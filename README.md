@@ -10,6 +10,13 @@ As the maintainer of this project, please make a few updates:
 - Understanding the security reporting process in SECURITY.MD
 - Remove this section from the README
 
+### Generating protobufs
+If the gRPC proto definitions need to be updated, the corresponding source code can be regenerated using the following command from the `src/durabletask` directory:
+
+```bash
+python3 -m grpc_tools.protoc --proto_path=../../submodules/durabletask-protobuf/protos  --python_out=. --pyi_out=. --grpc_python_out=. orchestrator_service.proto
+```
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
