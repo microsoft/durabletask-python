@@ -1,0 +1,24 @@
+{
+    "editor.formatOnSave": true,
+    "python.analysis.typeCheckingMode": "basic",
+    "python.formatting.autopep8Args": [
+        "--max-line-length=120"
+    ],
+    "python.testing.pytestArgs": [
+        "-v",
+        "--cov=durabletask/",
+        "--cov-report=lcov",
+        "tests/"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "coverage-gutters.showLineCoverage": true,
+    "coverage-gutters.coverageFileNames": [
+        "coverage.lcov",
+        "lcov.info",
+        "cov.xml",
+        "coverage.xml",
+        "jacoco.xml",
+        "coverage.cobertura.xml"
+    ]
+}

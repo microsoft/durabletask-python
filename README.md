@@ -11,10 +11,10 @@ As the maintainer of this project, please make a few updates:
 - Remove this section from the README
 
 ### Generating protobufs
-If the gRPC proto definitions need to be updated, the corresponding source code can be regenerated using the following command from the `src/durabletask` directory:
+If the gRPC proto definitions need to be updated, the corresponding source code can be regenerated using the following command from the project root:
 
 ```bash
-python3 -m grpc_tools.protoc --proto_path=../../submodules/durabletask-protobuf/protos  --python_out=. --pyi_out=. --grpc_python_out=. orchestrator_service.proto
+python3 -m grpc_tools.protoc --proto_path=./submodules/durabletask-protobuf/protos  --python_out=./durabletask/protos --pyi_out=./durabletask/protos --grpc_python_out=./durabletask/protos orchestrator_service.proto
 ```
 
 ## Contributing

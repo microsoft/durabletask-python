@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Debug Tests",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "purpose": [
+                "debug-test"
+            ],
+            "env": {
+                // pytest-cov breaks debugging, so we have to disable it during debug sessions
+                "PYTEST_ADDOPTS": "--no-cov"
+            },
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
