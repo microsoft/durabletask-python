@@ -57,19 +57,23 @@ def new_complete_orchestration_action(
         id: int,
         status: OrchestrationStatus,
         result: str | None = None,
-        failureDetails: TaskFailureDetails | None = None) -> OrchestratorAction:
-    resultWrapper = None
+        failure_details: TaskFailureDetails | None = None) -> OrchestratorAction:
+
+    result_pb: wrappers_pb2.StringValue | None = None
     if result is not None:
-        resultWrapper = wrappers_pb2.StringValue(value=result)
-    return OrchestratorAction(id=id, completeOrchestration=CompleteOrchestrationAction(
+        result_pb = wrappers_pb2.StringValue(value=result)
+
+    completeOrchestrationAction = CompleteOrchestrationAction(
         orchestrationStatus=status,
-        result=resultWrapper,
-        carryoverEvents=None,  # TODO: Populate carryoverEvents
-        failureDetails=failureDetails,
-    ))
+        result=result_pb,
+        failureDetails=failure_details)
+
+    # TODO: CarryoverEvents
+
+    return OrchestratorAction(id=id, completeOrchestration=completeOrchestrationAction)
 
 
-def create_timer_action(id: int, fire_at: datetime) -> OrchestratorAction:
+def new_create_timer_action(id: int, fire_at: datetime) -> OrchestratorAction:
     timestamp = timestamp_pb2.Timestamp()
     timestamp.FromDatetime(fire_at)
     return OrchestratorAction(id=id, createTimer=CreateTimerAction(fireAt=timestamp))

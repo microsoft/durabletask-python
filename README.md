@@ -17,6 +17,13 @@ If the gRPC proto definitions need to be updated, the corresponding source code 
 python3 -m grpc_tools.protoc --proto_path=./submodules/durabletask-protobuf/protos  --python_out=./durabletask/protos --pyi_out=./durabletask/protos --grpc_python_out=./durabletask/protos orchestrator_service.proto
 ```
 
+### Running E2E tests
+The E2E (end-to-end) tests require a sidecar process to be running. You can run a sidecar process using the following `docker` command (assumes you have Docker installed on your local system.)
+
+```sh
+docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
+```
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a

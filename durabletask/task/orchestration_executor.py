@@ -97,7 +97,7 @@ class RuntimeOrchestrationContext(OrchestrationContext):
 
     def create_timer(self, fire_at: datetime) -> task.Task:
         id = self.next_sequence_number()
-        action = ph.create_timer_action(id, fire_at)
+        action = ph.new_create_timer_action(id, fire_at)
         self._pending_actions[id] = action
 
         timer_task = task.CompletableTask()

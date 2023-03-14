@@ -1,12 +1,8 @@
-from abc import ABC, abstractmethod, abstractproperty
-import simplejson as json
-
-import durabletask.protos.helpers as ph
-import durabletask.protos.orchestrator_service_pb2 as protos
-import durabletask.task.task as task
-
+from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Callable, Generator, List
+
+import durabletask.task.task as task
 
 
 class OrchestrationContext(ABC):
