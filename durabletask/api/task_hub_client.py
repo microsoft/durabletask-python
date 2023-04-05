@@ -1,17 +1,23 @@
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import Any
+from typing import Any, TypeVar
 import uuid
 import grpc
 from durabletask.api.state import OrchestrationState, new_orchestration_state
+import durabletask.protos.helpers as helpers
 import durabletask.protos.orchestrator_service_pb2 as pb
 import durabletask.internal.shared as shared
 import simplejson as json
 
-from google.protobuf import timestamp_pb2, wrappers_pb2
+from google.protobuf import wrappers_pb2
 
+import durabletask.task.registry as registry
 from durabletask.protos.orchestrator_service_pb2_grpc import TaskHubSidecarServiceStub
+from durabletask.task.orchestration import Orchestrator
+
+TInput = TypeVar('TInput')
+TOutput = TypeVar('TOutput')
 
 
 class TaskHubGrpcClient:
@@ -24,22 +30,19 @@ class TaskHubGrpcClient:
         self._stub = TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger(log_handler, log_formatter)
 
-    def schedule_new_orchestration(self, name: str, *,
-                                   input: Any = None,
+    def schedule_new_orchestration(self, orchestrator: Orchestrator[TInput, TOutput], *,
+                                   input: TInput | None = None,
                                    instance_id: str | None = None,
                                    start_at: datetime | None = None) -> str:
-        req = pb.CreateInstanceRequest(name=name)
-        if instance_id is None:
-            instance_id = uuid.uuid4().hex
-        req.instanceId = instance_id
 
-        if input is not None:
-            json_input = json.dumps(input)
-            req.input = wrappers_pb2.StringValue(value=json_input)
+        name = registry.get_name(orchestrator)
 
-        if start_at is not None:
-            req.scheduledStartTimestamp = timestamp_pb2.Timestamp()
-            req.scheduledStartTimestamp.FromDatetime(start_at)
+        req = pb.CreateInstanceRequest(
+            name=name,
+            instanceId=instance_id if instance_id else uuid.uuid4().hex,
+            input=wrappers_pb2.StringValue(value=json.dumps(input)) if input else None,
+            scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None)
+
         self._logger.info(f"Starting new '{name}' instance with ID = '{instance_id}'.")
         res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
         return res.instanceId

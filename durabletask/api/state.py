@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import durabletask.protos.orchestrator_service_pb2 as pb
+import durabletask.protos.helpers as helpers
 from durabletask.protos.orchestrator_service_pb2 import TaskFailureDetails
 
 
@@ -29,7 +30,7 @@ def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> Or
         state.orchestrationStatus,
         state.createdTimestamp.ToDatetime(),
         state.lastUpdatedTimestamp.ToDatetime(),
-        state.input.value if state.input is not None else None,
-        state.output.value if state.output is not None else None,
-        state.customStatus.value if state.customStatus is not None else None,
+        state.input.value if not helpers.is_empty(state.input) else None,
+        state.output.value if not helpers.is_empty(state.output) else None,
+        state.customStatus.value if not helpers.is_empty(state.customStatus) else None,
         state.failureDetails if state.failureDetails.errorMessage != '' or state.failureDetails.errorType != '' else None)

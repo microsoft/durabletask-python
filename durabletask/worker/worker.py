@@ -9,10 +9,12 @@ from threading import Event, Thread
 from google.protobuf import empty_pb2
 
 from durabletask.protos.orchestrator_service_pb2_grpc import TaskHubSidecarServiceStub
+from durabletask.task.registry import Registry
 
 import durabletask.protos.orchestrator_service_pb2 as pb
 import durabletask.protos.helpers as pbh
 import durabletask.internal.shared as shared
+import durabletask.task.execution as execution
 
 
 class TaskHubWorker(ABC):
@@ -20,17 +22,17 @@ class TaskHubWorker(ABC):
 
 
 class TaskHubGrpcWorker(TaskHubWorker):
-    response_stream: grpc.Future
+    _response_stream: grpc.Future | None
 
-    def __init__(self, *,
+    def __init__(self, registry: Registry, *,
                  host_address: str | None = None,
                  log_handler=None,
                  log_formatter: logging.Formatter | None = None):
-        if host_address is None:
-            host_address = shared.get_default_host_address()
-        self._host_address = host_address
+        self._registry = registry
+        self._host_address = host_address if host_address else shared.get_default_host_address()
         self._logger = shared.get_logger(log_handler, log_formatter)
         self._shutdown = Event()
+        self._response_stream = None
 
     def __enter__(self):
         return self
@@ -53,12 +55,12 @@ class TaskHubGrpcWorker(TaskHubWorker):
                         stub.Hello(empty_pb2.Empty())
 
                         # stream work items
-                        self.response_stream = stub.GetWorkItems(pb.GetWorkItemsRequest())
+                        self._response_stream = stub.GetWorkItems(pb.GetWorkItemsRequest())
                         self._logger.info(f'Successfully connected to {self._host_address}. Waiting for work items...')
 
                         # The stream blocks until either a work item is received or the stream is canceled
                         # by another thread (see the stop() method).
-                        for work_item in self.response_stream:
+                        for work_item in self._response_stream:
                             self._logger.info(f'Got work item: {work_item}')
                             if work_item.HasField('orchestratorRequest'):
                                 executor.submit(self._execute_orchestrator, work_item.orchestratorRequest, stub)
@@ -91,20 +93,45 @@ class TaskHubGrpcWorker(TaskHubWorker):
     def stop(self):
         self._logger.info(f"Stopping gRPC worker...")
         self._shutdown.set()
-        if self.response_stream is not None:
-            self.response_stream.cancel()
+        if self._response_stream is not None:
+            self._response_stream.cancel()
         if self._runLoop is not None:
             self._runLoop.join(timeout=30)
         self._logger.info("Worker shutdown completed")
 
     def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: TaskHubSidecarServiceStub):
         try:
-            complete_action = pbh.new_complete_orchestration_action(0, pb.ORCHESTRATION_STATUS_COMPLETED)
-            actions = [complete_action]
+            executor = execution.OrchestrationExecutor(self._registry, self._logger)
+            actions = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
             res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions)
-            stub.CompleteOrchestratorTask(res)
         except Exception as ex:
             self._logger.exception(f"An error occurred while trying to execute instance '{req.instanceId}': {ex}")
+            failure_details = pbh.new_failure_details(ex)
+            actions = [pbh.new_complete_orchestration_action(-1, pb.ORCHESTRATION_STATUS_FAILED, "", failure_details)]
+            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions)
+
+        try:
+            stub.CompleteOrchestratorTask(res)
+        except Exception as ex:
+            self._logger.exception(f"Failed to deliver orchestrator response for '{req.instanceId}' to sidecar: {ex}")
 
     def _execute_activity(self, req: pb.ActivityRequest, stub: TaskHubSidecarServiceStub):
-        raise NotImplementedError()
+        instance_id = req.orchestrationInstance.instanceId
+        try:
+            executor = execution.ActivityExecutor(self._registry, self._logger)
+            result = executor.execute(instance_id, req.name, req.taskId, req.input.value)
+            res = pb.ActivityResponse(
+                instanceId=instance_id,
+                taskId=req.taskId,
+                result=pbh.get_string_value(result))
+        except Exception as ex:
+            res = pb.ActivityResponse(
+                instanceId=instance_id,
+                taskId=req.taskId,
+                failureDetails=pbh.new_failure_details(ex))
+
+        try:
+            stub.CompleteActivityTask(res)
+        except Exception as ex:
+            self._logger.exception(
+                f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}")
