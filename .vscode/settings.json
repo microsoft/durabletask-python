@@ -1,9 +1,18 @@
 {
-    "editor.formatOnSave": true,
-    "python.analysis.typeCheckingMode": "basic",
-    "python.formatting.autopep8Args": [
-        "--max-line-length=120"
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.autopep8",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true,
+        },
+        "editor.rulers": [
+            119
+        ],
+    },
+    "autopep8.args": [
+        "--max-line-length=119"
     ],
+    "python.analysis.typeCheckingMode": "basic",
     "python.testing.pytestArgs": [
         "-v",
         "--cov=durabletask/",

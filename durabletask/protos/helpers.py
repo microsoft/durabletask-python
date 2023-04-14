@@ -69,6 +69,37 @@ def new_task_failed_event(event_id: int, ex: Exception) -> HistoryEvent:
     )
 
 
+def new_sub_orchestration_created_event(event_id: int, name: str, instance_id: str, encoded_input: str | None = None) -> HistoryEvent:
+    return HistoryEvent(
+        eventId=event_id,
+        timestamp=timestamp_pb2.Timestamp(),
+        subOrchestrationInstanceCreated=SubOrchestrationInstanceCreatedEvent(
+            name=name,
+            input=get_string_value(encoded_input),
+            instanceId=instance_id)
+    )
+
+
+def new_sub_orchestration_completed_event(event_id: int, encoded_output: str | None = None) -> HistoryEvent:
+    return HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        subOrchestrationInstanceCompleted=SubOrchestrationInstanceCompletedEvent(
+            result=get_string_value(encoded_output),
+            taskScheduledId=event_id)
+    )
+
+
+def new_sub_orchestration_failed_event(event_id: int, ex: Exception) -> HistoryEvent:
+    return HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        subOrchestrationInstanceFailed=SubOrchestrationInstanceFailedEvent(
+            failureDetails=new_failure_details(ex),
+            taskScheduledId=event_id)
+    )
+
+
 def new_failure_details(ex: Exception) -> TaskFailureDetails:
     return TaskFailureDetails(
         errorType=type(ex).__name__,
@@ -118,6 +149,15 @@ def new_timestamp(dt: datetime) -> timestamp_pb2.Timestamp:
     ts = timestamp_pb2.Timestamp()
     ts.FromDatetime(dt)
     return ts
+
+
+def new_create_sub_orchestration_action(id: int, name: str, instance_id: str | None, input: Any) -> OrchestratorAction:
+    encoded_input = json.dumps(input) if input is not None else None
+    return OrchestratorAction(id=id, createSubOrchestration=CreateSubOrchestrationAction(
+        name=name,
+        instanceId=instance_id,
+        input=get_string_value(encoded_input)
+    ))
 
 
 def is_empty(v: wrappers_pb2.StringValue):

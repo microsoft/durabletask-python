@@ -1,3 +1,6 @@
+# See https://peps.python.org/pep-0563/
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Callable, Generator, TypeVar
@@ -96,6 +99,29 @@ class OrchestrationContext(ABC):
         -------
         Task
             A Durable Task that completes when the called activity function completes or fails.
+        """
+        pass
+
+    @abstractmethod
+    def call_sub_orchestrator(self,  orchestrator: Orchestrator[TInput, TOutput], *,
+                              input: TInput | None = None,
+                              instance_id: str | None = None) -> task.Task[TOutput]:
+        """Schedule sub-orchestrator function for execution.
+
+        Parameters
+        ----------
+        orchestrator: Orchestrator[TInput, TOutput]
+            A reference to the orchestrator function to call.
+        input: TInput | None
+            The optional JSON-serializable input to pass to the orchestrator function.
+        instance_id: str | None
+            A unique ID to use for the sub-orchestration instance. If not specified, a
+            random UUID will be used.
+
+        Returns
+        -------
+        Task
+            A Durable Task that completes when the called sub-orchestrator completes or fails.
         """
         pass
 

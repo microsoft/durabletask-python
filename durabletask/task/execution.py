@@ -1,16 +1,14 @@
-import inspect
-from logging import Logger
-import simplejson as json
-
 from datetime import datetime
+from logging import Logger
 from types import GeneratorType
 from typing import Any, Dict, Generator, Iterable, List, TypeVar
 
+import simplejson as json
+
 import durabletask.protos.helpers as ph
 import durabletask.protos.orchestrator_service_pb2 as pb
-from durabletask.task.activities import Activity, ActivityContext
 import durabletask.task.task as task
-
+from durabletask.task.activities import Activity, ActivityContext
 from durabletask.task.orchestration import OrchestrationContext, Orchestrator
 from durabletask.task.registry import Registry, get_name
 from durabletask.task.task import Task
@@ -67,11 +65,11 @@ class RuntimeOrchestrationContext(OrchestrationContext):
         # case is if the user yielded on a WhenAll task and there are still
         # outstanding child tasks that need to be completed.
         if self._previous_task is not None:
-            if self._previous_task.is_failed():
+            if self._previous_task.is_failed:
                 # Raise the failure as an exception to the generator. The orchestrator can then either
                 # handle the exception or allow it to fail the orchestration.
                 self._generator.throw(self._previous_task.get_exception())
-            elif self._previous_task.is_complete():
+            elif self._previous_task.is_complete:
                 # Resume the generator. This will either return a Task or raise StopIteration if it's done.
                 next_task = self._generator.send(self._previous_task.get_result())
                 # TODO: Validate the return value
@@ -137,6 +135,21 @@ class RuntimeOrchestrationContext(OrchestrationContext):
         activity_task = task.CompletableTask[TOutput]()
         self._pending_tasks[id] = activity_task
         return activity_task
+
+    def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
+                              input: TInput | None = None,
+                              instance_id: str | None = None) -> task.Task[TOutput]:
+        id = self.next_sequence_number()
+        name = get_name(orchestrator)
+        if instance_id is None:
+            # Create a deteministic instance ID based on the parent instance ID
+            instance_id = f"{self.instance_id}:{id:04x}"
+        action = ph.new_create_sub_orchestration_action(id, name, instance_id, input)
+        self._pending_actions[id] = action
+
+        sub_orch_task = task.CompletableTask[TOutput]()
+        self._pending_tasks[id] = sub_orch_task
+        return sub_orch_task
 
 
 class OrchestrationExecutor:
@@ -251,6 +264,45 @@ class OrchestrationExecutor:
                         f"Ignoring unexpected taskFailed event for '{ctx.instance_id}' with ID = {task_id}.")
                     return
                 activity_task.fail(event.taskFailed.failureDetails)
+                ctx.resume()
+            elif event.HasField("subOrchestrationInstanceCreated"):
+                # This history event confirms that the sub-orchestration execution was successfully scheduled.
+                # Remove the subOrchestrationInstanceCreated event from the pending action list so we don't schedule it again.
+                task_id = event.eventId
+                action = ctx._pending_actions.pop(task_id, None)
+                if not action:
+                    raise _get_non_determinism_error(task_id, get_name(ctx.call_sub_orchestrator))
+                elif not action.HasField("createSubOrchestration"):
+                    expected_method_name = get_name(ctx.call_sub_orchestrator)
+                    raise _get_wrong_action_type_error(task_id, expected_method_name, action)
+                elif action.createSubOrchestration.name != event.subOrchestrationInstanceCreated.name:
+                    raise _get_wrong_action_name_error(
+                        task_id,
+                        method_name=get_name(ctx.call_sub_orchestrator),
+                        expected_task_name=event.subOrchestrationInstanceCreated.name,
+                        actual_task_name=action.createSubOrchestration.name)
+            elif event.HasField("subOrchestrationInstanceCompleted"):
+                task_id = event.subOrchestrationInstanceCompleted.taskScheduledId
+                sub_orch_task = ctx._pending_tasks.pop(task_id, None)
+                if not sub_orch_task:
+                    # TODO: Should this be an error? When would it ever happen?
+                    self._logger.warning(
+                        f"Ignoring unexpected subOrchestrationInstanceCompleted event for '{ctx.instance_id}' with ID = {task_id}.")
+                    return
+                result = None
+                if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
+                    result = json.loads(event.subOrchestrationInstanceCompleted.result.value)
+                sub_orch_task.complete(result)
+                ctx.resume()
+            elif event.HasField("subOrchestrationInstanceFailed"):
+                task_id = event.subOrchestrationInstanceFailed.taskScheduledId
+                sub_orch_task = ctx._pending_tasks.pop(task_id, None)
+                if not sub_orch_task:
+                    # TODO: Should this be an error? When would it ever happen?
+                    self._logger.warning(
+                        f"Ignoring unexpected subOrchestrationInstanceFailed event for '{ctx.instance_id}' with ID = {task_id}.")
+                    return
+                sub_orch_task.fail(event.subOrchestrationInstanceFailed.failureDetails)
                 ctx.resume()
             else:
                 eventType = event.WhichOneof("eventType")
