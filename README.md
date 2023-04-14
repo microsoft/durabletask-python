@@ -1,14 +1,29 @@
-# Project
+# Durable Task Client SDK for Python
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-As the maintainer of this project, please make a few updates:
+This repo contains a Python client SDK for use with the [Durable Task Framework for Go](https://github.com/microsoft/durabletask-go) and [Dapr Workflow](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-overview/). With this SDK, you can define, schedule, and manage durable orchestrations using ordinary Python code.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+⚠️ **This SDK is currently under active development and is not yet ready for production use.** ⚠️
+
+> Note that this project is **not** currently affiliated with the [Durable Functions](https://docs.microsoft.com/azure/azure-functions/durable/durable-functions-overview) project for Azure Functions. If you are looking for a Python SDK for Durable Functions, please see [this repo](https://github.com/Azure/azure-functions-durable-python).
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.8 or higher
+
+### Installing
+
+#### Install from PyPI
+This package is not yet published to [PyPI](https://pypi.org/).
+
+#### Install from source
+TODO
+
+## Development
+The following is more information about how to develop this project.
 
 ### Generating protobufs
 If the gRPC proto definitions need to be updated, the corresponding source code can be regenerated using the following command from the project root:
