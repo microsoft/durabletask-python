@@ -1,6 +1,7 @@
 # Durable Task Client SDK for Python
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Build Validation](https://github.com/microsoft/durabletask-python/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/microsoft/durabletask-python/actions/workflows/pr-validation.yml)
 
 This repo contains a Python client SDK for use with the [Durable Task Framework for Go](https://github.com/microsoft/durabletask-go) and [Dapr Workflow](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-overview/). With this SDK, you can define, schedule, and manage durable orchestrations using ordinary Python code.
 
@@ -12,7 +13,7 @@ This repo contains a Python client SDK for use with the [Durable Task Framework 
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10 or higher
 
 ### Installing
 
@@ -32,11 +33,22 @@ If the gRPC proto definitions need to be updated, the corresponding source code 
 python3 -m grpc_tools.protoc --proto_path=./submodules/durabletask-protobuf/protos  --python_out=./durabletask/protos --pyi_out=./durabletask/protos --grpc_python_out=./durabletask/protos orchestrator_service.proto
 ```
 
+### Linting and running unit tests
+
+See the [pr-validation.yml](.github/workflows/pr-validation.yml) workflow for the full list of commands that are run as part of the CI/CD pipeline.
+
 ### Running E2E tests
+
 The E2E (end-to-end) tests require a sidecar process to be running. You can run a sidecar process using the following `docker` command (assumes you have Docker installed on your local system.)
 
 ```sh
 docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
+```
+
+To run the E2E tests, run the following command from the project root (we assume you have `pytest` installed locally):
+
+```sh
+pytest -m e2e --verbose
 ```
 
 ## Contributing
