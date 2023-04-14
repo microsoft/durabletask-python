@@ -1,12 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 # See https://peps.python.org/pep-0563/
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Callable, Generator, TypeVar
-from durabletask.task.activities import Activity
 
 import durabletask.task.task as task
+from durabletask.task.activities import Activity
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
@@ -103,7 +106,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_sub_orchestrator(self,  orchestrator: Orchestrator[TInput, TOutput], *,
+    def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
                               input: TInput | None = None,
                               instance_id: str | None = None) -> task.Task[TOutput]:
         """Schedule sub-orchestrator function for execution.

@@ -1,5 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import threading
 
+import pytest
 import simplejson as json
 
 import durabletask.protos.orchestrator_service_pb2 as pb
@@ -12,6 +16,7 @@ from durabletask.task.registry import Registry
 
 # NOTE: These tests assume a sidecar process is running. Example command:
 #       docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
+pytestmark = pytest.mark.e2e
 
 
 def test_empty_orchestration():
@@ -33,7 +38,7 @@ def test_empty_orchestration():
         id = task_hub_client.schedule_new_orchestration(empty_orchestrator)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
-    assert invoked == True
+    assert invoked
     assert state is not None
     assert state.name == name
     assert state.instance_id == id

@@ -1,20 +1,21 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import concurrent.futures
 import logging
-import time
-import grpc
-
 from abc import ABC
 from threading import Event, Thread
 
+import grpc
 from google.protobuf import empty_pb2
 
-from durabletask.protos.orchestrator_service_pb2_grpc import TaskHubSidecarServiceStub
-from durabletask.task.registry import Registry
-
-import durabletask.protos.orchestrator_service_pb2 as pb
-import durabletask.protos.helpers as pbh
 import durabletask.internal.shared as shared
+import durabletask.protos.helpers as pbh
+import durabletask.protos.orchestrator_service_pb2 as pb
 import durabletask.task.execution as execution
+from durabletask.protos.orchestrator_service_pb2_grpc import \
+    TaskHubSidecarServiceStub
+from durabletask.task.registry import Registry
 
 
 class TaskHubWorker(ABC):
@@ -91,7 +92,7 @@ class TaskHubGrpcWorker(TaskHubWorker):
         self._runLoop.start()
 
     def stop(self):
-        self._logger.info(f"Stopping gRPC worker...")
+        self._logger.info("Stopping gRPC worker...")
         self._shutdown.set()
         if self._response_stream is not None:
             self._response_stream.cancel()

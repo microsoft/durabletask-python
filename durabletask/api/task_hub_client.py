@@ -1,19 +1,22 @@
-from dataclasses import dataclass
-from datetime import datetime
-import logging
-from typing import Any, TypeVar
-import uuid
-import grpc
-from durabletask.api.state import OrchestrationState, new_orchestration_state
-import durabletask.protos.helpers as helpers
-import durabletask.protos.orchestrator_service_pb2 as pb
-import durabletask.internal.shared as shared
-import simplejson as json
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
+import logging
+import uuid
+from datetime import datetime
+from typing import TypeVar
+
+import grpc
+import simplejson as json
 from google.protobuf import wrappers_pb2
 
+import durabletask.internal.shared as shared
+import durabletask.protos.helpers as helpers
+import durabletask.protos.orchestrator_service_pb2 as pb
 import durabletask.task.registry as registry
-from durabletask.protos.orchestrator_service_pb2_grpc import TaskHubSidecarServiceStub
+from durabletask.api.state import OrchestrationState, new_orchestration_state
+from durabletask.protos.orchestrator_service_pb2_grpc import \
+    TaskHubSidecarServiceStub
 from durabletask.task.orchestration import Orchestrator
 
 TInput = TypeVar('TInput')

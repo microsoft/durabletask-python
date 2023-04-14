@@ -1,10 +1,15 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from typing import Any, Tuple
-from durabletask.task.activities import Activity, ActivityContext
-from durabletask.task.execution import ActivityExecutor, ActivityNotRegisteredError
-from durabletask.task.registry import Registry
+
+import simplejson as json
 
 import durabletask.internal.shared as shared
-import simplejson as json
+from durabletask.task.activities import Activity, ActivityContext
+from durabletask.task.execution import (ActivityExecutor,
+                                        ActivityNotRegisteredError)
+from durabletask.task.registry import Registry
 
 TEST_LOGGER = shared.get_logger()
 TEST_INSTANCE_ID = 'abc123'

@@ -1,7 +1,10 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from datetime import datetime
 from logging import Logger
 from types import GeneratorType
-from typing import Any, Dict, Generator, Iterable, List, TypeVar
+from typing import Any, Generator, Iterable, List, TypeVar
 
 import simplejson as json
 
@@ -79,7 +82,7 @@ class RuntimeOrchestrationContext(OrchestrationContext):
         self._is_complete = True
         self._result = result
         result_json: str | None = None
-        if result != None:
+        if result is not None:
             result_json = json.dumps(result)
         action = ph.new_complete_orchestration_action(
             self.next_sequence_number(), pb.ORCHESTRATION_STATUS_COMPLETED, result_json)

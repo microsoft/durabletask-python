@@ -1,6 +1,9 @@
-from typing import Callable, Dict
-from durabletask.task.activities import Activity
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
+from typing import Callable, Dict
+
+from durabletask.task.activities import Activity
 from durabletask.task.orchestration import Orchestrator
 
 

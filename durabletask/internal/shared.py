@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import logging
 
 import grpc
@@ -14,7 +17,9 @@ def get_grpc_channel(host_address: str | None) -> grpc.Channel:
     return channel
 
 
-def get_logger(log_handler: logging.Handler | None = None, log_formatter: logging.Formatter | None = None) -> logging.Logger:
+def get_logger(
+        log_handler: logging.Handler | None = None,
+        log_formatter: logging.Formatter | None = None) -> logging.Logger:
     logger = logging.Logger("durabletask")
 
     # Add a default log handler if none is provided

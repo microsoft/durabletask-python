@@ -1,9 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from dataclasses import dataclass
 from datetime import datetime
 
-import durabletask.protos.orchestrator_service_pb2 as pb
 import durabletask.protos.helpers as helpers
-from durabletask.protos.orchestrator_service_pb2 import TaskFailureDetails
+import durabletask.protos.orchestrator_service_pb2 as pb
 
 
 @dataclass

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 # See https://peps.python.org/pep-0563/
 from __future__ import annotations
 
