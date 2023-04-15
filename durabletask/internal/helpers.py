@@ -8,7 +8,7 @@ from typing import Any
 import simplejson as json
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
-import durabletask.protos.orchestrator_service_pb2 as pb
+import durabletask.internal.orchestrator_service_pb2 as pb
 
 # TODO: The new_xxx_event methods are only used by test code and should be moved elsewhere
 
@@ -175,3 +175,12 @@ def new_create_sub_orchestration_action(
 
 def is_empty(v: wrappers_pb2.StringValue):
     return v is None or v.value == ''
+
+
+def get_orchestration_status_str(status: pb.OrchestrationStatus):
+    try:
+        const_name = pb.OrchestrationStatus.Name(status)
+        if const_name.startswith('ORCHESTRATION_STATUS_'):
+            return const_name[len('ORCHESTRATION_STATUS_'):]
+    except Exception:
+        return "UNKNOWN"

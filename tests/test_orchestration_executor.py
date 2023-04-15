@@ -7,12 +7,9 @@ from typing import List
 
 import simplejson as json
 
-import durabletask.protos.helpers as helpers
-import durabletask.protos.orchestrator_service_pb2 as pb
-import durabletask.task.task as task
-from durabletask.task.execution import OrchestrationExecutor
-from durabletask.task.orchestration import OrchestrationContext
-from durabletask.task.registry import Registry, get_name
+import durabletask.internal.helpers as helpers
+import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask import task, worker
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
@@ -26,12 +23,12 @@ TEST_INSTANCE_ID = "abc123"
 def test_orchestrator_inputs():
     """Validates orchestrator function input population"""
 
-    def orchestrator(ctx: OrchestrationContext, my_input: int):
+    def orchestrator(ctx: task.OrchestrationContext, my_input: int):
         return my_input, ctx.instance_id, str(ctx.current_utc_datetime), ctx.is_replaying
 
     test_input = 42
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     start_time = datetime.now()
@@ -39,7 +36,7 @@ def test_orchestrator_inputs():
         helpers.new_orchestrator_started_event(start_time),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=json.dumps(test_input)),
     ]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, [], new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -53,14 +50,14 @@ def test_orchestrator_inputs():
 def test_complete_orchestration_actions():
     """Tests the actions output for a completed orchestration"""
 
-    def empty_orchestrator(ctx: OrchestrationContext, _):
+    def empty_orchestrator(ctx: task.OrchestrationContext, _):
         return "done"
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(empty_orchestrator)
 
     new_events = [helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, [], new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -71,10 +68,10 @@ def test_complete_orchestration_actions():
 def test_orchestrator_not_registered():
     """Tests the effect of scheduling an unregistered orchestrator"""
 
-    registry = Registry()
+    registry = worker._Registry()
     name = "Bogus"
     new_events = [helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, [], new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -86,12 +83,12 @@ def test_orchestrator_not_registered():
 def test_create_timer_actions():
     """Tests the actions output for the create_timer orchestrator method"""
 
-    def delay_orchestrator(ctx: OrchestrationContext, _):
+    def delay_orchestrator(ctx: task.OrchestrationContext, _):
         due_time = ctx.current_utc_datetime + timedelta(seconds=1)
         yield ctx.create_timer(due_time)
         return "done"
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(delay_orchestrator)
 
     start_time = datetime(2020, 1, 1, 12, 0, 0)
@@ -100,7 +97,7 @@ def test_create_timer_actions():
     new_events = [
         helpers.new_orchestrator_started_event(start_time),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, [], new_events)
 
     assert actions is not None
@@ -114,12 +111,12 @@ def test_create_timer_actions():
 def test_timer_fired_completion():
     """Tests the resumption of task using a timer_fired event"""
 
-    def delay_orchestrator(ctx: OrchestrationContext, _):
+    def delay_orchestrator(ctx: task.OrchestrationContext, _):
         due_time = ctx.current_utc_datetime + timedelta(seconds=1)
         yield ctx.create_timer(due_time)
         return "done"
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(delay_orchestrator)
 
     start_time = datetime(2020, 1, 1, 12, 0, 0)
@@ -132,7 +129,7 @@ def test_timer_fired_completion():
     new_events = [
         helpers.new_timer_fired_event(1, expected_fire_at)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -146,10 +143,10 @@ def test_schedule_activity_actions():
     def dummy_activity(ctx, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, orchestrator_input):
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
         yield ctx.call_activity(dummy_activity, input=orchestrator_input)
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     # TODO: Test several different input types (int, bool, str, dict, etc.)
@@ -157,14 +154,14 @@ def test_schedule_activity_actions():
     new_events = [
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input)]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, [], new_events)
 
     assert len(actions) == 1
     assert type(actions[0]) is pb.OrchestratorAction
     assert actions[0].id == 1
     assert actions[0].HasField("scheduleTask")
-    assert actions[0].scheduleTask.name == get_name(dummy_activity)
+    assert actions[0].scheduleTask.name == task.get_name(dummy_activity)
     assert actions[0].scheduleTask.input.value == encoded_input
 
 
@@ -174,22 +171,22 @@ def test_activity_task_completion():
     def dummy_activity(ctx, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, orchestrator_input):
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
         result = yield ctx.call_activity(dummy_activity, input=orchestrator_input)
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     old_events = [
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
-        helpers.new_task_scheduled_event(1, get_name(dummy_activity))]
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
 
     encoded_output = json.dumps("done!")
     new_events = [helpers.new_task_completed_event(1, encoded_output)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -202,22 +199,22 @@ def test_activity_task_failed():
     def dummy_activity(ctx, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, orchestrator_input):
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
         result = yield ctx.call_activity(dummy_activity, input=orchestrator_input)
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     old_events = [
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
-        helpers.new_task_scheduled_event(1, get_name(dummy_activity))]
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
 
     ex = Exception("Kah-BOOOOM!!!")
     new_events = [helpers.new_task_failed_event(1, ex)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -235,11 +232,11 @@ def test_nondeterminism_expected_timer():
     def dummy_activity(ctx, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_activity(dummy_activity)
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     fire_at = datetime.now()
@@ -249,7 +246,7 @@ def test_nondeterminism_expected_timer():
         helpers.new_timer_created_event(1, fire_at)]
     new_events = [helpers.new_timer_fired_event(timer_id=1, fire_at=fire_at)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -262,11 +259,11 @@ def test_nondeterminism_expected_timer():
 
 def test_nondeterminism_expected_activity_call_no_task_id():
     """Tests the non-determinism detection logic when invoking activity functions"""
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield task.CompletableTask()  # dummy task
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     old_events = [
@@ -276,7 +273,7 @@ def test_nondeterminism_expected_activity_call_no_task_id():
 
     new_events = [helpers.new_task_completed_event(1)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -291,21 +288,21 @@ def test_nondeterminism_expected_activity_call_wrong_task_type():
     def dummy_activity(ctx, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         # create a timer when the history expects an activity call
         yield ctx.create_timer(datetime.now())
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     old_events = [
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
-        helpers.new_task_scheduled_event(1, get_name(dummy_activity))]
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
 
     new_events = [helpers.new_task_completed_event(1)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -321,11 +318,11 @@ def test_nondeterminism_wrong_activity_name():
     def dummy_activity(ctx, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         # create a timer when the history expects an activity call
         yield ctx.call_activity(dummy_activity)
 
-    registry = Registry()
+    registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
     old_events = [
@@ -335,7 +332,7 @@ def test_nondeterminism_wrong_activity_name():
 
     new_events = [helpers.new_task_completed_event(1)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -349,14 +346,14 @@ def test_nondeterminism_wrong_activity_name():
 
 def test_sub_orchestration_task_completion():
     """Tests that a sub-orchestration task is completed when the sub-orchestration completes"""
-    def suborchestrator(ctx: OrchestrationContext, _):
+    def suborchestrator(ctx: task.OrchestrationContext, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_sub_orchestrator(suborchestrator)
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     suborchestrator_name = registry.add_orchestrator(suborchestrator)
     orchestrator_name = registry.add_orchestrator(orchestrator)
 
@@ -368,7 +365,7 @@ def test_sub_orchestration_task_completion():
     new_events = [
         helpers.new_sub_orchestration_completed_event(1, encoded_output="42")]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -378,14 +375,14 @@ def test_sub_orchestration_task_completion():
 
 def test_sub_orchestration_task_failed():
     """Tests that a sub-orchestration task is completed when the sub-orchestration fails"""
-    def suborchestrator(ctx: OrchestrationContext, _):
+    def suborchestrator(ctx: task.OrchestrationContext, _):
         pass
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_sub_orchestrator(suborchestrator)
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     suborchestrator_name = registry.add_orchestrator(suborchestrator)
     orchestrator_name = registry.add_orchestrator(orchestrator)
 
@@ -397,7 +394,7 @@ def test_sub_orchestration_task_failed():
     ex = Exception("Kah-BOOOOM!!!")
     new_events = [helpers.new_sub_orchestration_failed_event(1, ex)]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -412,11 +409,11 @@ def test_sub_orchestration_task_failed():
 
 def test_nondeterminism_expected_sub_orchestration_task_completion_no_task():
     """Tests the non-determinism detection when a sub-orchestration action is encounteed when it shouldn't be"""
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield task.CompletableTask()  # dummy task
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
 
     old_events = [
@@ -427,7 +424,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_no_task():
     new_events = [
         helpers.new_sub_orchestration_completed_event(1, encoded_output="42")]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -441,11 +438,11 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_wrong_task_ty
     """Tests the non-determinism detection when a sub-orchestration action is encounteed when it shouldn't be.
     This variation tests the case where the expected task type is wrong (e.g. the code schedules a timer task
     but the history contains a sub-orchestration completed task)."""
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.create_timer(datetime.utcnow())  # created timer but history expects sub-orchestration
         return result
 
-    registry = Registry()
+    registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
 
     old_events = [
@@ -456,7 +453,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_wrong_task_ty
     new_events = [
         helpers.new_sub_orchestration_completed_event(1, encoded_output="42")]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -471,14 +468,14 @@ def test_fan_out():
     def hello(_, name: str):
         return f"Hello {name}!"
 
-    def orchestrator(ctx: OrchestrationContext, count: int):
+    def orchestrator(ctx: task.OrchestrationContext, count: int):
         tasks = []
         for i in range(count):
             tasks.append(ctx.call_activity(hello, input=str(i)))
         results = yield task.when_all(tasks)
         return results
 
-    registry = Registry()
+    registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
     activity_name = registry.add_activity(hello)
 
@@ -487,7 +484,7 @@ def test_fan_out():
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input="10")]
 
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     # The result should be 10 "taskScheduled" actions with inputs from 0 to 9
@@ -503,14 +500,14 @@ def test_fan_in():
     def print_int(_, val: int):
         return str(val)
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         tasks = []
         for i in range(10):
             tasks.append(ctx.call_activity(print_int, input=i))
         results = yield task.when_all(tasks)
         return results
 
-    registry = Registry()
+    registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
     activity_name = registry.add_activity(print_int)
 
@@ -528,12 +525,12 @@ def test_fan_in():
 
     # First, test with only the first 5 events. We expect the orchestration to be running
     # but return zero actions since its still waiting for the other 5 tasks to complete.
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events[:5])
     assert len(actions) == 0
 
     # Now test with the full set of new events. We expect the orchestration to complete.
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -546,14 +543,14 @@ def test_fan_in_with_single_failure():
     def print_int(_, val: int):
         return str(val)
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         tasks = []
         for i in range(10):
             tasks.append(ctx.call_activity(print_int, input=i))
         results = yield task.when_all(tasks)
         return results
 
-    registry = Registry()
+    registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
     activity_name = registry.add_activity(print_int)
 
@@ -574,7 +571,7 @@ def test_fan_in_with_single_failure():
     new_events.append(helpers.new_task_failed_event(6, ex))
 
     # Now test with the full set of new events. We expect the orchestration to complete.
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
@@ -588,7 +585,7 @@ def test_when_any():
     def hello(_, name: str):
         return f"Hello {name}!"
 
-    def orchestrator(ctx: OrchestrationContext, _):
+    def orchestrator(ctx: task.OrchestrationContext, _):
         t1 = ctx.call_activity(hello, input="Tokyo")
         t2 = ctx.call_activity(hello, input="Seattle")
         winner = yield task.when_any([t1, t2])
@@ -597,7 +594,7 @@ def test_when_any():
         else:
             return t2.get_result()
 
-    registry = Registry()
+    registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
     activity_name = registry.add_activity(hello)
 
@@ -605,7 +602,7 @@ def test_when_any():
     # to return two actions: one to schedule the "Tokyo" task and one to schedule the "Seattle" task.
     old_events = []
     new_events = [helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 2
     assert actions[0].HasField('scheduleTask')
@@ -621,7 +618,7 @@ def test_when_any():
     # Test 2: Complete the "Tokyo" task. We expect the orchestration to complete with output "Hello, Tokyo!"
     encoded_output = json.dumps(hello(None, "Tokyo"))
     new_events = [helpers.new_task_completed_event(1, encoded_output)]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
@@ -630,7 +627,7 @@ def test_when_any():
     # Test 3: Complete the "Seattle" task. We expect the orchestration to complete with output "Hello, Seattle!"
     encoded_output = json.dumps(hello(None, "Seattle"))
     new_events = [helpers.new_task_completed_event(2, encoded_output)]
-    executor = OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED

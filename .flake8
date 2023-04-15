@@ -1,0 +1,6 @@
+[flake8]
+ignore = E501,C901
+exclude = 
+    .git
+    *_pb2*
+    __pycache__

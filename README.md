@@ -9,33 +9,107 @@ This repo contains a Python client SDK for use with the [Durable Task Framework 
 
 > Note that this project is **not** currently affiliated with the [Durable Functions](https://docs.microsoft.com/azure/azure-functions/durable/durable-functions-overview) project for Azure Functions. If you are looking for a Python SDK for Durable Functions, please see [this repo](https://github.com/Azure/azure-functions-durable-python).
 
+## Features
+
+- [x] Orchestrations
+- [x] Activities
+- [x] Durable timers
+- [x] Sub-orchestrations
+- [ ] External events
+- [ ] Suspend and resume
+- [ ] Retry policies
+
+## Supported patterns
+
+The following orchestration patterns are currently supported.
+
+### Function chaining
+
+An orchestration can chain a sequence of function calls using the following syntax:
+
+```python
+def hello(ctx: task.ActivityContext, name: str) -> str:
+    return f'Hello {name}!'
+
+
+def sequence(ctx: task.OrchestrationContext, _):
+    result1 = yield ctx.call_activity(hello, input='Tokyo')
+    result2 = yield ctx.call_activity(hello, input='Seattle')
+    result3 = yield ctx.call_activity(hello, input='London')
+
+    return [result1, result2, result3]
+```
+
+### Fan-out/fan-in
+
+An orchestration can fan-out a dynamic number of function calls in parallel and then fan-in the results using the following syntax:
+
+```python
+def get_work_items(ctx: task.ActivityContext, _) -> List[str]:
+    # ...
+
+def process_work_item(ctx: task.ActivityContext, item: str) -> int:
+    # ...
+
+def orchestrator(ctx: task.OrchestrationContext, _):
+    work_items = yield ctx.call_activity(get_work_items)
+
+    tasks = [ctx.call_activity(process_work_item, input=item) for item in work_items]
+    results = yield task.when_all(tasks)
+
+    return {'work_items': work_items, 'results': results, 'total': sum(results)}
+```
+
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.10 or higher
+- A Durable Task-compatible sidecar, like [Dapr Workflow](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-overview/)
 
-### Installing
+### Installing the Durable Task Python client SDK
 
-#### Install from PyPI
-This package is not yet published to [PyPI](https://pypi.org/).
+Installation is currently only supported from source. Ensure pip, setuptools, and wheel are up-to-date.
 
-#### Install from source
-TODO
-
-## Development
-The following is more information about how to develop this project.
-
-### Generating protobufs
-If the gRPC proto definitions need to be updated, the corresponding source code can be regenerated using the following command from the project root:
-
-```bash
-python3 -m grpc_tools.protoc --proto_path=./submodules/durabletask-protobuf/protos  --python_out=./durabletask/protos --pyi_out=./durabletask/protos --grpc_python_out=./durabletask/protos orchestrator_service.proto
+```sh
+python3 -m pip install --upgrade pip setuptools wheel
 ```
 
-### Linting and running unit tests
+To install this package from source, clone this repository and run the following command from the project root:
 
-See the [pr-validation.yml](.github/workflows/pr-validation.yml) workflow for the full list of commands that are run as part of the CI/CD pipeline.
+```sh
+python3 -m pip install .
+```
+
+### Run the samples
+
+See the [examples](./examples) directory for a list of sample orchestrations and instructions on how to run them.
+
+## Development
+
+The following is more information about how to develop this project. Note that development commands require that `make` is installed on your local machine. If you're using Windows, you can install `make` using [Chocolatey](https://chocolatey.org/) or use WSL.
+
+### Generating protobufs
+
+Protobuf definitions are stored in the [./submodules/durabletask-proto](./submodules/durabletask-proto) directory, which is a submodule. To update the submodule, run the following command from the project root:
+
+```sh
+git submodule update --init
+```
+
+Once the submodule is available, the corresponding source code can be regenerated using the following command from the project root:
+
+```sh
+make proto-gen
+```
+
+### Running unit tests
+
+Unit tests can be run using the following command from the project root. Unit tests _don't_ require a sidecar process to be running.
+
+```sh
+make test-unit
+```
 
 ### Running E2E tests
 
@@ -45,10 +119,10 @@ The E2E (end-to-end) tests require a sidecar process to be running. You can run 
 docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
 ```
 
-To run the E2E tests, run the following command from the project root (we assume you have `pytest` installed locally):
+To run the E2E tests, run the following command from the project root:
 
 ```sh
-pytest -m e2e --verbose
+make test-e2e
 ```
 
 ## Contributing
