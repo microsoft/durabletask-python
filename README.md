@@ -28,10 +28,11 @@ The following orchestration patterns are currently supported.
 An orchestration can chain a sequence of function calls using the following syntax:
 
 ```python
+# simple activity function that returns a greeting
 def hello(ctx: task.ActivityContext, name: str) -> str:
     return f'Hello {name}!'
 
-
+# orchestrator function that sequences the activity calls
 def sequence(ctx: task.OrchestrationContext, _):
     result1 = yield ctx.call_activity(hello, input='Tokyo')
     result2 = yield ctx.call_activity(hello, input='Seattle')
@@ -40,25 +41,35 @@ def sequence(ctx: task.OrchestrationContext, _):
     return [result1, result2, result3]
 ```
 
+You can find the full sample [here](./examples/activity_sequence.py).
+
 ### Fan-out/fan-in
 
 An orchestration can fan-out a dynamic number of function calls in parallel and then fan-in the results using the following syntax:
 
 ```python
+# activity function for getting the list of work items
 def get_work_items(ctx: task.ActivityContext, _) -> List[str]:
     # ...
 
+# activity function for processing a single work item
 def process_work_item(ctx: task.ActivityContext, item: str) -> int:
     # ...
 
+# orchestrator function that fans-out the work items and then fans-in the results
 def orchestrator(ctx: task.OrchestrationContext, _):
+    # the number of work-items is unknown in advance
     work_items = yield ctx.call_activity(get_work_items)
 
+    # fan-out: schedule the work items in parallel and wait for all of them to complete
     tasks = [ctx.call_activity(process_work_item, input=item) for item in work_items]
     results = yield task.when_all(tasks)
 
+    # fan-in: summarize and return the results
     return {'work_items': work_items, 'results': results, 'total': sum(results)}
 ```
+
+You can find the full sample [here](./examples/fanout_fanin.py).
 
 ## Getting Started
 
@@ -113,7 +124,7 @@ make test-unit
 
 ### Running E2E tests
 
-The E2E (end-to-end) tests require a sidecar process to be running. You can run a sidecar process using the following `docker` command (assumes you have Docker installed on your local system.)
+The E2E (end-to-end) tests require a sidecar process to be running. You can use the Dapr sidecar for this or run a Durable Task test sidecar using the following `docker` command:
 
 ```sh
 docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
