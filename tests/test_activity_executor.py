@@ -6,10 +6,7 @@ from typing import Any, Tuple
 import simplejson as json
 
 import durabletask.internal.shared as shared
-from durabletask.task.activities import Activity, ActivityContext
-from durabletask.task.execution import (ActivityExecutor,
-                                        ActivityNotRegisteredError)
-from durabletask.task.registry import Registry
+from durabletask import task, worker
 
 TEST_LOGGER = shared.get_logger()
 TEST_INSTANCE_ID = 'abc123'
@@ -18,7 +15,7 @@ TEST_TASK_ID = 42
 
 def test_activity_inputs():
     """Validates activity function input population"""
-    def test_activity(ctx: ActivityContext, test_input: Any):
+    def test_activity(ctx: task.ActivityContext, test_input: Any):
         # return all activity inputs back as the output
         return test_input, ctx.orchestration_id, ctx.task_id
 
@@ -35,7 +32,7 @@ def test_activity_inputs():
 
 def test_activity_not_registered():
 
-    def test_activity(ctx: ActivityContext, _):
+    def test_activity(ctx: task.ActivityContext, _):
         pass  # not used
 
     executor, _ = _get_activity_executor(test_activity)
@@ -46,12 +43,12 @@ def test_activity_not_registered():
     except Exception as ex:
         caught_exception = ex
 
-    assert type(caught_exception) is ActivityNotRegisteredError
+    assert type(caught_exception) is worker.ActivityNotRegisteredError
     assert "Bogus" in str(caught_exception)
 
 
-def _get_activity_executor(fn: Activity) -> Tuple[ActivityExecutor, str]:
-    registry = Registry()
+def _get_activity_executor(fn: task.Activity) -> Tuple[worker._ActivityExecutor, str]:
+    registry = worker._Registry()
     name = registry.add_activity(fn)
-    executor = ActivityExecutor(registry, TEST_LOGGER)
+    executor = worker._ActivityExecutor(registry, TEST_LOGGER)
     return executor, name

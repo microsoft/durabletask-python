@@ -31,9 +31,7 @@ jobs:
         pip install -r requirements.txt
     - name: Lint with flake8
       run: |
-        # flake8 settings are in setup.cfg
         flake8 . --count --show-source --statistics --exit-zero
-    - name: Test with pytest
+    - name: Pytest unit tests
       run: |
-        # pytest markers are defined in setup.cfg
         pytest -m "not e2e" --verbose
