@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import json
 from typing import Any, Tuple
-
-import simplejson as json
 
 import durabletask.internal.shared as shared
 from durabletask import task, worker

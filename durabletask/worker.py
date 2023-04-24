@@ -3,13 +3,13 @@
 
 import concurrent.futures
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
 from typing import Any, Dict, Generator, List, Sequence, TypeVar
 
 import grpc
-import simplejson as json
+from attr import dataclass
 from google.protobuf import empty_pb2
 
 import durabletask.internal.helpers as ph
@@ -207,6 +207,12 @@ class TaskHubGrpcWorker:
                 f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}")
 
 
+@dataclass
+class _ExternalEvent:
+    name: str
+    data: Any
+
+
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Generator[task.Task, Any, Any] | None
     _previous_task: task.Task | None
@@ -222,6 +228,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._completion_status: pb.OrchestrationStatus | None = None
+        self._received_events: Dict[str, List[_ExternalEvent]] = {}
+        self._pending_events: Dict[str, List[task.CompletableTask]] = {}
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -245,17 +253,23 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 # handle the exception or allow it to fail the orchestration.
                 self._generator.throw(self._previous_task.get_exception())
             elif self._previous_task.is_complete:
-                # Resume the generator. This will either return a Task or raise StopIteration if it's done.
-                next_task = self._generator.send(self._previous_task.get_result())
-                # TODO: Validate the return value
-                self._previous_task = next_task
+                while True:
+                    # Resume the generator. This will either return a Task or raise StopIteration if it's done.
+                    # CONSIDER: Should we check for possible infinite loops here?
+                    next_task = self._generator.send(self._previous_task.get_result())
+                    if not isinstance(next_task, task.Task):
+                        raise TypeError("The orchestrator generator yielded a non-Task object")
+                    self._previous_task = next_task
+                    # If a completed task was returned, then we can keep running the generator function.
+                    if not self._previous_task.is_complete:
+                        break
 
     def set_complete(self, result: Any):
         self._is_complete = True
         self._result = result
         result_json: str | None = None
         if result is not None:
-            result_json = json.dumps(result)
+            result_json = shared.to_json(result)
         action = ph.new_complete_orchestration_action(
             self.next_sequence_number(), pb.ORCHESTRATION_STATUS_COMPLETED, result_json)
         self._pending_actions[action.id] = action
@@ -291,8 +305,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def current_utc_datetime(self, value: datetime):
         self._current_utc_datetime = value
 
-    def create_timer(self, fire_at: datetime) -> task.Task:
+    def create_timer(self, fire_at: datetime | timedelta) -> task.Task:
         id = self.next_sequence_number()
+        if isinstance(fire_at, timedelta):
+            fire_at = self.current_utc_datetime + fire_at
         action = ph.new_create_timer_action(id, fire_at)
         self._pending_actions[id] = action
 
@@ -304,7 +320,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                       input: TInput | None = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         name = task.get_name(activity)
-        action = ph.new_schedule_task_action(id, name, input)
+        encoded_input = shared.to_json(input) if input else None
+        action = ph.new_schedule_task_action(id, name, encoded_input)
         self._pending_actions[id] = action
 
         activity_task = task.CompletableTask[TOutput]()
@@ -319,12 +336,35 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if instance_id is None:
             # Create a deteministic instance ID based on the parent instance ID
             instance_id = f"{self.instance_id}:{id:04x}"
-        action = ph.new_create_sub_orchestration_action(id, name, instance_id, input)
+        encoded_input = shared.to_json(input) if input else None
+        action = ph.new_create_sub_orchestration_action(id, name, instance_id, encoded_input)
         self._pending_actions[id] = action
 
         sub_orch_task = task.CompletableTask[TOutput]()
         self._pending_tasks[id] = sub_orch_task
         return sub_orch_task
+
+    def wait_for_external_event(self, name: str) -> task.Task:
+        # Check to see if this event has already been received, in which case we
+        # can return it immediately. Otherwise, record out intent to receive an
+        # event with the given name so that we can resume the generator when it
+        # arrives. If there are multiple events with the same name, we return
+        # them in the order they were received.
+        external_event_task = task.CompletableTask()
+        event_name = name.upper()
+        event_list = self._received_events.get(event_name, None)
+        if event_list:
+            event = event_list.pop(0)
+            if not event_list:
+                del self._received_events[event_name]
+            external_event_task.complete(event.data)
+        else:
+            task_list = self._pending_events.get(event_name, None)
+            if not task_list:
+                task_list = []
+                self._pending_events[event_name] = task_list
+            task_list.append(external_event_task)
+        return external_event_task
 
 
 class _OrchestrationExecutor:
@@ -381,7 +421,7 @@ class _OrchestrationExecutor:
                 # deserialize the input, if any
                 input = None
                 if event.executionStarted.input is not None and event.executionStarted.input.value != "":
-                    input = json.loads(event.executionStarted.input.value)
+                    input = shared.from_json(event.executionStarted.input.value)
 
                 result = fn(ctx, input)  # this does not execute the generator, only creates it
                 if isinstance(result, GeneratorType):
@@ -437,7 +477,7 @@ class _OrchestrationExecutor:
                     return
                 result = None
                 if not ph.is_empty(event.taskCompleted.result):
-                    result = json.loads(event.taskCompleted.result.value)
+                    result = shared.from_json(event.taskCompleted.result.value)
                 activity_task.complete(result)
                 ctx.resume()
             elif event.HasField("taskFailed"):
@@ -448,7 +488,9 @@ class _OrchestrationExecutor:
                     self._logger.warning(
                         f"Ignoring unexpected taskFailed event for '{ctx.instance_id}' with ID = {task_id}.")
                     return
-                activity_task.fail(event.taskFailed.failureDetails)
+                activity_task.fail(
+                    f"Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
+                    event.taskFailed.failureDetails)
                 ctx.resume()
             elif event.HasField("subOrchestrationInstanceCreated"):
                 # This history event confirms that the sub-orchestration execution was successfully scheduled.
@@ -476,19 +518,48 @@ class _OrchestrationExecutor:
                     return
                 result = None
                 if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
-                    result = json.loads(event.subOrchestrationInstanceCompleted.result.value)
+                    result = shared.from_json(event.subOrchestrationInstanceCompleted.result.value)
                 sub_orch_task.complete(result)
                 ctx.resume()
             elif event.HasField("subOrchestrationInstanceFailed"):
-                task_id = event.subOrchestrationInstanceFailed.taskScheduledId
+                failedEvent = event.subOrchestrationInstanceFailed
+                task_id = failedEvent.taskScheduledId
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
                 if not sub_orch_task:
                     # TODO: Should this be an error? When would it ever happen?
                     self._logger.warning(
                         f"Ignoring unexpected subOrchestrationInstanceFailed event for '{ctx.instance_id}' with ID = {task_id}.")
                     return
-                sub_orch_task.fail(event.subOrchestrationInstanceFailed.failureDetails)
+                sub_orch_task.fail(
+                    f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",
+                    failedEvent.failureDetails)
                 ctx.resume()
+            elif event.HasField("eventRaised"):
+                # event names are case-insensitive
+                event_name = event.eventRaised.name.upper()
+                if not ctx.is_replaying:
+                    self._logger.info(f"Event raised: {event_name}")
+                task_list = ctx._pending_events.get(event_name, None)
+                decoded_result: Any | None = None
+                if task_list:
+                    event_task = task_list.pop(0)
+                    if not ph.is_empty(event.eventRaised.input):
+                        decoded_result = shared.from_json(event.eventRaised.input.value)
+                    event_task.complete(decoded_result)
+                    if not task_list:
+                        del ctx._pending_events[event_name]
+                    ctx.resume()
+                else:
+                    # buffer the event
+                    event_list = ctx._received_events.get(event_name, None)
+                    if not event_list:
+                        event_list = []
+                        ctx._received_events[event_name] = event_list
+                    if not ph.is_empty(event.eventRaised.input):
+                        decoded_result = shared.from_json(event.eventRaised.input.value)
+                    event_list.append(_ExternalEvent(event.eventRaised.name, decoded_result))
+                    if not ctx.is_replaying:
+                        self._logger.info(f"Event '{event_name}' has been buffered as there are no tasks waiting for it.")
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(f"Don't know how to handle event of type '{eventType}'")
@@ -509,13 +580,13 @@ class _ActivityExecutor:
         if not fn:
             raise ActivityNotRegisteredError(f"Activity function named '{name}' was not registered!")
 
-        activity_input = json.loads(encoded_input) if encoded_input else None
+        activity_input = shared.from_json(encoded_input) if encoded_input else None
         ctx = task.ActivityContext(orchestration_id, task_id)
 
         # Execute the activity function
         activity_output = fn(ctx, activity_input)
 
-        encoded_output = json.dumps(activity_output) if activity_output is not None else None
+        encoded_output = shared.to_json(activity_output) if activity_output is not None else None
         chars = len(encoded_output) if encoded_output else 0
         self._logger.debug(
             f"{orchestration_id}/{task_id}: Activity '{name}' completed successfully with {chars} char(s) of encoded output.")

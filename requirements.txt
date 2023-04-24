@@ -3,4 +3,3 @@ grpcio
 grpcio-tools
 pytest
 pytest-cov
-simplejson

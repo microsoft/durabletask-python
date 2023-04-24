@@ -6,12 +6,14 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
+            "cwd": "${fileDirname}",
             "purpose": [
                 "debug-test"
             ],
             "env": {
                 // pytest-cov breaks debugging, so we have to disable it during debug sessions
-                "PYTEST_ADDOPTS": "--no-cov"
+                "PYTEST_ADDOPTS": "--no-cov",
+                "PYTHONPATH": "${workspaceFolder}"
             },
             "console": "integratedTerminal",
             "justMyCode": false
