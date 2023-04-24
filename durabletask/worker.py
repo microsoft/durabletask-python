@@ -3,13 +3,13 @@
 
 import concurrent.futures
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
 from typing import Any, Dict, Generator, List, Sequence, TypeVar
 
 import grpc
-from attr import dataclass
 from google.protobuf import empty_pb2
 
 import durabletask.internal.helpers as ph
