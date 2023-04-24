@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import List
-
-import simplejson as json
 
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -220,7 +219,7 @@ def test_activity_task_failed():
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
-    assert complete_action.failureDetails.errorMessage == str(ex)
+    assert str(ex) in complete_action.failureDetails.errorMessage
 
     # Make sure the line of code where the exception was raised is included in the stack trace
     user_code_statement = "ctx.call_activity(dummy_activity, input=orchestrator_input)"
@@ -400,7 +399,7 @@ def test_sub_orchestration_task_failed():
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
-    assert complete_action.failureDetails.errorMessage == str(ex)
+    assert str(ex) in complete_action.failureDetails.errorMessage
 
     # Make sure the line of code where the exception was raised is included in the stack trace
     user_code_statement = "ctx.call_sub_orchestrator(suborchestrator)"
@@ -461,6 +460,69 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_wrong_task_ty
     assert complete_action.failureDetails.errorType == 'NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
     assert "call_sub_orchestrator" in complete_action.failureDetails.errorMessage  # expected method name
+
+
+def test_raise_event():
+    """Tests that an orchestration can wait for and process an external event sent by a client"""
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.wait_for_external_event("my_event")
+        return result
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+
+    old_events = []
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID)]
+
+    # Execute the orchestration until it is waiting for an external event. The result
+    # should be an empty list of actions because the orchestration didn't schedule any work.
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 0
+
+    # Now send an external event to the orchestration and execute it again. This time
+    # the orchestration should complete.
+    old_events = new_events
+    new_events = [helpers.new_event_raised_event("my_event", encoded_input="42")]
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == "42"
+
+
+def test_raise_event_buffered():
+    """Tests that an orchestration can receive an event that arrives earlier than expected"""
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        yield ctx.create_timer(ctx.current_utc_datetime + timedelta(days=1))
+        result = yield ctx.wait_for_external_event("my_event")
+        return result
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+
+    old_events = []
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID),
+        helpers.new_event_raised_event("my_event", encoded_input="42")]
+
+    # Execute the orchestration. It should be in a running state waiting for the timer to fire
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 1
+    assert actions[0].HasField("createTimer")
+
+    # Complete the timer task. The orchestration should move to the wait_for_external_event step, which
+    # should then complete immediately because the event was buffered in the old event history.
+    timer_due_time = datetime.utcnow() + timedelta(days=1)
+    old_events = new_events + [helpers.new_timer_created_event(1, timer_due_time)]
+    new_events = [helpers.new_timer_fired_event(1, timer_due_time)]
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == "42"
 
 
 def test_fan_out():
@@ -577,7 +639,7 @@ def test_fan_in_with_single_failure():
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Is this the right error type?
-    assert complete_action.failureDetails.errorMessage == str(ex)
+    assert str(ex) in complete_action.failureDetails.errorMessage
 
 
 def test_when_any():

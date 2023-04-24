@@ -6,10 +6,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import grpc
-import simplejson as json
 from google.protobuf import wrappers_pb2
 
 import durabletask.internal.helpers as helpers
@@ -46,7 +45,23 @@ class OrchestrationState:
     serialized_input: str | None
     serialized_output: str | None
     serialized_custom_status: str | None
-    failure_details: pb.TaskFailureDetails | None
+    failure_details: task.FailureDetails | None
+
+    def raise_if_failed(self):
+        if self.failure_details is not None:
+            raise OrchestrationFailedError(
+                f"Orchestration '{self.instance_id}' failed: {self.failure_details.message}",
+                self.failure_details)
+
+
+class OrchestrationFailedError(Exception):
+    def __init__(self, message: str, failure_details: task.FailureDetails):
+        super().__init__(message)
+        self._failure_details = failure_details
+
+    @property
+    def failure_details(self):
+        return self._failure_details
 
 
 def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> OrchestrationState | None:
@@ -54,6 +69,14 @@ def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> Or
         return None
 
     state = res.orchestrationState
+
+    failure_details = None
+    if state.failureDetails.errorMessage != '' or state.failureDetails.errorType != '':
+        failure_details = task.FailureDetails(
+            state.failureDetails.errorMessage,
+            state.failureDetails.errorType,
+            state.failureDetails.stackTrace.value if not helpers.is_empty(state.failureDetails.stackTrace) else None)
+
     return OrchestrationState(
         instance_id,
         state.name,
@@ -63,7 +86,7 @@ def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> Or
         state.input.value if not helpers.is_empty(state.input) else None,
         state.output.value if not helpers.is_empty(state.output) else None,
         state.customStatus.value if not helpers.is_empty(state.customStatus) else None,
-        state.failureDetails if state.failureDetails.errorMessage != '' or state.failureDetails.errorType != '' else None)
+        failure_details)
 
 
 class TaskHubGrpcClient:
@@ -86,7 +109,7 @@ class TaskHubGrpcClient:
         req = pb.CreateInstanceRequest(
             name=name,
             instanceId=instance_id if instance_id else uuid.uuid4().hex,
-            input=wrappers_pb2.StringValue(value=json.dumps(input)) if input else None,
+            input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input else None,
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None)
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
@@ -128,6 +151,16 @@ class TaskHubGrpcClient:
             else:
                 raise
 
+    def raise_orchestration_event(self, instance_id: str, event_name: str, *,
+                                  data: Any | None = None):
+        req = pb.RaiseEventRequest(
+            instanceId=instance_id,
+            name=event_name,
+            input=wrappers_pb2.StringValue(value=shared.to_json(data)) if data else None)
+
+        self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+        self._stub.RaiseEvent(req)
+
     def terminate_orchestration(self):
         pass
 
@@ -135,7 +168,4 @@ class TaskHubGrpcClient:
         pass
 
     def resume_orchestration(self):
-        pass
-
-    def raise_orchestration_event(self):
         pass

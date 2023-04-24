@@ -71,6 +71,37 @@ def orchestrator(ctx: task.OrchestrationContext, _):
 
 You can find the full sample [here](./examples/fanout_fanin.py).
 
+### Human interaction and durable timers
+
+An orchestration can wait for a user-defined event, such as a human approval event, before proceding to the next step. In addition, the orchestration can create a timer with an arbitrary duration that triggers some alternate action if the external event hasn't been received:
+
+```python
+def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
+    """Orchestrator function that represents a purchase order workflow"""
+    # Orders under $1000 are auto-approved
+    if order.Cost < 1000:
+        return "Auto-approved"
+
+    # Orders of $1000 or more require manager approval
+    yield ctx.call_activity(send_approval_request, input=order)
+
+    # Approvals must be received within 24 hours or they will be canceled.
+    approval_event = ctx.wait_for_external_event("approval_received")
+    timeout_event = ctx.create_timer(timedelta(hours=24))
+    winner = yield task.when_any([approval_event, timeout_event])
+    if winner == timeout_event:
+        return "Canceled"
+
+    # The order was approved
+    ctx.call_activity(place_order, input=order)
+    approval_details = approval_event.get_result()
+    return f"Approved by '{approval_details.approver}'"
+```
+
+As an aside, you'll also notice that the example orchestration above works with custom business objects. Support for custom business objects includes support for custom classes, custom data classes, and named tuples. Serialization and deserialization of these objects is handled automatically by the SDK.
+
+You can find the full sample [here](./examples/human_interaction.py).
+
 ## Getting Started
 
 ### Prerequisites

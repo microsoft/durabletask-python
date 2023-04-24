@@ -3,9 +3,7 @@
 
 import traceback
 from datetime import datetime
-from typing import Any
 
-import simplejson as json
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -117,6 +115,14 @@ def new_failure_details(ex: Exception) -> pb.TaskFailureDetails:
     )
 
 
+def new_event_raised_event(name: str, encoded_input: str | None = None) -> pb.HistoryEvent:
+    return pb.HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        eventRaised=pb.EventRaisedEvent(name=name, input=get_string_value(encoded_input))
+    )
+
+
 def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
     if val is None:
         return None
@@ -146,8 +152,7 @@ def new_create_timer_action(id: int, fire_at: datetime) -> pb.OrchestratorAction
     return pb.OrchestratorAction(id=id, createTimer=pb.CreateTimerAction(fireAt=timestamp))
 
 
-def new_schedule_task_action(id: int, name: str, input: Any) -> pb.OrchestratorAction:
-    encoded_input = json.dumps(input) if input is not None else None
+def new_schedule_task_action(id: int, name: str, encoded_input: str | None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, scheduleTask=pb.ScheduleTaskAction(
         name=name,
         input=get_string_value(encoded_input)
@@ -164,8 +169,7 @@ def new_create_sub_orchestration_action(
         id: int,
         name: str,
         instance_id: str | None,
-        input: Any) -> pb.OrchestratorAction:
-    encoded_input = json.dumps(input) if input is not None else None
+        encoded_input: str | None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, createSubOrchestration=pb.CreateSubOrchestrationAction(
         name=name,
         instanceId=instance_id,

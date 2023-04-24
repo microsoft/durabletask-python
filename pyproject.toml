@@ -26,7 +26,6 @@ license = {file = "LICENSE"}
 readme = "README.md"
 dependencies = [
     "grpcio",
-    "simplejson",
 ]
 
 [project.urls]

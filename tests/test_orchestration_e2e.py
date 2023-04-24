@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import json
 import threading
+from datetime import timedelta
 
 import pytest
-import simplejson as json
 
 from durabletask import client, task, worker
 
@@ -112,3 +113,59 @@ def test_sub_orchestration_fan_out():
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert state.failure_details is None
     assert activity_counter == 30
+
+
+def test_wait_for_multiple_external_events():
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        a = yield ctx.wait_for_external_event('A')
+        b = yield ctx.wait_for_external_event('B')
+        c = yield ctx.wait_for_external_event('C')
+        return [a, b, c]
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.start()
+        w.add_orchestrator(orchestrator)
+
+        # Start the orchestration and immediately raise events to it.
+        task_hub_client = client.TaskHubGrpcClient()
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        task_hub_client.raise_orchestration_event(id, 'A', data='a')
+        task_hub_client.raise_orchestration_event(id, 'B', data='b')
+        task_hub_client.raise_orchestration_event(id, 'C', data='c')
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_output == json.dumps(['a', 'b', 'c'])
+
+
+@pytest.mark.parametrize("raise_event", [True, False])
+def test_wait_for_external_event_timeout(raise_event: bool):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        approval: task.Task[bool] = ctx.wait_for_external_event('Approval')
+        timeout = ctx.create_timer(timedelta(seconds=3))
+        winner = yield task.when_any([approval, timeout])
+        if winner == approval:
+            return "approved"
+        else:
+            return "timed out"
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.start()
+        w.add_orchestrator(orchestrator)
+
+        # Start the orchestration and immediately raise events to it.
+        task_hub_client = client.TaskHubGrpcClient()
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        if raise_event:
+            task_hub_client.raise_orchestration_event(id, 'Approval')
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    if raise_event:
+        assert state.serialized_output == json.dumps("approved")
+    else:
+        assert state.serialized_output == json.dumps("timed out")

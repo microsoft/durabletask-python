@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Generator, Generic, List, TypeVar
 
 import durabletask.internal.helpers as pbh
@@ -70,13 +70,13 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def create_timer(self, fire_at: datetime) -> Task:
+    def create_timer(self, fire_at: datetime | timedelta) -> Task:
         """Create a Timer Task to fire after at the specified deadline.
 
         Parameters
         ----------
-        fire_at: datetime.datetime
-            The time for the timer to trigger
+        fire_at: datetime.datetime | datetime.timedelta
+            The time for the timer to trigger or a time delta from now.
 
         Returns
         -------
@@ -129,12 +129,27 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    # TOOD: Add a timeout parameter, which allows the task to be canceled if the event is
+    # not received within the specified timeout. This requires support for task cancellation.
+    @abstractmethod
+    def wait_for_external_event(self, name: str) -> Task:
+        """Wait asynchronously for an event to be raised with the name `name`.
 
-class TaskFailedError(Exception):
-    """Exception type for all orchestration task failures."""
+        Parameters
+        ----------
+        name : str
+            The event name of the event that the task is waiting for.
 
+        Returns
+        -------
+        Task[TOutput]
+            A Durable Task that completes when the event is received.
+        """
+        pass
+
+
+class FailureDetails:
     def __init__(self, message: str, error_type: str, stack_trace: str | None):
-        super().__init__(message)
         self._message = message
         self._error_type = error_type
         self._stack_trace = stack_trace
@@ -150,6 +165,21 @@ class TaskFailedError(Exception):
     @property
     def stack_trace(self) -> str | None:
         return self._stack_trace
+
+
+class TaskFailedError(Exception):
+    """Exception type for all orchestration task failures."""
+
+    def __init__(self, message: str, details: pb.TaskFailureDetails):
+        super().__init__(message)
+        self._details = FailureDetails(
+            details.errorMessage,
+            details.errorType,
+            details.stackTrace.value if not pbh.is_empty(details.stackTrace) else None)
+
+    @property
+    def details(self) -> FailureDetails:
+        return self._details
 
 
 class NonDeterminismError(Exception):
@@ -208,6 +238,8 @@ class CompositeTask(Task[T]):
         self._failed_tasks = 0
         for task in tasks:
             task._parent = self
+            if task.is_complete:
+                self.on_child_completed(task)
 
     def get_tasks(self) -> List[Task]:
         return self._tasks
@@ -230,13 +262,10 @@ class CompletableTask(Task[T]):
         if self._parent is not None:
             self._parent.on_child_completed(self)
 
-    def fail(self, details: pb.TaskFailureDetails):
+    def fail(self, message: str, details: pb.TaskFailureDetails):
         if self._is_complete:
             raise ValueError('The task has already completed.')
-        self._exception = TaskFailedError(
-            details.errorMessage,
-            details.errorType,
-            details.stackTrace.value if not pbh.is_empty(details.stackTrace) else None)
+        self._exception = TaskFailedError(message, details)
         self._is_complete = True
         if self._parent is not None:
             self._parent.on_child_completed(self)
@@ -278,6 +307,7 @@ class WhenAnyTask(CompositeTask[Task]):
         super().__init__(tasks)
 
     def on_child_completed(self, task: Task):
+        # The first task to complete is the result of the WhenAnyTask.
         if not self.is_complete:
             self._is_complete = True
             self._result = task

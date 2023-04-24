@@ -18,7 +18,10 @@ With one of the sidecars running, you can simply execute any of the examples in 
 python3 ./activity_sequence.py
 ```
 
+In some cases, the sample may require command-line parameters or user inputs. In these cases, the sample will print out instructions on how to proceed.
+
 ## List of examples
 
 - [Activity sequence](./activity_sequence.py): Orchestration that schedules three activity calls in a sequence.
 - [Fan-out/fan-in](./fanout_fanin.py): Orchestration that schedules a dynamic number of activity calls in parallel, waits for all of them to complete, and then performs an aggregation on the results.
+- [Human interaction](./human_interaction.py): Orchestration that waits for a human to approve an order before continuing.
