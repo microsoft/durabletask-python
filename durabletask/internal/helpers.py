@@ -139,6 +139,16 @@ def new_resume_event() -> pb.HistoryEvent:
     )
 
 
+def new_terminated_event(*, encoded_output: str | None = None) -> pb.HistoryEvent:
+    return pb.HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        executionTerminated=pb.ExecutionTerminatedEvent(
+            input=get_string_value(encoded_output)
+        )
+    )
+
+
 def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
     if val is None:
         return None

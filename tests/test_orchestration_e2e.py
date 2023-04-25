@@ -101,10 +101,10 @@ def test_sub_orchestration_fan_out():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with worker.TaskHubGrpcWorker() as w:
-        w.start()
         w.add_activity(increment)
         w.add_orchestrator(orchestrator_child)
         w.add_orchestrator(parent_orchestrator)
+        w.start()
 
         task_hub_client = client.TaskHubGrpcClient()
         id = task_hub_client.schedule_new_orchestration(parent_orchestrator, input=10)
@@ -125,8 +125,8 @@ def test_wait_for_multiple_external_events():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with worker.TaskHubGrpcWorker() as w:
-        w.start()
         w.add_orchestrator(orchestrator)
+        w.start()
 
         # Start the orchestration and immediately raise events to it.
         task_hub_client = client.TaskHubGrpcClient()
@@ -154,8 +154,8 @@ def test_wait_for_external_event_timeout(raise_event: bool):
 
     # Start a worker, which will connect to the sidecar in a background thread
     with worker.TaskHubGrpcWorker() as w:
-        w.start()
         w.add_orchestrator(orchestrator)
+        w.start()
 
         # Start the orchestration and immediately raise events to it.
         task_hub_client = client.TaskHubGrpcClient()
@@ -209,3 +209,26 @@ def test_suspend_and_resume():
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
         assert state.serialized_output == json.dumps(42)
+
+
+def test_terminate():
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.wait_for_external_event("my_event")
+        return result
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(orchestrator)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient()
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        state = task_hub_client.wait_for_orchestration_start(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.RUNNING
+
+        task_hub_client.terminate_orchestration(id, output="some reason for termination")
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.TERMINATED
+        assert state.serialized_output == json.dumps("some reason for termination")

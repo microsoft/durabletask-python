@@ -277,17 +277,23 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                     if not self._previous_task.is_complete:
                         break
 
-    def set_complete(self, result: Any):
+    def set_complete(self, result: Any, status: pb.OrchestrationStatus, is_result_encoded: bool = False):
+        if self._is_complete:
+            return
+
         self._is_complete = True
         self._result = result
         result_json: str | None = None
         if result is not None:
-            result_json = shared.to_json(result)
+            result_json = result if is_result_encoded else shared.to_json(result)
         action = ph.new_complete_orchestration_action(
-            self.next_sequence_number(), pb.ORCHESTRATION_STATUS_COMPLETED, result_json)
+            self.next_sequence_number(), status, result_json)
         self._pending_actions[action.id] = action
 
     def set_failed(self, ex: Exception):
+        if self._is_complete:
+            return
+
         self._is_complete = True
         self._pending_actions.clear()  # Cancel any pending actions
         action = ph.new_complete_orchestration_action(
@@ -409,6 +415,8 @@ class _OrchestrationExecutor:
             ctx._is_replaying = False
             for new_event in new_events:
                 self.process_event(ctx, new_event)
+                if ctx._is_complete:
+                    break
         except Exception as ex:
             # Unhandled exceptions fail the orchestration
             ctx.set_failed(ex)
@@ -450,7 +458,7 @@ class _OrchestrationExecutor:
                     ctx.run(result)
                 else:
                     # This is an orchestrator that doesn't schedule any tasks
-                    ctx.set_complete(result)
+                    ctx.set_complete(result, pb.ORCHESTRATION_STATUS_COMPLETED)
             elif event.HasField("timerCreated"):
                 # This history event confirms that the timer was successfully scheduled.
                 # Remove the timerCreated event from the pending action list so we don't schedule it again.
@@ -597,12 +605,17 @@ class _OrchestrationExecutor:
                 for e in self._suspended_events:
                     self.process_event(ctx, e)
                 self._suspended_events = []
+            elif event.HasField("executionTerminated"):
+                if not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Execution terminating.")
+                encoded_output = event.executionTerminated.input.value if not ph.is_empty(event.executionTerminated.input) else None
+                ctx.set_complete(encoded_output, pb.ORCHESTRATION_STATUS_TERMINATED, is_result_encoded=True)
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(f"Don't know how to handle event of type '{eventType}'")
         except StopIteration as generatorStopped:
             # The orchestrator generator function completed
-            ctx.set_complete(generatorStopped.value)
+            ctx.set_complete(generatorStopped.value, pb.ORCHESTRATION_STATUS_COMPLETED)
 
 
 class _ActivityExecutor:
