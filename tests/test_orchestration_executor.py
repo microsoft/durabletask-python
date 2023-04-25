@@ -560,6 +560,31 @@ def test_suspend_resume():
     assert complete_action.result.value == "42"
 
 
+def test_terminate():
+    """Tests that an orchestration can be terminated before it completes"""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.wait_for_external_event("my_event")
+        return result
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID)]
+    new_events = [
+        helpers.new_terminated_event(encoded_output=json.dumps("terminated!")),
+        helpers.new_event_raised_event("my_event", encoded_input="42")]
+
+    # Execute the orchestration. It should be in a running state waiting for an external event
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_TERMINATED
+    assert complete_action.result.value == json.dumps("terminated!")
+
+
 def test_fan_out():
     """Tests that a fan-out pattern correctly schedules N tasks"""
     def hello(_, name: str):

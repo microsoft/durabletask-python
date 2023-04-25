@@ -161,8 +161,14 @@ class TaskHubGrpcClient:
         self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
         self._stub.RaiseEvent(req)
 
-    def terminate_orchestration(self):
-        raise NotImplementedError()
+    def terminate_orchestration(self, instance_id: str, *,
+                                output: Any | None = None):
+        req = pb.TerminateRequest(
+            instanceId=instance_id,
+            output=wrappers_pb2.StringValue(value=shared.to_json(output)) if output else None)
+
+        self._logger.info(f"Terminating instance '{instance_id}'.")
+        self._stub.TerminateInstance(req)
 
     def suspend_orchestration(self, instance_id: str):
         req = pb.SuspendRequest(instanceId=instance_id)
