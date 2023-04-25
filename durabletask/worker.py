@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
-from typing import Any, Dict, Generator, List, Sequence, TypeVar
+from typing import Any, Dict, Generator, List, Sequence, TypeVar, Union
 
 import grpc
 from google.protobuf import empty_pb2
@@ -48,7 +48,7 @@ class _Registry:
 
         self.orchestrators[name] = fn
 
-    def get_orchestrator(self, name: str) -> task.Orchestrator | None:
+    def get_orchestrator(self, name: str) -> Union[task.Orchestrator, None]:
         return self.orchestrators.get(name)
 
     def add_activity(self, fn: task.Activity) -> str:
@@ -67,7 +67,7 @@ class _Registry:
 
         self.activities[name] = fn
 
-    def get_activity(self, name: str) -> task.Activity | None:
+    def get_activity(self, name: str) -> Union[task.Activity, None]:
         return self.activities.get(name)
 
 
@@ -82,12 +82,12 @@ class ActivityNotRegisteredError(ValueError):
 
 
 class TaskHubGrpcWorker:
-    _response_stream: grpc.Future | None
+    _response_stream: Union[grpc.Future, None]
 
     def __init__(self, *,
-                 host_address: str | None = None,
+                 host_address: Union[str, None] = None,
                  log_handler=None,
-                 log_formatter: logging.Formatter | None = None):
+                 log_formatter: Union[logging.Formatter, None] = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
         self._logger = shared.get_logger(log_handler, log_formatter)
@@ -227,8 +227,8 @@ class _ExternalEvent:
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
-    _generator: Generator[task.Task, Any, Any] | None
-    _previous_task: task.Task | None
+    _generator: Union[Generator[task.Task, Any, Any], None]
+    _previous_task: Union[task.Task, None]
 
     def __init__(self, instance_id: str):
         self._generator = None
@@ -240,7 +240,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
-        self._completion_status: pb.OrchestrationStatus | None = None
+        self._completion_status: Union[pb.OrchestrationStatus, None] = None
         self._received_events: Dict[str, List[_ExternalEvent]] = {}
         self._pending_events: Dict[str, List[task.CompletableTask]] = {}
 
@@ -283,7 +283,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         self._is_complete = True
         self._result = result
-        result_json: str | None = None
+        result_json: Union[str, None] = None
         if result is not None:
             result_json = result if is_result_encoded else shared.to_json(result)
         action = ph.new_complete_orchestration_action(
@@ -324,7 +324,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def current_utc_datetime(self, value: datetime):
         self._current_utc_datetime = value
 
-    def create_timer(self, fire_at: datetime | timedelta) -> task.Task:
+    def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
             fire_at = self.current_utc_datetime + fire_at
@@ -336,9 +336,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return timer_task
 
     def call_activity(self, activity: task.Activity[TInput, TOutput], *,
-                      input: TInput | None = None) -> task.Task[TOutput]:
-        id = self.next_sequence_number()
+                      input: Union[TInput, None] = None) -> task.Task[TOutput]:
         name = task.get_name(activity)
+        return self.call_named_activity(name, activity, input=input)
+
+    def call_named_activity(self, name: str, activity: task.Activity[TInput, TOutput], *,
+                      input: Union[TInput, None] = None) -> task.Task[TOutput]:
+        id = self.next_sequence_number()
         encoded_input = shared.to_json(input) if input else None
         action = ph.new_schedule_task_action(id, name, encoded_input)
         self._pending_actions[id] = action
@@ -348,8 +352,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return activity_task
 
     def call_sub_orchestrator(self, orchestrator: task.Orchestrator[TInput, TOutput], *,
-                              input: TInput | None = None,
-                              instance_id: str | None = None) -> task.Task[TOutput]:
+                              input: Union[TInput, None] = None,
+                              instance_id: Union[str, None] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         name = task.get_name(orchestrator)
         if instance_id is None:
@@ -387,7 +391,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
 
 class _OrchestrationExecutor:
-    _generator: task.Orchestrator | None
+    _generator: Union[task.Orchestrator, None]
 
     def __init__(self, registry: _Registry, logger: logging.Logger):
         self._registry = registry
@@ -574,7 +578,7 @@ class _OrchestrationExecutor:
                 if not ctx.is_replaying:
                     self._logger.info(f"Event raised: {event_name}")
                 task_list = ctx._pending_events.get(event_name, None)
-                decoded_result: Any | None = None
+                decoded_result: Union[Any, None] = None
                 if task_list:
                     event_task = task_list.pop(0)
                     if not ph.is_empty(event.eventRaised.input):
@@ -623,7 +627,7 @@ class _ActivityExecutor:
         self._registry = registry
         self._logger = logger
 
-    def execute(self, orchestration_id: str, name: str, task_id: int, encoded_input: str | None) -> str | None:
+    def execute(self, orchestration_id: str, name: str, task_id: int, encoded_input: Union[str, None]) -> Union[str, None]:
         """Executes an activity function and returns the serialized result, if any."""
         self._logger.debug(f"{orchestration_id}/{task_id}: Executing activity '{name}'...")
         fn = self._registry.get_activity(name)

@@ -3,6 +3,7 @@
 
 import traceback
 from datetime import datetime
+from typing import Union
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -11,14 +12,14 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 # TODO: The new_xxx_event methods are only used by test code and should be moved elsewhere
 
 
-def new_orchestrator_started_event(timestamp: datetime | None = None) -> pb.HistoryEvent:
+def new_orchestrator_started_event(timestamp: Union[datetime, None] = None) -> pb.HistoryEvent:
     ts = timestamp_pb2.Timestamp()
     if timestamp is not None:
         ts.FromDatetime(timestamp)
     return pb.HistoryEvent(eventId=-1, timestamp=ts, orchestratorStarted=pb.OrchestratorStartedEvent())
 
 
-def new_execution_started_event(name: str, instance_id: str, encoded_input: str | None = None) -> pb.HistoryEvent:
+def new_execution_started_event(name: str, instance_id: str, encoded_input: Union[str, None] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -48,7 +49,7 @@ def new_timer_fired_event(timer_id: int, fire_at: datetime) -> pb.HistoryEvent:
     )
 
 
-def new_task_scheduled_event(event_id: int, name: str, encoded_input: str | None = None) -> pb.HistoryEvent:
+def new_task_scheduled_event(event_id: int, name: str, encoded_input: Union[str, None] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
@@ -56,7 +57,7 @@ def new_task_scheduled_event(event_id: int, name: str, encoded_input: str | None
     )
 
 
-def new_task_completed_event(event_id: int, encoded_output: str | None = None) -> pb.HistoryEvent:
+def new_task_completed_event(event_id: int, encoded_output: Union[str, None] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -76,7 +77,7 @@ def new_sub_orchestration_created_event(
         event_id: int,
         name: str,
         instance_id: str,
-        encoded_input: str | None = None) -> pb.HistoryEvent:
+        encoded_input: Union[str, None] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
@@ -87,7 +88,7 @@ def new_sub_orchestration_created_event(
     )
 
 
-def new_sub_orchestration_completed_event(event_id: int, encoded_output: str | None = None) -> pb.HistoryEvent:
+def new_sub_orchestration_completed_event(event_id: int, encoded_output: Union[str, None] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -115,7 +116,7 @@ def new_failure_details(ex: Exception) -> pb.TaskFailureDetails:
     )
 
 
-def new_event_raised_event(name: str, encoded_input: str | None = None) -> pb.HistoryEvent:
+def new_event_raised_event(name: str, encoded_input: Union[str, None] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -139,7 +140,7 @@ def new_resume_event() -> pb.HistoryEvent:
     )
 
 
-def new_terminated_event(*, encoded_output: str | None = None) -> pb.HistoryEvent:
+def new_terminated_event(*, encoded_output: Union[str, None] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -149,7 +150,7 @@ def new_terminated_event(*, encoded_output: str | None = None) -> pb.HistoryEven
     )
 
 
-def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
+def get_string_value(val: Union[str, None]) -> Union[wrappers_pb2.StringValue, None]:
     if val is None:
         return None
     else:
@@ -159,8 +160,8 @@ def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
 def new_complete_orchestration_action(
         id: int,
         status: pb.OrchestrationStatus,
-        result: str | None = None,
-        failure_details: pb.TaskFailureDetails | None = None) -> pb.OrchestratorAction:
+        result: Union[str, None] = None,
+        failure_details: Union[pb.TaskFailureDetails, None] = None) -> pb.OrchestratorAction:
 
     completeOrchestrationAction = pb.CompleteOrchestrationAction(
         orchestrationStatus=status,
@@ -178,7 +179,7 @@ def new_create_timer_action(id: int, fire_at: datetime) -> pb.OrchestratorAction
     return pb.OrchestratorAction(id=id, createTimer=pb.CreateTimerAction(fireAt=timestamp))
 
 
-def new_schedule_task_action(id: int, name: str, encoded_input: str | None) -> pb.OrchestratorAction:
+def new_schedule_task_action(id: int, name: str, encoded_input: Union[str, None]) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, scheduleTask=pb.ScheduleTaskAction(
         name=name,
         input=get_string_value(encoded_input)
@@ -194,8 +195,8 @@ def new_timestamp(dt: datetime) -> timestamp_pb2.Timestamp:
 def new_create_sub_orchestration_action(
         id: int,
         name: str,
-        instance_id: str | None,
-        encoded_input: str | None) -> pb.OrchestratorAction:
+        instance_id: Union[str, None],
+        encoded_input: Union[str, None]) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, createSubOrchestration=pb.CreateSubOrchestrationAction(
         name=name,
         instanceId=instance_id,

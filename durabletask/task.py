@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Callable, Generator, Generic, List, TypeVar
+from typing import Any, Callable, Generator, Generic, List, TypeVar, Union
 
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -70,7 +70,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def create_timer(self, fire_at: datetime | timedelta) -> Task:
+    def create_timer(self, fire_at: Union[datetime, timedelta]) -> Task:
         """Create a Timer Task to fire after at the specified deadline.
 
         Parameters
@@ -87,14 +87,37 @@ class OrchestrationContext(ABC):
 
     @abstractmethod
     def call_activity(self, activity: Activity[TInput, TOutput], *,
-                      input: TInput | None = None) -> Task[TOutput]:
+                      input: Union[TInput, None] = None) -> Task[TOutput]:
         """Schedule an activity for execution.
 
         Parameters
         ----------
-        name: Activity[TInput, TOutput]
+        activity: Activity[TInput, TOutput]
             A reference to the activity function to call.
-        input: TInput | None
+        input: Union[TInput, None]
+            The JSON-serializable input (or None) to pass to the activity.
+        return_type: task.Task[TOutput]
+            The JSON-serializable output type to expect from the activity result.
+
+        Returns
+        -------
+        Task
+            A Durable Task that completes when the called activity function completes or fails.
+        """
+        pass
+
+    @abstractmethod
+    def call_named_activity(self, name: str, activity: Activity[TInput, TOutput], *,
+                      input: Union[TInput, None] = None) -> Task[TOutput]:
+        """Schedule an activity for execution.
+
+        Parameters
+        ----------
+        name: str
+            The name of the activity function to call.
+        activity: Activity[TInput, TOutput]
+            A reference to the activity function to call.
+        input: Union[TInput, None]
             The JSON-serializable input (or None) to pass to the activity.
         return_type: task.Task[TOutput]
             The JSON-serializable output type to expect from the activity result.
@@ -108,17 +131,17 @@ class OrchestrationContext(ABC):
 
     @abstractmethod
     def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
-                              input: TInput | None = None,
-                              instance_id: str | None = None) -> Task[TOutput]:
+                              input: Union[TInput, None] = None,
+                              instance_id: Union[str, None] = None) -> Task[TOutput]:
         """Schedule sub-orchestrator function for execution.
 
         Parameters
         ----------
         orchestrator: Orchestrator[TInput, TOutput]
             A reference to the orchestrator function to call.
-        input: TInput | None
+        input: Union[TInput, None]
             The optional JSON-serializable input to pass to the orchestrator function.
-        instance_id: str | None
+        instance_id: Union[str, None]
             A unique ID to use for the sub-orchestration instance. If not specified, a
             random UUID will be used.
 
@@ -149,7 +172,7 @@ class OrchestrationContext(ABC):
 
 
 class FailureDetails:
-    def __init__(self, message: str, error_type: str, stack_trace: str | None):
+    def __init__(self, message: str, error_type: str, stack_trace: Union[str, None]):
         self._message = message
         self._error_type = error_type
         self._stack_trace = stack_trace
@@ -163,7 +186,7 @@ class FailureDetails:
         return self._error_type
 
     @property
-    def stack_trace(self) -> str | None:
+    def stack_trace(self) -> Union[str, None]:
         return self._stack_trace
 
 
@@ -193,8 +216,8 @@ class OrchestrationStateError(Exception):
 class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
-    _exception: TaskFailedError | None
-    _parent: CompositeTask[T] | None
+    _exception: Union[TaskFailedError, None]
+    _parent: Union[CompositeTask[T], None]
 
     def __init__(self) -> None:
         super().__init__()
@@ -357,7 +380,7 @@ class ActivityContext:
 
 
 # Orchestrators are generators that yield tasks and receive/return any type
-Orchestrator = Callable[[OrchestrationContext, TInput], Generator[Task, Any, Any] | TOutput]
+Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, Any, Any], TOutput]]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]

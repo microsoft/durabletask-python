@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Union
 
 import grpc
 from google.protobuf import wrappers_pb2
@@ -19,7 +19,7 @@ from durabletask import task
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
-
+defaultVersion = '1.0.0'
 
 class OrchestrationStatus(Enum):
     """The status of an orchestration instance."""
@@ -42,10 +42,10 @@ class OrchestrationState:
     runtime_status: OrchestrationStatus
     created_at: datetime
     last_updated_at: datetime
-    serialized_input: str | None
-    serialized_output: str | None
-    serialized_custom_status: str | None
-    failure_details: task.FailureDetails | None
+    serialized_input: Union[str, None]
+    serialized_output: Union[str, None]
+    serialized_custom_status: Union[str, None]
+    failure_details: Union[task.FailureDetails, None]
 
     def raise_if_failed(self):
         if self.failure_details is not None:
@@ -64,7 +64,7 @@ class OrchestrationFailedError(Exception):
         return self._failure_details
 
 
-def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> OrchestrationState | None:
+def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> Union[OrchestrationState, None]:
     if not res.exists:
         return None
 
@@ -92,38 +92,46 @@ def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> Or
 class TaskHubGrpcClient:
 
     def __init__(self, *,
-                 host_address: str | None = None,
+                 host_address: Union[str, None] = None,
                  log_handler=None,
-                 log_formatter: logging.Formatter | None = None):
+                 log_formatter: Union[logging.Formatter, None] = None):
         channel = shared.get_grpc_channel(host_address)
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger(log_handler, log_formatter)
 
-    def schedule_new_orchestration(self, orchestrator: task.Orchestrator[TInput, TOutput], *,
-                                   input: TInput | None = None,
-                                   instance_id: str | None = None,
-                                   start_at: datetime | None = None) -> str:
+    def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
+                                   input: Union[TInput, None] = None,
+                                   version: Union[str, None] = None,
+                                   instance_id: Union[str, None] = None,
+                                   start_at: Union[datetime, None] = None) -> str:
 
-        name = task.get_name(orchestrator)
+        if isinstance(orchestrator, str):
+            name = orchestrator
+        else:
+            name = task.get_name(orchestrator)
+
+        if version is None:
+            version = defaultVersion
 
         req = pb.CreateInstanceRequest(
             name=name,
             instanceId=instance_id if instance_id else uuid.uuid4().hex,
             input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input else None,
-            scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None)
+            scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
+            version=wrappers_pb2.StringValue(value=version))
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
         res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
         return res.instanceId
 
-    def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> OrchestrationState | None:
+    def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> Union[OrchestrationState, None]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         res: pb.GetInstanceResponse = self._stub.GetInstance(req)
         return new_orchestration_state(req.instanceId, res)
 
     def wait_for_orchestration_start(self, instance_id: str, *,
                                      fetch_payloads: bool = False,
-                                     timeout: int = 60) -> OrchestrationState | None:
+                                     timeout: int = 60) -> Union[OrchestrationState, None]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
@@ -138,7 +146,7 @@ class TaskHubGrpcClient:
 
     def wait_for_orchestration_completion(self, instance_id: str, *,
                                           fetch_payloads: bool = True,
-                                          timeout: int = 60) -> OrchestrationState | None:
+                                          timeout: int = 60) -> Union[OrchestrationState, None]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
@@ -152,7 +160,7 @@ class TaskHubGrpcClient:
                 raise
 
     def raise_orchestration_event(self, instance_id: str, event_name: str, *,
-                                  data: Any | None = None):
+                                  data: Union[Any, None] = None):
         req = pb.RaiseEventRequest(
             instanceId=instance_id,
             name=event_name,
@@ -162,7 +170,7 @@ class TaskHubGrpcClient:
         self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self, instance_id: str, *,
-                                output: Any | None = None):
+                                output: Union[Any, None] = None):
         req = pb.TerminateRequest(
             instanceId=instance_id,
             output=wrappers_pb2.StringValue(value=shared.to_json(output)) if output else None)
