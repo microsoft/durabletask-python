@@ -162,10 +162,14 @@ class TaskHubGrpcClient:
         self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self):
-        pass
+        raise NotImplementedError()
 
-    def suspend_orchestration(self):
-        pass
+    def suspend_orchestration(self, instance_id: str):
+        req = pb.SuspendRequest(instanceId=instance_id)
+        self._logger.info(f"Suspending instance '{instance_id}'.")
+        self._stub.SuspendInstance(req)
 
-    def resume_orchestration(self):
-        pass
+    def resume_orchestration(self, instance_id: str):
+        req = pb.ResumeRequest(instanceId=instance_id)
+        self._logger.info(f"Resuming instance '{instance_id}'.")
+        self._stub.ResumeInstance(req)

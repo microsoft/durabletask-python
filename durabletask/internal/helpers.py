@@ -123,6 +123,22 @@ def new_event_raised_event(name: str, encoded_input: str | None = None) -> pb.Hi
     )
 
 
+def new_suspend_event() -> pb.HistoryEvent:
+    return pb.HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        executionSuspended=pb.ExecutionSuspendedEvent()
+    )
+
+
+def new_resume_event() -> pb.HistoryEvent:
+    return pb.HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        executionResumed=pb.ExecutionResumedEvent()
+    )
+
+
 def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
     if val is None:
         return None

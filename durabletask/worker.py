@@ -93,6 +93,7 @@ class TaskHubGrpcWorker:
         self._logger = shared.get_logger(log_handler, log_formatter)
         self._shutdown = Event()
         self._response_stream = None
+        self._is_running = False
 
     def __enter__(self):
         return self
@@ -102,16 +103,23 @@ class TaskHubGrpcWorker:
 
     def add_orchestrator(self, fn: task.Orchestrator) -> str:
         """Registers an orchestrator function with the worker."""
+        if self._is_running:
+            raise RuntimeError('Orchestrators cannot be added while the worker is running.')
         return self._registry.add_orchestrator(fn)
 
     def add_activity(self, fn: task.Activity) -> str:
         """Registers an activity function with the worker."""
+        if self._is_running:
+            raise RuntimeError('Activities cannot be added while the worker is running.')
         return self._registry.add_activity(fn)
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
         channel = shared.get_grpc_channel(self._host_address)
         stub = stubs.TaskHubSidecarServiceStub(channel)
+
+        if self._is_running:
+            raise RuntimeError('The worker is already running.')
 
         def run_loop():
             # TODO: Investigate whether asyncio could be used to enable greater concurrency for async activity
@@ -158,9 +166,13 @@ class TaskHubGrpcWorker:
         self._logger.info(f"starting gRPC worker that connects to {self._host_address}")
         self._runLoop = Thread(target=run_loop)
         self._runLoop.start()
+        self._is_running = True
 
     def stop(self):
         """Stops the worker and waits for any pending work items to complete."""
+        if not self._is_running:
+            return
+
         self._logger.info("Stopping gRPC worker...")
         self._shutdown.set()
         if self._response_stream is not None:
@@ -168,6 +180,7 @@ class TaskHubGrpcWorker:
         if self._runLoop is not None:
             self._runLoop.join(timeout=30)
         self._logger.info("Worker shutdown completed")
+        self._is_running = False
 
     def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: stubs.TaskHubSidecarServiceStub):
         try:
@@ -374,6 +387,8 @@ class _OrchestrationExecutor:
         self._registry = registry
         self._logger = logger
         self._generator = None
+        self._is_suspended = False
+        self._suspended_events: List[pb.HistoryEvent] = []
 
     def execute(self, instance_id: str, old_events: Sequence[pb.HistoryEvent], new_events: Sequence[pb.HistoryEvent]) -> List[pb.OrchestratorAction]:
         if not new_events:
@@ -408,6 +423,12 @@ class _OrchestrationExecutor:
         return actions
 
     def process_event(self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent) -> None:
+        if self._is_suspended and _is_suspendable(event):
+            # We are suspended, so we need to buffer this event until we are resumed
+            self._suspended_events.append(event)
+            return
+
+        # CONSIDER: change to a switch statement with event.WhichOneof("eventType")
         try:
             if event.HasField("orchestratorStarted"):
                 ctx.current_utc_datetime = event.timestamp.ToDatetime()
@@ -445,8 +466,9 @@ class _OrchestrationExecutor:
                 timer_task = ctx._pending_tasks.pop(timer_id, None)
                 if not timer_task:
                     # TODO: Should this be an error? When would it ever happen?
-                    self._logger.warning(
-                        f"Ignoring unexpected timerFired event for '{ctx.instance_id}' with ID = {timer_id}.")
+                    if not ctx._is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}.")
                     return
                 timer_task.complete(None)
                 ctx.resume()
@@ -472,8 +494,9 @@ class _OrchestrationExecutor:
                 activity_task = ctx._pending_tasks.pop(task_id, None)
                 if not activity_task:
                     # TODO: Should this be an error? When would it ever happen?
-                    self._logger.warning(
-                        f"Ignoring unexpected taskCompleted event for '{ctx.instance_id}' with ID = {task_id}.")
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected taskCompleted event with ID = {task_id}.")
                     return
                 result = None
                 if not ph.is_empty(event.taskCompleted.result):
@@ -485,11 +508,12 @@ class _OrchestrationExecutor:
                 activity_task = ctx._pending_tasks.pop(task_id, None)
                 if not activity_task:
                     # TODO: Should this be an error? When would it ever happen?
-                    self._logger.warning(
-                        f"Ignoring unexpected taskFailed event for '{ctx.instance_id}' with ID = {task_id}.")
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected taskFailed event with ID = {task_id}.")
                     return
                 activity_task.fail(
-                    f"Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
+                    f"{ctx.instance_id}: Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
                     event.taskFailed.failureDetails)
                 ctx.resume()
             elif event.HasField("subOrchestrationInstanceCreated"):
@@ -513,8 +537,9 @@ class _OrchestrationExecutor:
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
                 if not sub_orch_task:
                     # TODO: Should this be an error? When would it ever happen?
-                    self._logger.warning(
-                        f"Ignoring unexpected subOrchestrationInstanceCompleted event for '{ctx.instance_id}' with ID = {task_id}.")
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceCompleted event with ID = {task_id}.")
                     return
                 result = None
                 if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
@@ -527,8 +552,9 @@ class _OrchestrationExecutor:
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
                 if not sub_orch_task:
                     # TODO: Should this be an error? When would it ever happen?
-                    self._logger.warning(
-                        f"Ignoring unexpected subOrchestrationInstanceFailed event for '{ctx.instance_id}' with ID = {task_id}.")
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceFailed event with ID = {task_id}.")
                     return
                 sub_orch_task.fail(
                     f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",
@@ -559,7 +585,18 @@ class _OrchestrationExecutor:
                         decoded_result = shared.from_json(event.eventRaised.input.value)
                     event_list.append(_ExternalEvent(event.eventRaised.name, decoded_result))
                     if not ctx.is_replaying:
-                        self._logger.info(f"Event '{event_name}' has been buffered as there are no tasks waiting for it.")
+                        self._logger.info(f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it.")
+            elif event.HasField("executionSuspended"):
+                if not self._is_suspended and not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Execution suspended.")
+                self._is_suspended = True
+            elif event.HasField("executionResumed") and self._is_suspended:
+                if not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Resuming execution.")
+                self._is_suspended = False
+                for e in self._suspended_events:
+                    self.process_event(ctx, e)
+                self._suspended_events = []
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(f"Don't know how to handle event of type '{eventType}'")
@@ -667,3 +704,8 @@ def _get_action_summary(new_actions: Sequence[pb.OrchestratorAction]) -> str:
             action_type = action.WhichOneof('orchestratorActionType')
             counts[action_type] = counts.get(action_type, 0) + 1
         return f"[{', '.join(f'{name}={count}' for name, count in counts.items())}]"
+
+
+def _is_suspendable(event: pb.HistoryEvent) -> bool:
+    """Returns true if the event is one that can be suspended and resumed."""
+    return event.WhichOneof("eventType") not in ["executionResumed", "executionTerminated"]

@@ -486,6 +486,7 @@ def test_raise_event():
     # the orchestration should complete.
     old_events = new_events
     new_events = [helpers.new_event_raised_event("my_event", encoded_input="42")]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
@@ -519,6 +520,40 @@ def test_raise_event_buffered():
     timer_due_time = datetime.utcnow() + timedelta(days=1)
     old_events = new_events + [helpers.new_timer_created_event(1, timer_due_time)]
     new_events = [helpers.new_timer_fired_event(1, timer_due_time)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == "42"
+
+
+def test_suspend_resume():
+    """Tests that an orchestration can be suspended and resumed"""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.wait_for_external_event("my_event")
+        return result
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID)]
+    new_events = [
+        helpers.new_suspend_event(),
+        helpers.new_event_raised_event("my_event", encoded_input="42")]
+
+    # Execute the orchestration. It should remain in a running state because it was suspended prior
+    # to processing the event raised event.
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 0
+
+    # Resume the orchestration. It should complete successfully.
+    old_events = old_events + new_events
+    new_events = [helpers.new_resume_event()]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED

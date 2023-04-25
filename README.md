@@ -9,15 +9,6 @@ This repo contains a Python client SDK for use with the [Durable Task Framework 
 
 > Note that this project is **not** currently affiliated with the [Durable Functions](https://docs.microsoft.com/azure/azure-functions/durable/durable-functions-overview) project for Azure Functions. If you are looking for a Python SDK for Durable Functions, please see [this repo](https://github.com/Azure/azure-functions-durable-python).
 
-## Features
-
-- [x] Orchestrations
-- [x] Activities
-- [x] Durable timers
-- [x] Sub-orchestrations
-- [ ] External events
-- [ ] Suspend and resume
-- [ ] Retry policies
 
 ## Supported patterns
 
@@ -101,6 +92,38 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
 As an aside, you'll also notice that the example orchestration above works with custom business objects. Support for custom business objects includes support for custom classes, custom data classes, and named tuples. Serialization and deserialization of these objects is handled automatically by the SDK.
 
 You can find the full sample [here](./examples/human_interaction.py).
+
+## Feature overview
+
+The following features are currently supported:
+
+### Orchestrations
+
+Orchestrations are implemented using ordinary Python functions that take an `OrchestrationContext` as their first parameter. The `OrchestrationContext` provides APIs for starting child orchestrations, scheduling activities, and waiting for external events, among other things. Orchestrations are fault-tolerant and durable, meaning that they can automatically recover from failures and rebuild their local execution state. Orchestrator functions must be deterministic, meaning that they must always produce the same output given the same input.
+
+### Activities
+
+Activities are implemented using ordinary Python functions that take an `ActivityContext` as their first parameter. Activity functions are scheduled by orchestrations and have at-least-once execution guarantees, meaning that they will be executed at least once but may be executed multiple times in the event of a transient failure. Activity functions are where the real "work" of any orchestration is done.
+
+### Durable timers
+
+Orchestrations can schedule durable timers using the `create_timer` API. These timers are durable, meaning that they will survive orchestrator restarts and will fire even if the orchestrator is not actively in memory. Durable timers can be of any duration, from milliseconds to months.
+
+### Sub-orchestrations
+
+Orchestrations can start child orchestrations using the `call_sub_orchestrator` API. Child orchestrations are useful for encapsulating complex logic and for breaking up large orchestrations into smaller, more manageable pieces.
+
+### External events
+
+Orchestrations can wait for external events using the `wait_for_external_event` API. External events are useful for implementing human interaction patterns, such as waiting for a user to approve an order before continuing.
+
+### Suspend and resume
+
+Orchestrations can be suspended using the `suspend_orchestration` client API and will remain suspended until resumed using the `resume_orchestration` client API. A suspended orchestration will stop processing new events, but will continue to buffer any that happen to arrive until resumed, ensuring that no data is lost.
+
+### Retry policies (TODO)
+
+Orchestrations can specify retry policies for activities and sub-orchestrations. These policies control how many times and how frequently an activity or sub-orchestration will be retried in the event of a transient error.
 
 ## Getting Started
 
