@@ -335,14 +335,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_tasks[id] = timer_task
         return timer_task
 
-    def call_activity(self, activity: task.Activity[TInput, TOutput], *,
-                      input: Union[TInput, None] = None) -> task.Task[TOutput]:
-        name = task.get_name(activity)
-        return self.call_named_activity(name, activity, input=input)
-
-    def call_named_activity(self, name: str, activity: task.Activity[TInput, TOutput], *,
+    def call_activity(self, activity: Union[task.Activity[TInput, TOutput], str], *,
                       input: Union[TInput, None] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
+        name = activity if isinstance(activity, str) else task.get_name(activity)
         encoded_input = shared.to_json(input) if input else None
         action = ph.new_schedule_task_action(id, name, encoded_input)
         self._pending_actions[id] = action

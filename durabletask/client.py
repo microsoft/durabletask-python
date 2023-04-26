@@ -101,24 +101,17 @@ class TaskHubGrpcClient:
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Union[TInput, None] = None,
-                                   version: Union[str, None] = None,
                                    instance_id: Union[str, None] = None,
                                    start_at: Union[datetime, None] = None) -> str:
 
-        if isinstance(orchestrator, str):
-            name = orchestrator
-        else:
-            name = task.get_name(orchestrator)
-
-        if version is None:
-            version = defaultVersion
+        name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
 
         req = pb.CreateInstanceRequest(
             name=name,
             instanceId=instance_id if instance_id else uuid.uuid4().hex,
             input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input else None,
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
-            version=wrappers_pb2.StringValue(value=version))
+            version=wrappers_pb2.StringValue(value=""))
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
         res: pb.CreateInstanceResponse = self._stub.StartInstance(req)

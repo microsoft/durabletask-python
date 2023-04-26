@@ -86,36 +86,13 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_activity(self, activity: Activity[TInput, TOutput], *,
+    def call_activity(self, activity: Union[Activity[TInput, TOutput], str], *,
                       input: Union[TInput, None] = None) -> Task[TOutput]:
         """Schedule an activity for execution.
 
         Parameters
         ----------
-        activity: Activity[TInput, TOutput]
-            A reference to the activity function to call.
-        input: Union[TInput, None]
-            The JSON-serializable input (or None) to pass to the activity.
-        return_type: task.Task[TOutput]
-            The JSON-serializable output type to expect from the activity result.
-
-        Returns
-        -------
-        Task
-            A Durable Task that completes when the called activity function completes or fails.
-        """
-        pass
-
-    @abstractmethod
-    def call_named_activity(self, name: str, activity: Activity[TInput, TOutput], *,
-                      input: Union[TInput, None] = None) -> Task[TOutput]:
-        """Schedule an activity for execution.
-
-        Parameters
-        ----------
-        name: str
-            The name of the activity function to call.
-        activity: Activity[TInput, TOutput]
+        activity: Union[Activity[TInput, TOutput], str]
             A reference to the activity function to call.
         input: Union[TInput, None]
             The JSON-serializable input (or None) to pass to the activity.
