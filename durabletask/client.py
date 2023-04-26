@@ -19,7 +19,6 @@ from durabletask import task
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
-defaultVersion = '1.0.0'
 
 class OrchestrationStatus(Enum):
     """The status of an orchestration instance."""
