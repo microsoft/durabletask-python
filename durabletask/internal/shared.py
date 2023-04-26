@@ -5,7 +5,7 @@ import dataclasses
 import json
 import logging
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, Union
 
 import grpc
 
@@ -18,7 +18,7 @@ def get_default_host_address() -> str:
     return "localhost:4001"
 
 
-def get_grpc_channel(host_address: str | None) -> grpc.Channel:
+def get_grpc_channel(host_address: Union[str, None]) -> grpc.Channel:
     if host_address is None:
         host_address = get_default_host_address()
     channel = grpc.insecure_channel(host_address)
@@ -26,8 +26,8 @@ def get_grpc_channel(host_address: str | None) -> grpc.Channel:
 
 
 def get_logger(
-        log_handler: logging.Handler | None = None,
-        log_formatter: logging.Formatter | None = None) -> logging.Logger:
+        log_handler: Union[logging.Handler, None] = None,
+        log_formatter: Union[logging.Formatter, None] = None) -> logging.Logger:
     logger = logging.Logger("durabletask")
 
     # Add a default log handler if none is provided

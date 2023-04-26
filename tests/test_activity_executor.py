@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import json
-from typing import Any, Tuple
+from typing import Any, Tuple, Union
 
 import durabletask.internal.shared as shared
 from durabletask import task, worker
@@ -36,7 +36,7 @@ def test_activity_not_registered():
 
     executor, _ = _get_activity_executor(test_activity)
 
-    caught_exception: Exception | None = None
+    caught_exception: Union[Exception, None] = None
     try:
         executor.execute(TEST_INSTANCE_ID, "Bogus", TEST_TASK_ID, None)
     except Exception as ex:
