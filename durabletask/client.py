@@ -20,6 +20,7 @@ from durabletask import task
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
 
+
 class OrchestrationStatus(Enum):
     """The status of an orchestration instance."""
     RUNNING = pb.ORCHESTRATION_STATUS_RUNNING
