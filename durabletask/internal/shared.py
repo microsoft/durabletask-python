@@ -26,9 +26,10 @@ def get_grpc_channel(host_address: Union[str, None]) -> grpc.Channel:
 
 
 def get_logger(
+        name_suffix: str,
         log_handler: Union[logging.Handler, None] = None,
         log_formatter: Union[logging.Formatter, None] = None) -> logging.Logger:
-    logger = logging.Logger("durabletask")
+    logger = logging.Logger(f"durabletask-{name_suffix}")
 
     # Add a default log handler if none is provided
     if log_handler is None:

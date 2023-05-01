@@ -2,12 +2,16 @@
 # Licensed under the MIT License.
 
 import json
+import logging
 from typing import Any, Tuple, Union
 
-import durabletask.internal.shared as shared
 from durabletask import task, worker
 
-TEST_LOGGER = shared.get_logger()
+logging.basicConfig(
+    format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    level=logging.DEBUG)
+TEST_LOGGER = logging.getLogger("tests")
 TEST_INSTANCE_ID = 'abc123'
 TEST_TASK_ID = 42
 

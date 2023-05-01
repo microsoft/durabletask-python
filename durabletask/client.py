@@ -97,7 +97,7 @@ class TaskHubGrpcClient:
                  log_formatter: Union[logging.Formatter, None] = None):
         channel = shared.get_grpc_channel(host_address)
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
-        self._logger = shared.get_logger(log_handler, log_formatter)
+        self._logger = shared.get_logger("client", log_handler, log_formatter)
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Union[TInput, None] = None,
@@ -109,7 +109,7 @@ class TaskHubGrpcClient:
         req = pb.CreateInstanceRequest(
             name=name,
             instanceId=instance_id if instance_id else uuid.uuid4().hex,
-            input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input else None,
+            input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input is not None else None,
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
             version=wrappers_pb2.StringValue(value=""))
 
@@ -144,7 +144,19 @@ class TaskHubGrpcClient:
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
             res: pb.GetInstanceResponse = self._stub.WaitForInstanceCompletion(req, timeout=timeout)
-            return new_orchestration_state(req.instanceId, res)
+            state = new_orchestration_state(req.instanceId, res)
+            if not state:
+                return None
+
+            if state.runtime_status == OrchestrationStatus.FAILED and state.failure_details is not None:
+                details = state.failure_details
+                self._logger.info(f"Instance '{instance_id}' failed: [{details.error_type}] {details.message}")
+            elif state.runtime_status == OrchestrationStatus.TERMINATED:
+                self._logger.info(f"Instance '{instance_id}' was terminated.")
+            elif state.runtime_status == OrchestrationStatus.COMPLETED:
+                self._logger.info(f"Instance '{instance_id}' completed.")
+
+            return state
         except grpc.RpcError as rpc_error:
             if rpc_error.code() == grpc.StatusCode.DEADLINE_EXCEEDED:  # type: ignore
                 # Replace gRPC error with the built-in TimeoutError

@@ -147,6 +147,19 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @abstractmethod
+    def continue_as_new(self, new_input: Any, *, save_events: bool = False) -> None:
+        """Continue the orchestration execution as a new instance.
+
+        Parameters
+        ----------
+        new_input : Any
+            The new input to use for the new orchestration instance.
+        save_events : bool
+            A flag indicating whether to add any unprocessed external events in the new orchestration history.
+        """
+        pass
+
 
 class FailureDetails:
     def __init__(self, message: str, error_type: str, stack_trace: Union[str, None]):
