@@ -3,7 +3,6 @@
 
 import concurrent.futures
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
@@ -90,7 +89,7 @@ class TaskHubGrpcWorker:
                  log_formatter: Union[logging.Formatter, None] = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
-        self._logger = shared.get_logger(log_handler, log_formatter)
+        self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._response_stream = None
         self._is_running = False
@@ -149,7 +148,7 @@ class TaskHubGrpcWorker:
 
                     except grpc.RpcError as rpc_error:
                         if rpc_error.code() == grpc.StatusCode.CANCELLED:  # type: ignore
-                            self._logger.warning(f'Disconnected from {self._host_address}')
+                            self._logger.info(f'Disconnected from {self._host_address}')
                         elif rpc_error.code() == grpc.StatusCode.UNAVAILABLE:  # type: ignore
                             self._logger.warning(
                                 f'The sidecar at address {self._host_address} is unavailable - will continue retrying')
@@ -163,7 +162,7 @@ class TaskHubGrpcWorker:
                 self._logger.info("No longer listening for work items")
                 return
 
-        self._logger.info(f"starting gRPC worker that connects to {self._host_address}")
+        self._logger.info(f"Starting gRPC worker that connects to {self._host_address}")
         self._runLoop = Thread(target=run_loop)
         self._runLoop.start()
         self._is_running = True
@@ -220,12 +219,6 @@ class TaskHubGrpcWorker:
                 f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}")
 
 
-@dataclass
-class _ExternalEvent:
-    name: str
-    data: Any
-
-
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Union[Generator[task.Task, Any, Any], None]
     _previous_task: Union[task.Task, None]
@@ -241,8 +234,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._completion_status: Union[pb.OrchestrationStatus, None] = None
-        self._received_events: Dict[str, List[_ExternalEvent]] = {}
+        self._received_events: Dict[str, List[Any]] = {}
         self._pending_events: Dict[str, List[task.CompletableTask]] = {}
+        self._new_input: Union[Any, None] = None
+        self._save_events = False
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -282,6 +277,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             return
 
         self._is_complete = True
+        self._completion_status = status
+        self._pending_actions.clear()  # Cancel any pending actions
+
         self._result = result
         result_json: Union[str, None] = None
         if result is not None:
@@ -296,13 +294,44 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         self._is_complete = True
         self._pending_actions.clear()  # Cancel any pending actions
+        self._completion_status = pb.ORCHESTRATION_STATUS_FAILED
+
         action = ph.new_complete_orchestration_action(
             self.next_sequence_number(), pb.ORCHESTRATION_STATUS_FAILED, None, ph.new_failure_details(ex)
         )
         self._pending_actions[action.id] = action
 
+    def set_continued_as_new(self, new_input: Any, save_events: bool):
+        if self._is_complete:
+            return
+
+        self._is_complete = True
+        self._pending_actions.clear()  # Cancel any pending actions
+        self._completion_status = pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+        self._new_input = new_input
+        self._save_events = save_events
+
     def get_actions(self) -> List[pb.OrchestratorAction]:
-        return list(self._pending_actions.values())
+        if self._completion_status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
+            # When continuing-as-new, we only return a single completion action.
+            carryover_events: Union[List[pb.HistoryEvent], None] = None
+            if self._save_events:
+                carryover_events = []
+                # We need to save the current set of pending events so that they can be
+                # replayed when the new instance starts.
+                for event_name, values in self._received_events.items():
+                    for event_value in values:
+                        encoded_value = shared.to_json(event_value) if event_value else None
+                        carryover_events.append(ph.new_event_raised_event(event_name, encoded_value))
+            action = ph.new_complete_orchestration_action(
+                self.next_sequence_number(),
+                pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW,
+                result=shared.to_json(self._new_input) if self._new_input is not None else None,
+                failure_details=None,
+                carryover_events=carryover_events)
+            return [action]
+        else:
+            return list(self._pending_actions.values())
 
     def next_sequence_number(self) -> int:
         self._sequence_number += 1
@@ -370,13 +399,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # arrives. If there are multiple events with the same name, we return
         # them in the order they were received.
         external_event_task = task.CompletableTask()
-        event_name = name.upper()
+        event_name = name.casefold()
         event_list = self._received_events.get(event_name, None)
         if event_list:
-            event = event_list.pop(0)
+            event_data = event_list.pop(0)
             if not event_list:
                 del self._received_events[event_name]
-            external_event_task.complete(event.data)
+            external_event_task.complete(event_data)
         else:
             task_list = self._pending_events.get(event_name, None)
             if not task_list:
@@ -384,6 +413,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 self._pending_events[event_name] = task_list
             task_list.append(external_event_task)
         return external_event_task
+
+    def continue_as_new(self, new_input, *, save_events: bool = False) -> None:
+        if self._is_complete:
+            return
+
+        self.set_continued_as_new(new_input, save_events)
 
 
 class _OrchestrationExecutor:
@@ -415,13 +450,16 @@ class _OrchestrationExecutor:
             ctx._is_replaying = False
             for new_event in new_events:
                 self.process_event(ctx, new_event)
-                if ctx._is_complete:
-                    break
+
         except Exception as ex:
             # Unhandled exceptions fail the orchestration
             ctx.set_failed(ex)
 
-        if ctx._completion_status:
+        if not ctx._is_complete:
+            task_count = len(ctx._pending_tasks)
+            event_count = len(ctx._pending_events)
+            self._logger.info(f"{instance_id}: Waiting for {task_count} task(s) and {event_count} event(s).")
+        elif ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             completion_status_str = pbh.get_orchestration_status_str(ctx._completion_status)
             self._logger.info(f"{instance_id}: Orchestration completed with status: {completion_status_str}")
 
@@ -570,9 +608,9 @@ class _OrchestrationExecutor:
                 ctx.resume()
             elif event.HasField("eventRaised"):
                 # event names are case-insensitive
-                event_name = event.eventRaised.name.upper()
+                event_name = event.eventRaised.name.casefold()
                 if not ctx.is_replaying:
-                    self._logger.info(f"Event raised: {event_name}")
+                    self._logger.info(f"{ctx.instance_id} Event raised: {event_name}")
                 task_list = ctx._pending_events.get(event_name, None)
                 decoded_result: Union[Any, None] = None
                 if task_list:
@@ -591,7 +629,7 @@ class _OrchestrationExecutor:
                         ctx._received_events[event_name] = event_list
                     if not ph.is_empty(event.eventRaised.input):
                         decoded_result = shared.from_json(event.eventRaised.input.value)
-                    event_list.append(_ExternalEvent(event.eventRaised.name, decoded_result))
+                    event_list.append(decoded_result)
                     if not ctx.is_replaying:
                         self._logger.info(f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it.")
             elif event.HasField("executionSuspended"):

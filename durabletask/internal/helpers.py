@@ -3,7 +3,7 @@
 
 import traceback
 from datetime import datetime
-from typing import Union
+from typing import List, Union
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -161,14 +161,13 @@ def new_complete_orchestration_action(
         id: int,
         status: pb.OrchestrationStatus,
         result: Union[str, None] = None,
-        failure_details: Union[pb.TaskFailureDetails, None] = None) -> pb.OrchestratorAction:
-
+        failure_details: Union[pb.TaskFailureDetails, None] = None,
+        carryover_events: Union[List[pb.HistoryEvent], None] = None) -> pb.OrchestratorAction:
     completeOrchestrationAction = pb.CompleteOrchestrationAction(
         orchestrationStatus=status,
         result=get_string_value(result),
-        failureDetails=failure_details)
-
-    # TODO: CarryoverEvents
+        failureDetails=failure_details,
+        carryoverEvents=carryover_events)
 
     return pb.OrchestratorAction(id=id, completeOrchestration=completeOrchestrationAction)
 

@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import List
 
+import pytest
+
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask import task, worker
@@ -583,6 +585,41 @@ def test_terminate():
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_TERMINATED
     assert complete_action.result.value == json.dumps("terminated!")
+
+
+@pytest.mark.parametrize("save_events", [True, False])
+def test_continue_as_new(save_events: bool):
+    """Tests the behavior of the continue-as-new API"""
+    def orchestrator(ctx: task.OrchestrationContext, input: int):
+        yield ctx.create_timer(ctx.current_utc_datetime + timedelta(days=1))
+        ctx.continue_as_new(input + 1, save_events=save_events)
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input="1"),
+        helpers.new_event_raised_event("my_event", encoded_input="42"),
+        helpers.new_event_raised_event("my_event", encoded_input="43"),
+        helpers.new_event_raised_event("my_event", encoded_input="44"),
+        helpers.new_timer_created_event(1, datetime.utcnow() + timedelta(days=1))]
+    new_events = [
+        helpers.new_timer_fired_event(1, datetime.utcnow() + timedelta(days=1))]
+
+    # Execute the orchestration. It should be in a running state waiting for the timer to fire
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert complete_action.result.value == json.dumps(2)
+    assert len(complete_action.carryoverEvents) == (3 if save_events else 0)
+    for i in range(len(complete_action.carryoverEvents)):
+        event = complete_action.carryoverEvents[i]
+        assert type(event) is pb.HistoryEvent
+        assert event.HasField("eventRaised")
+        assert event.eventRaised.name.casefold() == "my_event".casefold()  # event names are case-insensitive
+        assert event.eventRaised.input.value == json.dumps(42 + i)
 
 
 def test_fan_out():
