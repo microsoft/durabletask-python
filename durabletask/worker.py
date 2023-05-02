@@ -28,8 +28,8 @@ class _Registry:
     activities: Dict[str, task.Activity]
 
     def __init__(self):
-        self.orchestrators = dict[str, task.Orchestrator]()
-        self.activities = dict[str, task.Activity]()
+        self.orchestrators = {}
+        self.activities = {}
 
     def add_orchestrator(self, fn: task.Orchestrator) -> str:
         if fn is None:
@@ -228,8 +228,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._is_replaying = True
         self._is_complete = False
         self._result = None
-        self._pending_actions = dict[int, pb.OrchestratorAction]()
-        self._pending_tasks = dict[int, task.CompletableTask]()
+        self._pending_actions = {}
+        self._pending_tasks = {}
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
@@ -736,7 +736,7 @@ def _get_new_event_summary(new_events: Sequence[pb.HistoryEvent]) -> str:
     elif len(new_events) == 1:
         return f"[{new_events[0].WhichOneof('eventType')}]"
     else:
-        counts = dict[str, int]()
+        counts = {}
         for event in new_events:
             event_type = event.WhichOneof('eventType')
             counts[event_type] = counts.get(event_type, 0) + 1
@@ -750,7 +750,7 @@ def _get_action_summary(new_actions: Sequence[pb.OrchestratorAction]) -> str:
     elif len(new_actions) == 1:
         return f"[{new_actions[0].WhichOneof('orchestratorActionType')}]"
     else:
-        counts = dict[str, int]()
+        counts = {}
         for action in new_actions:
             action_type = action.WhichOneof('orchestratorActionType')
             counts[action_type] = counts.get(action_type, 0) + 1
