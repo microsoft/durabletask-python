@@ -1,5 +1,5 @@
 autopep8
 grpcio
-grpcio-tools
+grpcio-tools<1.49
 pytest
 pytest-cov
