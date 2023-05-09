@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9","3.10", "3.11"]
+        python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
 
     steps:
     - uses: actions/checkout@v3
@@ -32,6 +32,7 @@ jobs:
     - name: Lint with flake8
       run: |
         flake8 . --count --show-source --statistics --exit-zero
+      if: matrix.python-version != '3.7'
     - name: Pytest unit tests
       run: |
         pytest -m "not e2e" --verbose

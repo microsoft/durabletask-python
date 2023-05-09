@@ -133,7 +133,7 @@ Orchestrations can specify retry policies for activities and sub-orchestrations.
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.7 or higher (Python 3.8 or higher is recommended when running tests or making contributions)
 - A Durable Task-compatible sidecar, like [Dapr Workflow](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-overview/)
 
 ### Installing the Durable Task Python client SDK
