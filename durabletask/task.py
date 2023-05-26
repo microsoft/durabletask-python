@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Callable, Generator, Generic, List, TypeVar, Union
+from typing import (Any, Callable, Generator, Generic, List, Optional, TypeVar,
+                    Union)
 
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -87,17 +88,18 @@ class OrchestrationContext(ABC):
 
     @abstractmethod
     def call_activity(self, activity: Union[Activity[TInput, TOutput], str], *,
-                      input: Union[TInput, None] = None) -> Task[TOutput]:
+                      input: Optional[TInput] = None,
+                      retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
         """Schedule an activity for execution.
 
         Parameters
         ----------
         activity: Union[Activity[TInput, TOutput], str]
             A reference to the activity function to call.
-        input: Union[TInput, None]
+        input: Optional[TInput]
             The JSON-serializable input (or None) to pass to the activity.
-        return_type: task.Task[TOutput]
-            The JSON-serializable output type to expect from the activity result.
+        retry_policy: Optional[RetryPolicy]
+            The retry policy to use for this activity call.
 
         Returns
         -------
@@ -108,19 +110,22 @@ class OrchestrationContext(ABC):
 
     @abstractmethod
     def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
-                              input: Union[TInput, None] = None,
-                              instance_id: Union[str, None] = None) -> Task[TOutput]:
+                              input: Optional[TInput] = None,
+                              instance_id: Optional[str] = None,
+                              retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
         """Schedule sub-orchestrator function for execution.
 
         Parameters
         ----------
         orchestrator: Orchestrator[TInput, TOutput]
             A reference to the orchestrator function to call.
-        input: Union[TInput, None]
+        input: Optional[TInput]
             The optional JSON-serializable input to pass to the orchestrator function.
-        instance_id: Union[str, None]
+        instance_id: Optional[str]
             A unique ID to use for the sub-orchestration instance. If not specified, a
             random UUID will be used.
+        retry_policy: Optional[RetryPolicy]
+            The retry policy to use for this sub-orchestrator call.
 
         Returns
         -------
@@ -162,7 +167,7 @@ class OrchestrationContext(ABC):
 
 
 class FailureDetails:
-    def __init__(self, message: str, error_type: str, stack_trace: Union[str, None]):
+    def __init__(self, message: str, error_type: str, stack_trace: Optional[str]):
         self._message = message
         self._error_type = error_type
         self._stack_trace = stack_trace
@@ -176,7 +181,7 @@ class FailureDetails:
         return self._error_type
 
     @property
-    def stack_trace(self) -> Union[str, None]:
+    def stack_trace(self) -> Optional[str]:
         return self._stack_trace
 
 
@@ -206,8 +211,8 @@ class OrchestrationStateError(Exception):
 class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
-    _exception: Union[TaskFailedError, None]
-    _parent: Union[CompositeTask[T], None]
+    _exception: Optional[TaskFailedError]
+    _parent: Optional[CompositeTask[T]]
 
     def __init__(self) -> None:
         super().__init__()
@@ -374,6 +379,74 @@ Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, An
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
+
+
+class RetryPolicy:
+    """Represents the retry policy for an orchestration or activity function."""
+
+    def __init__(self, *,
+                 first_retry_interval: timedelta,
+                 max_number_of_attempts: int,
+                 backoff_coefficient: Optional[float] = 1.0,
+                 max_retry_interval: Optional[timedelta] = None,
+                 retry_timeout: Optional[timedelta] = None):
+        """Creates a new RetryPolicy instance.
+
+        Parameters
+        ----------
+        first_retry_interval : timedelta
+            The retry interval to use for the first retry attempt.
+        max_number_of_attempts : int
+            The maximum number of retry attempts.
+        backoff_coefficient : Optional[float]
+            The backoff coefficient to use for calculating the next retry interval.
+        max_retry_interval : Optional[timedelta]
+            The maximum retry interval to use for any retry attempt.
+        retry_timeout : Optional[timedelta]
+            The maximum amount of time to spend retrying the operation.
+        """
+        # validate inputs
+        if first_retry_interval < timedelta(seconds=0):
+            raise ValueError('first_retry_interval must be >= 0')
+        if max_number_of_attempts < 1:
+            raise ValueError('max_number_of_attempts must be >= 1')
+        if backoff_coefficient is not None and backoff_coefficient < 1:
+            raise ValueError('backoff_coefficient must be >= 1')
+        if max_retry_interval is not None and max_retry_interval < timedelta(seconds=0):
+            raise ValueError('max_retry_interval must be >= 0')
+        if retry_timeout is not None and retry_timeout < timedelta(seconds=0):
+            raise ValueError('retry_timeout must be >= 0')
+
+        self._first_retry_interval = first_retry_interval
+        self._max_number_of_attempts = max_number_of_attempts
+        self._backoff_coefficient = backoff_coefficient
+        self._max_retry_interval = max_retry_interval
+        self._retry_timeout = retry_timeout
+
+    @property
+    def first_retry_interval(self) -> timedelta:
+        """The retry interval to use for the first retry attempt."""
+        return self._first_retry_interval
+
+    @property
+    def max_number_of_attempts(self) -> int:
+        """The maximum number of retry attempts."""
+        return self._max_number_of_attempts
+
+    @property
+    def backoff_coefficient(self) -> Optional[float]:
+        """The backoff coefficient to use for calculating the next retry interval."""
+        return self._backoff_coefficient
+
+    @property
+    def max_retry_interval(self) -> Optional[timedelta]:
+        """The maximum retry interval to use for any retry attempt."""
+        return self._max_retry_interval
+
+    @property
+    def retry_timeout(self) -> Optional[timedelta]:
+        """The maximum amount of time to spend retrying the operation."""
+        return self._retry_timeout
 
 
 def get_name(fn: Callable) -> str:
