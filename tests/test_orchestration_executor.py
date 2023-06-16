@@ -249,15 +249,15 @@ def test_activity_retry_policies():
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
+    current_timestamp = datetime.utcnow()
     # Simulate the task failing for the first time and confirm that a timer is scheduled for 1 second in the future
     old_events = [
-        helpers.new_orchestrator_started_event(),
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
         helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
-    current_timestamp = datetime.utcnow()
     expected_fire_at = current_timestamp + timedelta(seconds=1)
     new_events = [
-        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)

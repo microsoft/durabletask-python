@@ -634,8 +634,8 @@ class _OrchestrationExecutor:
                                 event.taskFailed.failureDetails)
                             ctx.resume()
                         else:
-                            activity_task.increment_retry_count()
                             next_delay = activity_task.compute_next_delay_in_seconds()
+                            activity_task.increment_retry_count()
                             if next_delay == timedelta.min:
                                 activity_task.fail(
                                     f"{ctx.instance_id}: Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
@@ -698,8 +698,8 @@ class _OrchestrationExecutor:
                                 failedEvent.failureDetails)
                             ctx.resume()
                         else:
-                            sub_orch_task.increment_retry_count()
                             next_delay = sub_orch_task.compute_next_delay_in_seconds()
+                            sub_orch_task.increment_retry_count()
                             if next_delay == timedelta.min:
                                 sub_orch_task.fail(
                                     f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",
