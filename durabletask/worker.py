@@ -21,7 +21,6 @@ from durabletask import task
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
-first_attempts: Dict[str, datetime] = {}
 
 
 class _Registry:
@@ -374,8 +373,6 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                       retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         
-        if retry_policy is not None and first_attempts.get(self._instance_id + "#" + str(id)) is None:
-            first_attempts[self._instance_id + "#" + str(id)] = datetime.utcnow()
         self.call_activity_util(id, activity, input, retry_policy)
         return self._pending_tasks.get(id, task.CompletableTask())
 
@@ -400,7 +397,6 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                     self._pending_tasks[id] = activity_task
                 else:
                     activity_task = task.RetryableTask[TOutput](retry_policy=retry_policy, action=action)
-                    activity_task.first_attempt = first_attempts[self._instance_id + "#" + str(id)]
                     self._pending_tasks[id] = activity_task
             else:
                 self._pending_tasks[id] = act_task
@@ -411,8 +407,6 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                               retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
-        if retry_policy is not None and first_attempts.get(self._instance_id + "#" + str(id)) is None:
-            first_attempts[self._instance_id + "#" + str(id)] = datetime.utcnow()
         self.call_sub_orchestrator_util(id, orchestrator_name, input=input, instance_id=instance_id,
                                         retry_policy=retry_policy)
         return self._pending_tasks.get(id, task.CompletableTask())
@@ -442,7 +436,6 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 self._pending_tasks[id] = sub_orch_task
             else:
                 sub_orch_task = task.RetryableTask[TOutput](retry_policy=retry_policy, action=action)
-                sub_orch_task.first_attempt = first_attempts[self._instance_id + "#" + str(id)]
                 self._pending_tasks[id] = sub_orch_task
         else:
             self._pending_tasks[id] = orch_task
@@ -594,6 +587,9 @@ class _OrchestrationExecutor:
                 # Remove the taskScheduled event from the pending action list so we don't schedule it again.
                 task_id = event.eventId
                 action = ctx._pending_actions.pop(task_id, None)
+                activity_task = ctx._pending_tasks.get(task_id, None)
+                if isinstance(activity_task, task.RetryableTask):
+                    activity_task.set_first_attempt(ctx.current_utc_datetime)
                 if not action:
                     raise _get_non_determinism_error(task_id, task.get_name(ctx.call_activity))
                 elif not action.HasField("scheduleTask"):

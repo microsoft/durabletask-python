@@ -327,7 +327,7 @@ class RetryableTask(CompletableTask[T]):
         self._action = action
         self._retry_policy = retry_policy
         self._retry_count = 0
-        self.first_attempt: datetime
+        self._first_attempt: datetime
 
     def try_completion(self) -> bool:
         if self._retry_count >= self._retry_policy.max_number_of_attempts - 1:
@@ -335,6 +335,9 @@ class RetryableTask(CompletableTask[T]):
         else:
             return False
     
+    def set_first_attempt(self, first_attempt: datetime) -> None:
+        self._first_attempt = first_attempt
+
     def increment_retry_count(self) -> None:
         self._retry_count += 1
     
@@ -342,7 +345,7 @@ class RetryableTask(CompletableTask[T]):
         next_delay = timedelta.min
         retry_expiration: datetime = datetime.max
         if self._retry_policy.retry_timeout is not None and self._retry_policy.retry_timeout != datetime.max:
-            retry_expiration = self.first_attempt + self._retry_policy.retry_timeout
+            retry_expiration = self._first_attempt + self._retry_policy.retry_timeout
         
         if self._retry_policy.backoff_coefficient is None:
             backoff_coefficient = 1.0
