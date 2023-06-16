@@ -571,8 +571,7 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}.")
                     return
                 timer_task.complete(None)
-                # if timer_task._retryable_parent is not None:
-                if isinstance(timer_task, task.TimerTask):
+                if timer_task._retryable_parent is not None and timer_task._retryable_type is not None:
                     activity_action = timer_task._retryable_parent._action
                     
                     if timer_task._retryable_type == "activity":

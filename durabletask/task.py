@@ -301,6 +301,7 @@ class CompletableTask(Task[T]):
     def __init__(self):
         super().__init__()
         self._retryable_parent = None
+        self._retryable_type = None
 
     def complete(self, result: T):
         if self._is_complete:
