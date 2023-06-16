@@ -4,6 +4,7 @@
 # See https://peps.python.org/pep-0563/
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import (Any, Callable, Generator, Generic, List, Optional, TypeVar,
@@ -266,29 +267,6 @@ class CompositeTask(Task[T]):
     def on_child_completed(self, task: Task[T]):
         pass
 
-
-class CompletableTask(Task[T]):
-
-    def __init__(self):
-        super().__init__()
-
-    def complete(self, result: T):
-        if self._is_complete:
-            raise ValueError('The task has already completed.')
-        self._result = result
-        self._is_complete = True
-        if self._parent is not None:
-            self._parent.on_child_completed(self)
-
-    def fail(self, message: str, details: pb.TaskFailureDetails):
-        if self._is_complete:
-            raise ValueError('The task has already completed.')
-        self._exception = TaskFailedError(message, details)
-        self._is_complete = True
-        if self._parent is not None:
-            self._parent.on_child_completed(self)
-
-
 class WhenAllTask(CompositeTask[List[T]]):
     """A task that completes when all of its child tasks complete."""
 
@@ -316,6 +294,88 @@ class WhenAllTask(CompositeTask[List[T]]):
 
     def get_completed_tasks(self) -> int:
         return self._completed_tasks
+
+
+class CompletableTask(Task[T]):
+
+    def __init__(self):
+        super().__init__()
+        self._retryable_parent = None
+
+    def complete(self, result: T):
+        if self._is_complete:
+            raise ValueError('The task has already completed.')
+        self._result = result
+        self._is_complete = True
+        if self._parent is not None:
+            self._parent.on_child_completed(self)
+
+    def fail(self, message: str, details: pb.TaskFailureDetails):
+        if self._is_complete:
+            raise ValueError('The task has already completed.')
+        self._exception = TaskFailedError(message, details)
+        self._is_complete = True
+        if self._parent is not None:
+            self._parent.on_child_completed(self)
+
+
+class RetryableTask(CompletableTask[T]):
+
+    def __init__(self, retry_policy: RetryPolicy, action: pb.OrchestratorAction) -> None:
+        super().__init__()
+        self._action = action
+        self._retry_policy = retry_policy
+        self._retry_count = 0
+        self.first_attempt: datetime
+
+    def try_completion(self) -> bool:
+        if self._retry_count >= self._retry_policy.max_number_of_attempts - 1:
+            return True
+        else:
+            return False
+    
+    def increment_retry_count(self) -> None:
+        self._retry_count += 1
+    
+    def compute_next_delay_in_seconds(self) -> timedelta:
+        next_delay = timedelta.min
+        retry_expiration: datetime = datetime.max
+        if self._retry_policy.retry_timeout is not None and self._retry_policy.retry_timeout != datetime.max:
+            retry_expiration = self.first_attempt + self._retry_policy.retry_timeout
+        
+        if self._retry_policy.backoff_coefficient is None:
+            backoff_coefficient = 1.0
+        else:
+            backoff_coefficient = self._retry_policy.backoff_coefficient
+
+        if datetime.utcnow() < retry_expiration:
+            next_delay_f = math.pow(backoff_coefficient, self._retry_count) * self._retry_policy.first_retry_interval.total_seconds()
+
+            if self._retry_policy.max_retry_interval is not None:
+                next_delay_f = min(next_delay_f, self._retry_policy.max_retry_interval.total_seconds())
+                return timedelta(seconds=next_delay_f)
+
+        return next_delay
+
+
+class TimerTask(CompletableTask[T]):
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def set_retryable_parent(self, retryable_task: RetryableTask, retryable_type: str):
+        self._retryable_parent = retryable_task
+        self._retryable_type = retryable_type
+
+    def complete(self, result: T):
+        if self._is_complete:
+            raise ValueError('The task has already completed.')
+        self._result = result
+        self._is_complete = True
+        if self._retryable_parent is not None:
+            self._retryable_parent.try_completion()
+        elif self._parent is not None:
+            self._parent.on_child_completed(self)
 
 
 class WhenAnyTask(CompositeTask[Task]):
