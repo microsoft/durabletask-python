@@ -376,7 +376,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         id = self.next_sequence_number()
 
         self.call_activity_function_helper(id, activity, input=input, retry_policy=retry_policy,
-                                           task_type=task.TaskType.ACTIVITY)
+                                           is_sub_orch=False)
         return self._pending_tasks.get(id, task.CompletableTask())
 
     def call_sub_orchestrator(self, orchestrator: task.Orchestrator[TInput, TOutput], *,
@@ -386,14 +386,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
         self.call_activity_function_helper(id, orchestrator_name, input=input, retry_policy=retry_policy,
-                                          task_type=task.TaskType.SUB_ORCHESTRATOR, instance_id=instance_id)
+                                          is_sub_orch=True, instance_id=instance_id)
         return self._pending_tasks.get(id, task.CompletableTask())
     
     def call_activity_function_helper(self, id: Optional[int],
                                       activity_function: Union[task.Activity[TInput, TOutput], str], *,
                                       input: Optional[TInput] = None,
                                       retry_policy: Optional[task.RetryPolicy] = None,
-                                      task_type: task.TaskType,
+                                      is_sub_orch: bool = False,
                                       instance_id: Optional[str] = None,
                                       fn_task: Optional[task.CompletableTask[TOutput]] = None):
         if id is None:
@@ -402,10 +402,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if fn_task is None:
             encoded_input = shared.to_json(input) if input else None
         else:
-            # Here, we don't need to convert the input to JSON because it is already convereted.
+            # Here, we don't need to convert the input to JSON because it is already converted.
             # We just need to take string representation of it.
             encoded_input = input.__str__()
-        if task_type == task.TaskType.ACTIVITY:
+        if is_sub_orch == False:
             name = activity_function if isinstance(activity_function, str) else task.get_name(activity_function)
             action = ph.new_schedule_task_action(id, name, encoded_input)
         else:
@@ -422,7 +422,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 fn_task = task.CompletableTask[TOutput]()
             else:
                 fn_task = task.RetryableTask[TOutput](retry_policy=retry_policy, action=action,
-                                                            task_type=task_type)
+                                                            is_sub_orch=is_sub_orch)
                 fn_task.set_first_attempt(self.current_utc_datetime)
         self._pending_tasks[id] = fn_task
 
@@ -553,7 +553,7 @@ class _OrchestrationExecutor:
                 if timer_task._retryable_parent is not None:
                     activity_action = timer_task._retryable_parent._action
                     
-                    if timer_task._retryable_parent._task_type == task.TaskType.ACTIVITY:
+                    if timer_task._retryable_parent._is_sub_orch == False:
                         cur_task = activity_action.scheduleTask
                         instance_id = None
                     else:
@@ -562,7 +562,7 @@ class _OrchestrationExecutor:
                     ctx.call_activity_function_helper(id=activity_action.id, activity_function=cur_task.name,
                                                       input=cur_task.input.value,
                                                       retry_policy=timer_task._retryable_parent._retry_policy,
-                                                      task_type=timer_task._retryable_parent._task_type,
+                                                      is_sub_orch=timer_task._retryable_parent._is_sub_orch,
                                                       instance_id=instance_id,
                                                       fn_task=timer_task._retryable_parent)
                 else:

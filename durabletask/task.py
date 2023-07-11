@@ -7,7 +7,6 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from enum import Enum
 from typing import (Any, Callable, Generator, Generic, List, Optional, TypeVar,
                     Union)
 
@@ -210,15 +209,6 @@ class OrchestrationStateError(Exception):
     pass
 
 
-class TaskType(Enum):
-    """A enumeration that represents the kind of possible task.
-    """
-    # Activity task
-    ACTIVITY = 0
-    # Sub-orchestrator task
-    SUB_ORCHESTRATOR = 1
-
-
 class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
@@ -332,13 +322,13 @@ class CompletableTask(Task[T]):
 class RetryableTask(CompletableTask[T]):
 
     def __init__(self, retry_policy: RetryPolicy, action: pb.OrchestratorAction,
-                 task_type: TaskType) -> None:
+                 is_sub_orch: bool) -> None:
         super().__init__()
         self._action = action
         self._retry_policy = retry_policy
         self._retry_count = 0
         self._first_attempt: datetime
-        self._task_type = task_type
+        self._is_sub_orch = is_sub_orch
 
     def try_completion(self) -> bool:
         if self._retry_count >= self._retry_policy.max_number_of_attempts - 1:
