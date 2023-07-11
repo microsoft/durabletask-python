@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import (Any, Callable, Generator, Generic, List, Optional, TypeVar,
                     Union)
 
@@ -209,6 +210,15 @@ class OrchestrationStateError(Exception):
     pass
 
 
+class TaskType(Enum):
+    """A enumeration that represents the kind of possible task.
+    """
+    # Activity task
+    ACTIVITY = 0
+    # Sub-orchestrator task
+    SUB_ORCHESTRATOR = 1
+
+
 class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
@@ -301,7 +311,6 @@ class CompletableTask(Task[T]):
     def __init__(self):
         super().__init__()
         self._retryable_parent = None
-        self._retryable_type = None
 
     def complete(self, result: T):
         if self._is_complete:
@@ -322,12 +331,14 @@ class CompletableTask(Task[T]):
 
 class RetryableTask(CompletableTask[T]):
 
-    def __init__(self, retry_policy: RetryPolicy, action: pb.OrchestratorAction) -> None:
+    def __init__(self, retry_policy: RetryPolicy, action: pb.OrchestratorAction,
+                 task_type: TaskType) -> None:
         super().__init__()
         self._action = action
         self._retry_policy = retry_policy
         self._retry_count = 0
         self._first_attempt: datetime
+        self._task_type = task_type
 
     def try_completion(self) -> bool:
         if self._retry_count >= self._retry_policy.max_number_of_attempts - 1:
@@ -367,9 +378,8 @@ class TimerTask(CompletableTask[T]):
     def __init__(self) -> None:
         super().__init__()
 
-    def set_retryable_parent(self, retryable_task: RetryableTask, retryable_type: str):
+    def set_retryable_parent(self, retryable_task: RetryableTask):
         self._retryable_parent = retryable_task
-        self._retryable_type = retryable_type
 
     def complete(self, result: T):
         if self._is_complete:

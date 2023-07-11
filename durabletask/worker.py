@@ -219,6 +219,12 @@ class TaskHubGrpcWorker:
                 f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}")
 
 
+class TaskWrapper(task.Task):
+    def __init__(self, task: task.Task, type: Optional[task.TaskType] = None):
+        self._task = task
+        self._type = type
+
+
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
@@ -353,9 +359,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def current_utc_datetime(self, value: datetime):
         self._current_utc_datetime = value
 
-    def create_timer(self, fire_at: Union[datetime, timedelta],
-                     retryable_task: Optional[task.RetryableTask] = None,
-                     retryable_type: Optional[str] = None) -> task.Task:
+    def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
+        return self.create_timer_internal(fire_at)
+    
+    def create_timer_internal(self, fire_at: Union[datetime, timedelta],
+                     retryable_task: Optional[task.RetryableTask] = None) -> task.Task:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
             fire_at = self.current_utc_datetime + fire_at
@@ -363,8 +371,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_actions[id] = action
 
         timer_task = task.TimerTask()
-        if retryable_task is not None and retryable_type is not None:
-            timer_task.set_retryable_parent(retryable_task, retryable_type)
+        if retryable_task is not None:
+            timer_task.set_retryable_parent(retryable_task)
         self._pending_tasks[id] = timer_task
         return timer_task
 
@@ -372,34 +380,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                       input: Optional[TInput] = None,
                       retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
-        
-        self.call_activity_util(id, activity, input, retry_policy)
-        return self._pending_tasks.get(id, task.CompletableTask())
 
-    def call_activity_util(self, id: Optional[int],
-                           activity: Union[task.Activity[TInput, TOutput], str],
-                           input: Optional[TInput] = None,
-                           retry_policy: Optional[task.RetryPolicy] = None,
-                           act_task: Optional[task.CompletableTask[TOutput]] = None):
-            if id is None:
-                id = self.next_sequence_number()
-            name = activity if isinstance(activity, str) else task.get_name(activity)
-                    
-            if act_task is None:
-                encoded_input = shared.to_json(input) if input else None
-            else:
-                encoded_input = input.__str__()
-            action = ph.new_schedule_task_action(id, name, encoded_input)
-            self._pending_actions[id] = action
-            if act_task is None:
-                if retry_policy is None:
-                    activity_task = task.CompletableTask[TOutput]()
-                    self._pending_tasks[id] = activity_task
-                else:
-                    activity_task = task.RetryableTask[TOutput](retry_policy=retry_policy, action=action)
-                    self._pending_tasks[id] = activity_task
-            else:
-                self._pending_tasks[id] = act_task
+        self.call_activity_function_helper(id, activity, input=input, retry_policy=retry_policy,
+                                           task_type=task.TaskType.ACTIVITY)
+        return self._pending_tasks.get(id, task.CompletableTask())
 
     def call_sub_orchestrator(self, orchestrator: task.Orchestrator[TInput, TOutput], *,
                               input: Optional[TInput] = None,
@@ -407,38 +391,46 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                               retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
-        self.call_sub_orchestrator_util(id, orchestrator_name, input=input, instance_id=instance_id,
-                                        retry_policy=retry_policy)
+        self.call_activity_function_helper(id, orchestrator_name, input=input, retry_policy=retry_policy,
+                                          task_type=task.TaskType.SUB_ORCHESTRATOR, instance_id=instance_id)
         return self._pending_tasks.get(id, task.CompletableTask())
     
-    def call_sub_orchestrator_util(self, id: Optional[int],
-                                   orchestrator_name: str, *,
-                                   input: Optional[TInput] = None,
-                                   instance_id: Optional[str] = None,
-                                   retry_policy: Optional[task.RetryPolicy] = None,
-                                   orch_task: Optional[task.CompletableTask[TOutput]] = None):
+    def call_activity_function_helper(self, id: Optional[int],
+                                      activity_function: Union[task.Activity[TInput, TOutput], str], *,
+                                      input: Optional[TInput] = None,
+                                      retry_policy: Optional[task.RetryPolicy] = None,
+                                      task_type: task.TaskType,
+                                      instance_id: Optional[str] = None,
+                                      fn_task: Optional[task.CompletableTask[TOutput]] = None):
         if id is None:
             id = self.next_sequence_number()
         
-        if instance_id is None:
-            # Create a deteministic instance ID based on the parent instance ID
-            instance_id = f"{self.instance_id}:{id:04x}"
-        if orch_task is None:
+        if fn_task is None:
             encoded_input = shared.to_json(input) if input else None
         else:
+            # Here, we don't need to convert the input to JSON because it is already convereted.
+            # We just need to take string representation of it.
             encoded_input = input.__str__()
-        action = ph.new_create_sub_orchestration_action(id, orchestrator_name, instance_id, encoded_input)
+        if task_type == task.TaskType.ACTIVITY:
+            name = activity_function if isinstance(activity_function, str) else task.get_name(activity_function)
+            action = ph.new_schedule_task_action(id, name, encoded_input)
+        else:
+            if instance_id is None:
+                # Create a deteministic instance ID based on the parent instance ID
+                instance_id = f"{self.instance_id}:{id:04x}"
+            if not isinstance(activity_function, str):
+                raise ValueError("Orchestrator function name must be a string")
+            action = ph.new_create_sub_orchestration_action(id, activity_function, instance_id, encoded_input)
         self._pending_actions[id] = action
 
-        if orch_task is None:
+        if fn_task is None:
             if retry_policy is None:
-                sub_orch_task = task.CompletableTask[TOutput]()
-                self._pending_tasks[id] = sub_orch_task
+                fn_task = task.CompletableTask[TOutput]()
             else:
-                sub_orch_task = task.RetryableTask[TOutput](retry_policy=retry_policy, action=action)
-                self._pending_tasks[id] = sub_orch_task
-        else:
-            self._pending_tasks[id] = orch_task
+                fn_task = task.RetryableTask[TOutput](retry_policy=retry_policy, action=action,
+                                                            task_type=task_type)
+                fn_task.set_first_attempt(self.current_utc_datetime)
+        self._pending_tasks[id] = fn_task
 
     def wait_for_external_event(self, name: str) -> task.Task:
         # Check to see if this event has already been received, in which case we
@@ -564,22 +556,21 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}.")
                     return
                 timer_task.complete(None)
-                if timer_task._retryable_parent is not None and timer_task._retryable_type is not None:
+                if timer_task._retryable_parent is not None:
                     activity_action = timer_task._retryable_parent._action
                     
-                    if timer_task._retryable_type == "activity":
-                        cur_scheduled_task = activity_action.scheduleTask
-                        ctx.call_activity_util(id=activity_action.id, activity=cur_scheduled_task.name,
-                                                        input=cur_scheduled_task.input.value,
-                                                        retry_policy=timer_task._retryable_parent._retry_policy,
-                                                        act_task=timer_task._retryable_parent)
-                    elif timer_task._retryable_type == "sub_orch":
-                        cur_sub_orch = activity_action.createSubOrchestration
-                        ctx.call_sub_orchestrator_util(id=activity_action.id, orchestrator_name=cur_sub_orch.name,
-                                                        input=cur_sub_orch.input.value,
-                                                        instance_id=cur_sub_orch.instanceId,
-                                                        retry_policy=timer_task._retryable_parent._retry_policy,
-                                                        orch_task=timer_task._retryable_parent)
+                    if timer_task._retryable_parent._task_type == task.TaskType.ACTIVITY:
+                        cur_task = activity_action.scheduleTask
+                        instance_id = None
+                    else:
+                        cur_task = activity_action.createSubOrchestration
+                        instance_id = cur_task.instanceId
+                    ctx.call_activity_function_helper(id=activity_action.id, activity_function=cur_task.name,
+                                                      input=cur_task.input.value,
+                                                      retry_policy=timer_task._retryable_parent._retry_policy,
+                                                      task_type=timer_task._retryable_parent._task_type,
+                                                      instance_id=instance_id,
+                                                      fn_task=timer_task._retryable_parent)
                 else:
                     ctx.resume()
             elif event.HasField("taskScheduled"):
@@ -588,8 +579,6 @@ class _OrchestrationExecutor:
                 task_id = event.eventId
                 action = ctx._pending_actions.pop(task_id, None)
                 activity_task = ctx._pending_tasks.get(task_id, None)
-                if isinstance(activity_task, task.RetryableTask):
-                    activity_task.set_first_attempt(ctx.current_utc_datetime)
                 if not action:
                     raise _get_non_determinism_error(task_id, task.get_name(ctx.call_activity))
                 elif not action.HasField("scheduleTask"):
@@ -642,7 +631,7 @@ class _OrchestrationExecutor:
                                     event.taskFailed.failureDetails)
                                 ctx.resume()
                             else:
-                                ctx.create_timer(next_delay, activity_task, "activity")
+                                ctx.create_timer_internal(next_delay, activity_task)
                 elif isinstance(activity_task, task.CompletableTask):
                     activity_task.fail(
                         f"{ctx.instance_id}: Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
@@ -706,7 +695,7 @@ class _OrchestrationExecutor:
                                     failedEvent.failureDetails)
                                 ctx.resume()
                             else:
-                                ctx.create_timer(next_delay, sub_orch_task, "sub_orch")
+                                ctx.create_timer_internal(next_delay, sub_orch_task)
                 elif isinstance(sub_orch_task, task.CompletableTask):
                     sub_orch_task.fail(
                         f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",
