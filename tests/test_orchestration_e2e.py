@@ -268,3 +268,39 @@ def test_continue_as_new():
         assert state.serialized_output == json.dumps(all_results)
         assert state.serialized_input == json.dumps(4)
         assert all_results == [1, 2, 3, 4, 5]
+
+
+def test_retry_policies():
+    retry_policy = task.RetryPolicy(
+        first_retry_interval=timedelta(milliseconds=1),
+        max_number_of_attempts=3,
+    )
+
+    def parent_orchestrator(ctx: task.OrchestrationContext, _):
+        yield ctx.call_sub_orchestrator(child_orchestrator, retry_policy=retry_policy)
+
+    def child_orchestrator(ctx: task.OrchestrationContext, _):
+        yield ctx.call_activity(throw_activity, retry_policy=retry_policy)
+
+    def throw_activity(ctx: task.ActivityContext, _):
+        raise RuntimeError("Kah-BOOOOM!!!")
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(parent_orchestrator)
+        w.add_orchestrator(child_orchestrator)
+        w.add_activity(throw_activity)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient()
+        id = task_hub_client.schedule_new_orchestration(parent_orchestrator)
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.FAILED
+        assert state.failure_details is not None
+        assert state.failure_details.error_type == "RuntimeError"
+        assert state.failure_details.message == "Kah-BOOOOM!!!"
+        assert state.failure_details.stack_trace is not None
+        assert state.failure_details.stack_trace.startswith("RuntimeError: Kah-BOOOOM!!!\n")
+
+        # TODO: Verify that the throw_activity was called 9 times and the child_orchestrator was called 3 times
