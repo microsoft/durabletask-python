@@ -219,12 +219,6 @@ class TaskHubGrpcWorker:
                 f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}")
 
 
-class TaskWrapper(task.Task):
-    def __init__(self, task: task.Task, type: Optional[task.TaskType] = None):
-        self._task = task
-        self._type = type
-
-
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
