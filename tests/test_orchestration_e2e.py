@@ -289,7 +289,8 @@ def test_retry_policies():
 
     def child_orchestrator(ctx: task.OrchestrationContext, _):
         nonlocal child_orch_counter
-        child_orch_counter += 1
+        if not ctx.is_replaying:
+            child_orch_counter += 1
         yield ctx.call_activity(throw_activity)
 
     def throw_activity(ctx: task.ActivityContext, _):
@@ -314,9 +315,8 @@ def test_retry_policies():
         assert state.failure_details.message.startswith("Sub-orchestration task #1 failed:")
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
-        # child orchestrator gets called twice, but underlying activity gets called only once.
         assert throw_activity_counter == 1
-        assert child_orch_counter == 2
+        assert child_orch_counter == 1
 
     # Second setup: With retry policies
     retry_policy=task.RetryPolicy(
@@ -331,7 +331,10 @@ def test_retry_policies():
 
     def child_orchestrator_with_retry(ctx: task.OrchestrationContext, _):
         nonlocal child_orch_counter
-        child_orch_counter += 1
+        if not ctx.is_replaying:
+            # NOTE: Real orchestrations should never interact with nonlocal variables like this.
+            # This is done only for testing purposes.
+            child_orch_counter += 1
         yield ctx.call_activity(throw_activity_with_retry, retry_policy=retry_policy)
 
     def throw_activity_with_retry(ctx: task.ActivityContext, _):
@@ -356,7 +359,7 @@ def test_retry_policies():
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
         assert throw_activity_counter == 10
-        assert child_orch_counter == 20
+        assert child_orch_counter == 4
 
 def test_retry_timeout():
     # This test verifies that the retry timeout is working as expected.
