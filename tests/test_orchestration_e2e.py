@@ -315,7 +315,6 @@ def test_retry_policies():
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
         # child orchestrator gets called twice, but underlying activity gets called only once.
-        # this happens due to child orchestrator getting called from history evenst as well.
         assert throw_activity_counter == 1
         assert child_orch_counter == 2
 
