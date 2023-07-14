@@ -239,10 +239,10 @@ def test_activity_retry_policies():
             dummy_activity,
             retry_policy=task.RetryPolicy(
                 first_retry_interval=timedelta(seconds=1),
-                max_number_of_attempts=5,
+                max_number_of_attempts=6,
                 backoff_coefficient=2,
                 max_retry_interval=timedelta(seconds=10),
-                retry_timeout=timedelta(seconds=30)),
+                retry_timeout=timedelta(seconds=50)),
             input=orchestrator_input)
         return result
 
@@ -256,6 +256,7 @@ def test_activity_retry_policies():
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
         helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
     expected_fire_at = current_timestamp + timedelta(seconds=1)
+    
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
@@ -264,6 +265,7 @@ def test_activity_retry_policies():
     print(actions)
     assert len(actions) == 1
     assert actions[0].HasField("createTimer")
+    assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
     assert actions[0].id == 2
 
     # Simulate the timer firing at the expected time and confirm that another activity task is scheduled
@@ -280,16 +282,43 @@ def test_activity_retry_policies():
 
     # Simulate the task failing for the second time and confirm that a timer is scheduled for 2 seconds in the future
     old_events = old_events + new_events
-    current_timestamp = current_timestamp + timedelta(seconds=1)
     expected_fire_at = current_timestamp + timedelta(seconds=2)
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(3, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
-    assert len(actions) == 2
-    assert actions[0].HasField("createTimer")
-    assert actions[0].id == 2
+    assert len(actions) == 3
+    assert actions[2].HasField("createTimer")
+    assert actions[2].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[2].id == 3
+
+    # Simulate the timer firing at the expected time and confirm that another activity task is scheduled
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(3, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 3
+    print(f'actions: {actions}')
+    assert actions[1].HasField("scheduleTask")
+    assert actions[1].id == 1
+
+    # Simulate the task failing for a third time and confirm that a timer is scheduled for 4 seconds in the future
+    expected_fire_at = current_timestamp + timedelta(seconds=4)
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 4
+    print(f'actions: {actions}')
+    assert actions[3].HasField("createTimer")
+    assert actions[3].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[3].id == 4
 
     # Simulate the timer firing at the expected time and confirm that another activity task is scheduled
     current_timestamp = expected_fire_at
@@ -299,24 +328,72 @@ def test_activity_retry_policies():
         helpers.new_timer_fired_event(4, current_timestamp)]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
-    assert len(actions) == 2
+    assert len(actions) == 4
     assert actions[1].HasField("scheduleTask")
     assert actions[1].id == 1
 
-    # Simulate the task failing for a third time and confirm that a timer is scheduled for 4 seconds in the future
-    # expected_fire_at = current_timestamp + timedelta(seconds=4)
+    # # Simulate the task failing for a fourth time and confirm that a timer is scheduled for 8 seconds in the future
+    expected_fire_at = current_timestamp + timedelta(seconds=8)
     old_events = old_events + new_events
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(5, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
-    assert len(actions) == 2
-    assert actions[0].HasField("createTimer")
-    assert actions[0].id == 2
+    assert len(actions) == 5
+    assert actions[4].HasField("createTimer")
+    assert actions[4].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[4].id == 5
 
-    # TODO: Keep going, and confirm the behavior of max_retry_interval and retry_timeout
+    # Simulate the timer firing at the expected time and confirm that another activity task is scheduled
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(5, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 5
+    assert actions[1].HasField("scheduleTask")
+    assert actions[1].id == 1
 
+    # # Simulate the task failing for a fifth time and confirm that a timer is scheduled for 10 seconds in the future.
+    # # This time, the timer will fire after 10 seconds, instead of 16, as max_retry_interval is set to 10 seconds.
+    expected_fire_at = current_timestamp + timedelta(seconds=10)
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 6
+    assert actions[5].HasField("createTimer")
+    assert actions[5].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[5].id == 6
+
+    # Simulate the timer firing at the expected time and confirm that another activity task is scheduled
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(6, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 6
+    assert actions[1].HasField("scheduleTask")
+    assert actions[1].id == 1
+
+    # # Simulate the task failing for a sixth time and confirm that orchestration is marked as failed finally.
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 1
+    print(f'actions failed: {actions}')
+    assert actions[0].completeOrchestration.failureDetails.errorMessage == "abc123: Activity task #1 failed: Kah-BOOOOM!!!"
+    assert actions[0].id == 7
 
 def test_nondeterminism_expected_timer():
     """Tests the non-determinism detection logic when call_timer is expected but some other method (call_activity) is called instead"""
