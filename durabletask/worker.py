@@ -368,7 +368,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                       input: Union[TInput, None] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         name = activity if isinstance(activity, str) else task.get_name(activity)
-        encoded_input = shared.to_json(input) if input else None
+        encoded_input = shared.to_json(input) if input is not None else None
         action = ph.new_schedule_task_action(id, name, encoded_input)
         self._pending_actions[id] = action
 
@@ -384,7 +384,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if instance_id is None:
             # Create a deteministic instance ID based on the parent instance ID
             instance_id = f"{self.instance_id}:{id:04x}"
-        encoded_input = shared.to_json(input) if input else None
+        encoded_input = shared.to_json(input) if input is not None else None
         action = ph.new_create_sub_orchestration_action(id, name, instance_id, encoded_input)
         self._pending_actions[id] = action
 
