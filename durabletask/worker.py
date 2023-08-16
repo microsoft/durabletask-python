@@ -404,7 +404,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         else:
             # Here, we don't need to convert the input to JSON because it is already converted.
             # We just need to take string representation of it.
-            encoded_input = input.__str__()
+            encoded_input = str(input)
         if is_sub_orch == False:
             name = activity_function if isinstance(activity_function, str) else task.get_name(activity_function)
             action = ph.new_schedule_task_action(id, name, encoded_input)
@@ -617,7 +617,7 @@ class _OrchestrationExecutor:
                                 event.taskFailed.failureDetails)
                             ctx.resume()
                         else:
-                            next_delay = activity_task.compute_next_delay_in_seconds()
+                            next_delay = activity_task.compute_next_delay()
                             activity_task.increment_retry_count()
                             if next_delay == timedelta.min:
                                 activity_task.fail(
@@ -681,7 +681,7 @@ class _OrchestrationExecutor:
                                 failedEvent.failureDetails)
                             ctx.resume()
                         else:
-                            next_delay = sub_orch_task.compute_next_delay_in_seconds()
+                            next_delay = sub_orch_task.compute_next_delay()
                             sub_orch_task.increment_retry_count()
                             if next_delay == timedelta.min:
                                 sub_orch_task.fail(

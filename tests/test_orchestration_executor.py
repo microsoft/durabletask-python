@@ -960,6 +960,185 @@ def test_when_any():
     assert complete_action.result.value == encoded_output
 
 
+def test_when_any_with_retry():
+    """Tests that a when_any pattern works correctly"""
+    def dummy_activity(_, inp: str):
+        if inp == "Tokyo":
+            raise ValueError("Kah-BOOOOM!!!")
+        return f"Hello {inp}!"
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        t1 = ctx.call_activity(dummy_activity, 
+                               retry_policy=task.RetryPolicy(
+                                            first_retry_interval=timedelta(seconds=1),
+                                            max_number_of_attempts=6,
+                                            backoff_coefficient=2,
+                                            max_retry_interval=timedelta(seconds=10),
+                                            retry_timeout=timedelta(seconds=50)),
+                               input="Tokyo")
+        t2 = ctx.call_activity(dummy_activity, input="Seattle")
+        winner = yield task.when_any([t1, t2])
+        if winner == t1:
+            return t1.get_result()
+        else:
+            return t2.get_result()
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+    activity_name = registry.add_activity(dummy_activity)
+
+    current_timestamp = datetime.utcnow()
+    # Simulate the task failing for the first time and confirm that a timer is scheduled for 1 second in the future
+    old_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity)),
+        helpers.new_task_scheduled_event(2, task.get_name(dummy_activity))]
+    expected_fire_at = current_timestamp + timedelta(seconds=1)
+
+    new_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    print(actions)
+    assert len(actions) == 1
+    assert actions[0].HasField("createTimer")
+    assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[0].id == 3
+
+    # Simulate the timer firing at the expected time and confirm that another activity task is scheduled
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(3, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 2
+    assert actions[1].HasField("scheduleTask")
+    assert actions[1].id == 1
+
+    # Simulate the task failing for the second time and confirm that a timer is scheduled for 2 seconds in the future
+    old_events = old_events + new_events
+    expected_fire_at = current_timestamp + timedelta(seconds=2)
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 3
+    assert actions[2].HasField("createTimer")
+    assert actions[2].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[2].id == 4
+
+    # Complete the "Seattle" task. We expect the orchestration to complete with output "Hello, Seattle!"
+    encoded_output = json.dumps(dummy_activity(None, "Seattle"))
+    new_events = [helpers.new_task_completed_event(2, encoded_output)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == encoded_output
+
+def test_when_all_with_retry():
+    """Tests that a when_any pattern works correctly"""
+    def dummy_activity(ctx, inp: str):
+        if inp == "Tokyo":
+            raise ValueError("Kah-BOOOOM!!!")
+        return f"Hello {inp}!"
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        t1 = ctx.call_activity(dummy_activity, 
+                               retry_policy=task.RetryPolicy(
+                                            first_retry_interval=timedelta(seconds=2),
+                                            max_number_of_attempts=3,
+                                            backoff_coefficient=4,
+                                            max_retry_interval=timedelta(seconds=5),
+                                            retry_timeout=timedelta(seconds=50)),
+                               input="Tokyo")
+        t2 = ctx.call_activity(dummy_activity, input="Seattle")
+        winner = yield task.when_all([t1, t2])
+        if winner == t1:
+            return t1.get_result()
+        else:
+            return t2.get_result()
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+    activity_name = registry.add_activity(dummy_activity)
+
+    current_timestamp = datetime.utcnow()
+    # Simulate the task failing for the first time and confirm that a timer is scheduled for 2 seconds in the future
+    old_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity)),
+        helpers.new_task_scheduled_event(2, task.get_name(dummy_activity))]
+    expected_fire_at = current_timestamp + timedelta(seconds=2)
+
+    new_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    print(actions)
+    assert len(actions) == 1
+    assert actions[0].HasField("createTimer")
+    assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[0].id == 3
+
+    # Simulate the timer firing at the expected time and confirm that another activity task is scheduled
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(3, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 2
+    assert actions[1].HasField("scheduleTask")
+    assert actions[1].id == 1
+
+    # Simulate the task failing for the second time and confirm that a timer is scheduled for 5 seconds in the future
+    old_events = old_events + new_events
+    expected_fire_at = current_timestamp + timedelta(seconds=5)
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 3
+    assert actions[2].HasField("createTimer")
+    assert actions[2].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[2].id == 4
+
+    # Complete the "Seattle" task.
+    # And, Simulate the timer firing at the expected time and confirm that another activity task is scheduled
+    encoded_output = json.dumps(dummy_activity(None, "Seattle"))
+    old_events = old_events + new_events
+    new_events = [helpers.new_task_completed_event(2, encoded_output),
+                  helpers.new_timer_fired_event(4, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    assert len(actions) == 3
+    assert actions[1].HasField("scheduleTask")
+    assert actions[1].id == 1
+
+    ex = Exception("Kah-BOOOOM!!!")
+    
+    # Simulate the task failing for the third time. Overall workflow should fail at this point.
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
+    assert str(ex) in complete_action.failureDetails.errorMessage
+
 def get_and_validate_single_complete_orchestration_action(actions: List[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
     assert len(actions) == 1
     assert type(actions[0]) is pb.OrchestratorAction

@@ -342,7 +342,7 @@ class RetryableTask(CompletableTask[T]):
     def increment_retry_count(self) -> None:
         self._retry_count += 1
     
-    def compute_next_delay_in_seconds(self) -> timedelta:
+    def compute_next_delay(self) -> timedelta:
         next_delay = timedelta.min
         retry_expiration: datetime = datetime.max
         if self._retry_policy.retry_timeout is not None and self._retry_policy.retry_timeout != datetime.max:
