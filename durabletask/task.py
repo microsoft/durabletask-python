@@ -320,6 +320,13 @@ class WhenAnyTask(CompositeTask[Task]):
         super().__init__(tasks)
 
     def on_child_completed(self, task: Task):
+        if task.is_complete and task.is_failed:
+            self._failed_tasks += 1
+            if self._failed_tasks == len(self._tasks):
+                self._is_complete = True
+                self._exception = TaskFailedError('All tasks failed.',
+                                                  pbh.new_failure_details(Exception('All tasks failed.')))
+            return
         # The first task to complete is the result of the WhenAnyTask.
         if not self.is_complete:
             self._is_complete = True
