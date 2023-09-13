@@ -4,10 +4,15 @@
 import dataclasses
 import json
 import logging
+import os
 from types import SimpleNamespace
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 
 import grpc
+
+from durabletask.internal.grpc_interceptor import (
+    StreamStreamClientInterceptorImpl, StreamUnaryClientInterceptorImpl,
+    UnaryStreamClientInterceptorImpl, UnaryUnaryClientInterceptorImpl)
 
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
@@ -18,12 +23,18 @@ def get_default_host_address() -> str:
     return "localhost:4001"
 
 
-def get_grpc_channel(host_address: Union[str, None]) -> grpc.Channel:
+def get_grpc_channel(host_address: Union[str, None], metadata: Optional[Dict[str, Any]]) -> grpc.Channel:
     if host_address is None:
         host_address = get_default_host_address()
     channel = grpc.insecure_channel(host_address)
+    if metadata != None and len(metadata) > 0:
+        interceptors = [
+            UnaryUnaryClientInterceptorImpl(metadata), 
+            UnaryStreamClientInterceptorImpl(metadata), 
+            StreamUnaryClientInterceptorImpl(metadata), 
+            StreamStreamClientInterceptorImpl(metadata)]
+        channel = grpc.intercept_channel(channel, *interceptors)
     return channel
-
 
 def get_logger(
         name_suffix: str,
