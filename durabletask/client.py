@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional, TypeVar, Union
+from typing import Any, List, Tuple, TypeVar, Union
 
 import grpc
 from google.protobuf import wrappers_pb2
@@ -93,7 +93,7 @@ class TaskHubGrpcClient:
 
     def __init__(self, *,
                  host_address: Union[str, None] = None,
-                 metadata: Optional[Dict[str, Any]],
+                 metadata: List[Tuple[str, str]],
                  log_handler=None,
                  log_formatter: Union[logging.Formatter, None] = None):
         channel = shared.get_grpc_channel(host_address, metadata)

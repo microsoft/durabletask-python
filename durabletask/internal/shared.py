@@ -5,7 +5,7 @@ import dataclasses
 import json
 import logging
 from types import SimpleNamespace
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import grpc
 
@@ -22,7 +22,7 @@ def get_default_host_address() -> str:
     return "localhost:4001"
 
 
-def get_grpc_channel(host_address: Union[str, None], metadata: Optional[Dict[str, Any]]) -> grpc.Channel:
+def get_grpc_channel(host_address: Union[str, None], metadata: List[Tuple[str, str]]) -> grpc.Channel:
     if host_address is None:
         host_address = get_default_host_address()
     channel = grpc.insecure_channel(host_address)
