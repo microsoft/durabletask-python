@@ -18,8 +18,10 @@ class _ClientCallDetails(
     """
     pass
 
-def intercept_call(
+def _intercept_call(
             client_call_details: _ClientCallDetails, metadata: List[Tuple[str, str]]) -> _ClientCallDetails:
+    """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
+        call details."""
     new_metadata = []
     new_client_call_details = client_call_details
     if client_call_details.metadata is not None:
@@ -45,7 +47,7 @@ class UnaryUnaryClientInterceptorImpl (grpc.UnaryUnaryClientInterceptor):
         self._metadata = metadata
 
     def intercept_unary_unary(self, continuation, client_call_details, request):
-        new_client_call_details = intercept_call(client_call_details, self._metadata)
+        new_client_call_details = _intercept_call(client_call_details, self._metadata)
         return continuation(new_client_call_details, request)
 
 class UnaryStreamClientInterceptorImpl (grpc.UnaryStreamClientInterceptor):
@@ -59,7 +61,7 @@ class UnaryStreamClientInterceptorImpl (grpc.UnaryStreamClientInterceptor):
     def intercept_unary_stream(self, continuation, client_call_details, request):
         # client_call_details = client_call_details._replace(metadata=self._metadata)
         # return continuation(client_call_details, request)
-        new_client_call_details = intercept_call(client_call_details, self._metadata)
+        new_client_call_details = _intercept_call(client_call_details, self._metadata)
         return continuation(new_client_call_details, request)
 
 class StreamUnaryClientInterceptorImpl (grpc.StreamUnaryClientInterceptor):
@@ -73,7 +75,7 @@ class StreamUnaryClientInterceptorImpl (grpc.StreamUnaryClientInterceptor):
     def intercept_stream_unary(self, continuation, client_call_details, request):
         # client_call_details = client_call_details._replace(metadata=self._metadata)
         # return continuation(client_call_details, request)
-        new_client_call_details = intercept_call(client_call_details, self._metadata)
+        new_client_call_details = _intercept_call(client_call_details, self._metadata)
         return continuation(new_client_call_details, request)
     
 class StreamStreamClientInterceptorImpl (grpc.StreamStreamClientInterceptor):
@@ -87,5 +89,5 @@ class StreamStreamClientInterceptorImpl (grpc.StreamStreamClientInterceptor):
     def intercept_stream_stream(self, continuation, client_call_details, request):
         # client_call_details = client_call_details._replace(metadata=self._metadata)
         # return continuation(client_call_details, request)
-        new_client_call_details = intercept_call(client_call_details, self._metadata)
+        new_client_call_details = _intercept_call(client_call_details, self._metadata)
         return continuation(new_client_call_details, request)
