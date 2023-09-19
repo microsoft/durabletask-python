@@ -20,11 +20,11 @@ def get_default_host_address() -> str:
     return "localhost:4001"
 
 
-def get_grpc_channel(host_address: Union[str, None], metadata: List[Tuple[str, str]]) -> grpc.Channel:
+def get_grpc_channel(host_address: Union[str, None], metadata: Union[List[Tuple[str, str]], None]) -> grpc.Channel:
     if host_address is None:
         host_address = get_default_host_address()
     channel = grpc.insecure_channel(host_address)
-    if metadata != None and len(metadata) > 0:
+    if metadata is not None and len(metadata) > 0:
         interceptors = [DefaultClientInterceptorImpl(metadata)]
         channel = grpc.intercept_channel(channel, *interceptors)
     return channel
