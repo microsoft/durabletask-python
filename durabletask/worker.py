@@ -6,8 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
-from typing import (Any, Dict, Generator, List, Optional, Sequence, TypeVar,
-                    Union)
+from typing import Any, Dict, Generator, List, Sequence, Tuple, TypeVar, Union
 
 import grpc
 from google.protobuf import empty_pb2
@@ -86,7 +85,7 @@ class TaskHubGrpcWorker:
 
     def __init__(self, *,
                  host_address: Union[str, None] = None,
-                 metadata: Optional[Dict[str, Any]],
+                 metadata: List[Tuple[str, str]],
                  log_handler=None,
                  log_formatter: Union[logging.Formatter, None] = None):
         self._registry = _Registry()

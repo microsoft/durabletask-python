@@ -9,9 +9,7 @@ from typing import Any, Dict, List, Tuple, Union
 
 import grpc
 
-from durabletask.internal.grpc_interceptor import (
-    StreamStreamClientInterceptorImpl, StreamUnaryClientInterceptorImpl,
-    UnaryStreamClientInterceptorImpl, UnaryUnaryClientInterceptorImpl)
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
@@ -27,11 +25,7 @@ def get_grpc_channel(host_address: Union[str, None], metadata: List[Tuple[str, s
         host_address = get_default_host_address()
     channel = grpc.insecure_channel(host_address)
     if metadata != None and len(metadata) > 0:
-        interceptors = [
-            UnaryUnaryClientInterceptorImpl(metadata), 
-            UnaryStreamClientInterceptorImpl(metadata), 
-            StreamUnaryClientInterceptorImpl(metadata), 
-            StreamStreamClientInterceptorImpl(metadata)]
+        interceptors = [DefaultClientInterceptorImpl(metadata)]
         channel = grpc.intercept_channel(channel, *interceptors)
     return channel
 
