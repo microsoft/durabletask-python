@@ -34,15 +34,18 @@ class DefaultClientInterceptorImpl (
                 self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
             call details."""
+        if self._metadata is None:
+            return client_call_details
+        
         if client_call_details.metadata is not None:
             metadata = list(client_call_details.metadata)
         else:
             metadata = []
-        if self._metadata is not None:
-            metadata.extend(self._metadata)
-            client_call_details = _ClientCallDetails(
-                client_call_details.method, client_call_details.timeout, metadata,
-                client_call_details.credentials, client_call_details.wait_for_ready, client_call_details.compression)
+        
+        metadata.extend(self._metadata)
+        client_call_details = _ClientCallDetails(
+            client_call_details.method, client_call_details.timeout, metadata,
+            client_call_details.credentials, client_call_details.wait_for_ready, client_call_details.compression)
 
         return client_call_details
 
