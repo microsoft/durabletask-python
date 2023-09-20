@@ -93,8 +93,8 @@ class TaskHubGrpcClient:
 
     def __init__(self, *,
                  host_address: Union[str, None] = None,
-                 metadata: List[Tuple[str, str]],
-                 log_handler=None,
+                 metadata: Union[List[Tuple[str, str]], None] = None,
+                 log_handler = None,
                  log_formatter: Union[logging.Formatter, None] = None):
         channel = shared.get_grpc_channel(host_address, metadata)
         self._stub = stubs.TaskHubSidecarServiceStub(channel)

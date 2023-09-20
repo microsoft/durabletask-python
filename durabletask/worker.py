@@ -85,8 +85,8 @@ class TaskHubGrpcWorker:
 
     def __init__(self, *,
                  host_address: Union[str, None] = None,
-                 metadata: List[Tuple[str, str]],
-                 log_handler=None,
+                 metadata: Union[List[Tuple[str, str]], None] = None,
+                 log_handler = None,
                  log_formatter: Union[logging.Formatter, None] = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
