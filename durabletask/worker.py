@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
-from typing import Any, Dict, Generator, List, Sequence, TypeVar, Union
+from typing import Any, Dict, Generator, List, Sequence, Tuple, TypeVar, Union
 
 import grpc
 from google.protobuf import empty_pb2
@@ -85,10 +85,12 @@ class TaskHubGrpcWorker:
 
     def __init__(self, *,
                  host_address: Union[str, None] = None,
-                 log_handler=None,
+                 metadata: Union[List[Tuple[str, str]], None] = None,
+                 log_handler = None,
                  log_formatter: Union[logging.Formatter, None] = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
+        self._metadata = metadata
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._response_stream = None
@@ -114,7 +116,7 @@ class TaskHubGrpcWorker:
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
-        channel = shared.get_grpc_channel(self._host_address)
+        channel = shared.get_grpc_channel(self._host_address, self._metadata)
         stub = stubs.TaskHubSidecarServiceStub(channel)
 
         if self._is_running:
