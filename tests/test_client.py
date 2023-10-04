@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
-from durabletask.internal.shared import (DefaultClientInterceptorImpl, get_default_host_address,
+from durabletask.internal.shared import (DefaultClientInterceptorImpl,
+                                         get_default_host_address,
                                          get_grpc_channel)
 
 HOST_ADDRESS = 'localhost:50051'
@@ -15,7 +16,7 @@ def test_get_grpc_channel_insecure():
 
 def test_get_grpc_channel_secure():
     with patch('grpc.secure_channel') as mock_channel, patch(
-        'grpc.ssl_channel_credentials') as mock_credentials:
+            'grpc.ssl_channel_credentials') as mock_credentials:
         get_grpc_channel(HOST_ADDRESS, METADATA, True)
         mock_channel.assert_called_once_with(HOST_ADDRESS, mock_credentials.return_value)
 
