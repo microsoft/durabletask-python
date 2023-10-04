@@ -14,8 +14,8 @@ def test_get_grpc_channel_insecure():
 
 
 def test_get_grpc_channel_secure():
-    with (patch('grpc.secure_channel') as mock_channel, patch(
-            'grpc.ssl_channel_credentials') as mock_credentials):
+    with patch('grpc.secure_channel') as mock_channel, patch(
+        'grpc.ssl_channel_credentials') as mock_credentials:
         get_grpc_channel(HOST_ADDRESS, METADATA, True)
         mock_channel.assert_called_once_with(HOST_ADDRESS, mock_credentials.return_value)
 
@@ -27,8 +27,8 @@ def test_get_grpc_channel_default_host_address():
 
 
 def test_get_grpc_channel_with_metadata():
-    with (patch('grpc.insecure_channel') as mock_channel, patch(
-            'grpc.intercept_channel') as mock_intercept_channel):
+    with patch('grpc.insecure_channel') as mock_channel, patch(
+            'grpc.intercept_channel') as mock_intercept_channel:
         get_grpc_channel(HOST_ADDRESS, METADATA, False)
         mock_channel.assert_called_once_with(HOST_ADDRESS)
         mock_intercept_channel.assert_called_once()
