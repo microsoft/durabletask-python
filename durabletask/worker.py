@@ -87,7 +87,8 @@ class TaskHubGrpcWorker:
                  host_address: Union[str, None] = None,
                  metadata: Union[List[Tuple[str, str]], None] = None,
                  log_handler = None,
-                 log_formatter: Union[logging.Formatter, None] = None):
+                 log_formatter: Union[logging.Formatter, None] = None,
+                 secure_channel: bool = False):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
         self._metadata = metadata
@@ -95,6 +96,7 @@ class TaskHubGrpcWorker:
         self._shutdown = Event()
         self._response_stream = None
         self._is_running = False
+        self._secure_channel = secure_channel
 
     def __enter__(self):
         return self
@@ -116,7 +118,7 @@ class TaskHubGrpcWorker:
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
-        channel = shared.get_grpc_channel(self._host_address, self._metadata)
+        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel)
         stub = stubs.TaskHubSidecarServiceStub(channel)
 
         if self._is_running:
