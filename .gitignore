@@ -128,4 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# IDEs
+.idea
+
 coverage.lcov
