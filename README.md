@@ -2,6 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Build Validation](https://github.com/microsoft/durabletask-python/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/microsoft/durabletask-python/actions/workflows/pr-validation.yml)
+[![PyPI version](https://badge.fury.io/py/durabletask.svg)](https://badge.fury.io/py/durabletask)
 
 This repo contains a Python client SDK for use with the [Durable Task Framework for Go](https://github.com/microsoft/durabletask-go) and [Dapr Workflow](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-overview/). With this SDK, you can define, schedule, and manage durable orchestrations using ordinary Python code.
 
@@ -84,7 +85,7 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
         return "Canceled"
 
     # The order was approved
-    ctx.call_activity(place_order, input=order)
+    yield ctx.call_activity(place_order, input=order)
     approval_details = approval_event.get_result()
     return f"Approved by '{approval_details.approver}'"
 ```
@@ -133,7 +134,7 @@ Orchestrations can specify retry policies for activities and sub-orchestrations.
 
 ### Prerequisites
 
-- Python 3.7 or higher (Python 3.8 or higher is recommended when running tests or making contributions)
+- Python 3.8
 - A Durable Task-compatible sidecar, like [Dapr Workflow](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-overview/)
 
 ### Installing the Durable Task Python client SDK

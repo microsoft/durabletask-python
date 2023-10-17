@@ -6,8 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
-from typing import (Any, Dict, Generator, List, Optional, Sequence, TypeVar,
-                    Union)
+from typing import Any, Dict, Generator, List, Sequence, Tuple, TypeVar, Union
 
 import grpc
 from google.protobuf import empty_pb2
@@ -48,7 +47,7 @@ class _Registry:
 
         self.orchestrators[name] = fn
 
-    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator]:
+    def get_orchestrator(self, name: str) -> Union[task.Orchestrator, None]:
         return self.orchestrators.get(name)
 
     def add_activity(self, fn: task.Activity) -> str:
@@ -67,7 +66,7 @@ class _Registry:
 
         self.activities[name] = fn
 
-    def get_activity(self, name: str) -> Optional[task.Activity]:
+    def get_activity(self, name: str) -> Union[task.Activity, None]:
         return self.activities.get(name)
 
 
@@ -82,17 +81,21 @@ class ActivityNotRegisteredError(ValueError):
 
 
 class TaskHubGrpcWorker:
-    _response_stream: Optional[grpc.Future] = None
+    _response_stream: Union[grpc.Future, None]
 
     def __init__(self, *,
-                 host_address: Optional[str] = None,
-                 log_handler=None,
-                 log_formatter: Optional[logging.Formatter] = None):
+                 host_address: Union[str, None] = None,
+                 metadata: Union[List[Tuple[str, str]], None] = None,
+                 log_handler = None,
+                 log_formatter: Union[logging.Formatter, None] = None,
+                 secure_channel: bool = False):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
+        self._metadata = metadata
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
+        self._secure_channel = secure_channel
 
     def __enter__(self):
         return self
@@ -114,7 +117,7 @@ class TaskHubGrpcWorker:
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
-        channel = shared.get_grpc_channel(self._host_address)
+        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel)
         stub = stubs.TaskHubSidecarServiceStub(channel)
 
         if self._is_running:
@@ -220,8 +223,8 @@ class TaskHubGrpcWorker:
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
-    _generator: Optional[Generator[task.Task, Any, Any]]
-    _previous_task: Optional[task.Task]
+    _generator: Union[Generator[task.Task, Any, Any], None]
+    _previous_task: Union[task.Task, None]
 
     def __init__(self, instance_id: str):
         self._generator = None
@@ -233,10 +236,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
-        self._completion_status: Optional[pb.OrchestrationStatus] = None
+        self._completion_status: Union[pb.OrchestrationStatus, None] = None
         self._received_events: Dict[str, List[Any]] = {}
         self._pending_events: Dict[str, List[task.CompletableTask]] = {}
-        self._new_input: Optional[Any] = None
+        self._new_input: Union[Any, None] = None
         self._save_events = False
 
     def run(self, generator: Generator[task.Task, Any, Any]):
@@ -281,7 +284,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_actions.clear()  # Cancel any pending actions
 
         self._result = result
-        result_json: Optional[str] = None
+        result_json: Union[str, None] = None
         if result is not None:
             result_json = result if is_result_encoded else shared.to_json(result)
         action = ph.new_complete_orchestration_action(
@@ -314,7 +317,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def get_actions(self) -> List[pb.OrchestratorAction]:
         if self._completion_status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             # When continuing-as-new, we only return a single completion action.
-            carryover_events: Optional[List[pb.HistoryEvent]] = None
+            carryover_events: Union[List[pb.HistoryEvent], None] = None
             if self._save_events:
                 carryover_events = []
                 # We need to save the current set of pending events so that they can be
@@ -357,7 +360,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return self.create_timer_internal(fire_at)
     
     def create_timer_internal(self, fire_at: Union[datetime, timedelta],
-                     retryable_task: Optional[task.RetryableTask] = None) -> task.Task:
+                     retryable_task: Union[task.RetryableTask, None] = None) -> task.Task:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
             fire_at = self.current_utc_datetime + fire_at
@@ -371,8 +374,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return timer_task
 
     def call_activity(self, activity: Union[task.Activity[TInput, TOutput], str], *,
-                      input: Optional[TInput] = None,
-                      retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
+                      input: Union[TInput, None] = None,
+                      retry_policy: Union[task.RetryPolicy, None] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
 
         self.call_activity_function_helper(id, activity, input=input, retry_policy=retry_policy,
@@ -380,22 +383,22 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return self._pending_tasks.get(id, task.CompletableTask())
 
     def call_sub_orchestrator(self, orchestrator: task.Orchestrator[TInput, TOutput], *,
-                              input: Optional[TInput] = None,
-                              instance_id: Optional[str] = None,
-                              retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
+                              input: Union[TInput, None] = None,
+                              instance_id: Union[str, None] = None,
+                              retry_policy: Union[task.RetryPolicy, None] = None) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
         self.call_activity_function_helper(id, orchestrator_name, input=input, retry_policy=retry_policy,
                                           is_sub_orch=True, instance_id=instance_id)
         return self._pending_tasks.get(id, task.CompletableTask())
     
-    def call_activity_function_helper(self, id: Optional[int],
+    def call_activity_function_helper(self, id: Union[int, None],
                                       activity_function: Union[task.Activity[TInput, TOutput], str], *,
-                                      input: Optional[TInput] = None,
-                                      retry_policy: Optional[task.RetryPolicy] = None,
+                                      input: Union[TInput, None] = None,
+                                      retry_policy: Union[task.RetryPolicy, None] = None,
                                       is_sub_orch: bool = False,
-                                      instance_id: Optional[str] = None,
-                                      fn_task: Optional[task.CompletableTask[TOutput]] = None):
+                                      instance_id: Union[str, None] = None,
+                                      fn_task: Union[task.CompletableTask[TOutput], None] = None):
         if id is None:
             id = self.next_sequence_number()
         
@@ -456,7 +459,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
 
 class _OrchestrationExecutor:
-    _generator: Optional[task.Orchestrator] = None
+    _generator: Union[task.Orchestrator, None]
 
     def __init__(self, registry: _Registry, logger: logging.Logger):
         self._registry = registry
@@ -703,7 +706,7 @@ class _OrchestrationExecutor:
                 if not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id} Event raised: {event_name}")
                 task_list = ctx._pending_events.get(event_name, None)
-                decoded_result: Optional[Any] = None
+                decoded_result: Union[Any, None] = None
                 if task_list:
                     event_task = task_list.pop(0)
                     if not ph.is_empty(event.eventRaised.input):
@@ -752,7 +755,7 @@ class _ActivityExecutor:
         self._registry = registry
         self._logger = logger
 
-    def execute(self, orchestration_id: str, name: str, task_id: int, encoded_input: Optional[str]) -> Optional[str]:
+    def execute(self, orchestration_id: str, name: str, task_id: int, encoded_input: Union[str, None]) -> Union[str, None]:
         """Executes an activity function and returns the serialized result, if any."""
         self._logger.debug(f"{orchestration_id}/{task_id}: Executing activity '{name}'...")
         fn = self._registry.get_activity(name)

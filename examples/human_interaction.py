@@ -51,7 +51,7 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
         return "Cancelled"
 
     # The order was approved
-    ctx.call_activity(place_order, input=order)
+    yield ctx.call_activity(place_order, input=order)
     approval_details = approval_event.get_result()
     return f"Approved by '{approval_details.approver}'"
 
