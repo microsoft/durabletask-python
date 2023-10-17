@@ -259,10 +259,9 @@ def test_activity_retry_policies():
     
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
-    print(actions)
     assert len(actions) == 1
     assert actions[0].HasField("createTimer")
     assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
@@ -285,7 +284,7 @@ def test_activity_retry_policies():
     expected_fire_at = current_timestamp + timedelta(seconds=2)
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 3
@@ -302,7 +301,6 @@ def test_activity_retry_policies():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 3
-    print(f'actions: {actions}')
     assert actions[1].HasField("scheduleTask")
     assert actions[1].id == 1
 
@@ -311,11 +309,10 @@ def test_activity_retry_policies():
     old_events = old_events + new_events
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 4
-    print(f'actions: {actions}')
     assert actions[3].HasField("createTimer")
     assert actions[3].createTimer.fireAt.ToDatetime() == expected_fire_at
     assert actions[3].id == 4
@@ -337,7 +334,7 @@ def test_activity_retry_policies():
     old_events = old_events + new_events
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 5
@@ -363,7 +360,7 @@ def test_activity_retry_policies():
     old_events = old_events + new_events
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 6
@@ -387,11 +384,10 @@ def test_activity_retry_policies():
     old_events = old_events + new_events
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 1
-    print(f'actions failed: {actions}')
     assert actions[0].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
     assert actions[0].id == 7
 
@@ -998,10 +994,9 @@ def test_when_any_with_retry():
 
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
-    print(actions)
     assert len(actions) == 1
     assert actions[0].HasField("createTimer")
     assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
@@ -1024,7 +1019,7 @@ def test_when_any_with_retry():
     expected_fire_at = current_timestamp + timedelta(seconds=2)
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 3
@@ -1079,10 +1074,9 @@ def test_when_all_with_retry():
 
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
-    print(actions)
     assert len(actions) == 1
     assert actions[0].HasField("createTimer")
     assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
@@ -1105,7 +1099,7 @@ def test_when_all_with_retry():
     expected_fire_at = current_timestamp + timedelta(seconds=5)
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     assert len(actions) == 3
@@ -1131,7 +1125,7 @@ def test_when_all_with_retry():
     old_events = old_events + new_events
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
-        helpers.new_task_failed_event(1, Exception("Kah-BOOOOM!!!"))]
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     actions = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     complete_action = get_and_validate_single_complete_orchestration_action(actions)
