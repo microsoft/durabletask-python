@@ -320,13 +320,7 @@ class CompletableTask(Task[T]):
 
 
 class RetryableTask(CompletableTask[T]):
-    """
-    A task that can be retried according to a retry policy.
-    _retry_count variable is initialized to 0 and incremented each time the task is retried.
-    _retry_count is used to determine if the task has exhausted its retries. It will be compared to the max_number_of_attempts
-    in the retry policy and if it is greater than or equal to max_number_of_attempts - 1, the task will not be retried.
-    _retry_count is always 1 less than the total number of overall attempts done.
-    """
+    """A task that can be retried according to a retry policy."""
 
     def __init__(self, retry_policy: RetryPolicy, action: pb.OrchestratorAction,
                  start_time:datetime, is_sub_orch: bool) -> None:
@@ -337,18 +331,13 @@ class RetryableTask(CompletableTask[T]):
         self._start_time = start_time
         self._is_sub_orch = is_sub_orch
 
-    def retry_exhausted(self) -> bool:
-        if self._attempt_count >= self._retry_policy.max_number_of_attempts:
-            return True
-        else:
-            return False
-
     def increment_attempt_count(self) -> None:
         self._attempt_count += 1
     
     def compute_next_delay(self) -> Union[timedelta, None]:
         if self._attempt_count >= self._retry_policy.max_number_of_attempts:
             return None
+
         retry_expiration: datetime = datetime.max
         if self._retry_policy.retry_timeout is not None and self._retry_policy.retry_timeout != datetime.max:
             retry_expiration = self._start_time + self._retry_policy.retry_timeout
@@ -375,16 +364,6 @@ class TimerTask(CompletableTask[T]):
 
     def set_retryable_parent(self, retryable_task: RetryableTask):
         self._retryable_parent = retryable_task
-
-    def complete(self, result: T):
-        if self._is_complete:
-            raise ValueError('The task has already completed.')
-        self._result = result
-        self._is_complete = True
-        if self._retryable_parent is not None:
-            self._retryable_parent.retry_exhausted()
-        elif self._parent is not None:
-            self._parent.on_child_completed(self)
 
 
 class WhenAnyTask(CompositeTask[Task]):
