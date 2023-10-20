@@ -329,7 +329,7 @@ def test_activity_retry_policies():
     assert actions[1].HasField("scheduleTask")
     assert actions[1].id == 1
 
-    # # Simulate the task failing for a fourth time and confirm that a timer is scheduled for 8 seconds in the future
+    # Simulate the task failing for a fourth time and confirm that a timer is scheduled for 8 seconds in the future
     expected_fire_at = current_timestamp + timedelta(seconds=8)
     old_events = old_events + new_events
     new_events = [
@@ -354,8 +354,8 @@ def test_activity_retry_policies():
     assert actions[1].HasField("scheduleTask")
     assert actions[1].id == 1
 
-    # # Simulate the task failing for a fifth time and confirm that a timer is scheduled for 10 seconds in the future.
-    # # This time, the timer will fire after 10 seconds, instead of 16, as max_retry_interval is set to 10 seconds.
+    # Simulate the task failing for a fifth time and confirm that a timer is scheduled for 10 seconds in the future.
+    # This time, the timer will fire after 10 seconds, instead of 16, as max_retry_interval is set to 10 seconds.
     expected_fire_at = current_timestamp + timedelta(seconds=10)
     old_events = old_events + new_events
     new_events = [
@@ -380,7 +380,7 @@ def test_activity_retry_policies():
     assert actions[1].HasField("scheduleTask")
     assert actions[1].id == 1
 
-    # # Simulate the task failing for a sixth time and confirm that orchestration is marked as failed finally.
+    # Simulate the task failing for a sixth time and confirm that orchestration is marked as failed finally.
     old_events = old_events + new_events
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
@@ -957,7 +957,7 @@ def test_when_any():
 
 
 def test_when_any_with_retry():
-    """Tests that a when_any pattern works correctly"""
+    """Tests that a when_any pattern works correctly with retries"""
     def dummy_activity(_, inp: str):
         if inp == "Tokyo":
             raise ValueError("Kah-BOOOOM!!!")
@@ -981,7 +981,7 @@ def test_when_any_with_retry():
 
     registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
-    activity_name = registry.add_activity(dummy_activity)
+    registry.add_activity(dummy_activity)
 
     current_timestamp = datetime.utcnow()
     # Simulate the task failing for the first time and confirm that a timer is scheduled for 1 second in the future
@@ -1037,7 +1037,7 @@ def test_when_any_with_retry():
     assert complete_action.result.value == encoded_output
 
 def test_when_all_with_retry():
-    """Tests that a when_any pattern works correctly"""
+    """Tests that a when_all pattern works correctly with retries"""
     def dummy_activity(ctx, inp: str):
         if inp == "Tokyo":
             raise ValueError("Kah-BOOOOM!!!")
@@ -1053,15 +1053,12 @@ def test_when_all_with_retry():
                                             retry_timeout=timedelta(seconds=50)),
                                input="Tokyo")
         t2 = ctx.call_activity(dummy_activity, input="Seattle")
-        winner = yield task.when_all([t1, t2])
-        if winner == t1:
-            return t1.get_result()
-        else:
-            return t2.get_result()
+        results = yield task.when_all([t1, t2])
+        return results
 
     registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
-    activity_name = registry.add_activity(dummy_activity)
+    registry.add_activity(dummy_activity)
 
     current_timestamp = datetime.utcnow()
     # Simulate the task failing for the first time and confirm that a timer is scheduled for 2 seconds in the future
@@ -1119,7 +1116,7 @@ def test_when_all_with_retry():
     assert actions[1].HasField("scheduleTask")
     assert actions[1].id == 1
 
-    ex = Exception("Kah-BOOOOM!!!")
+    ex = ValueError("Kah-BOOOOM!!!")
     
     # Simulate the task failing for the third time. Overall workflow should fail at this point.
     old_events = old_events + new_events
