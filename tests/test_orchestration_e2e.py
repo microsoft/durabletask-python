@@ -77,6 +77,51 @@ def test_activity_sequence():
     assert state.serialized_custom_status is None
 
 
+def test_activity_error_handling():
+
+    def throw(_: task.ActivityContext, input: int) -> int:
+        raise RuntimeError("Kah-BOOOOM!!!")
+
+    compensation_counter = 0
+
+    def increment_counter(ctx, _):
+        nonlocal compensation_counter
+        compensation_counter += 1
+
+    def orchestrator(ctx: task.OrchestrationContext, input: int):
+        error_msg = ""
+        try:
+            yield ctx.call_activity(throw, input=input)
+        except task.TaskFailedError as e:
+            error_msg = e.details.message
+
+            # compensating actions
+            yield ctx.call_activity(increment_counter)
+            yield ctx.call_activity(increment_counter)
+
+        return error_msg
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(throw)
+        w.add_activity(increment_counter)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient()
+        id = task_hub_client.schedule_new_orchestration(orchestrator, input=1)
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.name == task.get_name(orchestrator)
+    assert state.instance_id == id
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_output == json.dumps("Kah-BOOOOM!!!")
+    assert state.failure_details is None
+    assert state.serialized_custom_status is None
+    assert compensation_counter == 2
+
+
 def test_sub_orchestration_fan_out():
     threadLock = threading.Lock()
     activity_counter = 0
@@ -269,10 +314,14 @@ def test_continue_as_new():
         assert state.serialized_input == json.dumps(4)
         assert all_results == [1, 2, 3, 4, 5]
 
+
+# NOTE: This test fails when running against durabletask-go with sqlite because the sqlite backend does not yet
+#       support orchestration ID reuse. This gap is being tracked here:
+#       https://github.com/microsoft/durabletask-go/issues/42
 def test_retry_policies():
     # This test verifies that the retry policies are working as expected.
     # It does this by creating an orchestration that calls a sub-orchestrator,
-    # which in turn calls an activity that always fails. 
+    # which in turn calls an activity that always fails.
     # In this test, the retry policies are added, and the orchestration
     # should still fail. But, number of times the sub-orchestrator and activity
     # is called should increase as per the retry policies.
@@ -281,12 +330,12 @@ def test_retry_policies():
     throw_activity_counter = 0
 
     # Second setup: With retry policies
-    retry_policy=task.RetryPolicy(
-                first_retry_interval=timedelta(seconds=1),
-                max_number_of_attempts=3,
-                backoff_coefficient=1,
-                max_retry_interval=timedelta(seconds=10),
-                retry_timeout=timedelta(seconds=30))
+    retry_policy = task.RetryPolicy(
+        first_retry_interval=timedelta(seconds=1),
+        max_number_of_attempts=3,
+        backoff_coefficient=1,
+        max_retry_interval=timedelta(seconds=10),
+        retry_timeout=timedelta(seconds=30))
 
     def parent_orchestrator_with_retry(ctx: task.OrchestrationContext, _):
         yield ctx.call_sub_orchestrator(child_orchestrator_with_retry, retry_policy=retry_policy)
@@ -323,18 +372,19 @@ def test_retry_policies():
         assert throw_activity_counter == 9
         assert child_orch_counter == 3
 
+
 def test_retry_timeout():
     # This test verifies that the retry timeout is working as expected.
     # Max number of attempts is 5 and retry timeout is 14 seconds.
     # Total seconds consumed till 4th attempt is 1 + 2 + 4 + 8 = 15 seconds.
     # So, the 5th attempt should not be made and the orchestration should fail.
     throw_activity_counter = 0
-    retry_policy=task.RetryPolicy(
-                first_retry_interval=timedelta(seconds=1),
-                max_number_of_attempts=5,
-                backoff_coefficient=2,
-                max_retry_interval=timedelta(seconds=10),
-                retry_timeout=timedelta(seconds=14))
+    retry_policy = task.RetryPolicy(
+        first_retry_interval=timedelta(seconds=1),
+        max_number_of_attempts=5,
+        backoff_coefficient=2,
+        max_retry_interval=timedelta(seconds=10),
+        retry_timeout=timedelta(seconds=14))
 
     def mock_orchestrator(ctx: task.OrchestrationContext, _):
         yield ctx.call_activity(throw_activity, retry_policy=retry_policy)
