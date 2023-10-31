@@ -85,10 +85,10 @@ class TaskHubGrpcWorker:
     _response_stream: Optional[grpc.Future] = None
 
     def __init__(self, *,
-                 host_address: Union[str, None] = None,
-                 metadata: Union[List[Tuple[str, str]], None] = None,
-                 log_handler = None,
-                 log_formatter: Union[logging.Formatter, None] = None,
+                 host_address: Optional[str] = None,
+                 metadata: Optional[List[Tuple[str, str]]] = None,
+                 log_handler=None,
+                 log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
@@ -259,22 +259,20 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # has reached a completed state. The only time this won't be the
         # case is if the user yielded on a WhenAll task and there are still
         # outstanding child tasks that need to be completed.
-        if self._previous_task is not None:
+        while self._previous_task is not None and self._previous_task.is_complete:
+            next_task = None
             if self._previous_task.is_failed:
-                # Raise the failure as an exception to the generator. The orchestrator can then either
-                # handle the exception or allow it to fail the orchestration.
-                self._generator.throw(self._previous_task.get_exception())
-            elif self._previous_task.is_complete:
-                while True:
-                    # Resume the generator. This will either return a Task or raise StopIteration if it's done.
-                    # CONSIDER: Should we check for possible infinite loops here?
-                    next_task = self._generator.send(self._previous_task.get_result())
-                    if not isinstance(next_task, task.Task):
-                        raise TypeError("The orchestrator generator yielded a non-Task object")
-                    self._previous_task = next_task
-                    # If a completed task was returned, then we can keep running the generator function.
-                    if not self._previous_task.is_complete:
-                        break
+                # Raise the failure as an exception to the generator.
+                # The orchestrator can then either handle the exception or allow it to fail the orchestration.
+                next_task = self._generator.throw(self._previous_task.get_exception())
+            else:
+                # Resume the generator with the previous result.
+                # This will either return a Task or raise StopIteration if it's done.
+                next_task = self._generator.send(self._previous_task.get_result())
+
+            if not isinstance(next_task, task.Task):
+                raise TypeError("The orchestrator generator yielded a non-Task object")
+            self._previous_task = next_task
 
     def set_complete(self, result: Any, status: pb.OrchestrationStatus, is_result_encoded: bool = False):
         if self._is_complete:
@@ -359,9 +357,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
         return self.create_timer_internal(fire_at)
-    
+
     def create_timer_internal(self, fire_at: Union[datetime, timedelta],
-                     retryable_task: Optional[task.RetryableTask] = None) -> task.Task:
+                              retryable_task: Optional[task.RetryableTask] = None) -> task.Task:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
             fire_at = self.current_utc_datetime + fire_at
@@ -390,9 +388,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
         self.call_activity_function_helper(id, orchestrator_name, input=input, retry_policy=retry_policy,
-                                          is_sub_orch=True, instance_id=instance_id)
+                                           is_sub_orch=True, instance_id=instance_id)
         return self._pending_tasks.get(id, task.CompletableTask())
-    
+
     def call_activity_function_helper(self, id: Optional[int],
                                       activity_function: Union[task.Activity[TInput, TOutput], str], *,
                                       input: Optional[TInput] = None,
@@ -402,14 +400,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                                       fn_task: Optional[task.CompletableTask[TOutput]] = None):
         if id is None:
             id = self.next_sequence_number()
-        
+
         if fn_task is None:
             encoded_input = shared.to_json(input) if input is not None else None
         else:
             # Here, we don't need to convert the input to JSON because it is already converted.
             # We just need to take string representation of it.
             encoded_input = str(input)
-        if is_sub_orch == False:
+        if not is_sub_orch:
             name = activity_function if isinstance(activity_function, str) else task.get_name(activity_function)
             action = ph.new_schedule_task_action(id, name, encoded_input)
         else:
@@ -495,7 +493,7 @@ class _OrchestrationExecutor:
         if not ctx._is_complete:
             task_count = len(ctx._pending_tasks)
             event_count = len(ctx._pending_events)
-            self._logger.info(f"{instance_id}: Waiting for {task_count} task(s) and {event_count} event(s).")
+            self._logger.info(f"{instance_id}: Orchestrator yielded with {task_count} task(s) and {event_count} event(s) outstanding.")
         elif ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             completion_status_str = pbh.get_orchestration_status_str(ctx._completion_status)
             self._logger.info(f"{instance_id}: Orchestration completed with status: {completion_status_str}")
@@ -556,8 +554,8 @@ class _OrchestrationExecutor:
                 timer_task.complete(None)
                 if timer_task._retryable_parent is not None:
                     activity_action = timer_task._retryable_parent._action
-                    
-                    if timer_task._retryable_parent._is_sub_orch == False:
+
+                    if not timer_task._retryable_parent._is_sub_orch:
                         cur_task = activity_action.scheduleTask
                         instance_id = None
                     else:
@@ -612,11 +610,11 @@ class _OrchestrationExecutor:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected taskFailed event with ID = {task_id}.")
                     return
-                
+
                 if isinstance(activity_task, task.RetryableTask):
                     if activity_task._retry_policy is not None:
                         next_delay = activity_task.compute_next_delay()
-                        if next_delay == None:
+                        if next_delay is None:
                             activity_task.fail(
                                 f"{ctx.instance_id}: Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
                                 event.taskFailed.failureDetails)
@@ -674,7 +672,7 @@ class _OrchestrationExecutor:
                 if isinstance(sub_orch_task, task.RetryableTask):
                     if sub_orch_task._retry_policy is not None:
                         next_delay = sub_orch_task.compute_next_delay()
-                        if next_delay == None:
+                        if next_delay is None:
                             sub_orch_task.fail(
                                 f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",
                                 failedEvent.failureDetails)

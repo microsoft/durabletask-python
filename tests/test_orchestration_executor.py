@@ -256,7 +256,7 @@ def test_activity_retry_policies():
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
         helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
     expected_fire_at = current_timestamp + timedelta(seconds=1)
-    
+
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
@@ -390,6 +390,7 @@ def test_activity_retry_policies():
     assert len(actions) == 1
     assert actions[0].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
     assert actions[0].id == 7
+
 
 def test_nondeterminism_expected_timer():
     """Tests the non-determinism detection logic when call_timer is expected but some other method (call_activity) is called instead"""
@@ -964,13 +965,13 @@ def test_when_any_with_retry():
         return f"Hello {inp}!"
 
     def orchestrator(ctx: task.OrchestrationContext, _):
-        t1 = ctx.call_activity(dummy_activity, 
+        t1 = ctx.call_activity(dummy_activity,
                                retry_policy=task.RetryPolicy(
-                                            first_retry_interval=timedelta(seconds=1),
-                                            max_number_of_attempts=6,
-                                            backoff_coefficient=2,
-                                            max_retry_interval=timedelta(seconds=10),
-                                            retry_timeout=timedelta(seconds=50)),
+                                   first_retry_interval=timedelta(seconds=1),
+                                   max_number_of_attempts=6,
+                                   backoff_coefficient=2,
+                                   max_retry_interval=timedelta(seconds=10),
+                                   retry_timeout=timedelta(seconds=50)),
                                input="Tokyo")
         t2 = ctx.call_activity(dummy_activity, input="Seattle")
         winner = yield task.when_any([t1, t2])
@@ -1036,6 +1037,7 @@ def test_when_any_with_retry():
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == encoded_output
 
+
 def test_when_all_with_retry():
     """Tests that a when_all pattern works correctly with retries"""
     def dummy_activity(ctx, inp: str):
@@ -1044,13 +1046,13 @@ def test_when_all_with_retry():
         return f"Hello {inp}!"
 
     def orchestrator(ctx: task.OrchestrationContext, _):
-        t1 = ctx.call_activity(dummy_activity, 
+        t1 = ctx.call_activity(dummy_activity,
                                retry_policy=task.RetryPolicy(
-                                            first_retry_interval=timedelta(seconds=2),
-                                            max_number_of_attempts=3,
-                                            backoff_coefficient=4,
-                                            max_retry_interval=timedelta(seconds=5),
-                                            retry_timeout=timedelta(seconds=50)),
+                                   first_retry_interval=timedelta(seconds=2),
+                                   max_number_of_attempts=3,
+                                   backoff_coefficient=4,
+                                   max_retry_interval=timedelta(seconds=5),
+                                   retry_timeout=timedelta(seconds=50)),
                                input="Tokyo")
         t2 = ctx.call_activity(dummy_activity, input="Seattle")
         results = yield task.when_all([t1, t2])
@@ -1117,7 +1119,7 @@ def test_when_all_with_retry():
     assert actions[1].id == 1
 
     ex = ValueError("Kah-BOOOOM!!!")
-    
+
     # Simulate the task failing for the third time. Overall workflow should fail at this point.
     old_events = old_events + new_events
     new_events = [
@@ -1129,6 +1131,7 @@ def test_when_all_with_retry():
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
+
 
 def get_and_validate_single_complete_orchestration_action(actions: List[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
     assert len(actions) == 1
