@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Retry policies for activities and sub-orchestrations ([#11](https://github.com/microsoft/durabletask-python/pull/11)) - contributed by [@DeepanshuA](https://github.com/DeepanshuA)
 
+### Fixed
+
+- Fix try/except in orchestrator functions not being handled correctly ([#21](https://github.com/microsoft/durabletask-python/pull/21)) - by [@cgillum](https://github.com/cgillum)
+- Updated `durabletask-protobuf` submodule reference to latest distributed tracing commit - by [@cgillum](https://github.com/cgillum)
+
 ## v0.1.0a5
 
 ### New
