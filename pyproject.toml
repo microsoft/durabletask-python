@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "durabletask"
-version = "0.1.0"
+version = "0.1.0-alpha.6"
 description = "A Durable Task Client SDK for Python"
 keywords = [
     "durable",
