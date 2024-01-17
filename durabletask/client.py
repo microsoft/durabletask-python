@@ -177,10 +177,12 @@ class TaskHubGrpcClient:
         self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self, instance_id: str, *,
-                                output: Union[Any, None] = None):
+                                output: Union[Any, None] = None,
+                                recursive: bool = True):
         req = pb.TerminateRequest(
             instanceId=instance_id,
-            output=wrappers_pb2.StringValue(value=shared.to_json(output)) if output else None)
+            output=wrappers_pb2.StringValue(value=shared.to_json(output)) if output else None,
+            recursive=recursive)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
         self._stub.TerminateInstance(req)

@@ -278,6 +278,38 @@ def test_terminate():
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
         assert state.serialized_output == json.dumps("some reason for termination")
 
+def test_terminate_recursive():
+    def root(ctx: task.OrchestrationContext, _):
+        result = yield ctx.call_sub_orchestrator(child)
+        return result
+    def child(ctx: task.OrchestrationContext, _):
+        result = yield ctx.wait_for_external_event("my_event")
+        return result
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(root)
+        w.add_orchestrator(child)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient()
+        id = task_hub_client.schedule_new_orchestration(root)
+        state = task_hub_client.wait_for_orchestration_start(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.RUNNING
+
+        # Terminate root orchestration(recursive set to True by default)
+        task_hub_client.terminate_orchestration(id, output="some reason for termination")
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.TERMINATED
+
+        # Verify that child orchestration is also terminated
+        c = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.TERMINATED
+
+
 
 def test_continue_as_new():
     all_results = []
