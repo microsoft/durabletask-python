@@ -10,7 +10,7 @@ from typing import (Any, Dict, Generator, List, Optional, Sequence, Tuple,
                     TypeVar, Union)
 
 import grpc
-from google.protobuf import empty_pb2
+from google.protobuf import empty_pb2, wrappers_pb2
 
 import durabletask.internal.helpers as ph
 import durabletask.internal.helpers as pbh
@@ -188,8 +188,8 @@ class TaskHubGrpcWorker:
     def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: stubs.TaskHubSidecarServiceStub):
         try:
             executor = _OrchestrationExecutor(self._registry, self._logger)
-            actions = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
-            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions)
+            actions, custom_status = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
+            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions, customStatus=wrappers_pb2.StringValue(value=custom_status))
         except Exception as ex:
             self._logger.exception(f"An error occurred while trying to execute instance '{req.instanceId}': {ex}")
             failure_details = pbh.new_failure_details(ex)
@@ -242,6 +242,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_events: Dict[str, List[task.CompletableTask]] = {}
         self._new_input: Optional[Any] = None
         self._save_events = False
+        self._custom_status: str = ""
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -355,6 +356,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def current_utc_datetime(self, value: datetime):
         self._current_utc_datetime = value
 
+    @property
+    def custom_status(self) -> str:
+        return self._custom_status
+
+    @custom_status.setter
+    def custom_status(self, custom_status: str) -> None:
+        self._custom_status = custom_status
+
     def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
         return self.create_timer_internal(fire_at)
 
@@ -466,7 +475,7 @@ class _OrchestrationExecutor:
         self._is_suspended = False
         self._suspended_events: List[pb.HistoryEvent] = []
 
-    def execute(self, instance_id: str, old_events: Sequence[pb.HistoryEvent], new_events: Sequence[pb.HistoryEvent]) -> List[pb.OrchestratorAction]:
+    def execute(self, instance_id: str, old_events: Sequence[pb.HistoryEvent], new_events: Sequence[pb.HistoryEvent]) -> Tuple[List[pb.OrchestratorAction],str]:
         if not new_events:
             raise task.OrchestrationStateError("The new history event list must have at least one event in it.")
 
@@ -501,7 +510,7 @@ class _OrchestrationExecutor:
         actions = ctx.get_actions()
         if self._logger.level <= logging.DEBUG:
             self._logger.debug(f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}")
-        return actions
+        return actions, ctx.custom_status
 
     def process_event(self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent) -> None:
         if self._is_suspended and _is_suspendable(event):

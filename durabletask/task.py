@@ -71,6 +71,20 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @property
+    @abstractmethod
+    def custom_status(self) -> str:
+        """Get the custom status.
+        """
+        pass
+
+    @custom_status.setter
+    @abstractmethod
+    def custom_status(self, custom_status: str) -> None:
+        """Set the custom status.
+        """
+        pass
+
     @abstractmethod
     def create_timer(self, fire_at: Union[datetime, timedelta]) -> Task:
         """Create a Timer Task to fire after at the specified deadline.
