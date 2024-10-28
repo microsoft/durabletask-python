@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.2.0 (Unreleased)
+
+### New
+
+- Support for orchestration custom status ([#31](https://github.com/microsoft/durabletask-python/pull/31)) - contributed by [@famarting](https://github.com/famarting)
+
+### Updates
+
+- Updated `durabletask-protobuf` submodule reference to latest
+
 ## v0.1.1a1
 
 ### New

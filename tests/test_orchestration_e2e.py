@@ -441,3 +441,26 @@ def test_retry_timeout():
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
         assert throw_activity_counter == 4
+
+def test_custom_status():
+
+    def empty_orchestrator(ctx: task.OrchestrationContext, _):
+        ctx.set_custom_status("foobaz")
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(empty_orchestrator)
+        w.start()
+
+        c = client.TaskHubGrpcClient()
+        id = c.schedule_new_orchestration(empty_orchestrator)
+        state = c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.name == task.get_name(empty_orchestrator)
+    assert state.instance_id == id
+    assert state.failure_details is None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_input is None
+    assert state.serialized_output is None
+    assert state.serialized_custom_status is "\"foobaz\""
