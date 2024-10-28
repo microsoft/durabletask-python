@@ -4,7 +4,9 @@ import grpc
 import warnings
 
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-import orchestrator_service_pb2 as orchestrator__service__pb2
+
+# TODO: This is a manual edit. Need to figure out how to not manually edit this file.
+import durabletask.internal.orchestrator_service_pb2 as orchestrator__service__pb2
 
 GRPC_GENERATED_VERSION = '1.67.0'
 GRPC_VERSION = grpc.__version__
