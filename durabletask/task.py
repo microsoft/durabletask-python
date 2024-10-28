@@ -71,16 +71,8 @@ class OrchestrationContext(ABC):
         """
         pass
 
-    @property
     @abstractmethod
-    def custom_status(self) -> str:
-        """Get the custom status.
-        """
-        pass
-
-    @custom_status.setter
-    @abstractmethod
-    def custom_status(self, custom_status: str) -> None:
+    def set_custom_status(self, custom_status: str) -> None:
         """Set the custom status.
         """
         pass

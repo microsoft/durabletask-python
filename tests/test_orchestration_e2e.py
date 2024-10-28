@@ -445,7 +445,7 @@ def test_retry_timeout():
 def test_custom_status():
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        ctx.custom_status = "foobaz"
+        ctx.set_custom_status("foobaz")
 
     # Start a worker, which will connect to the sidecar in a background thread
     with worker.TaskHubGrpcWorker() as w:
@@ -463,4 +463,4 @@ def test_custom_status():
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert state.serialized_input is None
     assert state.serialized_output is None
-    assert state.serialized_custom_status is "foobaz"
+    assert state.serialized_custom_status is "\"foobaz\""

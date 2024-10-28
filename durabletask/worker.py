@@ -356,12 +356,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def current_utc_datetime(self, value: datetime):
         self._current_utc_datetime = value
 
-    @property
-    def custom_status(self) -> str:
-        return self._custom_status
-
-    @custom_status.setter
-    def custom_status(self, custom_status: str) -> None:
+    def set_custom_status(self, custom_status: str) -> None:
         self._custom_status = custom_status
 
     def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
@@ -510,7 +505,7 @@ class _OrchestrationExecutor:
         actions = ctx.get_actions()
         if self._logger.level <= logging.DEBUG:
             self._logger.debug(f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}")
-        return actions, ctx.custom_status
+        return actions, ctx._custom_status
 
     def process_event(self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent) -> None:
         if self._is_suspended and _is_suspendable(event):
