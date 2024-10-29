@@ -309,6 +309,9 @@ def test_terminate_recursive():
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
 
+        task_hub_client.purge_orchestration(id)
+        state = task_hub_client.get_orchestration_state(id)
+        assert state is None
 
 
 def test_continue_as_new():
