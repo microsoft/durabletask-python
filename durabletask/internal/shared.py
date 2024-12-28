@@ -5,7 +5,7 @@ import dataclasses
 import json
 import logging
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Optional
 
 import grpc
 
@@ -20,7 +20,10 @@ def get_default_host_address() -> str:
     return "localhost:4001"
 
 
-def get_grpc_channel(host_address: Union[str, None], metadata: Union[List[Tuple[str, str]], None], secure_channel: bool = False) -> grpc.Channel:
+def get_grpc_channel(
+        host_address: Optional[str],
+        metadata: Optional[list[tuple[str, str]]],
+        secure_channel: bool = False) -> grpc.Channel:
     if host_address is None:
         host_address = get_default_host_address()
 
@@ -36,8 +39,8 @@ def get_grpc_channel(host_address: Union[str, None], metadata: Union[List[Tuple[
 
 def get_logger(
         name_suffix: str,
-        log_handler: Union[logging.Handler, None] = None,
-        log_formatter: Union[logging.Formatter, None] = None) -> logging.Logger:
+        log_handler: Optional[logging.Handler] = None,
+        log_formatter: Optional[logging.Formatter] = None) -> logging.Logger:
     logger = logging.Logger(f"durabletask-{name_suffix}")
 
     # Add a default log handler if none is provided
@@ -78,7 +81,7 @@ class InternalJSONEncoder(json.JSONEncoder):
         if dataclasses.is_dataclass(obj):
             # Dataclasses are not serializable by default, so we convert them to a dict and mark them for
             # automatic deserialization by the receiver
-            d = dataclasses.asdict(obj)
+            d = dataclasses.asdict(obj)  # type: ignore 
             d[AUTO_SERIALIZED] = True
             return d
         elif isinstance(obj, SimpleNamespace):
@@ -94,7 +97,7 @@ class InternalJSONDecoder(json.JSONDecoder):
     def __init__(self, *args, **kwargs):
         super().__init__(object_hook=self.dict_to_object, *args, **kwargs)
 
-    def dict_to_object(self, d: Dict[str, Any]):
+    def dict_to_object(self, d: dict[str, Any]):
         # If the object was serialized by the InternalJSONEncoder, deserialize it as a SimpleNamespace
         if d.pop(AUTO_SERIALIZED, False):
             return SimpleNamespace(**d)
