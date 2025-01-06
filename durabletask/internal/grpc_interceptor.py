@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 from collections import namedtuple
-from typing import List, Tuple
 
 import grpc
 
@@ -26,7 +25,7 @@ class DefaultClientInterceptorImpl (
     StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an 
     interceptor to add additional headers to all calls as needed."""
 
-    def __init__(self, metadata: List[Tuple[str, str]]):
+    def __init__(self, metadata: list[tuple[str, str]]):
         super().__init__()
         self._metadata = metadata
 

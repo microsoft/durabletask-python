@@ -466,4 +466,4 @@ def test_custom_status():
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert state.serialized_input is None
     assert state.serialized_output is None
-    assert state.serialized_custom_status is "\"foobaz\""
+    assert state.serialized_custom_status == "\"foobaz\""

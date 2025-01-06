@@ -6,8 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
-from typing import (Any, Dict, Generator, List, Optional, Sequence, Tuple,
-                    TypeVar, Union)
+from typing import Any, Generator, Optional, Sequence, TypeVar, Union
 
 import grpc
 from google.protobuf import empty_pb2, wrappers_pb2
@@ -25,8 +24,8 @@ TOutput = TypeVar('TOutput')
 
 class _Registry:
 
-    orchestrators: Dict[str, task.Orchestrator]
-    activities: Dict[str, task.Activity]
+    orchestrators: dict[str, task.Orchestrator]
+    activities: dict[str, task.Activity]
 
     def __init__(self):
         self.orchestrators = {}
@@ -86,7 +85,7 @@ class TaskHubGrpcWorker:
 
     def __init__(self, *,
                  host_address: Optional[str] = None,
-                 metadata: Optional[List[Tuple[str, str]]] = None,
+                 metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler=None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False):
@@ -140,7 +139,7 @@ class TaskHubGrpcWorker:
 
                         # The stream blocks until either a work item is received or the stream is canceled
                         # by another thread (see the stop() method).
-                        for work_item in self._response_stream:
+                        for work_item in self._response_stream:  # type: ignore
                             request_type = work_item.WhichOneof('request')
                             self._logger.debug(f'Received "{request_type}" work item')
                             if work_item.HasField('orchestratorRequest'):
@@ -189,7 +188,10 @@ class TaskHubGrpcWorker:
         try:
             executor = _OrchestrationExecutor(self._registry, self._logger)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
-            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=result.actions, customStatus=wrappers_pb2.StringValue(value=result.custom_status))
+            res = pb.OrchestratorResponse(
+                instanceId=req.instanceId,
+                actions=result.actions,
+                customStatus=pbh.get_string_value(result.encoded_custom_status))
         except Exception as ex:
             self._logger.exception(f"An error occurred while trying to execute instance '{req.instanceId}': {ex}")
             failure_details = pbh.new_failure_details(ex)
@@ -232,17 +234,17 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._is_replaying = True
         self._is_complete = False
         self._result = None
-        self._pending_actions: Dict[int, pb.OrchestratorAction] = {}
-        self._pending_tasks: Dict[int, task.CompletableTask] = {}
+        self._pending_actions: dict[int, pb.OrchestratorAction] = {}
+        self._pending_tasks: dict[int, task.CompletableTask] = {}
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._completion_status: Optional[pb.OrchestrationStatus] = None
-        self._received_events: Dict[str, List[Any]] = {}
-        self._pending_events: Dict[str, List[task.CompletableTask]] = {}
+        self._received_events: dict[str, list[Any]] = {}
+        self._pending_events: dict[str, list[task.CompletableTask]] = {}
         self._new_input: Optional[Any] = None
         self._save_events = False
-        self._custom_status: str = ""
+        self._encoded_custom_status: Optional[str] = None
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -314,10 +316,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._new_input = new_input
         self._save_events = save_events
 
-    def get_actions(self) -> List[pb.OrchestratorAction]:
+    def get_actions(self) -> list[pb.OrchestratorAction]:
         if self._completion_status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             # When continuing-as-new, we only return a single completion action.
-            carryover_events: Optional[List[pb.HistoryEvent]] = None
+            carryover_events: Optional[list[pb.HistoryEvent]] = None
             if self._save_events:
                 carryover_events = []
                 # We need to save the current set of pending events so that they can be
@@ -356,8 +358,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def current_utc_datetime(self, value: datetime):
         self._current_utc_datetime = value
 
-    def set_custom_status(self, custom_status: str) -> None:
-        self._custom_status = custom_status
+    def set_custom_status(self, custom_status: Any) -> None:
+        self._encoded_custom_status = shared.to_json(custom_status) if custom_status is not None else None
 
     def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
         return self.create_timer_internal(fire_at)
@@ -462,12 +464,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
 
 class ExecutionResults:
-    actions: List[pb.OrchestratorAction]
-    custom_status: str
+    actions: list[pb.OrchestratorAction]
+    encoded_custom_status: Optional[str]
 
-    def __init__(self, actions: List[pb.OrchestratorAction], custom_status: str):
+    def __init__(self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]):
         self.actions = actions
-        self.custom_status = custom_status
+        self.encoded_custom_status = encoded_custom_status
 
 class _OrchestrationExecutor:
     _generator: Optional[task.Orchestrator] = None
@@ -476,7 +478,7 @@ class _OrchestrationExecutor:
         self._registry = registry
         self._logger = logger
         self._is_suspended = False
-        self._suspended_events: List[pb.HistoryEvent] = []
+        self._suspended_events: list[pb.HistoryEvent] = []
 
     def execute(self, instance_id: str, old_events: Sequence[pb.HistoryEvent], new_events: Sequence[pb.HistoryEvent]) -> ExecutionResults:
         if not new_events:
@@ -513,7 +515,7 @@ class _OrchestrationExecutor:
         actions = ctx.get_actions()
         if self._logger.level <= logging.DEBUG:
             self._logger.debug(f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}")
-        return ExecutionResults(actions=actions, custom_status=ctx._custom_status)
+        return ExecutionResults(actions=actions, encoded_custom_status=ctx._encoded_custom_status)
 
     def process_event(self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent) -> None:
         if self._is_suspended and _is_suspendable(event):
@@ -829,7 +831,7 @@ def _get_new_event_summary(new_events: Sequence[pb.HistoryEvent]) -> str:
     elif len(new_events) == 1:
         return f"[{new_events[0].WhichOneof('eventType')}]"
     else:
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for event in new_events:
             event_type = event.WhichOneof('eventType')
             counts[event_type] = counts.get(event_type, 0) + 1
@@ -843,7 +845,7 @@ def _get_action_summary(new_actions: Sequence[pb.OrchestratorAction]) -> str:
     elif len(new_actions) == 1:
         return f"[{new_actions[0].WhichOneof('orchestratorActionType')}]"
     else:
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for action in new_actions:
             action_type = action.WhichOneof('orchestratorActionType')
             counts[action_type] = counts.get(action_type, 0) + 1

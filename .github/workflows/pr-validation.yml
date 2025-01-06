@@ -16,12 +16,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
@@ -35,3 +35,16 @@ jobs:
     - name: Pytest unit tests
       run: |
         pytest -m "not e2e" --verbose
+
+    # Sidecar for running e2e tests requires Go SDK
+    - name: Install Go SDK
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    # Install and run the durabletask-go sidecar for running e2e tests
+    - name: Pytest e2e tests
+      run: |
+        go install github.com/microsoft/durabletask-go@main
+        durabletask-go --port 4001 &
+        pytest -m "e2e" --verbose

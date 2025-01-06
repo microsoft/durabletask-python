@@ -1,5 +1,6 @@
 autopep8
 grpcio
 grpcio-tools
+protobuf
 pytest
 pytest-cov

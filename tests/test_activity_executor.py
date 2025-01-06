@@ -3,7 +3,7 @@
 
 import json
 import logging
-from typing import Any, Tuple, Union
+from typing import Any, Optional, Tuple
 
 from durabletask import task, worker
 
@@ -40,7 +40,7 @@ def test_activity_not_registered():
 
     executor, _ = _get_activity_executor(test_activity)
 
-    caught_exception: Union[Exception, None] = None
+    caught_exception: Optional[Exception] = None
     try:
         executor.execute(TEST_INSTANCE_ID, "Bogus", TEST_TASK_ID, None)
     except Exception as ex:

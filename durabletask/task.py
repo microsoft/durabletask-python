@@ -7,8 +7,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import (Any, Callable, Generator, Generic, List, Optional, TypeVar,
-                    Union)
+from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
 
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -72,8 +71,13 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def set_custom_status(self, custom_status: str) -> None:
-        """Set the custom status.
+    def set_custom_status(self, custom_status: Any) -> None:
+        """Set the orchestration instance's custom status.
+
+        Parameters
+        ----------
+        custom_status: Any
+            A JSON-serializable custom status value to set.
         """
         pass
 
@@ -254,9 +258,9 @@ class Task(ABC, Generic[T]):
 
 class CompositeTask(Task[T]):
     """A task that is composed of other tasks."""
-    _tasks: List[Task]
+    _tasks: list[Task]
 
-    def __init__(self, tasks: List[Task]):
+    def __init__(self, tasks: list[Task]):
         super().__init__()
         self._tasks = tasks
         self._completed_tasks = 0
@@ -266,17 +270,17 @@ class CompositeTask(Task[T]):
             if task.is_complete:
                 self.on_child_completed(task)
 
-    def get_tasks(self) -> List[Task]:
+    def get_tasks(self) -> list[Task]:
         return self._tasks
 
     @abstractmethod
     def on_child_completed(self, task: Task[T]):
         pass
 
-class WhenAllTask(CompositeTask[List[T]]):
+class WhenAllTask(CompositeTask[list[T]]):
     """A task that completes when all of its child tasks complete."""
 
-    def __init__(self, tasks: List[Task[T]]):
+    def __init__(self, tasks: list[Task[T]]):
         super().__init__(tasks)
         self._completed_tasks = 0
         self._failed_tasks = 0
@@ -340,7 +344,7 @@ class RetryableTask(CompletableTask[T]):
     def increment_attempt_count(self) -> None:
         self._attempt_count += 1
     
-    def compute_next_delay(self) -> Union[timedelta, None]:
+    def compute_next_delay(self) -> Optional[timedelta]:
         if self._attempt_count >= self._retry_policy.max_number_of_attempts:
             return None
 
@@ -375,7 +379,7 @@ class TimerTask(CompletableTask[T]):
 class WhenAnyTask(CompositeTask[Task]):
     """A task that completes when any of its child tasks complete."""
 
-    def __init__(self, tasks: List[Task]):
+    def __init__(self, tasks: list[Task]):
         super().__init__(tasks)
 
     def on_child_completed(self, task: Task):
@@ -385,12 +389,12 @@ class WhenAnyTask(CompositeTask[Task]):
             self._result = task
 
 
-def when_all(tasks: List[Task[T]]) -> WhenAllTask[T]:
+def when_all(tasks: list[Task[T]]) -> WhenAllTask[T]:
     """Returns a task that completes when all of the provided tasks complete or when one of the tasks fail."""
     return WhenAllTask(tasks)
 
 
-def when_any(tasks: List[Task]) -> WhenAnyTask:
+def when_any(tasks: list[Task]) -> WhenAnyTask:
     """Returns a task that completes when any of the provided tasks complete or fail."""
     return WhenAnyTask(tasks)
 

@@ -3,12 +3,11 @@ that a dynamic number activity functions in parallel, waits for them all
 to complete, and prints an aggregate summary of the outputs."""
 import random
 import time
-from typing import List
 
 from durabletask import client, task, worker
 
 
-def get_work_items(ctx: task.ActivityContext, _) -> List[str]:
+def get_work_items(ctx: task.ActivityContext, _) -> list[str]:
     """Activity function that returns a list of work items"""
     # return a random number of work items
     count = random.randint(2, 10)
@@ -32,11 +31,11 @@ def orchestrator(ctx: task.OrchestrationContext, _):
     activity functions in parallel, waits for them all to complete, and prints
     an aggregate summary of the outputs"""
 
-    work_items: List[str] = yield ctx.call_activity(get_work_items)
+    work_items: list[str] = yield ctx.call_activity(get_work_items)
 
     # execute the work-items in parallel and wait for them all to return
     tasks = [ctx.call_activity(process_work_item, input=item) for item in work_items]
-    results: List[int] = yield task.when_all(tasks)
+    results: list[int] = yield task.when_all(tasks)
 
     # return an aggregate summary of the results
     return {

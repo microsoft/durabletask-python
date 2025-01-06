@@ -4,7 +4,6 @@
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List
 
 import pytest
 
@@ -1184,7 +1183,7 @@ def test_when_all_with_retry():
     assert str(ex) in complete_action.failureDetails.errorMessage
 
 
-def get_and_validate_single_complete_orchestration_action(actions: List[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
+def get_and_validate_single_complete_orchestration_action(actions: list[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
     assert len(actions) == 1
     assert type(actions[0]) is pb.OrchestratorAction
     assert actions[0].HasField("completeOrchestration")

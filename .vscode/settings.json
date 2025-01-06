@@ -3,7 +3,7 @@
         "editor.defaultFormatter": "ms-python.autopep8",
         "editor.formatOnSave": true,
         "editor.codeActionsOnSave": {
-            "source.organizeImports": true,
+            "source.organizeImports": "explicit"
         },
         "editor.rulers": [
             119
@@ -29,5 +29,6 @@
         "coverage.xml",
         "jacoco.xml",
         "coverage.cobertura.xml"
-    ]
+    ],
+    "makefile.configureOnOpen": false
 }
