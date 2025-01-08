@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changes
 
-- Protos are compiled with gRPC 1.62.3 / protobuf 3.25.X instead of the latst release. This ensures compatibility with a wider range of grpcio versions for better compatibility with other packages / libraries.
+- Protos are compiled with gRPC 1.62.3 / protobuf 3.25.X instead of the latest release. This ensures compatibility with a wider range of grpcio versions for better compatibility with other packages / libraries.
 
 ### Updates
 
