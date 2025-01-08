@@ -1,6 +1,5 @@
 autopep8
-grpcio
-grpcio-tools
+grpcio>=1.60.0 # 1.60.0 is the version introducing protobuf 1.25.X support, newer versions are backwards compatible
 protobuf
 pytest
 pytest-cov
