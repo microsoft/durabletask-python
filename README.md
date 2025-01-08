@@ -170,6 +170,7 @@ git submodule update --init
 Once the submodule is available, the corresponding source code can be regenerated using the following command from the project root:
 
 ```sh
+pip3 install -r dev-requirements.txt
 make gen-proto
 ```
 
