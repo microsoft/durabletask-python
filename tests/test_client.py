@@ -1,4 +1,4 @@
-from unittest.mock import patch, Mock, ANY
+from unittest.mock import patch, ANY
 
 from durabletask.internal.shared import (DefaultClientInterceptorImpl,
                                          get_default_host_address,
