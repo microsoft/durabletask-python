@@ -15,6 +15,9 @@ from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 # and should be deserialized as a SimpleNamespace
 AUTO_SERIALIZED = "__durabletask_autoobject__"
 
+SECURE_PROTOCOLS = ["https://", "grpcs://"]
+INSECURE_PROTOCOLS = ["http://", "grpc://"]
+
 
 def get_default_host_address() -> str:
     return "localhost:4001"
@@ -26,6 +29,20 @@ def get_grpc_channel(
         secure_channel: bool = False) -> grpc.Channel:
     if host_address is None:
         host_address = get_default_host_address()
+
+    for protocol in SECURE_PROTOCOLS:
+        if host_address.lower().startswith(protocol):
+            secure_channel = True
+            # remove the protocol from the host name
+            host_address = host_address[len(protocol):]
+            break
+
+    for protocol in INSECURE_PROTOCOLS:
+        if host_address.lower().startswith(protocol):
+            secure_channel = False
+            # remove the protocol from the host name
+            host_address = host_address[len(protocol):]
+            break
 
     if secure_channel:
         channel = grpc.secure_channel(host_address, grpc.ssl_channel_credentials())
