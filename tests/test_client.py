@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import patch, Mock, ANY
 
 from durabletask.internal.shared import (DefaultClientInterceptorImpl,
                                          get_default_host_address,
@@ -39,3 +39,50 @@ def test_get_grpc_channel_with_metadata():
         assert args[0] == mock_channel.return_value
         assert isinstance(args[1], DefaultClientInterceptorImpl)
         assert args[1]._metadata == METADATA
+
+
+def test_grpc_channel_with_host_name_protocol_stripping():
+    with patch('grpc.insecure_channel') as mock_insecure_channel, patch(
+            'grpc.secure_channel') as mock_secure_channel:
+
+        host_name = "myserver.com:1234"
+
+        prefix = "grpc://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_insecure_channel.assert_called_with(host_name)
+
+        prefix = "http://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_insecure_channel.assert_called_with(host_name)
+
+        prefix = "HTTP://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_insecure_channel.assert_called_with(host_name)
+
+        prefix = "GRPC://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_insecure_channel.assert_called_with(host_name)
+
+        prefix = ""
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_insecure_channel.assert_called_with(host_name)
+
+        prefix = "grpcs://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_secure_channel.assert_called_with(host_name, ANY)
+
+        prefix = "https://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_secure_channel.assert_called_with(host_name, ANY)
+
+        prefix = "HTTPS://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_secure_channel.assert_called_with(host_name, ANY)
+
+        prefix = "GRPCS://"
+        get_grpc_channel(prefix + host_name, METADATA)
+        mock_secure_channel.assert_called_with(host_name, ANY)
+
+        prefix = ""
+        get_grpc_channel(prefix + host_name, METADATA, True)
+        mock_secure_channel.assert_called_with(host_name, ANY)
