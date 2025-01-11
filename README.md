@@ -184,10 +184,11 @@ make test-unit
 
 ### Running E2E tests
 
-The E2E (end-to-end) tests require a sidecar process to be running. You can use the Dapr sidecar for this or run a Durable Task test sidecar using the following `docker` command:
+The E2E (end-to-end) tests require a sidecar process to be running. You can use the Dapr sidecar for this or run a Durable Task test sidecar using the following command:
 
 ```sh
-docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
+go install github.com/microsoft/durabletask-go@main
+durabletask-go --port 4001
 ```
 
 To run the E2E tests, run the following command from the project root:
