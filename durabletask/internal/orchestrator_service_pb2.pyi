@@ -63,16 +63,18 @@ class ActivityRequest(_message.Message):
     def __init__(self, name: _Optional[str] = ..., version: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., input: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., orchestrationInstance: _Optional[_Union[OrchestrationInstance, _Mapping]] = ..., taskId: _Optional[int] = ..., parentTraceContext: _Optional[_Union[TraceContext, _Mapping]] = ...) -> None: ...
 
 class ActivityResponse(_message.Message):
-    __slots__ = ("instanceId", "taskId", "result", "failureDetails")
+    __slots__ = ("instanceId", "taskId", "result", "failureDetails", "completionToken")
     INSTANCEID_FIELD_NUMBER: _ClassVar[int]
     TASKID_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     FAILUREDETAILS_FIELD_NUMBER: _ClassVar[int]
+    COMPLETIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     instanceId: str
     taskId: int
     result: _wrappers_pb2.StringValue
     failureDetails: TaskFailureDetails
-    def __init__(self, instanceId: _Optional[str] = ..., taskId: _Optional[int] = ..., result: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., failureDetails: _Optional[_Union[TaskFailureDetails, _Mapping]] = ...) -> None: ...
+    completionToken: str
+    def __init__(self, instanceId: _Optional[str] = ..., taskId: _Optional[int] = ..., result: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., failureDetails: _Optional[_Union[TaskFailureDetails, _Mapping]] = ..., completionToken: _Optional[str] = ...) -> None: ...
 
 class TaskFailureDetails(_message.Message):
     __slots__ = ("errorType", "errorMessage", "stackTrace", "innerFailure", "isNonRetriable")
@@ -421,14 +423,16 @@ class OrchestratorRequest(_message.Message):
     def __init__(self, instanceId: _Optional[str] = ..., executionId: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., pastEvents: _Optional[_Iterable[_Union[HistoryEvent, _Mapping]]] = ..., newEvents: _Optional[_Iterable[_Union[HistoryEvent, _Mapping]]] = ..., entityParameters: _Optional[_Union[OrchestratorEntityParameters, _Mapping]] = ...) -> None: ...
 
 class OrchestratorResponse(_message.Message):
-    __slots__ = ("instanceId", "actions", "customStatus")
+    __slots__ = ("instanceId", "actions", "customStatus", "completionToken")
     INSTANCEID_FIELD_NUMBER: _ClassVar[int]
     ACTIONS_FIELD_NUMBER: _ClassVar[int]
     CUSTOMSTATUS_FIELD_NUMBER: _ClassVar[int]
+    COMPLETIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     instanceId: str
     actions: _containers.RepeatedCompositeFieldContainer[OrchestratorAction]
     customStatus: _wrappers_pb2.StringValue
-    def __init__(self, instanceId: _Optional[str] = ..., actions: _Optional[_Iterable[_Union[OrchestratorAction, _Mapping]]] = ..., customStatus: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ...) -> None: ...
+    completionToken: str
+    def __init__(self, instanceId: _Optional[str] = ..., actions: _Optional[_Iterable[_Union[OrchestratorAction, _Mapping]]] = ..., customStatus: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., completionToken: _Optional[str] = ...) -> None: ...
 
 class CreateInstanceRequest(_message.Message):
     __slots__ = ("instanceId", "name", "version", "input", "scheduledStartTimestamp", "orchestrationIdReusePolicy", "executionId", "tags")
@@ -856,8 +860,12 @@ class StartNewOrchestrationAction(_message.Message):
     def __init__(self, instanceId: _Optional[str] = ..., name: _Optional[str] = ..., version: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., input: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., scheduledTime: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class GetWorkItemsRequest(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("maxConcurrentOrchestrationWorkItems", "maxConcurrentActivityWorkItems")
+    MAXCONCURRENTORCHESTRATIONWORKITEMS_FIELD_NUMBER: _ClassVar[int]
+    MAXCONCURRENTACTIVITYWORKITEMS_FIELD_NUMBER: _ClassVar[int]
+    maxConcurrentOrchestrationWorkItems: int
+    maxConcurrentActivityWorkItems: int
+    def __init__(self, maxConcurrentOrchestrationWorkItems: _Optional[int] = ..., maxConcurrentActivityWorkItems: _Optional[int] = ...) -> None: ...
 
 class WorkItem(_message.Message):
     __slots__ = ("orchestratorRequest", "activityRequest", "entityRequest", "healthPing", "completionToken")
