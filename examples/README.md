@@ -1,39 +1,14 @@
 # Examples
 
-This directory contains examples of how to author durable orchestrations using the Durable Task Python SDK. There are two backends that are compatible with the Durable Task Python SDK: The Dapr sidecar, and the Durable Task Scheduler (DTS).
+This directory contains examples of how to author durable orchestrations using the Durable Task Python SDK.
 
-## Prerequisites for using Dapr
+## Prerequisites
 
 All the examples assume that you have a Durable Task-compatible sidecar running locally. There are two options for this:
 
 1. Install the latest version of the [Dapr CLI](https://docs.dapr.io/getting-started/install-dapr-cli/), which contains and exposes an embedded version of the Durable Task engine. The setup process (which requires Docker) will configure the workflow engine to store state in a local Redis container.
 
 2. Clone and run the [Durable Task Sidecar](https://github.com/microsoft/durabletask-go) project locally (requires Go 1.18 or higher). Orchestration state will be stored in a local sqlite database.
-
-
-## Prerequisites for using DTS
-
-All the examples assume that you have a Durable Task Scheduler taskhub created.
-
-The simplest way to create a taskhub is by using the az cli commands:
-
-1. Create a scheduler:
-    az durabletask scheduler create --resource-group <testrg> --name <testscheduler> --location <eastus> --ip-allowlist "[0.0.0.0/0]" --sku-capacity 1, --sku-name "Dedicated" --tags "{}"
-
-2. Create your taskhub
-    az durabletask taskhub create --resource-group <testrg> --scheduler-name <testscheduler> --name <testtaskhub>
-
-3. Retrieve the endpoint for the taskhub. This can be done by locating the taskhub in the portal.
-
-4. Set the appropriate environment variables for the TASKHUB and ENDPOINT
-
-```sh
-export TASKHUB=<taskhubname>
-```
-
-```sh
-export ENDPOINT=<taskhubEndpoint>
-```
 
 ## Running the examples
 
