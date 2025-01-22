@@ -1,6 +1,6 @@
 # Examples
 
-This directory contains examples of how to author durable orchestrations using the Durable Task Python SDK. There are two backends that are compatible with the Durable Task Python SDK: The Dapr sidecar, and the Durable Task Scheduler (DTS)
+This directory contains examples of how to author durable orchestrations using the Durable Task Python SDK. There are two backends that are compatible with the Durable Task Python SDK: The Dapr sidecar, and the Durable Task Scheduler (DTS).
 
 ## Prerequisites for using Dapr
 

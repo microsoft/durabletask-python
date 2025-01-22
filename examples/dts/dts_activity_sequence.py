@@ -41,9 +41,9 @@ endpoint = os.getenv("ENDPOINT")
 if endpoint:
     print(f"The value of ENDPOINT is: {endpoint}")
 else:
-    print("ENDPOINT is not set. Please set the ENDPOINT environment variable to the endpoint of the taskhub")
-    print("If you are using windows powershell, run the following: $env:ENDPOINT=\"<taskhubEndpoint>\"")
-    print("If you are using bash, run the following: export ENDPOINT=\"<taskhubEndpoint>\"")
+    print("ENDPOINT is not set. Please set the ENDPOINT environment variable to the endpoint of the scheduler")
+    print("If you are using windows powershell, run the following: $env:ENDPOINT=\"<schedulerEndpoint>\"")
+    print("If you are using bash, run the following: export ENDPOINT=\"<schedulerEndpoint>\"")
     exit()
 
 
@@ -51,12 +51,12 @@ default_credential = DefaultAzureCredential()
 # Define the scope for Azure Resource Manager (ARM)
 arm_scope = "https://durabletask.io/.default"
 
-# Retrieve the access token
+# Retrieve the access token. Note that this approach doesn't support token refresh and can't be used in production.
 access_token = "Bearer " + default_credential.get_token(arm_scope).token
-# create a client, start an orchestration, and wait for it to finish
+
 metaData: list[tuple[str, str]] = [
-    ("taskhub", taskhub_name), # Hardcode for now, just the taskhub name
-    ("authorization", access_token) # use azure identity sdk for python
+    ("taskhub", taskhub_name),
+    ("authorization", access_token)
 ]
 # configure and start the worker
 with worker.TaskHubGrpcWorker(host_address=endpoint, metadata=metaData, secure_channel=True) as w:
