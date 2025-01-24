@@ -16,6 +16,7 @@ import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
+from durabletask.accessTokenManager import AccessTokenManager
 from durabletask import task
 
 TInput = TypeVar('TInput')
@@ -88,7 +89,8 @@ class TaskHubGrpcWorker:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler=None,
                  log_formatter: Optional[logging.Formatter] = None,
-                 secure_channel: bool = False):
+                 secure_channel: bool = False,
+                 access_token_manager: AccessTokenManager = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
         self._metadata = metadata
@@ -96,6 +98,27 @@ class TaskHubGrpcWorker:
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
+        self._access_token_manager = access_token_manager
+        self.__update_metadata_with_token()
+
+    def __update_metadata_with_token(self):
+        """
+        Add or update the `authorization` key in the metadata with the current access token.
+        """
+        if self._access_token_manager is not None:
+            token = self._access_token_manager.get_access_token()
+            
+            # Check if "authorization" already exists in the metadata
+            updated = False
+            for i, (key, _) in enumerate(self._metadata):
+                if key == "authorization":
+                    self._metadata[i] = ("authorization", token)
+                    updated = True
+                    break
+            
+            # If not updated, add a new entry
+            if not updated:
+                self._metadata.append(("authorization", token))
 
     def __enter__(self):
         return self
@@ -130,6 +153,7 @@ class TaskHubGrpcWorker:
             with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
                 while not self._shutdown.is_set():
                     try:
+                        self.__update_metadata_with_token()
                         # send a "Hello" message to the sidecar to ensure that it's listening
                         stub.Hello(empty_pb2.Empty())
 

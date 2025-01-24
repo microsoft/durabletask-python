@@ -26,6 +26,12 @@ export TASKHUB=<taskhubname>
 export ENDPOINT=<taskhubEndpoint>
 ```
 
+5. Since the samples rely on azure identity, ensure the package is installed and up-to-date
+
+```sh
+python3 -m pip install azure-identity
+```
+
 ## Running the examples
 
 With one of the sidecars running, you can simply execute any of the examples in this directory using `python3`:

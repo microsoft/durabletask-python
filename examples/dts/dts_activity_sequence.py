@@ -4,7 +4,7 @@ from azure.identity import DefaultAzureCredential
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
 from durabletask import client, task, worker
-
+from durabletask.accessTokenManager import AccessTokenManager
 
 def hello(ctx: task.ActivityContext, name: str) -> str:
     """Activity function that returns a greeting"""
@@ -47,19 +47,16 @@ else:
     exit()
 
 
-default_credential = DefaultAzureCredential()
 # Define the scope for Azure Resource Manager (ARM)
 arm_scope = "https://durabletask.io/.default"
-
-# Retrieve the access token. Note that this approach doesn't support token refresh and can't be used in production.
-access_token = "Bearer " + default_credential.get_token(arm_scope).token
+token_manager = AccessTokenManager(scope = arm_scope)
 
 metaData: list[tuple[str, str]] = [
-    ("taskhub", taskhub_name),
-    ("authorization", access_token)
+    ("taskhub", taskhub_name)
 ]
+
 # configure and start the worker
-with worker.TaskHubGrpcWorker(host_address=endpoint, metadata=metaData, secure_channel=True) as w:
+with worker.TaskHubGrpcWorker(host_address=endpoint, metadata=metaData, secure_channel=True, access_token_manager=token_manager) as w:
     w.add_orchestrator(sequence)
     w.add_activity(hello)
     w.start()
