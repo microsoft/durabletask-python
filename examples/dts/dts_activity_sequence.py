@@ -61,6 +61,7 @@ with worker.TaskHubGrpcWorker(host_address=endpoint, metadata=metaData, secure_c
     w.add_activity(hello)
     w.start()
 
+    # Construct the client and run the orchestrations
     c = client.TaskHubGrpcClient(host_address=endpoint, metadata=metaData, secure_channel=True)
     instance_id = c.schedule_new_orchestration(sequence)
     state = c.wait_for_orchestration_completion(instance_id, timeout=45)
