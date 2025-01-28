@@ -16,7 +16,6 @@ import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
-
 from durabletask import task
 
 TInput = TypeVar('TInput')
@@ -97,7 +96,6 @@ class TaskHubGrpcWorker:
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
-
 
     def __enter__(self):
         return self
