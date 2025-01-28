@@ -3,8 +3,9 @@ from azure.identity import DefaultAzureCredential
 
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
-from durabletask import client, task, worker
-from durabletask.accessTokenManager import AccessTokenManager
+from durabletask import client, task
+from externalpackages.durabletaskscheduler.durabletask_scheduler_worker import DurableTaskSchedulerWorker
+from externalpackages.durabletaskscheduler.access_token_manager import AccessTokenManager
 
 def hello(ctx: task.ActivityContext, name: str) -> str:
     """Activity function that returns a greeting"""
@@ -56,7 +57,7 @@ metaData: list[tuple[str, str]] = [
 ]
 
 # configure and start the worker
-with worker.TaskHubGrpcWorker(host_address=endpoint, metadata=metaData, secure_channel=True, access_token_manager=token_manager) as w:
+with DurableTaskSchedulerWorker(host_address=endpoint, metadata=metaData, secure_channel=True, access_token_manager=token_manager) as w:
     w.add_orchestrator(sequence)
     w.add_activity(hello)
     w.start()
