@@ -10,7 +10,7 @@ from durabletask.worker import TaskHubGrpcWorker
 from externalpackages.durabletaskscheduler.access_token_manager import AccessTokenManager
 
 class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
-    def __init__(self, *args, access_token_manager: AccessTokenManager = None, **kwargs):
+    def __init__(self, *args, access_token_manager: AccessTokenManager, **kwargs):
         # Initialize the base class
         super().__init__(*args, **kwargs)
         self._access_token_manager = access_token_manager
