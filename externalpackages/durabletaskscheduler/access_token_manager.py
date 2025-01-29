@@ -1,14 +1,26 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from datetime import datetime, timedelta
+from typing import Optional
 
 class AccessTokenManager:
-    def __init__(self, scope: str, refresh_buffer: int = 60):
-        self.scope = scope
+    def __init__(self, refresh_buffer: int = 60, use_managed_identity: bool = False, client_id: Optional[str] = None):
+        self.scope = "https://durabletask.io/.default"
         self.refresh_buffer = refresh_buffer
-        self.credential = DefaultAzureCredential()
+        
+        # Choose the appropriate credential based on use_managed_identity
+        if use_managed_identity:
+            if not client_id:
+                print("Using System Assigned Managed Identity for authentication.")
+                self.credential = ManagedIdentityCredential()
+            else:
+                print("Using User Assigned Managed Identity for authentication.")
+                self.credential = ManagedIdentityCredential(client_id)
+        else:
+            self.credential = DefaultAzureCredential()
+            print("Using Default Azure Credentials for authentication.")
+        
         self.token = None
         self.expiry_time = None
 

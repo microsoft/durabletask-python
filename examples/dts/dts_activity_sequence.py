@@ -47,22 +47,14 @@ else:
     exit()
 
 
-# Define the scope for Azure Resource Manager (ARM)
-arm_scope = "https://durabletask.io/.default"
-token_manager = AccessTokenManager(scope = arm_scope)
-
-meta_data: list[tuple[str, str]] = [
-    ("taskhub", taskhub_name)
-]
-
 # configure and start the worker
-with DurableTaskSchedulerWorker(host_address=endpoint, metadata=meta_data, secure_channel=True, access_token_manager=token_manager) as w:
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, client_id="", taskhub=taskhub_name) as w:
     w.add_orchestrator(sequence)
     w.add_activity(hello)
     w.start()
 
     # Construct the client and run the orchestrations
-    c = DurableTaskSchedulerClient(host_address=endpoint, metadata=meta_data, secure_channel=True, access_token_manager=token_manager)
+    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True, taskhub=taskhub_name)
     instance_id = c.schedule_new_orchestration(sequence)
     state = c.wait_for_orchestration_completion(instance_id, timeout=45)
     if state and state.runtime_status == client.OrchestrationStatus.COMPLETED:

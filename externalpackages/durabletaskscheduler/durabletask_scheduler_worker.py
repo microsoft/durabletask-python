@@ -5,35 +5,48 @@ import grpc
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
+from typing import Optional
 
 from durabletask.worker import TaskHubGrpcWorker
 from externalpackages.durabletaskscheduler.access_token_manager import AccessTokenManager
 
 class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
-    def __init__(self, *args, access_token_manager: AccessTokenManager, **kwargs):
-        # Initialize the base class
-        super().__init__(*args, **kwargs)
-        self._access_token_manager = access_token_manager
+    def __init__(self, *args, 
+                 metadata: Optional[list[tuple[str, str]]] = None,
+                 client_id: Optional[str] = None,
+                 taskhub: str,
+                 **kwargs):
+        if metadata is None:
+            metadata = []  # Ensure metadata is initialized
+        self._metadata = metadata
+        self._client_id = client_id
+        self._metadata.append(("taskhub", taskhub))
+        self._access_token_manager = AccessTokenManager(client_id=self._client_id)
         self.__update_metadata_with_token()
+        super().__init__(*args, metadata=self._metadata, **kwargs)
+
 
     def __update_metadata_with_token(self):
         """
         Add or update the `authorization` key in the metadata with the current access token.
         """
-        if self._access_token_manager is not None:
-            token = self._access_token_manager.get_access_token()
-            
-            # Check if "authorization" already exists in the metadata
-            updated = False
-            for i, (key, _) in enumerate(self._metadata):
-                if key == "authorization":
-                    self._metadata[i] = ("authorization", token)
-                    updated = True
-                    break
-            
-            # If not updated, add a new entry
-            if not updated:
-                self._metadata.append(("authorization", token))
+        token = self._access_token_manager.get_access_token()
+
+        # Ensure that self._metadata is initialized
+        if self._metadata is None:
+            self._metadata = []  # Initialize it if it's still None
+        
+        # Check if "authorization" already exists in the metadata
+        updated = False
+        for i, (key, _) in enumerate(self._metadata):
+            if key == "authorization":
+                self._metadata[i] = ("authorization", token)
+                updated = True
+                break
+        
+        # If not updated, add a new entry
+        if not updated:
+            self._metadata.append(("authorization", token))
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
