@@ -1,21 +1,31 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from typing import Optional
 from durabletask.client import TaskHubGrpcClient
 from externalpackages.durabletaskscheduler.access_token_manager import AccessTokenManager
 
 class DurableTaskSchedulerClient(TaskHubGrpcClient):
-    def __init__(self, *args, 
+    def __init__(self,
+                 host_address: str,
+                 secure_channel: bool,
                  metadata: Optional[list[tuple[str, str]]] = None,
+                 use_managed_identity: Optional[bool] = False,
                  client_id: Optional[str] = None,
-                 taskhub: str,
+                 taskhub: str = None,
                  **kwargs):
         if metadata is None:
             metadata = []  # Ensure metadata is initialized
         self._metadata = metadata
+        self._use_managed_identity = use_managed_identity
         self._client_id = client_id
         self._metadata.append(("taskhub", taskhub))
-        self._access_token_manager = AccessTokenManager(client_id=self._client_id)
+        self._metadata.append(("dts", "True"))
+        self._metadata.append(("use_managed_identity", str(use_managed_identity)))
+        self._metadata.append(("client_id", str(client_id)))
+        self._access_token_manager = AccessTokenManager(metadata=self._metadata)
         self.__update_metadata_with_token()
-        super().__init__(*args, metadata=self._metadata, **kwargs)
+        super().__init__(host_address=host_address, secure_channel=secure_channel, metadata=self._metadata, **kwargs)
 
     def __update_metadata_with_token(self):
         """
@@ -38,39 +48,3 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
         # If not updated, add a new entry
         if not updated:
             self._metadata.append(("authorization", token))
-
-    def schedule_new_orchestration(self, *args, **kwargs) -> str:
-        self.__update_metadata_with_token()
-        return super().schedule_new_orchestration(*args, **kwargs)
-
-    def get_orchestration_state(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().get_orchestration_state(*args, **kwargs)
-
-    def wait_for_orchestration_start(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().wait_for_orchestration_start(*args, **kwargs)
-
-    def wait_for_orchestration_completion(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().wait_for_orchestration_completion(*args, **kwargs)
-
-    def raise_orchestration_event(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().raise_orchestration_event(*args, **kwargs)
-
-    def terminate_orchestration(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().terminate_orchestration(*args, **kwargs)
-
-    def suspend_orchestration(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().suspend_orchestration(*args, **kwargs)
-
-    def resume_orchestration(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().resume_orchestration(*args, **kwargs)
-
-    def purge_orchestration(self, *args, **kwargs):
-        self.__update_metadata_with_token()
-        super().purge_orchestration(*args, **kwargs)

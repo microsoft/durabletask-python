@@ -10,6 +10,7 @@ from typing import Any, Optional
 import grpc
 
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+from externalpackages.durabletaskscheduler.durabletask_grpc_interceptor import DTSDefaultClientInterceptorImpl
 
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
@@ -50,7 +51,12 @@ def get_grpc_channel(
         channel = grpc.insecure_channel(host_address)
 
     if metadata is not None and len(metadata) > 0:
-        interceptors = [DefaultClientInterceptorImpl(metadata)]
+        for key, _ in metadata:
+            # Check if we are using DTS as the backend and if so, construct the DTS specific interceptors
+            if key == "dts":
+                interceptors = [DTSDefaultClientInterceptorImpl(metadata)]
+            else:
+                interceptors = [DefaultClientInterceptorImpl(metadata)]
         channel = grpc.intercept_channel(channel, *interceptors)
     return channel
 

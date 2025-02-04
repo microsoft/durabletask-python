@@ -4,7 +4,6 @@ import os
 from durabletask import client, task
 from externalpackages.durabletaskscheduler.durabletask_scheduler_worker import DurableTaskSchedulerWorker
 from externalpackages.durabletaskscheduler.durabletask_scheduler_client import DurableTaskSchedulerClient
-from externalpackages.durabletaskscheduler.access_token_manager import AccessTokenManager
 
 def hello(ctx: task.ActivityContext, name: str) -> str:
     """Activity function that returns a greeting"""
@@ -48,7 +47,7 @@ else:
 
 
 # configure and start the worker
-with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, client_id="", taskhub=taskhub_name) as w:
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, use_managed_identity=False, client_id="", taskhub=taskhub_name) as w:
     w.add_orchestrator(sequence)
     w.add_activity(hello)
     w.start()
@@ -56,7 +55,7 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, clie
     # Construct the client and run the orchestrations
     c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True, taskhub=taskhub_name)
     instance_id = c.schedule_new_orchestration(sequence)
-    state = c.wait_for_orchestration_completion(instance_id, timeout=45)
+    state = c.wait_for_orchestration_completion(instance_id, timeout=60)
     if state and state.runtime_status == client.OrchestrationStatus.COMPLETED:
         print(f'Orchestration completed! Result: {state.serialized_output}')
     elif state:

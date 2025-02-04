@@ -8,7 +8,6 @@ from durabletask import client, task
 from durabletask import client, task
 from externalpackages.durabletaskscheduler.durabletask_scheduler_worker import DurableTaskSchedulerWorker
 from externalpackages.durabletaskscheduler.durabletask_scheduler_client import DurableTaskSchedulerClient
-from externalpackages.durabletaskscheduler.access_token_manager import AccessTokenManager
 
 
 def get_work_items(ctx: task.ActivityContext, _) -> list[str]:
@@ -74,7 +73,7 @@ else:
     exit()
 
 # configure and start the worker
-with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, client_id="", taskhub=taskhub_name) as w:
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, taskhub=taskhub_name) as w:
     w.add_orchestrator(orchestrator)
     w.add_activity(process_work_item)
     w.add_activity(get_work_items)
@@ -88,3 +87,4 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, clie
         print(f'Orchestration completed! Result: {state.serialized_output}')
     elif state:
         print(f'Orchestration failed: {state.failure_details}')
+    exit()
