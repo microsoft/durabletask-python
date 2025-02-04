@@ -143,9 +143,11 @@ class TaskHubGrpcWorker:
                             request_type = work_item.WhichOneof('request')
                             self._logger.debug(f'Received "{request_type}" work item')
                             if work_item.HasField('orchestratorRequest'):
-                                executor.submit(self._execute_orchestrator, work_item.orchestratorRequest, stub)
+                                executor.submit(self._execute_orchestrator, work_item.orchestratorRequest, stub, work_item.completionToken)
                             elif work_item.HasField('activityRequest'):
-                                executor.submit(self._execute_activity, work_item.activityRequest, stub)
+                                executor.submit(self._execute_activity, work_item.activityRequest, stub, work_item.completionToken)
+                            elif work_item.HasField('healthPing'):
+                                pass # no-op
                             else:
                                 self._logger.warning(f'Unexpected work item type: {request_type}')
 
@@ -184,26 +186,27 @@ class TaskHubGrpcWorker:
         self._logger.info("Worker shutdown completed")
         self._is_running = False
 
-    def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: stubs.TaskHubSidecarServiceStub):
+    def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: stubs.TaskHubSidecarServiceStub, completionToken):
         try:
             executor = _OrchestrationExecutor(self._registry, self._logger)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
             res = pb.OrchestratorResponse(
                 instanceId=req.instanceId,
                 actions=result.actions,
-                customStatus=pbh.get_string_value(result.encoded_custom_status))
+                customStatus=pbh.get_string_value(result.encoded_custom_status),
+                completionToken=completionToken)
         except Exception as ex:
             self._logger.exception(f"An error occurred while trying to execute instance '{req.instanceId}': {ex}")
             failure_details = pbh.new_failure_details(ex)
             actions = [pbh.new_complete_orchestration_action(-1, pb.ORCHESTRATION_STATUS_FAILED, "", failure_details)]
-            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions)
+            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions, completionToken=completionToken)
 
         try:
             stub.CompleteOrchestratorTask(res)
         except Exception as ex:
             self._logger.exception(f"Failed to deliver orchestrator response for '{req.instanceId}' to sidecar: {ex}")
 
-    def _execute_activity(self, req: pb.ActivityRequest, stub: stubs.TaskHubSidecarServiceStub):
+    def _execute_activity(self, req: pb.ActivityRequest, stub: stubs.TaskHubSidecarServiceStub, completionToken):
         instance_id = req.orchestrationInstance.instanceId
         try:
             executor = _ActivityExecutor(self._registry, self._logger)
@@ -211,12 +214,14 @@ class TaskHubGrpcWorker:
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
-                result=pbh.get_string_value(result))
+                result=pbh.get_string_value(result),
+                completionToken=completionToken)
         except Exception as ex:
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
-                failureDetails=pbh.new_failure_details(ex))
+                failureDetails=pbh.new_failure_details(ex),
+                completionToken=completionToken)
 
         try:
             stub.CompleteActivityTask(res)
