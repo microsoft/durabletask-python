@@ -55,6 +55,7 @@ def get_grpc_channel(
             # Check if we are using DTS as the backend and if so, construct the DTS specific interceptors
             if key == "dts":
                 interceptors = [DTSDefaultClientInterceptorImpl(metadata)]
+                break
             else:
                 interceptors = [DefaultClientInterceptorImpl(metadata)]
         channel = grpc.intercept_channel(channel, *interceptors)
