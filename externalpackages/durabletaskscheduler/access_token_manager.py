@@ -3,6 +3,7 @@
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import durabletask.internal.shared as shared
 
 # By default, when there's 10minutes left before the token expires, refresh the token
 class AccessTokenManager:
@@ -12,6 +13,7 @@ class AccessTokenManager:
         self._use_managed_identity = False
         self._metadata = metadata
         self._client_id = None
+        self._logger = shared.get_logger("token_manager")
 
         if metadata:  # Ensure metadata is not None
             for key, value in metadata:
@@ -23,14 +25,14 @@ class AccessTokenManager:
         # Choose the appropriate credential based on use_managed_identity
         if self._use_managed_identity:
             if not self._client_id:
-                print("Using System Assigned Managed Identity for authentication.")
+                self._logger.debug("Using System Assigned Managed Identity for authentication.")
                 self.credential = ManagedIdentityCredential()
             else:
-                print("Using User Assigned Managed Identity for authentication.")
+                self._logger.debug("Using User Assigned Managed Identity for authentication.")
                 self.credential = ManagedIdentityCredential(client_id=self._client_id)
         else:
             self.credential = DefaultAzureCredential()
-            print("Using Default Azure Credentials for authentication.")
+            self._logger.debug("Using Default Azure Credentials for authentication.")
         
         self.token = None
         self.expiry_time = None
@@ -54,4 +56,4 @@ class AccessTokenManager:
         
         # Convert UNIX timestamp to timezone-aware datetime
         self.expiry_time = datetime.fromtimestamp(new_token.expires_on, tz=timezone.utc)
-        print(f"Token refreshed. Expires at: {self.expiry_time}")
+        self._logger.debug(f"Token refreshed. Expires at: {self.expiry_time}")
