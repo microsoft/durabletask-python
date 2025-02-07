@@ -32,6 +32,12 @@ export ENDPOINT=<taskhubEndpoint>
 python3 -m pip install azure-identity
 ```
 
+6. Install the correct pacakges from the top level of this repository, i.e. durabletask-python/
+
+```sh
+python3 -m pip install .
+```
+
 ## Running the examples
 
 With one of the sidecars running, you can simply execute any of the examples in this directory using `python3`:

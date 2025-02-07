@@ -97,7 +97,6 @@ class TaskHubGrpcClient:
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False):
-        self._metadata = metadata
         channel = shared.get_grpc_channel(host_address, metadata, secure_channel=secure_channel)
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
