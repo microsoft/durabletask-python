@@ -1,8 +1,8 @@
 from unittest.mock import patch, ANY
 
-from durabletask.internal.shared import (DefaultClientInterceptorImpl,
-                                         get_default_host_address,
+from durabletask.internal.shared import (get_default_host_address,
                                          get_grpc_channel)
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 HOST_ADDRESS = 'localhost:50051'
 METADATA = [('key1', 'value1'), ('key2', 'value2')]
