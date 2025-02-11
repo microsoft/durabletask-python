@@ -9,9 +9,6 @@ from typing import Any, Optional
 
 import grpc
 
-from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
-from externalpackages.durabletaskscheduler.durabletask_grpc_interceptor import DTSDefaultClientInterceptorImpl
-
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
 AUTO_SERIALIZED = "__durabletask_autoobject__"
@@ -26,8 +23,10 @@ def get_default_host_address() -> str:
 
 def get_grpc_channel(
         host_address: Optional[str],
-        metadata: Optional[list[tuple[str, str]]],
-        secure_channel: bool = False) -> grpc.Channel:
+        metadata: Optional[list[tuple[str, str]]] = None,
+        secure_channel: bool = False,
+        interceptors: Optional[list] = None) -> grpc.Channel:
+    
     if host_address is None:
         host_address = get_default_host_address()
 
@@ -45,19 +44,14 @@ def get_grpc_channel(
             host_address = host_address[len(protocol):]
             break
 
+    # Create the base channel
     if secure_channel:
         channel = grpc.secure_channel(host_address, grpc.ssl_channel_credentials())
     else:
         channel = grpc.insecure_channel(host_address)
 
-    if metadata is not None and len(metadata) > 0:
-        for key, _ in metadata:
-            # Check if we are using DTS as the backend and if so, construct the DTS specific interceptors
-            if key == "dts":
-                interceptors = [DTSDefaultClientInterceptorImpl(metadata)]
-                break
-            else:
-                interceptors = [DefaultClientInterceptorImpl(metadata)]
+    # Apply interceptors ONLY if they exist
+    if interceptors:
         channel = grpc.intercept_channel(channel, *interceptors)
     return channel
 

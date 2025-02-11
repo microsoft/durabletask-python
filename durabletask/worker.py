@@ -16,7 +16,9 @@ import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
+
 from durabletask import task
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
@@ -88,14 +90,24 @@ class TaskHubGrpcWorker:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler=None,
                  log_formatter: Optional[logging.Formatter] = None,
-                 secure_channel: bool = False):
+                 secure_channel: bool = False,
+                 interceptors: Optional[list[grpc.ServerInterceptor]] = None):  # Add interceptors
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
-        self._metadata = metadata
+        self._metadata = metadata or []  # Ensure metadata is never None
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
+
+        # Determine the interceptors to use
+        if interceptors is not None:
+            self._interceptors = interceptors
+        elif self._metadata:
+            self._interceptors = [DefaultClientInterceptorImpl(self._metadata)]
+        else:
+            self._interceptors = None
+
 
     def __enter__(self):
         return self
@@ -117,7 +129,12 @@ class TaskHubGrpcWorker:
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
-        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel)
+        
+        if self._metadata:
+            interceptors = [DefaultClientInterceptorImpl(self._metadata)]  
+        else:
+            interceptors =  None
+        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel, interceptors)
         stub = stubs.TaskHubSidecarServiceStub(channel)
 
         if self._is_running:

@@ -4,28 +4,40 @@
 from typing import Optional
 from durabletask.client import TaskHubGrpcClient
 from externalpackages.durabletaskscheduler.access_token_manager import AccessTokenManager
+from externalpackages.durabletaskscheduler.durabletask_grpc_interceptor import DTSDefaultClientInterceptorImpl
 
+# Client class used for Durable Task Scheduler (DTS)
 class DurableTaskSchedulerClient(TaskHubGrpcClient):
     def __init__(self,
                  host_address: str,
                  secure_channel: bool,
-                 metadata: Optional[list[tuple[str, str]]] = None,
+                 metadata: Optional[list[tuple[str, str]]] = [],
                  use_managed_identity: Optional[bool] = False,
                  client_id: Optional[str] = None,
                  taskhub: str = None,
                  **kwargs):
-        if metadata is None:
-            metadata = []  # Ensure metadata is initialized
-        self._metadata = metadata
-        self._use_managed_identity = use_managed_identity
-        self._client_id = client_id
-        self._metadata.append(("taskhub", taskhub))
+
+        # Ensure metadata is a list
+        metadata = metadata or []
+        self._metadata = metadata.copy()  # Use a copy to avoid modifying original
+
+        # Append DurableTask-specific metadata
+        self._metadata.append(("taskhub", taskhub or "default-taskhub"))
         self._metadata.append(("dts", "True"))
         self._metadata.append(("use_managed_identity", str(use_managed_identity)))
-        self._metadata.append(("client_id", str(client_id)))
+        self._metadata.append(("client_id", str(client_id or "None")))
+
         self._access_token_manager = AccessTokenManager(metadata=self._metadata)
         self.__update_metadata_with_token()
-        super().__init__(host_address=host_address, secure_channel=secure_channel, metadata=self._metadata, **kwargs)
+        interceptors = [DTSDefaultClientInterceptorImpl(self._metadata)]
+
+        super().__init__(
+            host_address=host_address,
+            secure_channel=secure_channel,
+            metadata=self._metadata,
+            interceptors=interceptors,  # Now explicitly passing interceptors
+            **kwargs
+        )
 
     def __update_metadata_with_token(self):
         """

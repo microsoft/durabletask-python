@@ -15,6 +15,8 @@ import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+
 from durabletask import task
 
 TInput = TypeVar('TInput')
@@ -96,8 +98,23 @@ class TaskHubGrpcClient:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
-                 secure_channel: bool = False):
-        channel = shared.get_grpc_channel(host_address, metadata, secure_channel=secure_channel)
+                 secure_channel: bool = False,
+                 interceptors: Optional[list] = None):
+
+        # Determine the interceptors to use
+        if interceptors is not None:
+            self._interceptors = interceptors
+        elif metadata:
+            self._interceptors = [DefaultClientInterceptorImpl(metadata)]
+        else:
+            self._interceptors = None
+
+        channel = shared.get_grpc_channel(
+            host_address=host_address,
+            metadata=metadata,
+            secure_channel=secure_channel,
+            interceptors=self._interceptors
+        )
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
 
