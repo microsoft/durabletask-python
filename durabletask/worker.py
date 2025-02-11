@@ -91,10 +91,10 @@ class TaskHubGrpcWorker:
                  log_handler=None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[list[grpc.ServerInterceptor]] = None):  # Add interceptors
+                 interceptors: Optional[list[DefaultClientInterceptorImpl]] = None):  # Add interceptors
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
-        self._metadata = metadata or []  # Ensure metadata is never None
+        self._metadata = metadata
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
@@ -129,12 +129,7 @@ class TaskHubGrpcWorker:
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
-        
-        if self._metadata:
-            interceptors = [DefaultClientInterceptorImpl(self._metadata)]  
-        else:
-            interceptors =  None
-        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel, interceptors)
+        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel, self._interceptors)
         stub = stubs.TaskHubSidecarServiceStub(channel)
 
         if self._is_running:

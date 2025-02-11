@@ -99,7 +99,7 @@ class TaskHubGrpcClient:
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[list] = None):
+                 interceptors: Optional[list[DefaultClientInterceptorImpl]] = None):
 
         # Determine the interceptors to use
         if interceptors is not None:
