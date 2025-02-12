@@ -11,7 +11,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
     def __init__(self,
                  host_address: str,
                  secure_channel: bool,
-                 metadata: Optional[list[tuple[str, str]]] = [],
+                 metadata: Optional[list[tuple[str, str]]] = None,
                  use_managed_identity: Optional[bool] = False,
                  client_id: Optional[str] = None,
                  taskhub: str = None,
@@ -29,13 +29,15 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
 
         self._access_token_manager = AccessTokenManager(metadata=self._metadata)
         self.__update_metadata_with_token()
-        interceptors = [DTSDefaultClientInterceptorImpl(self._metadata)]
+        self._interceptors = [DTSDefaultClientInterceptorImpl(self._metadata)]
 
+        # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
+        # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
             host_address=host_address,
             secure_channel=secure_channel,
-            metadata=self._metadata,
-            interceptors=interceptors,  # Now explicitly passing interceptors
+            metadata=None,
+            interceptors=self._interceptors,
             **kwargs
         )
 

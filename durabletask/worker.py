@@ -103,6 +103,8 @@ class TaskHubGrpcWorker:
         # Determine the interceptors to use
         if interceptors is not None:
             self._interceptors = interceptors
+            if metadata:
+                self._interceptors.append(DefaultClientInterceptorImpl(metadata))
         elif self._metadata:
             self._interceptors = [DefaultClientInterceptorImpl(self._metadata)]
         else:

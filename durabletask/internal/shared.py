@@ -6,6 +6,7 @@ import json
 import logging
 from types import SimpleNamespace
 from typing import Any, Optional
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 import grpc
 
@@ -25,7 +26,7 @@ def get_grpc_channel(
         host_address: Optional[str],
         metadata: Optional[list[tuple[str, str]]] = None,
         secure_channel: bool = False,
-        interceptors: Optional[list] = None) -> grpc.Channel:
+        interceptors: Optional[list[DefaultClientInterceptorImpl]] = None) -> grpc.Channel:
     
     if host_address is None:
         host_address = get_default_host_address()

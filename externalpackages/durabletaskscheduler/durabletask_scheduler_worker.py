@@ -31,10 +31,12 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         self.__update_metadata_with_token()
         interceptors = [DTSDefaultClientInterceptorImpl(self._metadata)]
 
+        # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
+        # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
             host_address=host_address,
             secure_channel=secure_channel,
-            metadata=self._metadata,
+            metadata=None, 
             interceptors=interceptors,
             **kwargs
         )
