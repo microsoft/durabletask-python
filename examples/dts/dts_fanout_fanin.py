@@ -6,8 +6,8 @@ import time
 import os
 from durabletask import client, task
 from durabletask import client, task
-from externalpackages.durabletaskscheduler.durabletask_scheduler_worker import DurableTaskSchedulerWorker
-from externalpackages.durabletaskscheduler.durabletask_scheduler_client import DurableTaskSchedulerClient
+import DurableTaskSchedulerWorker
+import DurableTaskSchedulerClient
 
 
 def get_work_items(ctx: task.ActivityContext, _) -> list[str]:

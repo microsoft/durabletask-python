@@ -38,9 +38,15 @@ python3 -m pip install azure-identity
 python3 -m pip install .
 ```
 
+7. Install the DTS specific packages from the durabletask-python/durabletask-azuremanaged directory
+
+```sh
+pip3 install -e .
+```
+
 ## Running the examples
 
-With one of the sidecars running, you can simply execute any of the examples in this directory using `python3`:
+Now, you can simply execute any of the examples in this directory using `python3`:
 
 ```sh
 python3 dts_activity_sequence.py

@@ -99,7 +99,7 @@ class TaskHubGrpcClient:
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[list[DefaultClientInterceptorImpl]] = None):
+                 interceptors: Optional[list[Union[grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor]]] = None):
 
         # Determine the interceptors to use
         if interceptors is not None:

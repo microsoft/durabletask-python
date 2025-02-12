@@ -2,8 +2,8 @@
 that calls an activity function in a sequence and prints the outputs."""
 import os
 from durabletask import client, task
-from externalpackages.durabletaskscheduler.durabletask_scheduler_worker import DurableTaskSchedulerWorker
-from externalpackages.durabletaskscheduler.durabletask_scheduler_client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.durabletask_scheduler_worker import DurableTaskSchedulerWorker
+from durabletask.azuremanaged.durabletask_scheduler_client import DurableTaskSchedulerClient
 
 def hello(ctx: task.ActivityContext, name: str) -> str:
     """Activity function that returns a greeting"""
