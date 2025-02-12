@@ -44,6 +44,8 @@ python3 -m pip install .
 pip3 install -e .
 ```
 
+8. Grant yourself the DurableTaskDataContributor role over your scheduler
+
 ## Running the examples
 
 Now, you can simply execute any of the examples in this directory using `python3`:

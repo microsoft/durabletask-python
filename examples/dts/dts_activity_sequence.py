@@ -1,9 +1,9 @@
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
 import os
-from durabletask import client, task
+from durabletask import task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.client import DurableTaskSchedulerClient, OrchestrationStatus
 
 def hello(ctx: task.ActivityContext, name: str) -> str:
     """Activity function that returns a greeting"""
@@ -56,7 +56,7 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, use_
     c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True, taskhub=taskhub_name)
     instance_id = c.schedule_new_orchestration(sequence)
     state = c.wait_for_orchestration_completion(instance_id, timeout=60)
-    if state and state.runtime_status == client.OrchestrationStatus.COMPLETED:
+    if state and state.runtime_status == OrchestrationStatus.COMPLETED:
         print(f'Orchestration completed! Result: {state.serialized_output}')
     elif state:
         print(f'Orchestration failed: {state.failure_details}')

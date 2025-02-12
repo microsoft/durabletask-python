@@ -2,9 +2,10 @@
 # Licensed under the MIT License.
 
 from typing import Optional
-from durabletask.client import TaskHubGrpcClient
+from durabletask.client import TaskHubGrpcClient, OrchestrationStatus
 from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
 from durabletask.azuremanaged.durabletask_grpc_interceptor import DTSDefaultClientInterceptorImpl
+from azure.identity import DefaultAzureCredential
 
 # Client class used for Durable Task Scheduler (DTS)
 class DurableTaskSchedulerClient(TaskHubGrpcClient):
@@ -18,7 +19,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
 
         if taskhub == None:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
-        
+
         # Ensure metadata is a list
         metadata = metadata or []
         self._metadata = metadata.copy()  # Use a copy to avoid modifying original
@@ -29,8 +30,11 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
         self._metadata.append(("use_managed_identity", str(use_managed_identity)))
         self._metadata.append(("client_id", str(client_id or "None")))
 
-        self._access_token_manager = AccessTokenManager(metadata=self._metadata)
-        self.__update_metadata_with_token()
+        self._access_token_manager = AccessTokenManager(use_managed_identity=use_managed_identity,
+                                                        client_id=client_id)
+        token = self._access_token_manager.get_access_token()
+        self._metadata.append(("authorization", token))
+
         self._interceptors = [DTSDefaultClientInterceptorImpl(self._metadata)]
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
@@ -40,25 +44,3 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
             secure_channel=secure_channel,
             metadata=None,
             interceptors=self._interceptors)
-
-    def __update_metadata_with_token(self):
-        """
-        Add or update the `authorization` key in the metadata with the current access token.
-        """
-        token = self._access_token_manager.get_access_token()
-
-        # Ensure that self._metadata is initialized
-        if self._metadata is None:
-            self._metadata = []  # Initialize it if it's still None
-        
-        # Check if "authorization" already exists in the metadata
-        updated = False
-        for i, (key, _) in enumerate(self._metadata):
-            if key == "authorization":
-                self._metadata[i] = ("authorization", token)
-                updated = True
-                break
-        
-        # If not updated, add a new entry
-        if not updated:
-            self._metadata.append(("authorization", token))

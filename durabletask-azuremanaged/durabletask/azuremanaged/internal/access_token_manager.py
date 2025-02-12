@@ -7,20 +7,12 @@ import durabletask.internal.shared as shared
 
 # By default, when there's 10minutes left before the token expires, refresh the token
 class AccessTokenManager:
-    def __init__(self, refresh_interval_seconds: int = 600, metadata: Optional[list[tuple[str, str]]] = None):
+    def __init__(self, refresh_interval_seconds: int = 600, use_managed_identity: bool = False, client_id: str = None):
         self.scope = "https://durabletask.io/.default"
         self.refresh_interval_seconds = refresh_interval_seconds
-        self._use_managed_identity = False
-        self._metadata = metadata
-        self._client_id = None
+        self._use_managed_identity = use_managed_identity
+        self._client_id = client_id
         self._logger = shared.get_logger("token_manager")
-
-        if metadata:  # Ensure metadata is not None
-            for key, value in metadata:
-                if key == "use_managed_identity":
-                    self._use_managed_identity = value.lower() == "true"  # Properly convert string to bool
-                elif key == "client_id":
-                    self._client_id = value  # Directly assign string
 
         # Choose the appropriate credential based on use_managed_identity
         if self._use_managed_identity:
