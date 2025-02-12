@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 from durabletask.internal.grpc_interceptor import _ClientCallDetails, DefaultClientInterceptorImpl
-from durabletask.azuremanaged.access_token_manager import AccessTokenManager
+from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
 
 import grpc
 

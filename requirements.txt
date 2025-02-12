@@ -4,4 +4,3 @@ protobuf
 pytest
 pytest-cov
 azure-identity
-durabletask-azuremanaged

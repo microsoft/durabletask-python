@@ -7,9 +7,9 @@ import durabletask.internal.shared as shared
 
 # By default, when there's 10minutes left before the token expires, refresh the token
 class AccessTokenManager:
-    def __init__(self, refresh_buffer: int = 600, metadata: Optional[list[tuple[str, str]]] = None):
+    def __init__(self, refresh_interval_seconds: int = 600, metadata: Optional[list[tuple[str, str]]] = None):
         self.scope = "https://durabletask.io/.default"
-        self.refresh_buffer = refresh_buffer
+        self.refresh_interval_seconds = refresh_interval_seconds
         self._use_managed_identity = False
         self._metadata = metadata
         self._client_id = None
@@ -42,13 +42,13 @@ class AccessTokenManager:
             self.refresh_token()
         return self.token
 
-    # Checks if the token is expired, or if it will expire in the next "refresh_buffer" seconds.
+    # Checks if the token is expired, or if it will expire in the next "refresh_interval_seconds" seconds.
     # For example, if the token is created to have a lifespan of 2 hours, and the refresh buffer is set to 30 minutes,
     # We will grab a new token when there're 30minutes left on the lifespan of the token
     def is_token_expired(self) -> bool:
         if self.expiry_time is None:
             return True
-        return datetime.now(timezone.utc) >= (self.expiry_time - timedelta(seconds=self.refresh_buffer))
+        return datetime.now(timezone.utc) >= (self.expiry_time - timedelta(seconds=self.refresh_interval_seconds))
 
     def refresh_token(self):
         new_token = self.credential.get_token(self.scope)

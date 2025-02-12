@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "durabletask.azuremanaged"
 version = "0.1b1"
-description = "An Azure Managed Backend for Durable Task Python SDK"
+description = "Extensions for the Durable Task Python SDK for integrating with the Durable Task Scheduler in Azure"
 keywords = [
     "durable",
     "task",

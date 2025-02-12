@@ -6,9 +6,8 @@ import time
 import os
 from durabletask import client, task
 from durabletask import client, task
-import DurableTaskSchedulerWorker
-import DurableTaskSchedulerClient
-
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 
 def get_work_items(ctx: task.ActivityContext, _) -> list[str]:
     """Activity function that returns a list of work items"""
