@@ -12,8 +12,8 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
     interceptor to add additional headers to all calls as needed."""
 
     def __init__(self, token_credential: TokenCredential, taskhub_name: str):
-        metadata = [("taskhub", taskhub_name)]
-        super().__init__(metadata)
+        self._metadata = [("taskhub", taskhub_name)]
+        super().__init__(self._metadata)
         
         if token_credential is not None:
             self._token_credential = token_credential

@@ -12,7 +12,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
-                 token_credential: TokenCredential = None,
+                 token_credential: TokenCredential,
                  secure_channel: Optional[bool] = True):
 
         if taskhub == None:
