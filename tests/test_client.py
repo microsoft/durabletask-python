@@ -6,7 +6,7 @@ from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 HOST_ADDRESS = 'localhost:50051'
 METADATA = [('key1', 'value1'), ('key2', 'value2')]
-INTERCEPTORS = DefaultClientInterceptorImpl(METADATA)
+INTERCEPTORS = [DefaultClientInterceptorImpl(METADATA)]
 
 def test_get_grpc_channel_insecure():
     with patch('grpc.insecure_channel') as mock_channel:
