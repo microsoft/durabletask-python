@@ -47,7 +47,7 @@ else:
 
 
 # configure and start the worker
-with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, use_managed_identity=False, client_id="", taskhub=taskhub_name) as w:
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, taskhub=taskhub_name) as w:
     w.add_orchestrator(sequence)
     w.add_activity(hello)
     w.start()

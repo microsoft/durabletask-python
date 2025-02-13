@@ -5,7 +5,7 @@ from typing import Optional
 from durabletask.client import TaskHubGrpcClient, OrchestrationStatus
 from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
 from durabletask.azuremanaged.durabletask_grpc_interceptor import DTSDefaultClientInterceptorImpl
-from azure.identity import DefaultAzureCredential
+from azure.core.credentials import TokenCredential
 
 # Client class used for Durable Task Scheduler (DTS)
 class DurableTaskSchedulerClient(TaskHubGrpcClient):
@@ -14,8 +14,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  taskhub: str,
                  secure_channel: Optional[bool] = True,
                  metadata: Optional[list[tuple[str, str]]] = None,
-                 use_managed_identity: Optional[bool] = False,
-                 client_id: Optional[str] = None):
+                 token_credential: Optional[TokenCredential] = None):
 
         if taskhub == None:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
@@ -27,14 +26,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
         # Append DurableTask-specific metadata
         self._metadata.append(("taskhub", taskhub))
         self._metadata.append(("dts", "True"))
-        self._metadata.append(("use_managed_identity", str(use_managed_identity)))
-        self._metadata.append(("client_id", str(client_id or "None")))
-
-        self._access_token_manager = AccessTokenManager(use_managed_identity=use_managed_identity,
-                                                        client_id=client_id)
-        token = self._access_token_manager.get_access_token()
-        self._metadata.append(("authorization", token))
-
+        self._metadata.append(("token_credential", token_credential))
         self._interceptors = [DTSDefaultClientInterceptorImpl(self._metadata)]
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class

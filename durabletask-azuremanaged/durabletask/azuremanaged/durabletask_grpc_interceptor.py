@@ -13,20 +13,18 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
 
     def __init__(self, metadata: list[tuple[str, str]]):
         super().__init__(metadata)
-
-        use_managed_identity = False
-        client_id = None
+        
+        self._token_credential = None
         
         # Check what authentication we are using
         if metadata:
             for key, value in metadata:
-                if key.lower() == "use_managed_identity":
-                    self.use_managed_identity = value.strip().lower() == "true"  # Convert to boolean
-                elif key.lower() == "client_id":
-                    self.client_id = value
+                if key.lower() == "token_credential":
+                    self._token_credential = value
 
-        self._token_manager = AccessTokenManager(use_managed_identity=use_managed_identity,
-                                                 client_id=client_id)
+        self._token_manager = AccessTokenManager(token_credential=self._token_credential)
+        token = self._token_manager.get_access_token()
+        self._metadata.append(("authorization", token))
 
     def _intercept_call(
                 self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
