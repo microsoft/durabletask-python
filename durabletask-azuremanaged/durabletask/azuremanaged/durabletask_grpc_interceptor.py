@@ -3,7 +3,7 @@
 
 from durabletask.internal.grpc_interceptor import _ClientCallDetails, DefaultClientInterceptorImpl
 from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
-
+from azure.core.credentials import TokenCredential
 import grpc
 
 class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
@@ -11,20 +11,15 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
     StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an 
     interceptor to add additional headers to all calls as needed."""
 
-    def __init__(self, metadata: list[tuple[str, str]]):
+    def __init__(self, token_credential: TokenCredential, taskhub_name: str):
+        metadata = [("taskhub", taskhub_name)]
         super().__init__(metadata)
         
-        self._token_credential = None
-        
-        # Check what authentication we are using
-        if metadata:
-            for key, value in metadata:
-                if key.lower() == "token_credential":
-                    self._token_credential = value
-
-        self._token_manager = AccessTokenManager(token_credential=self._token_credential)
-        token = self._token_manager.get_access_token()
-        self._metadata.append(("authorization", token))
+        if token_credential is not None:
+            self._token_credential = token_credential
+            self._token_manager = AccessTokenManager(token_credential=self._token_credential)
+            token = self._token_manager.get_access_token()
+            self._metadata.append(("authorization", token))
 
     def _intercept_call(
                 self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:

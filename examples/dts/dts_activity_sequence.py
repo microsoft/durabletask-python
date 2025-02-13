@@ -4,6 +4,7 @@ import os
 from durabletask import task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient, OrchestrationStatus
+from azure.identity import DefaultAzureCredential
 
 def hello(ctx: task.ActivityContext, name: str) -> str:
     """Activity function that returns a greeting"""
@@ -45,15 +46,18 @@ else:
     print("If you are using bash, run the following: export ENDPOINT=\"<schedulerEndpoint>\"")
     exit()
 
+credential = DefaultAzureCredential()
 
 # configure and start the worker
-with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, taskhub=taskhub_name) as w:
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                taskhub=taskhub_name, token_credential=credential) as w:
     w.add_orchestrator(sequence)
     w.add_activity(hello)
     w.start()
 
     # Construct the client and run the orchestrations
-    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True, taskhub=taskhub_name)
+    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                   taskhub=taskhub_name, token_credential=credential)
     instance_id = c.schedule_new_orchestration(sequence)
     state = c.wait_for_orchestration_completion(instance_id, timeout=60)
     if state and state.runtime_status == OrchestrationStatus.COMPLETED:

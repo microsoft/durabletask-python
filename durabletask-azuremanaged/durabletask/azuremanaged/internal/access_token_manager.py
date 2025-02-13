@@ -13,14 +13,7 @@ class AccessTokenManager:
         self._refresh_interval_seconds = refresh_interval_seconds
         self._logger = shared.get_logger("token_manager")
 
-        # Choose the appropriate credential. 
-        # Both TokenCredential and DefaultAzureCredential get_token methods return an AccessToken
-        if token_credential:
-            self._logger.debug("Using user provided token credentials.")
-            self._credential = token_credential
-        else:
-            self._credential = DefaultAzureCredential()
-            self._logger.debug("Using Default Azure Credentials for authentication.")
+        self._credential = token_credential
         
         self._token = self._credential.get_token(self._scope)
         self.expiry_time = None

@@ -8,6 +8,7 @@ from durabletask import client, task
 from durabletask import client, task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from azure.identity import DefaultAzureCredential
 
 def get_work_items(ctx: task.ActivityContext, _) -> list[str]:
     """Activity function that returns a list of work items"""
@@ -71,15 +72,19 @@ else:
     print("If you are using bash, run the following: export ENDPOINT=\"<schedulerEndpoint>\"")
     exit()
 
+credential = DefaultAzureCredential()
+
 # configure and start the worker
-with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True, taskhub=taskhub_name) as w:
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                taskhub=taskhub_name, token_credential=credential) as w:
     w.add_orchestrator(orchestrator)
     w.add_activity(process_work_item)
     w.add_activity(get_work_items)
     w.start()
 
     # create a client, start an orchestration, and wait for it to finish
-    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True, taskhub=taskhub_name)
+    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                   taskhub=taskhub_name, token_credential=credential)
     instance_id = c.schedule_new_orchestration(orchestrator)
     state = c.wait_for_orchestration_completion(instance_id, timeout=30)
     if state and state.runtime_status == client.OrchestrationStatus.COMPLETED:
