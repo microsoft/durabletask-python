@@ -113,7 +113,6 @@ class TaskHubGrpcClient:
 
         channel = shared.get_grpc_channel(
             host_address=host_address,
-            metadata=metadata,
             secure_channel=secure_channel,
             interceptors=self._interceptors
         )

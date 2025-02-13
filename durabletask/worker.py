@@ -131,7 +131,7 @@ class TaskHubGrpcWorker:
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
-        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel, self._interceptors)
+        channel = shared.get_grpc_channel(self._host_address, self._secure_channel, self._interceptors)
         stub = stubs.TaskHubSidecarServiceStub(channel)
 
         if self._is_running:
