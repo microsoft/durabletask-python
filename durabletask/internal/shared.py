@@ -24,7 +24,6 @@ def get_default_host_address() -> str:
 
 def get_grpc_channel(
         host_address: Optional[str],
-        metadata: Optional[list[tuple[str, str]]] = None,
         secure_channel: bool = False,
         interceptors: Optional[list[DefaultClientInterceptorImpl]] = None) -> grpc.Channel:
     
