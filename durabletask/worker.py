@@ -9,14 +9,13 @@ from types import GeneratorType
 from typing import Any, Generator, Optional, Sequence, TypeVar, Union
 
 import grpc
-from google.protobuf import empty_pb2, wrappers_pb2
+from google.protobuf import empty_pb2
 
 import durabletask.internal.helpers as ph
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
-
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
@@ -84,6 +83,7 @@ class ActivityNotRegisteredError(ValueError):
 
 class TaskHubGrpcWorker:
     _response_stream: Optional[grpc.Future] = None
+    _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
     def __init__(self, *,
                  host_address: Optional[str] = None,
@@ -91,10 +91,9 @@ class TaskHubGrpcWorker:
                  log_handler=None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[list[DefaultClientInterceptorImpl]] = None):  # Add interceptors
+                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
-        self._metadata = metadata
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
@@ -102,14 +101,13 @@ class TaskHubGrpcWorker:
 
         # Determine the interceptors to use
         if interceptors is not None:
-            self._interceptors = interceptors
+            self._interceptors = list(interceptors)
             if metadata:
                 self._interceptors.append(DefaultClientInterceptorImpl(metadata))
-        elif self._metadata:
-            self._interceptors = [DefaultClientInterceptorImpl(self._metadata)]
+        elif metadata:
+            self._interceptors = [DefaultClientInterceptorImpl(metadata)]
         else:
             self._interceptors = None
-
 
     def __enter__(self):
         return self
@@ -161,7 +159,7 @@ class TaskHubGrpcWorker:
                             elif work_item.HasField('activityRequest'):
                                 executor.submit(self._execute_activity, work_item.activityRequest, stub, work_item.completionToken)
                             elif work_item.HasField('healthPing'):
-                                pass # no-op
+                                pass  # no-op
                             else:
                                 self._logger.warning(f'Unexpected work item type: {request_type}')
 
@@ -489,6 +487,7 @@ class ExecutionResults:
     def __init__(self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]):
         self.actions = actions
         self.encoded_custom_status = encoded_custom_status
+
 
 class _OrchestrationExecutor:
     _generator: Optional[task.Orchestrator] = None

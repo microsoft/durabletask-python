@@ -1,14 +1,16 @@
 """End-to-end sample that demonstrates how to configure an orchestrator
 that a dynamic number activity functions in parallel, waits for them all
 to complete, and prints an aggregate summary of the outputs."""
+import os
 import random
 import time
-import os
-from durabletask import client, task
-from durabletask import client, task
-from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+
 from azure.identity import DefaultAzureCredential
+
+from durabletask import client, task
+from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
 
 def get_work_items(ctx: task.ActivityContext, _) -> list[str]:
     """Activity function that returns a list of work items"""

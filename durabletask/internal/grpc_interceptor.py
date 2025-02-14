@@ -19,10 +19,10 @@ class _ClientCallDetails(
 
 
 class DefaultClientInterceptorImpl (
-    grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor,
-    grpc.StreamUnaryClientInterceptor, grpc.StreamStreamClientInterceptor):
+        grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor,
+        grpc.StreamUnaryClientInterceptor, grpc.StreamStreamClientInterceptor):
     """The class implements a UnaryUnaryClientInterceptor, UnaryStreamClientInterceptor,
-    StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an 
+    StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an
     interceptor to add additional headers to all calls as needed."""
 
     def __init__(self, metadata: list[tuple[str, str]]):
@@ -30,17 +30,17 @@ class DefaultClientInterceptorImpl (
         self._metadata = metadata
 
     def _intercept_call(
-                self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
+            self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
             call details."""
         if self._metadata is None:
             return client_call_details
-        
+
         if client_call_details.metadata is not None:
             metadata = list(client_call_details.metadata)
         else:
             metadata = []
-        
+
         metadata.extend(self._metadata)
         client_call_details = _ClientCallDetails(
             client_call_details.method, client_call_details.timeout, metadata,

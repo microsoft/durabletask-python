@@ -5,10 +5,16 @@ import dataclasses
 import json
 import logging
 from types import SimpleNamespace
-from typing import Any, Optional
-from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+from typing import Any, Optional, Sequence, Union
 
 import grpc
+
+ClientInterceptor = Union[
+    grpc.UnaryUnaryClientInterceptor,
+    grpc.UnaryStreamClientInterceptor,
+    grpc.StreamUnaryClientInterceptor,
+    grpc.StreamStreamClientInterceptor
+]
 
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
@@ -25,8 +31,8 @@ def get_default_host_address() -> str:
 def get_grpc_channel(
         host_address: Optional[str],
         secure_channel: bool = False,
-        interceptors: Optional[list[DefaultClientInterceptorImpl]] = None) -> grpc.Channel:
-    
+        interceptors: Optional[Sequence[ClientInterceptor]] = None) -> grpc.Channel:
+
     if host_address is None:
         host_address = get_default_host_address()
 
@@ -54,6 +60,7 @@ def get_grpc_channel(
     if interceptors:
         channel = grpc.intercept_channel(channel, *interceptors)
     return channel
+
 
 def get_logger(
         name_suffix: str,
@@ -99,7 +106,7 @@ class InternalJSONEncoder(json.JSONEncoder):
         if dataclasses.is_dataclass(obj):
             # Dataclasses are not serializable by default, so we convert them to a dict and mark them for
             # automatic deserialization by the receiver
-            d = dataclasses.asdict(obj)  # type: ignore 
+            d = dataclasses.asdict(obj)  # type: ignore
             d[AUTO_SERIALIZED] = True
             return d
         elif isinstance(obj, SimpleNamespace):
