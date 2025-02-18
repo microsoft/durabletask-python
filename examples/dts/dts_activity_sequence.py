@@ -49,6 +49,8 @@ else:
     print("If you are using bash, run the following: export ENDPOINT=\"<schedulerEndpoint>\"")
     exit()
 
+# Note that any azure-identity credential type and configuration can be used here as DTS supports various credential
+# types such as Managed Identities
 credential = DefaultAzureCredential()
 
 # configure and start the worker
