@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, Optional, Sequence, TypeVar, Union
 
 import grpc
 from google.protobuf import wrappers_pb2
@@ -16,6 +16,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
 from durabletask import task
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
@@ -96,8 +97,25 @@ class TaskHubGrpcClient:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
-                 secure_channel: bool = False):
-        channel = shared.get_grpc_channel(host_address, metadata, secure_channel=secure_channel)
+                 secure_channel: bool = False,
+                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None):
+
+        # If the caller provided metadata, we need to create a new interceptor for it and
+        # add it to the list of interceptors.
+        if interceptors is not None:
+            interceptors = list(interceptors)
+            if metadata is not None:
+                interceptors.append(DefaultClientInterceptorImpl(metadata))
+        elif metadata is not None:
+            interceptors = [DefaultClientInterceptorImpl(metadata)]
+        else:
+            interceptors = None
+
+        channel = shared.get_grpc_channel(
+            host_address=host_address,
+            secure_channel=secure_channel,
+            interceptors=interceptors
+        )
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
 
@@ -116,7 +134,7 @@ class TaskHubGrpcClient:
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
             version=wrappers_pb2.StringValue(value=""),
             orchestrationIdReusePolicy=reuse_id_policy,
-            )
+        )
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
         res: pb.CreateInstanceResponse = self._stub.StartInstance(req)

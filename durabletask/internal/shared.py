@@ -5,11 +5,16 @@ import dataclasses
 import json
 import logging
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Optional, Sequence, Union
 
 import grpc
 
-from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+ClientInterceptor = Union[
+    grpc.UnaryUnaryClientInterceptor,
+    grpc.UnaryStreamClientInterceptor,
+    grpc.StreamUnaryClientInterceptor,
+    grpc.StreamStreamClientInterceptor
+]
 
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
@@ -25,8 +30,9 @@ def get_default_host_address() -> str:
 
 def get_grpc_channel(
         host_address: Optional[str],
-        metadata: Optional[list[tuple[str, str]]],
-        secure_channel: bool = False) -> grpc.Channel:
+        secure_channel: bool = False,
+        interceptors: Optional[Sequence[ClientInterceptor]] = None) -> grpc.Channel:
+
     if host_address is None:
         host_address = get_default_host_address()
 
@@ -44,15 +50,17 @@ def get_grpc_channel(
             host_address = host_address[len(protocol):]
             break
 
+    # Create the base channel
     if secure_channel:
         channel = grpc.secure_channel(host_address, grpc.ssl_channel_credentials())
     else:
         channel = grpc.insecure_channel(host_address)
 
-    if metadata is not None and len(metadata) > 0:
-        interceptors = [DefaultClientInterceptorImpl(metadata)]
+    # Apply interceptors ONLY if they exist
+    if interceptors:
         channel = grpc.intercept_channel(channel, *interceptors)
     return channel
+
 
 def get_logger(
         name_suffix: str,
@@ -98,7 +106,7 @@ class InternalJSONEncoder(json.JSONEncoder):
         if dataclasses.is_dataclass(obj):
             # Dataclasses are not serializable by default, so we convert them to a dict and mark them for
             # automatic deserialization by the receiver
-            d = dataclasses.asdict(obj)  # type: ignore 
+            d = dataclasses.asdict(obj)  # type: ignore
             d[AUTO_SERIALIZED] = True
             return d
         elif isinstance(obj, SimpleNamespace):

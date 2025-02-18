@@ -9,7 +9,7 @@ from types import GeneratorType
 from typing import Any, Generator, Optional, Sequence, TypeVar, Union
 
 import grpc
-from google.protobuf import empty_pb2, wrappers_pb2
+from google.protobuf import empty_pb2
 
 import durabletask.internal.helpers as ph
 import durabletask.internal.helpers as pbh
@@ -17,6 +17,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
 from durabletask import task
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
@@ -82,20 +83,31 @@ class ActivityNotRegisteredError(ValueError):
 
 class TaskHubGrpcWorker:
     _response_stream: Optional[grpc.Future] = None
+    _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
     def __init__(self, *,
                  host_address: Optional[str] = None,
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler=None,
                  log_formatter: Optional[logging.Formatter] = None,
-                 secure_channel: bool = False):
+                 secure_channel: bool = False,
+                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
-        self._metadata = metadata
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
+
+        # Determine the interceptors to use
+        if interceptors is not None:
+            self._interceptors = list(interceptors)
+            if metadata:
+                self._interceptors.append(DefaultClientInterceptorImpl(metadata))
+        elif metadata:
+            self._interceptors = [DefaultClientInterceptorImpl(metadata)]
+        else:
+            self._interceptors = None
 
     def __enter__(self):
         return self
@@ -117,7 +129,7 @@ class TaskHubGrpcWorker:
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
-        channel = shared.get_grpc_channel(self._host_address, self._metadata, self._secure_channel)
+        channel = shared.get_grpc_channel(self._host_address, self._secure_channel, self._interceptors)
         stub = stubs.TaskHubSidecarServiceStub(channel)
 
         if self._is_running:
@@ -143,9 +155,11 @@ class TaskHubGrpcWorker:
                             request_type = work_item.WhichOneof('request')
                             self._logger.debug(f'Received "{request_type}" work item')
                             if work_item.HasField('orchestratorRequest'):
-                                executor.submit(self._execute_orchestrator, work_item.orchestratorRequest, stub)
+                                executor.submit(self._execute_orchestrator, work_item.orchestratorRequest, stub, work_item.completionToken)
                             elif work_item.HasField('activityRequest'):
-                                executor.submit(self._execute_activity, work_item.activityRequest, stub)
+                                executor.submit(self._execute_activity, work_item.activityRequest, stub, work_item.completionToken)
+                            elif work_item.HasField('healthPing'):
+                                pass  # no-op
                             else:
                                 self._logger.warning(f'Unexpected work item type: {request_type}')
 
@@ -184,26 +198,27 @@ class TaskHubGrpcWorker:
         self._logger.info("Worker shutdown completed")
         self._is_running = False
 
-    def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: stubs.TaskHubSidecarServiceStub):
+    def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: stubs.TaskHubSidecarServiceStub, completionToken):
         try:
             executor = _OrchestrationExecutor(self._registry, self._logger)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
             res = pb.OrchestratorResponse(
                 instanceId=req.instanceId,
                 actions=result.actions,
-                customStatus=pbh.get_string_value(result.encoded_custom_status))
+                customStatus=pbh.get_string_value(result.encoded_custom_status),
+                completionToken=completionToken)
         except Exception as ex:
             self._logger.exception(f"An error occurred while trying to execute instance '{req.instanceId}': {ex}")
             failure_details = pbh.new_failure_details(ex)
             actions = [pbh.new_complete_orchestration_action(-1, pb.ORCHESTRATION_STATUS_FAILED, "", failure_details)]
-            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions)
+            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions, completionToken=completionToken)
 
         try:
             stub.CompleteOrchestratorTask(res)
         except Exception as ex:
             self._logger.exception(f"Failed to deliver orchestrator response for '{req.instanceId}' to sidecar: {ex}")
 
-    def _execute_activity(self, req: pb.ActivityRequest, stub: stubs.TaskHubSidecarServiceStub):
+    def _execute_activity(self, req: pb.ActivityRequest, stub: stubs.TaskHubSidecarServiceStub, completionToken):
         instance_id = req.orchestrationInstance.instanceId
         try:
             executor = _ActivityExecutor(self._registry, self._logger)
@@ -211,12 +226,14 @@ class TaskHubGrpcWorker:
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
-                result=pbh.get_string_value(result))
+                result=pbh.get_string_value(result),
+                completionToken=completionToken)
         except Exception as ex:
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
-                failureDetails=pbh.new_failure_details(ex))
+                failureDetails=pbh.new_failure_details(ex),
+                completionToken=completionToken)
 
         try:
             stub.CompleteActivityTask(res)
@@ -470,6 +487,7 @@ class ExecutionResults:
     def __init__(self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]):
         self.actions = actions
         self.encoded_custom_status = encoded_custom_status
+
 
 class _OrchestrationExecutor:
     _generator: Optional[task.Orchestrator] = None
