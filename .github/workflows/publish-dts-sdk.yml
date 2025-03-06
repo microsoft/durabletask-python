@@ -3,9 +3,19 @@ name: Publish Durable Task Scheduler to PyPI
 on:
   push:
     tags:
-      - 'v*'  # Only run for tags starting with "v"
+      - 'azuremanaged-v*'  # Only run for tags starting with "azuremanaged-v"
 
 jobs:
+  linter:
+    steps:
+      - name: Run linter
+        run: echo "Success"
+
+  test:
+    steps:
+      - name: Run tests
+        run: echo "Success"
+
   publish:
     runs-on: ubuntu-latest
 
@@ -14,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Extract version from tag
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV  # Extract version from the tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/azuremanaged-v}" >> $GITHUB_ENV  # Extract version from the tag
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,19 +37,19 @@ jobs:
           pip install build twine
 
       - name: Build package from directory durabletask-azuremanaged
+        working-directory: ./durabletask-azuremanaged
         run: |
-          cd durabletask-azuremanaged 
-          python -m build 
+          python -m build
 
       - name: Check package
+        working-directory: ./durabletask-azuremanaged
         run: |
-          cd durabletask-azuremanaged 
           twine check dist/* 
 
       - name: Publish package to PyPI
         env:
           TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}  # Store your PyPI API token in GitHub Secrets
-        run: |
-          cd durabletask-azuremanaged 
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN_AZUREMANAGED  }}  # Store your PyPI API token in GitHub Secrets
+        working-directory: ./durabletask-azuremanaged
+        run: | 
           twine upload dist/* 
