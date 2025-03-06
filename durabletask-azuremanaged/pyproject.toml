@@ -26,7 +26,7 @@ requires-python = ">=3.9"
 license = {file = "LICENSE"}
 readme = "README.md"
 dependencies = [
-    "durabletask>=0.2.0",
+    "durabletask>=0.2.0b1",
     "azure-identity>=1.19.0"
 ]
 
