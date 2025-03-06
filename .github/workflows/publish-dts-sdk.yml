@@ -15,12 +15,13 @@ jobs:
       with:
         python-version: 3.12
     - name: Install dependencies
+      working-directory: durabletask-azuremanaged
       run: |
         python -m pip install --upgrade pip
         pip install setuptools wheel tox
         pip install flake8
     - name: Run flake8 Linter
-      working-directory: ./durabletask-azuremanaged
+      working-directory: durabletask-azuremanaged
       run: flake8 .
 
   publish:
@@ -44,12 +45,12 @@ jobs:
           pip install build twine
 
       - name: Build package from directory durabletask-azuremanaged
-        working-directory: ./durabletask-azuremanaged
+        working-directory: durabletask-azuremanaged
         run: |
           python -m build
 
       - name: Check package
-        working-directory: ./durabletask-azuremanaged
+        working-directory: durabletask-azuremanaged
         run: |
           twine check dist/* 
 
@@ -57,6 +58,6 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN_AZUREMANAGED  }}  # Store your PyPI API token in GitHub Secrets
-        working-directory: ./durabletask-azuremanaged
+        working-directory: durabletask-azuremanaged
         run: | 
           twine upload dist/* 
