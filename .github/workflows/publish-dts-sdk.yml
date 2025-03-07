@@ -24,8 +24,36 @@ jobs:
       working-directory: durabletask-azuremanaged
       run: flake8 .
 
-  publish:
+
+  run-docker-tests:
     needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull Docker image
+        run: docker pull mcr.microsoft.com/dts/dts-emulator:v0.0.4
+
+      - name: Run Docker container
+        run: |
+          docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:v0.0.4
+
+      - name: Wait for container to be ready
+        run: sleep 10  # Adjust if your service needs more time to start
+
+      - name: Set environment variables
+        run: |
+          echo "TASKHUB=default" >> $GITHUB_ENV
+          echo "ENDPOINT=http://localhost:8080" >> $GITHUB_ENV
+
+      - name: Run the tests
+        working-directory: durabletask-azuremanaged
+        run: python -m dts_activity_sequence
+
+
+  publish:
+    needs: run-docker-tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
