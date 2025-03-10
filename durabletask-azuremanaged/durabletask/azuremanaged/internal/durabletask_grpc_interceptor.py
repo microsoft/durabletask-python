@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 
 import grpc
+from typing import Optional
+
 from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.internal.access_token_manager import \
@@ -15,7 +17,7 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
     StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an
     interceptor to add additional headers to all calls as needed."""
 
-    def __init__(self, token_credential: TokenCredential, taskhub_name: str):
+    def __init__(self, token_credential: Optional[TokenCredential], taskhub_name: str):
         self._metadata = [("taskhub", taskhub_name)]
         super().__init__(self._metadata)
 

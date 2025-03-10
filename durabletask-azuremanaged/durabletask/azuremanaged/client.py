@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from azure.core.credentials import TokenCredential
+from typing import Optional
 
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import \
     DTSDefaultClientInterceptorImpl
@@ -13,7 +14,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
-                 token_credential: TokenCredential,
+                 token_credential: Optional[TokenCredential],
                  secure_channel: bool = True):
 
         if not taskhub:
