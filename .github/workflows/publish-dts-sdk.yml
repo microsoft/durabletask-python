@@ -1,0 +1,63 @@
+name: Publish Durable Task Scheduler to PyPI
+
+on:
+  push:
+    tags:
+      - 'azuremanaged-v*'  # Only run for tags starting with "azuremanaged-v"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+    - name: Install dependencies
+      working-directory: durabletask-azuremanaged
+      run: |
+        python -m pip install --upgrade pip
+        pip install setuptools wheel tox
+        pip install flake8
+    - name: Run flake8 Linter
+      working-directory: durabletask-azuremanaged
+      run: flake8 .
+
+  publish:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/azuremanaged-v}" >> $GITHUB_ENV  # Extract version from the tag
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # Adjust Python version as needed
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package from directory durabletask-azuremanaged
+        working-directory: durabletask-azuremanaged
+        run: |
+          python -m build
+
+      - name: Check package
+        working-directory: durabletask-azuremanaged
+        run: |
+          twine check dist/* 
+
+      - name: Publish package to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN_AZUREMANAGED  }}  # Store your PyPI API token in GitHub Secrets
+        working-directory: durabletask-azuremanaged
+        run: | 
+          twine upload dist/* 
