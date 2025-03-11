@@ -55,7 +55,7 @@ jobs:
           echo "ENDPOINT=http://localhost:8080" >> $GITHUB_ENV
 
       - name: Install dependencies
-        working-directory: examples/durabletask-azuremanaged
+        working-directory: examples/dts
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -63,7 +63,6 @@ jobs:
       - name: Run the tests
         working-directory: tests/durabletask-azuremanaged
         run: python -m test_activity_sequence
-
 
   publish:
     needs: run-docker-tests
