@@ -41,7 +41,7 @@ jobs:
     - name: Pytest unit tests
       working-directory: tests/durabletask
       run: |
-        PYTHONPATH=$GITHUB_WORKSPACE pytest -m "not e2e and not dts" --verbose
+        pytest -m "not e2e and not dts" --verbose
 
     # Sidecar for running e2e tests requires Go SDK
     - name: Install Go SDK
@@ -55,4 +55,4 @@ jobs:
       run: |
         go install github.com/microsoft/durabletask-go@main
         durabletask-go --port 4001 &
-        PYTHONPATH=$GITHUB_WORKSPACE pytest -m "e2e and not dts" --verbose
+        pytest -m "e2e and not dts" --verbose

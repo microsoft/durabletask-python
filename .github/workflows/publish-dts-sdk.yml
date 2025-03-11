@@ -54,7 +54,13 @@ jobs:
           echo "TASKHUB=default" >> $GITHUB_ENV
           echo "ENDPOINT=http://localhost:8080" >> $GITHUB_ENV
 
-      - name: Install dependencies
+      - name: Install durabletask dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest
+          pip install -r requirements.txt
+
+      - name: Install durabletask-azuremanaged dependencies
         working-directory: examples/dts
         run: |
           python -m pip install --upgrade pip
@@ -63,7 +69,7 @@ jobs:
       - name: Run the tests
         working-directory: tests/durabletask-azuremanaged
         run: |
-          PYTHONPATH=$GITHUB_WORKSPACE pytest -m "dts" --verbose
+          pytest -m "dts" --verbose
 
   publish:
     needs: run-docker-tests
