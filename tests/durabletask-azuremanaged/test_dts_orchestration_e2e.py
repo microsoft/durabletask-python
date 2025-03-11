@@ -254,10 +254,12 @@ def test_suspend_and_resume():
 
         # Suspend the orchestration and wait for it to go into the SUSPENDED state
         task_hub_client.suspend_orchestration(id)
-        while state.runtime_status == client.OrchestrationStatus.RUNNING:
+        counter = 0
+        while state.runtime_status == client.OrchestrationStatus.RUNNING and counter < 1200:
             time.sleep(0.1)
             state = task_hub_client.get_orchestration_state(id)
             assert state is not None
+            counter+=1
         assert state.runtime_status == client.OrchestrationStatus.SUSPENDED
 
         # Raise an event to the orchestration and confirm that it does NOT complete
