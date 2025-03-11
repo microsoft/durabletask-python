@@ -62,7 +62,8 @@ jobs:
 
       - name: Run the tests
         working-directory: tests/durabletask-azuremanaged
-        run: python -m test_activity_sequence
+        run: |
+          PYTHONPATH=$GITHUB_WORKSPACE pytest -m "dts" --verbose
 
   publish:
     needs: run-docker-tests

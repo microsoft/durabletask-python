@@ -15,7 +15,7 @@ from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 # NOTE: These tests assume a sidecar process is running. Example command:
 #       docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
-pytestmark = pytest.mark.e2e
+pytestmark = pytest.mark.dts
 
 # Read the environment variables
 taskhub_name = os.getenv("TASKHUB", "default")
