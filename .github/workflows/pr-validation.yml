@@ -34,6 +34,7 @@ jobs:
       run: |
         flake8 . --count --show-source --statistics --exit-zero
     - name: Pytest unit tests
+      working-directory: examples/durabletask-azuremanaged
       run: |
         pytest -m "not e2e" --verbose
 
@@ -45,6 +46,7 @@ jobs:
 
     # Install and run the durabletask-go sidecar for running e2e tests
     - name: Pytest e2e tests
+      working-directory: examples/durabletask-azuremanaged
       run: |
         go install github.com/microsoft/durabletask-go@main
         durabletask-go --port 4001 &
