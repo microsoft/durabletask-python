@@ -65,8 +65,8 @@ In order to use the emulator for the examples, perform the following steps:
 
 4. Set the environment variables that are referenced and used in the examples:
     1. If you are using windows powershell:
-    `$env:TASKHUB=default`
-    `$env:ENDPOINT=http://localhost:8080`
+    `$env:TASKHUB="default"`
+    `$env:ENDPOINT="http://localhost:8080"`
     2. If you are using bash:
     `export TASKHUB=default`
     `export ENDPOINT=http://localhost:8080`
