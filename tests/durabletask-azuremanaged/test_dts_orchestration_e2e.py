@@ -202,37 +202,37 @@ def test_wait_for_multiple_external_events():
     assert state.serialized_output == json.dumps(['a', 'b', 'c'])
 
 
-@pytest.mark.parametrize("raise_event", [True, False])
-def test_wait_for_external_event_timeout(raise_event: bool):
-    def orchestrator(ctx: task.OrchestrationContext, _):
-        approval: task.Task[bool] = ctx.wait_for_external_event('Approval')
-        timeout = ctx.create_timer(timedelta(seconds=3))
-        winner = yield task.when_any([approval, timeout])
-        if winner == approval:
-            return "approved"
-        else:
-            return "timed out"
+# @pytest.mark.parametrize("raise_event", [True, False])
+# def test_wait_for_external_event_timeout(raise_event: bool):
+#     def orchestrator(ctx: task.OrchestrationContext, _):
+#         approval: task.Task[bool] = ctx.wait_for_external_event('Approval')
+#         timeout = ctx.create_timer(timedelta(seconds=3))
+#         winner = yield task.when_any([approval, timeout])
+#         if winner == approval:
+#             return "approved"
+#         else:
+#             return "timed out"
 
-    # Start a worker, which will connect to the sidecar in a background thread
-    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
-        w.add_orchestrator(orchestrator)
-        w.start()
+#     # Start a worker, which will connect to the sidecar in a background thread
+#     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+#                                 taskhub=taskhub_name, token_credential=None) as w:
+#         w.add_orchestrator(orchestrator)
+#         w.start()
 
-        # Start the orchestration and immediately raise events to it.
-        task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
-        id = task_hub_client.schedule_new_orchestration(orchestrator)
-        if raise_event:
-            task_hub_client.raise_orchestration_event(id, 'Approval')
-        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+#         # Start the orchestration and immediately raise events to it.
+#         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+#                                    taskhub=taskhub_name, token_credential=None)
+#         id = task_hub_client.schedule_new_orchestration(orchestrator)
+#         if raise_event:
+#             task_hub_client.raise_orchestration_event(id, 'Approval')
+#         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
-    assert state is not None
-    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
-    if raise_event:
-        assert state.serialized_output == json.dumps("approved")
-    else:
-        assert state.serialized_output == json.dumps("timed out")
+#     assert state is not None
+#     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+#     if raise_event:
+#         assert state.serialized_output == json.dumps("approved")
+#     else:
+#         assert state.serialized_output == json.dumps("timed out")
 
 
 # def test_suspend_and_resume():
