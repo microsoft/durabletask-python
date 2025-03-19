@@ -3,7 +3,7 @@ name: Publish Durable Task Scheduler to PyPI
 on:
   push:
     tags:
-      - 'testtag-v*'  # Only run for tags starting with "azuremanaged-v"
+      - 'azuremanaged-v*'  # Only run for tags starting with "azuremanaged-v"
 
 # on:
 #   push:
