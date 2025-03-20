@@ -2,14 +2,13 @@ name: Publish Durable Task Scheduler to PyPI
 
 on:
   push:
+    branches: 
+      - "main"
     tags:
-      - 'azuremanaged-v*'  # Only run for tags starting with "azuremanaged-v"
-
-on:
-  push:
-    branches: [ "main" ]
+      - "azuremanaged-v*"  # Only run for tags starting with "azuremanaged-v"
   pull_request:
-    branches: [ "main" ]
+    branches: 
+      - "main"
 
 jobs:
   lint:
