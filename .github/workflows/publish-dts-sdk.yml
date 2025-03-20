@@ -5,12 +5,11 @@ on:
     tags:
       - 'azuremanaged-v*'  # Only run for tags starting with "azuremanaged-v"
 
-# on:
-#   push:
-#     branches: [ "main" ]
-#   pull_request:
-#     branches: [ "main" ]
-
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   lint:
@@ -31,8 +30,9 @@ jobs:
       working-directory: durabletask-azuremanaged
       run: flake8 .
 
-
   run-docker-tests:
+    env:
+      EMULATOR_VERSION: "v0.0.4"  # Define the variable
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -40,11 +40,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Pull Docker image
-        run: docker pull mcr.microsoft.com/dts/dts-emulator:v0.0.4
+        run: docker pull mcr.microsoft.com/dts/dts-emulator:$EMULATOR_VERSION
 
       - name: Run Docker container
         run: |
-          docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:v0.0.4
+          docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:$EMULATOR_VERSION
 
       - name: Wait for container to be ready
         run: sleep 10  # Adjust if your service needs more time to start
