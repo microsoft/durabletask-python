@@ -4,8 +4,13 @@ This directory contains examples of how to author durable orchestrations using t
 
 ## Prerequisites
 
-All the examples assume that you have a Durable Task Scheduler taskhub created.
+There are 2 separate ways to run an example:
+1. Using the emulator.
+2. Using a real scheduler and taskhub.
 
+All the examples by defualt assume that you have a Durable Task Scheduler taskhub created.
+
+## Running with a scheduler and taskhub resource
 The simplest way to create a taskhub is by using the az cli commands:
 
 1. Create a scheduler:
@@ -45,6 +50,29 @@ The simplest way to create a taskhub is by using the az cli commands:
     ```
 
 1. Grant yourself the `Durable Task Data Contributor` role over your scheduler
+
+## Running with the emulator
+The emulator is a simulation of a scheduler and taskhub. It is the 'backend' of the durabletask-azuremanaged system packaged up into an easy to use docker container. For these steps, it is assumed that you are using port 8080.
+
+In order to use the emulator for the examples, perform the following steps:
+1. Install docker if it is not already installed.
+
+2. Pull down the docker image for the emulator:
+ `docker pull mcr.microsoft.com/dts/dts-emulator:v0.0.4`
+
+3. Run the emulator and wait a few seconds for the container to be ready:
+`docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:v0.0.4`
+
+4. Set the environment variables that are referenced and used in the examples:
+    1. If you are using windows powershell:
+    `$env:TASKHUB="default"`
+    `$env:ENDPOINT="http://localhost:8080"`
+    2. If you are using bash:
+    `export TASKHUB=default`
+    `export ENDPOINT=http://localhost:8080`
+
+5. Finally, edit the examples to change the `token_credential` input of both the `DurableTaskSchedulerWorker` and `DurableTaskSchedulerClient` to a value of `None` 
+
 
 ## Running the examples
 

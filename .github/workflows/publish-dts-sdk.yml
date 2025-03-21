@@ -1,0 +1,110 @@
+name: Publish Durable Task Scheduler to PyPI
+
+on:
+  push:
+    branches: 
+      - "main"
+    tags:
+      - "azuremanaged-v*"  # Only run for tags starting with "azuremanaged-v"
+  pull_request:
+    branches: 
+      - "main"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+    - name: Install dependencies
+      working-directory: durabletask-azuremanaged
+      run: |
+        python -m pip install --upgrade pip
+        pip install setuptools wheel tox
+        pip install flake8
+    - name: Run flake8 Linter
+      working-directory: durabletask-azuremanaged
+      run: flake8 .
+
+  run-docker-tests:
+    env:
+      EMULATOR_VERSION: "v0.0.5"  # Define the variable
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull Docker image
+        run: docker pull mcr.microsoft.com/dts/dts-emulator:$EMULATOR_VERSION
+
+      - name: Run Docker container
+        run: |
+          docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:$EMULATOR_VERSION
+
+      - name: Wait for container to be ready
+        run: sleep 10  # Adjust if your service needs more time to start
+
+      - name: Set environment variables
+        run: |
+          echo "TASKHUB=default" >> $GITHUB_ENV
+          echo "ENDPOINT=http://localhost:8080" >> $GITHUB_ENV
+
+      - name: Install durabletask dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest
+          pip install -r requirements.txt
+
+      - name: Install durabletask-azuremanaged dependencies
+        working-directory: examples/dts
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the tests
+        working-directory: tests/durabletask-azuremanaged
+        run: |
+          pytest -m "dts" --verbose
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/azuremanaged-v')  # Only run if a matching tag is pushed
+    needs: run-docker-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/azuremanaged-v}" >> $GITHUB_ENV  # Extract version from the tag
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # Adjust Python version as needed
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package from directory durabletask-azuremanaged
+        working-directory: durabletask-azuremanaged
+        run: |
+          python -m build
+
+      - name: Check package
+        working-directory: durabletask-azuremanaged
+        run: |
+          twine check dist/* 
+
+      - name: Publish package to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN_AZUREMANAGED  }}  # Store your PyPI API token in GitHub Secrets
+        working-directory: durabletask-azuremanaged
+        run: | 
+          twine upload dist/* 

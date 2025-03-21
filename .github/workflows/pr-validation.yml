@@ -25,17 +25,23 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
+    - name: Install durabletask dependencies
       run: |
         python -m pip install --upgrade pip
         pip install flake8 pytest
+        pip install -r requirements.txt
+    - name: Install durabletask-azuremanaged dependencies
+      working-directory: examples/dts
+      run: |
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
     - name: Lint with flake8
       run: |
         flake8 . --count --show-source --statistics --exit-zero
     - name: Pytest unit tests
+      working-directory: tests/durabletask
       run: |
-        pytest -m "not e2e" --verbose
+        pytest -m "not e2e and not dts" --verbose
 
     # Sidecar for running e2e tests requires Go SDK
     - name: Install Go SDK
@@ -45,7 +51,8 @@ jobs:
 
     # Install and run the durabletask-go sidecar for running e2e tests
     - name: Pytest e2e tests
+      working-directory: tests/durabletask
       run: |
         go install github.com/microsoft/durabletask-go@main
         durabletask-go --port 4001 &
-        pytest -m "e2e" --verbose
+        pytest -m "e2e and not dts" --verbose
