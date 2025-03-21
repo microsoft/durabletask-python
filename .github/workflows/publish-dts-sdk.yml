@@ -31,7 +31,7 @@ jobs:
 
   run-docker-tests:
     env:
-      EMULATOR_VERSION: "v0.0.4"  # Define the variable
+      EMULATOR_VERSION: "v0.0.5"  # Define the variable
     needs: lint
     runs-on: ubuntu-latest
     steps:
