@@ -6,6 +6,9 @@ The scenario showcases an order processing system where orders are processed in 
 
 > Note, for simplicity, this code is contained within a single source file. In real practice, you would have 
 
+# Prerequisites
+ - [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli)
+ - [`az durabletask` CLI extension](https://learn.microsoft.com/en-us/cli/azure/durabletask?view=azure-cli-latest)
 
 ## Running the Examples
 There are two separate ways to run an example:
