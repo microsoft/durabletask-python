@@ -58,10 +58,10 @@ In order to use the emulator for the examples, perform the following steps:
 1. Install docker if it is not already installed.
 
 2. Pull down the docker image for the emulator:
- `docker pull mcr.microsoft.com/dts/dts-emulator:v0.0.4`
+ `docker pull mcr.microsoft.com/dts/dts-emulator:v0.0.6`
 
 3. Run the emulator and wait a few seconds for the container to be ready:
-`docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:v0.0.4`
+`docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:v0.0.6`
 
 4. Set the environment variables that are referenced and used in the examples:
     1. If you are using windows powershell:
@@ -72,7 +72,6 @@ In order to use the emulator for the examples, perform the following steps:
     `export ENDPOINT=http://localhost:8080`
 
 5. Finally, edit the examples to change the `token_credential` input of both the `DurableTaskSchedulerWorker` and `DurableTaskSchedulerClient` to a value of `None` 
-
 
 ## Running the examples
 
