@@ -20,7 +20,7 @@ def sequence(ctx: task.OrchestrationContext, _):
     return [result1, result2, result3]
 ```
 
-You can find the full sample [here](./examples/activity_sequence.py).
+You can find the full sample [here](../examples/activity_sequence.py).
 
 ### Fan-out/fan-in
 
@@ -48,7 +48,7 @@ def orchestrator(ctx: task.OrchestrationContext, _):
     return {'work_items': work_items, 'results': results, 'total': sum(results)}
 ```
 
-You can find the full sample [here](./examples/fanout_fanin.py).
+You can find the full sample [here](../examples/fanout_fanin.py).
 
 ### Human interaction and durable timers
 
@@ -79,4 +79,4 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
 
 As an aside, you'll also notice that the example orchestration above works with custom business objects. Support for custom business objects includes support for custom classes, custom data classes, and named tuples. Serialization and deserialization of these objects is handled automatically by the SDK.
 
-You can find the full sample [here](./examples/human_interaction.py).
+You can find the full sample [here](../examples/human_interaction.py).
