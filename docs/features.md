@@ -22,7 +22,7 @@ Orchestrations can start child orchestrations using the `call_sub_orchestrator` 
 
 Orchestrations can wait for external events using the `wait_for_external_event` API. External events are useful for implementing human interaction patterns, such as waiting for a user to approve an order before continuing.
 
-### Continue-as-new (TODO)
+### Continue-as-new
 
 Orchestrations can be continued as new using the `continue_as_new` API. This API allows an orchestration to restart itself from scratch, optionally with a new input.
 
@@ -30,6 +30,6 @@ Orchestrations can be continued as new using the `continue_as_new` API. This API
 
 Orchestrations can be suspended using the `suspend_orchestration` client API and will remain suspended until resumed using the `resume_orchestration` client API. A suspended orchestration will stop processing new events, but will continue to buffer any that happen to arrive until resumed, ensuring that no data is lost. An orchestration can also be terminated using the `terminate_orchestration` client API. Terminated orchestrations will stop processing new events and will discard any buffered events.
 
-### Retry policies (TODO)
+### Retry policies
 
 Orchestrations can specify retry policies for activities and sub-orchestrations. These policies control how many times and how frequently an activity or sub-orchestration will be retried in the event of a transient error.

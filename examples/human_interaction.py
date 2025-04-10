@@ -3,13 +3,18 @@ that waits for an "approval" event before proceding to the next step. If
 the approval isn't received within a specified timeout, the order that is
 represented by the orchestration is automatically cancelled."""
 
+import os
 import threading
 import time
 from collections import namedtuple
 from dataclasses import dataclass
 from datetime import timedelta
 
+from azure.identity import DefaultAzureCredential
+
 from durabletask import client, task, worker
+from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
 @dataclass
@@ -63,37 +68,87 @@ if __name__ == "__main__":
     parser.add_argument("--cost", type=int, default=2000, help="Cost of the order")
     parser.add_argument("--approver", type=str, default="Me", help="Approver name")
     parser.add_argument("--timeout", type=int, default=60, help="Timeout in seconds")
+    parser.add_argument("--local", action="store_true", help="Use local worker instead of DurableTaskScheduler")
     args = parser.parse_args()
 
-    # configure and start the worker
-    with worker.TaskHubGrpcWorker() as w:
-        w.add_orchestrator(purchase_order_workflow)
-        w.add_activity(send_approval_request)
-        w.add_activity(place_order)
-        w.start()
+    if args.local:
+        # Use local worker (original implementation)
+        with worker.TaskHubGrpcWorker() as w:
+            w.add_orchestrator(purchase_order_workflow)
+            w.add_activity(send_approval_request)
+            w.add_activity(place_order)
+            w.start()
 
-        c = client.TaskHubGrpcClient()
+            c = client.TaskHubGrpcClient()
 
-        # Start a purchase order workflow using the user input
-        order = Order(args.cost, "MyProduct", 1)
-        instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
+            # Start a purchase order workflow using the user input
+            order = Order(args.cost, "MyProduct", 1)
+            instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
 
-        def prompt_for_approval():
-            input("Press [ENTER] to approve the order...\n")
-            approval_event = namedtuple("Approval", ["approver"])(args.approver)
-            c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
+            def prompt_for_approval():
+                input("Press [ENTER] to approve the order...\n")
+                approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
-        # Prompt the user for approval on a background thread
-        threading.Thread(target=prompt_for_approval, daemon=True).start()
+            # Prompt the user for approval on a background thread
+            threading.Thread(target=prompt_for_approval, daemon=True).start()
 
-        # Wait for the orchestration to complete
-        try:
-            state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
-            if not state:
-                print("Workflow not found!")  # not expected
-            elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
-                print(f'Orchestration completed! Result: {state.serialized_output}')
-            else:
-                state.raise_if_failed()  # raises an exception
-        except TimeoutError:
-            print("*** Orchestration timed out!")
+            # Wait for the orchestration to complete
+            try:
+                state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
+                if not state:
+                    print("Workflow not found!")  # not expected
+                elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
+                    print(f'Orchestration completed! Result: {state.serialized_output}')
+                else:
+                    state.raise_if_failed()  # raises an exception
+            except TimeoutError:
+                print("*** Orchestration timed out!")
+    else:
+        # Use DurableTaskScheduler
+        # Use environment variables if provided, otherwise use default emulator values
+        taskhub_name = os.getenv("TASKHUB", "default")
+        endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
+
+        print(f"Using taskhub: {taskhub_name}")
+        print(f"Using endpoint: {endpoint}")
+
+        # Set credential to None for emulator, or DefaultAzureCredential for Azure
+        credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
+
+        # Configure and start the worker - use secure_channel=False for emulator
+        secure_channel = endpoint != "http://localhost:8080"
+        with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
+                                       taskhub=taskhub_name, token_credential=credential) as w:
+            w.add_orchestrator(purchase_order_workflow)
+            w.add_activity(send_approval_request)
+            w.add_activity(place_order)
+            w.start()
+
+            # Construct the client and run the orchestrations
+            c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=secure_channel,
+                                          taskhub=taskhub_name, token_credential=credential)
+
+            # Start a purchase order workflow using the user input
+            order = Order(args.cost, "MyProduct", 1)
+            instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
+            
+            def prompt_for_approval():
+                input("Press [ENTER] to approve the order...\n")
+                approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
+
+            # Prompt the user for approval on a background thread
+            threading.Thread(target=prompt_for_approval, daemon=True).start()
+
+            # Wait for the orchestration to complete
+            try:
+                state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
+                if not state:
+                    print("Workflow not found!")  # not expected
+                elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
+                    print(f'Orchestration completed! Result: {state.serialized_output}')
+                else:
+                    state.raise_if_failed()  # raises an exception
+            except TimeoutError:
+                print("*** Orchestration timed out!")

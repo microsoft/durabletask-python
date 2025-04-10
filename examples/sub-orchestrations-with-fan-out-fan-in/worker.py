@@ -103,31 +103,15 @@ def orchestrator(ctx, _):
         'details': results,
     }
 
-# Read the environment variable
-taskhub_name = os.getenv("TASKHUB")
+# Use environment variables if provided, otherwise use default emulator values
+taskhub_name = os.getenv("TASKHUB", "default")
+endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
 
-# Check if the variable exists
-if taskhub_name:
-    print(f"The value of TASKHUB is: {taskhub_name}")
-else:
-    print("TASKHUB is not set. Please set the TASKHUB environment variable to the name of the taskhub you wish to use")
-    print("If you are using windows powershell, run the following: $env:TASKHUB=\"<taskhubname>\"")
-    print("If you are using bash, run the following: export TASKHUB=\"<taskhubname>\"")
-    exit()
+print(f"Using taskhub: {taskhub_name}")
+print(f"Using endpoint: {endpoint}")
 
-# Read the environment variable
-endpoint = os.getenv("ENDPOINT")
-
-# Check if the variable exists
-if endpoint:
-    print(f"The value of ENDPOINT is: {endpoint}")
-else:
-    print("ENDPOINT is not set. Please set the ENDPOINT environment variable to the endpoint of the scheduler")
-    print("If you are using windows powershell, run the following: $env:ENDPOINT=\"<schedulerEndpoint>\"")
-    print("If you are using bash, run the following: export ENDPOINT=\"<schedulerEndpoint>\"")
-    exit()
-
-credential = DefaultAzureCredential()
+# Set credential to None for emulator, or DefaultAzureCredential for Azure
+credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
 
 # Configure and start the worker
 with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
