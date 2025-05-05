@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from azure.core.credentials import TokenCredential
 from typing import Optional
 
-from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import \
-    DTSDefaultClientInterceptorImpl
+from azure.core.credentials import TokenCredential
+
+from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
+    DTSDefaultClientInterceptorImpl,
+)
 from durabletask.client import TaskHubGrpcClient
 
 

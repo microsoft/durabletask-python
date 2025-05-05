@@ -1,15 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import grpc
+from importlib.metadata import version
 from typing import Optional
 
+import grpc
 from azure.core.credentials import TokenCredential
 
-from durabletask.azuremanaged.internal.access_token_manager import \
-    AccessTokenManager
+from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
 from durabletask.internal.grpc_interceptor import (
-    DefaultClientInterceptorImpl, _ClientCallDetails)
+    DefaultClientInterceptorImpl,
+    _ClientCallDetails,
+)
 
 
 class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
@@ -18,7 +20,16 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
     interceptor to add additional headers to all calls as needed."""
 
     def __init__(self, token_credential: Optional[TokenCredential], taskhub_name: str):
-        self._metadata = [("taskhub", taskhub_name)]
+        try:
+            # Get the version of the azuremanaged package
+            sdk_version = version('durabletask-azuremanaged')
+        except Exception:
+            # Fallback if version cannot be determined
+            sdk_version = "unknown"
+        user_agent = f"durabletask-python/{sdk_version}"
+        self._metadata = [
+            ("taskhub", taskhub_name),
+            ("x-user-agent", user_agent)]  # 'user-agent' is a reserved header in grpc, so we use 'x-user-agent' instead
         super().__init__(self._metadata)
 
         if token_credential is not None:
