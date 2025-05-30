@@ -5,22 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.4.0
-
-### New
-
-- Added `ConcurrencyOptions` class for fine-grained concurrency control equivalent to .NET DurableTask SDK
-- Enhanced `TaskHubGrpcWorker` with `concurrency_options` parameter supporting separate limits for activities, orchestrations, and entities (100 * processor_count default each)
-
-### Breaking Changes
-
-- Removed `max_workers` parameter from `TaskHubGrpcWorker` constructor in favor of the more flexible `ConcurrencyOptions` approach
-
 ## v0.3.0
 
 ### New
 
-- Added configurable worker concurrency with `max_workers` parameter in `TaskHubGrpcWorker` constructor - allows customization of ThreadPoolExecutor size (default: 16 workers) (NOTE: This parameter was later removed in v0.4.0 in favor of `ConcurrencyOptions`)
+- Added `ConcurrencyOptions` class for fine-grained concurrency control with separate limits for activities and orchestrations. The thread pool worker count can also be configured.
 
 ### Fixed
 

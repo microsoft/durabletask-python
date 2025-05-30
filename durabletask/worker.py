@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import concurrent.futures
+import asyncio
+import inspect
 import logging
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
@@ -21,8 +23,8 @@ import durabletask.internal.shared as shared
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
-TInput = TypeVar('TInput')
-TOutput = TypeVar('TOutput')
+TInput = TypeVar("TInput")
+TOutput = TypeVar("TOutput")
 
 
 class ConcurrencyOptions:
@@ -33,9 +35,12 @@ class ConcurrencyOptions:
     activities, orchestrations, and entities.
     """
 
-    def __init__(self,
-                 maximum_concurrent_activity_work_items: Optional[int] = None,
-                 maximum_concurrent_orchestration_work_items: Optional[int] = None):
+    def __init__(
+        self,
+        maximum_concurrent_activity_work_items: Optional[int] = None,
+        maximum_concurrent_orchestration_work_items: Optional[int] = None,
+        maximum_thread_pool_workers: Optional[int] = None,
+    ):
         """Initialize concurrency options.
 
         Args:
@@ -43,9 +48,12 @@ class ConcurrencyOptions:
                 that can be processed concurrently. Defaults to 100 * processor_count.
             maximum_concurrent_orchestration_work_items: Maximum number of orchestration work items
                 that can be processed concurrently. Defaults to 100 * processor_count.
+            maximum_thread_pool_workers: Maximum number of thread pool workers to use.
         """
         processor_count = os.cpu_count() or 1
         default_concurrency = 100 * processor_count
+        # see https://docs.python.org/3/library/concurrent.futures.html
+        default_max_workers = processor_count + 4
 
         self.maximum_concurrent_activity_work_items = (
             maximum_concurrent_activity_work_items
@@ -59,21 +67,14 @@ class ConcurrencyOptions:
             else default_concurrency
         )
 
-    @property
-    def max_total_workers(self) -> int:
-        """Calculate the maximum total workers needed for the thread pool.
-
-        Since Python's ThreadPoolExecutor doesn't differentiate between work item types,
-        we use the maximum of all concurrency limits to ensure we have enough workers.
-        """
-        return max(
-            self.maximum_concurrent_activity_work_items,
-            self.maximum_concurrent_orchestration_work_items,
+        self.maximum_thread_pool_workers = (
+            maximum_thread_pool_workers
+            if maximum_thread_pool_workers is not None
+            else default_max_workers
         )
 
 
 class _Registry:
-
     orchestrators: dict[str, task.Orchestrator]
     activities: dict[str, task.Activity]
 
@@ -83,7 +84,7 @@ class _Registry:
 
     def add_orchestrator(self, fn: task.Orchestrator) -> str:
         if fn is None:
-            raise ValueError('An orchestrator function argument is required.')
+            raise ValueError("An orchestrator function argument is required.")
 
         name = task.get_name(fn)
         self.add_named_orchestrator(name, fn)
@@ -91,7 +92,7 @@ class _Registry:
 
     def add_named_orchestrator(self, name: str, fn: task.Orchestrator) -> None:
         if not name:
-            raise ValueError('A non-empty orchestrator name is required.')
+            raise ValueError("A non-empty orchestrator name is required.")
         if name in self.orchestrators:
             raise ValueError(f"A '{name}' orchestrator already exists.")
 
@@ -102,7 +103,7 @@ class _Registry:
 
     def add_activity(self, fn: task.Activity) -> str:
         if fn is None:
-            raise ValueError('An activity function argument is required.')
+            raise ValueError("An activity function argument is required.")
 
         name = task.get_name(fn)
         self.add_named_activity(name, fn)
@@ -110,7 +111,7 @@ class _Registry:
 
     def add_named_activity(self, name: str, fn: task.Activity) -> None:
         if not name:
-            raise ValueError('A non-empty activity name is required.')
+            raise ValueError("A non-empty activity name is required.")
         if name in self.activities:
             raise ValueError(f"A '{name}' activity already exists.")
 
@@ -122,11 +123,13 @@ class _Registry:
 
 class OrchestratorNotRegisteredError(ValueError):
     """Raised when attempting to start an orchestration that is not registered"""
+
     pass
 
 
 class ActivityNotRegisteredError(ValueError):
     """Raised when attempting to call an activity that is not registered"""
+
     pass
 
 
@@ -134,23 +137,32 @@ class TaskHubGrpcWorker:
     _response_stream: Optional[grpc.Future] = None
     _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
-    def __init__(self, *,
-                 host_address: Optional[str] = None,
-                 metadata: Optional[list[tuple[str, str]]] = None,
-                 log_handler=None,
-                 log_formatter: Optional[logging.Formatter] = None,
-                 secure_channel: bool = False,
-                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
-                 concurrency_options: Optional[ConcurrencyOptions] = None):
+    def __init__(
+        self,
+        *,
+        host_address: Optional[str] = None,
+        metadata: Optional[list[tuple[str, str]]] = None,
+        log_handler=None,
+        log_formatter: Optional[logging.Formatter] = None,
+        secure_channel: bool = False,
+        interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+        concurrency_options: Optional[ConcurrencyOptions] = None,
+    ):
         self._registry = _Registry()
-        self._host_address = host_address if host_address else shared.get_default_host_address()
+        self._host_address = (
+            host_address if host_address else shared.get_default_host_address()
+        )
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
 
         # Use provided concurrency options or create default ones
-        self._concurrency_options = concurrency_options if concurrency_options is not None else ConcurrencyOptions()
+        self._concurrency_options = (
+            concurrency_options
+            if concurrency_options is not None
+            else ConcurrencyOptions()
+        )
 
         # Determine the interceptors to use
         if interceptors is not None:
@@ -161,6 +173,8 @@ class TaskHubGrpcWorker:
             self._interceptors = [DefaultClientInterceptorImpl(metadata)]
         else:
             self._interceptors = None
+
+        self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options)
 
     @property
     def concurrency_options(self) -> ConcurrencyOptions:
@@ -176,181 +190,195 @@ class TaskHubGrpcWorker:
     def add_orchestrator(self, fn: task.Orchestrator) -> str:
         """Registers an orchestrator function with the worker."""
         if self._is_running:
-            raise RuntimeError('Orchestrators cannot be added while the worker is running.')
+            raise RuntimeError(
+                "Orchestrators cannot be added while the worker is running."
+            )
         return self._registry.add_orchestrator(fn)
 
     def add_activity(self, fn: task.Activity) -> str:
         """Registers an activity function with the worker."""
         if self._is_running:
-            raise RuntimeError('Activities cannot be added while the worker is running.')
+            raise RuntimeError(
+                "Activities cannot be added while the worker is running."
+            )
         return self._registry.add_activity(fn)
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
         if self._is_running:
-            raise RuntimeError('The worker is already running.')
+            raise RuntimeError("The worker is already running.")
 
         def run_loop():
-            """Enhanced run loop with better connection management and retry logic."""
-
-            # Connection state management for retry fix
-            current_channel: Optional[grpc.Channel] = None
-            current_stub: Optional[stubs.TaskHubSidecarServiceStub] = None
-            conn_retry_count = 0
-            conn_max_retry_delay = 60
-
-            def create_fresh_connection() -> None:
-                """Create a new gRPC channel and stub, invalidating any existing ones.
-
-                Raises:
-                    Exception: If connection creation or testing fails.
-                """
-                nonlocal current_channel, current_stub, conn_retry_count
-
-                # Close existing connection if any
-                if current_channel:
-                    try:
-                        current_channel.close()
-                    except Exception:
-                        pass
-
-                current_channel = None
-                current_stub = None
-
-                try:
-                    # Create new connection
-                    current_channel = shared.get_grpc_channel(self._host_address, self._secure_channel, self._interceptors)
-                    current_stub = stubs.TaskHubSidecarServiceStub(current_channel)
-
-                    # Test the connection
-                    current_stub.Hello(empty_pb2.Empty())
-                    conn_retry_count = 0  # Reset on successful connection
-                    self._logger.debug(f"Created fresh connection to {self._host_address}")
-
-                except Exception as e:
-                    self._logger.debug(f"Failed to create connection: {e}")
-                    current_channel = None
-                    current_stub = None
-                    raise  # Re-raise the original exception
-
-            def invalidate_connection() -> None:
-                """Mark current connection as invalid."""
-                nonlocal current_channel, current_stub
-                if current_channel:
-                    try:
-                        current_channel.close()
-                    except Exception:
-                        pass
-                current_channel = None
-                current_stub = None
-
-            def should_invalidate_connection(rpc_error: grpc.RpcError) -> bool:
-                """Determine if a gRPC error should trigger connection invalidation.
-
-                Connection-level errors (network, authentication, server unavailable)
-                should invalidate the connection, while application-level errors
-                (bad requests, not found, etc.) should not.
-                """
-                error_code = rpc_error.code()  # type: ignore
-
-                # Connection-level errors that warrant invalidation
-                connection_level_errors = {
-                    grpc.StatusCode.UNAVAILABLE,        # Server down/unreachable
-                    grpc.StatusCode.DEADLINE_EXCEEDED,  # Timeout, likely network issue
-                    grpc.StatusCode.CANCELLED,          # Connection cancelled
-                    grpc.StatusCode.UNAUTHENTICATED,    # Auth failed, may need new connection
-                    grpc.StatusCode.ABORTED,            # Transaction aborted, connection may be bad
-                }
-
-                return error_code in connection_level_errors
-
-            # TODO: Investigate whether asyncio could be used to enable greater concurrency for async activity
-            #       functions. We'd need to know ahead of time whether a function is async or not.
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self._concurrency_options.max_total_workers, thread_name_prefix="DurableTask") as executor:
-                while not self._shutdown.is_set():
-                    # Ensure we have a valid connection before attempting work
-                    if current_stub is None:
-                        try:
-                            create_fresh_connection()
-                        except Exception:
-                            # Connection failed, implement exponential backoff
-                            conn_retry_count += 1
-                            delay = min(conn_max_retry_delay, (2 ** min(conn_retry_count, 6)) + random.uniform(0, 1))
-                            self._logger.warning(f'Connection failed, retrying in {delay:.2f} seconds (attempt {conn_retry_count})')
-                            if self._shutdown.wait(delay):
-                                break  # Shutdown requested during wait
-                            continue
-
-                    try:
-                        # Stream work items with the current connection
-                        # Type assertion since we know current_stub is not None at this point
-                        assert current_stub is not None, "current_stub should not be None at this point"
-                        stub = current_stub  # Local reference for type safety
-
-                        # Create GetWorkItemsRequest with concurrency limits
-                        get_work_items_request = pb.GetWorkItemsRequest(
-                            maxConcurrentOrchestrationWorkItems=self._concurrency_options.maximum_concurrent_orchestration_work_items,
-                            maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items
-                        )
-                        self._response_stream = stub.GetWorkItems(get_work_items_request)
-                        self._logger.info(f'Successfully connected to {self._host_address}. Waiting for work items...')
-
-                        # Process work items concurrently as they arrive
-                        for work_item in self._response_stream:  # type: ignore
-                            if self._shutdown.is_set():
-                                break
-
-                            request_type = work_item.WhichOneof('request')
-                            self._logger.debug(f'Received "{request_type}" work item')
-
-                            # Submit work items to thread pool for concurrent processing
-                            if work_item.HasField('orchestratorRequest'):
-                                executor.submit(self._execute_orchestrator, work_item.orchestratorRequest, stub, work_item.completionToken)
-                            elif work_item.HasField('activityRequest'):
-                                executor.submit(self._execute_activity, work_item.activityRequest, stub, work_item.completionToken)
-                            elif work_item.HasField('healthPing'):
-                                pass  # no-op
-                            else:
-                                self._logger.warning(f'Unexpected work item type: {request_type}')
-
-                        # Stream ended normally (shouldn't happen unless server closes)
-                        self._logger.info("Work item stream ended normally")
-
-                    except grpc.RpcError as rpc_error:
-                        # Intelligently decide whether to invalidate connection based on error type
-                        should_invalidate = should_invalidate_connection(rpc_error)
-                        if should_invalidate:
-                            invalidate_connection()
-
-                        error_code = rpc_error.code()  # type: ignore
-                        if error_code == grpc.StatusCode.CANCELLED:
-                            self._logger.info(f'Disconnected from {self._host_address}')
-                            break  # Likely shutdown
-                        elif error_code == grpc.StatusCode.UNAVAILABLE:
-                            self._logger.warning(f'The sidecar at address {self._host_address} is unavailable - will continue retrying')
-                        elif should_invalidate:
-                            self._logger.warning(f'Connection-level gRPC error ({error_code}): {rpc_error} - invalidating connection')
-                        else:
-                            self._logger.warning(f'Application-level gRPC error ({error_code}): {rpc_error} - keeping connection')
-
-                        # Brief pause before retry
-                        self._shutdown.wait(1)
-
-                    except Exception as ex:
-                        # Unexpected error, invalidate connection and retry
-                        invalidate_connection()
-                        self._logger.warning(f'Unexpected error: {ex}')
-                        self._shutdown.wait(1)
-
-                # Final cleanup
-                invalidate_connection()
-
-            self._logger.info("No longer listening for work items")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self._async_run_loop())
 
         self._logger.info(f"Starting gRPC worker that connects to {self._host_address}")
         self._runLoop = Thread(target=run_loop)
         self._runLoop.start()
         self._is_running = True
+
+    async def _async_run_loop(self):
+        self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options)
+        worker_task = asyncio.create_task(self._async_worker_manager.run())
+        # Connection state management for retry fix
+        current_channel = None
+        current_stub = None
+        conn_retry_count = 0
+        conn_max_retry_delay = 60
+
+        def create_fresh_connection():
+            nonlocal current_channel, current_stub, conn_retry_count
+            if current_channel:
+                try:
+                    current_channel.close()
+                except Exception:
+                    pass
+            current_channel = None
+            current_stub = None
+            try:
+                current_channel = shared.get_grpc_channel(
+                    self._host_address, self._secure_channel, self._interceptors
+                )
+                current_stub = stubs.TaskHubSidecarServiceStub(current_channel)
+                current_stub.Hello(empty_pb2.Empty())
+                conn_retry_count = 0
+                self._logger.debug(f"Created fresh connection to {self._host_address}")
+            except Exception as e:
+                self._logger.debug(f"Failed to create connection: {e}")
+                current_channel = None
+                current_stub = None
+                raise
+
+        def invalidate_connection():
+            nonlocal current_channel, current_stub
+            if current_channel:
+                try:
+                    current_channel.close()
+                except Exception:
+                    pass
+            current_channel = None
+            current_stub = None
+
+        def should_invalidate_connection(rpc_error):
+            error_code = rpc_error.code()  # type: ignore
+            connection_level_errors = {
+                grpc.StatusCode.UNAVAILABLE,
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+                grpc.StatusCode.CANCELLED,
+                grpc.StatusCode.UNAUTHENTICATED,
+                grpc.StatusCode.ABORTED,
+            }
+            return error_code in connection_level_errors
+
+        while not self._shutdown.is_set():
+            if current_stub is None:
+                try:
+                    create_fresh_connection()
+                except Exception:
+                    conn_retry_count += 1
+                    delay = min(
+                        conn_max_retry_delay,
+                        (2 ** min(conn_retry_count, 6)) + random.uniform(0, 1),
+                    )
+                    self._logger.warning(
+                        f"Connection failed, retrying in {delay:.2f} seconds (attempt {conn_retry_count})"
+                    )
+                    if self._shutdown.wait(delay):
+                        break
+                    continue
+            try:
+                assert current_stub is not None
+                stub = current_stub
+                get_work_items_request = pb.GetWorkItemsRequest(
+                    maxConcurrentOrchestrationWorkItems=self._concurrency_options.maximum_concurrent_orchestration_work_items,
+                    maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items,
+                )
+                self._response_stream = stub.GetWorkItems(get_work_items_request)
+                self._logger.info(
+                    f"Successfully connected to {self._host_address}. Waiting for work items..."
+                )
+
+                # Use a thread to read from the blocking gRPC stream and forward to asyncio
+                import queue
+
+                work_item_queue = queue.Queue()
+
+                def stream_reader():
+                    try:
+                        for work_item in self._response_stream:
+                            work_item_queue.put(work_item)
+                    except Exception as e:
+                        work_item_queue.put(e)
+
+                import threading
+
+                reader_thread = threading.Thread(target=stream_reader, daemon=True)
+                reader_thread.start()
+                loop = asyncio.get_running_loop()
+                while not self._shutdown.is_set():
+                    try:
+                        work_item = await loop.run_in_executor(
+                            None, work_item_queue.get
+                        )
+                        if isinstance(work_item, Exception):
+                            raise work_item
+                        request_type = work_item.WhichOneof("request")
+                        self._logger.debug(f'Received "{request_type}" work item')
+                        if work_item.HasField("orchestratorRequest"):
+                            self._async_worker_manager.submit_orchestration(
+                                self._execute_orchestrator,
+                                work_item.orchestratorRequest,
+                                stub,
+                                work_item.completionToken,
+                            )
+                        elif work_item.HasField("activityRequest"):
+                            self._async_worker_manager.submit_activity(
+                                self._execute_activity,
+                                work_item.activityRequest,
+                                stub,
+                                work_item.completionToken,
+                            )
+                        elif work_item.HasField("healthPing"):
+                            pass
+                        else:
+                            self._logger.warning(
+                                f"Unexpected work item type: {request_type}"
+                            )
+                    except Exception as e:
+                        self._logger.warning(f"Error in work item stream: {e}")
+                        break
+                reader_thread.join(timeout=1)
+                self._logger.info("Work item stream ended normally")
+            except grpc.RpcError as rpc_error:
+                should_invalidate = should_invalidate_connection(rpc_error)
+                if should_invalidate:
+                    invalidate_connection()
+                error_code = rpc_error.code()  # type: ignore
+                if error_code == grpc.StatusCode.CANCELLED:
+                    self._logger.info(f"Disconnected from {self._host_address}")
+                    break
+                elif error_code == grpc.StatusCode.UNAVAILABLE:
+                    self._logger.warning(
+                        f"The sidecar at address {self._host_address} is unavailable - will continue retrying"
+                    )
+                elif should_invalidate:
+                    self._logger.warning(
+                        f"Connection-level gRPC error ({error_code}): {rpc_error} - resetting connection"
+                    )
+                else:
+                    self._logger.warning(
+                        f"Application-level gRPC error ({error_code}): {rpc_error}"
+                    )
+                self._shutdown.wait(1)
+            except Exception as ex:
+                invalidate_connection()
+                self._logger.warning(f"Unexpected error: {ex}")
+                self._shutdown.wait(1)
+        invalidate_connection()
+        self._logger.info("No longer listening for work items")
+        self._async_worker_manager.shutdown()
+        await worker_task
 
     def stop(self):
         """Stops the worker and waits for any pending work items to complete."""
@@ -363,10 +391,16 @@ class TaskHubGrpcWorker:
             self._response_stream.cancel()
         if self._runLoop is not None:
             self._runLoop.join(timeout=30)
+        self._async_worker_manager.shutdown()
         self._logger.info("Worker shutdown completed")
         self._is_running = False
 
-    def _execute_orchestrator(self, req: pb.OrchestratorRequest, stub: stubs.TaskHubSidecarServiceStub, completionToken):
+    def _execute_orchestrator(
+        self,
+        req: pb.OrchestratorRequest,
+        stub: stubs.TaskHubSidecarServiceStub,
+        completionToken,
+    ):
         try:
             executor = _OrchestrationExecutor(self._registry, self._logger)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
@@ -374,40 +408,63 @@ class TaskHubGrpcWorker:
                 instanceId=req.instanceId,
                 actions=result.actions,
                 customStatus=pbh.get_string_value(result.encoded_custom_status),
-                completionToken=completionToken)
+                completionToken=completionToken,
+            )
         except Exception as ex:
-            self._logger.exception(f"An error occurred while trying to execute instance '{req.instanceId}': {ex}")
+            self._logger.exception(
+                f"An error occurred while trying to execute instance '{req.instanceId}': {ex}"
+            )
             failure_details = pbh.new_failure_details(ex)
-            actions = [pbh.new_complete_orchestration_action(-1, pb.ORCHESTRATION_STATUS_FAILED, "", failure_details)]
-            res = pb.OrchestratorResponse(instanceId=req.instanceId, actions=actions, completionToken=completionToken)
+            actions = [
+                pbh.new_complete_orchestration_action(
+                    -1, pb.ORCHESTRATION_STATUS_FAILED, "", failure_details
+                )
+            ]
+            res = pb.OrchestratorResponse(
+                instanceId=req.instanceId,
+                actions=actions,
+                completionToken=completionToken,
+            )
 
         try:
             stub.CompleteOrchestratorTask(res)
         except Exception as ex:
-            self._logger.exception(f"Failed to deliver orchestrator response for '{req.instanceId}' to sidecar: {ex}")
+            self._logger.exception(
+                f"Failed to deliver orchestrator response for '{req.instanceId}' to sidecar: {ex}"
+            )
 
-    def _execute_activity(self, req: pb.ActivityRequest, stub: stubs.TaskHubSidecarServiceStub, completionToken):
+    def _execute_activity(
+        self,
+        req: pb.ActivityRequest,
+        stub: stubs.TaskHubSidecarServiceStub,
+        completionToken,
+    ):
         instance_id = req.orchestrationInstance.instanceId
         try:
             executor = _ActivityExecutor(self._registry, self._logger)
-            result = executor.execute(instance_id, req.name, req.taskId, req.input.value)
+            result = executor.execute(
+                instance_id, req.name, req.taskId, req.input.value
+            )
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
                 result=pbh.get_string_value(result),
-                completionToken=completionToken)
+                completionToken=completionToken,
+            )
         except Exception as ex:
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
                 failureDetails=pbh.new_failure_details(ex),
-                completionToken=completionToken)
+                completionToken=completionToken,
+            )
 
         try:
             stub.CompleteActivityTask(res)
         except Exception as ex:
             self._logger.exception(
-                f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}")
+                f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+            )
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
@@ -441,7 +498,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def resume(self):
         if self._generator is None:
             # This is never expected unless maybe there's an issue with the history
-            raise TypeError("The orchestrator generator is not initialized! Was the orchestration history corrupted?")
+            raise TypeError(
+                "The orchestrator generator is not initialized! Was the orchestration history corrupted?"
+            )
 
         # We can resume the generator only if the previously yielded task
         # has reached a completed state. The only time this won't be the
@@ -462,7 +521,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 raise TypeError("The orchestrator generator yielded a non-Task object")
             self._previous_task = next_task
 
-    def set_complete(self, result: Any, status: pb.OrchestrationStatus, is_result_encoded: bool = False):
+    def set_complete(
+        self,
+        result: Any,
+        status: pb.OrchestrationStatus,
+        is_result_encoded: bool = False,
+    ):
         if self._is_complete:
             return
 
@@ -475,7 +539,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if result is not None:
             result_json = result if is_result_encoded else shared.to_json(result)
         action = ph.new_complete_orchestration_action(
-            self.next_sequence_number(), status, result_json)
+            self.next_sequence_number(), status, result_json
+        )
         self._pending_actions[action.id] = action
 
     def set_failed(self, ex: Exception):
@@ -487,7 +552,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._completion_status = pb.ORCHESTRATION_STATUS_FAILED
 
         action = ph.new_complete_orchestration_action(
-            self.next_sequence_number(), pb.ORCHESTRATION_STATUS_FAILED, None, ph.new_failure_details(ex)
+            self.next_sequence_number(),
+            pb.ORCHESTRATION_STATUS_FAILED,
+            None,
+            ph.new_failure_details(ex),
         )
         self._pending_actions[action.id] = action
 
@@ -511,14 +579,21 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 # replayed when the new instance starts.
                 for event_name, values in self._received_events.items():
                     for event_value in values:
-                        encoded_value = shared.to_json(event_value) if event_value else None
-                        carryover_events.append(ph.new_event_raised_event(event_name, encoded_value))
+                        encoded_value = (
+                            shared.to_json(event_value) if event_value else None
+                        )
+                        carryover_events.append(
+                            ph.new_event_raised_event(event_name, encoded_value)
+                        )
             action = ph.new_complete_orchestration_action(
                 self.next_sequence_number(),
                 pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW,
-                result=shared.to_json(self._new_input) if self._new_input is not None else None,
+                result=shared.to_json(self._new_input)
+                if self._new_input is not None
+                else None,
                 failure_details=None,
-                carryover_events=carryover_events)
+                carryover_events=carryover_events,
+            )
             return [action]
         else:
             return list(self._pending_actions.values())
@@ -544,13 +619,18 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return self._is_replaying
 
     def set_custom_status(self, custom_status: Any) -> None:
-        self._encoded_custom_status = shared.to_json(custom_status) if custom_status is not None else None
+        self._encoded_custom_status = (
+            shared.to_json(custom_status) if custom_status is not None else None
+        )
 
     def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
         return self.create_timer_internal(fire_at)
 
-    def create_timer_internal(self, fire_at: Union[datetime, timedelta],
-                              retryable_task: Optional[task.RetryableTask] = None) -> task.Task:
+    def create_timer_internal(
+        self,
+        fire_at: Union[datetime, timedelta],
+        retryable_task: Optional[task.RetryableTask] = None,
+    ) -> task.Task:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
             fire_at = self.current_utc_datetime + fire_at
@@ -563,32 +643,51 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_tasks[id] = timer_task
         return timer_task
 
-    def call_activity(self, activity: Union[task.Activity[TInput, TOutput], str], *,
-                      input: Optional[TInput] = None,
-                      retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
+    def call_activity(
+        self,
+        activity: Union[task.Activity[TInput, TOutput], str],
+        *,
+        input: Optional[TInput] = None,
+        retry_policy: Optional[task.RetryPolicy] = None,
+    ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
 
-        self.call_activity_function_helper(id, activity, input=input, retry_policy=retry_policy,
-                                           is_sub_orch=False)
+        self.call_activity_function_helper(
+            id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False
+        )
         return self._pending_tasks.get(id, task.CompletableTask())
 
-    def call_sub_orchestrator(self, orchestrator: task.Orchestrator[TInput, TOutput], *,
-                              input: Optional[TInput] = None,
-                              instance_id: Optional[str] = None,
-                              retry_policy: Optional[task.RetryPolicy] = None) -> task.Task[TOutput]:
+    def call_sub_orchestrator(
+        self,
+        orchestrator: task.Orchestrator[TInput, TOutput],
+        *,
+        input: Optional[TInput] = None,
+        instance_id: Optional[str] = None,
+        retry_policy: Optional[task.RetryPolicy] = None,
+    ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
-        self.call_activity_function_helper(id, orchestrator_name, input=input, retry_policy=retry_policy,
-                                           is_sub_orch=True, instance_id=instance_id)
+        self.call_activity_function_helper(
+            id,
+            orchestrator_name,
+            input=input,
+            retry_policy=retry_policy,
+            is_sub_orch=True,
+            instance_id=instance_id,
+        )
         return self._pending_tasks.get(id, task.CompletableTask())
 
-    def call_activity_function_helper(self, id: Optional[int],
-                                      activity_function: Union[task.Activity[TInput, TOutput], str], *,
-                                      input: Optional[TInput] = None,
-                                      retry_policy: Optional[task.RetryPolicy] = None,
-                                      is_sub_orch: bool = False,
-                                      instance_id: Optional[str] = None,
-                                      fn_task: Optional[task.CompletableTask[TOutput]] = None):
+    def call_activity_function_helper(
+        self,
+        id: Optional[int],
+        activity_function: Union[task.Activity[TInput, TOutput], str],
+        *,
+        input: Optional[TInput] = None,
+        retry_policy: Optional[task.RetryPolicy] = None,
+        is_sub_orch: bool = False,
+        instance_id: Optional[str] = None,
+        fn_task: Optional[task.CompletableTask[TOutput]] = None,
+    ):
         if id is None:
             id = self.next_sequence_number()
 
@@ -599,7 +698,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             # We just need to take string representation of it.
             encoded_input = str(input)
         if not is_sub_orch:
-            name = activity_function if isinstance(activity_function, str) else task.get_name(activity_function)
+            name = (
+                activity_function
+                if isinstance(activity_function, str)
+                else task.get_name(activity_function)
+            )
             action = ph.new_schedule_task_action(id, name, encoded_input)
         else:
             if instance_id is None:
@@ -607,16 +710,21 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 instance_id = f"{self.instance_id}:{id:04x}"
             if not isinstance(activity_function, str):
                 raise ValueError("Orchestrator function name must be a string")
-            action = ph.new_create_sub_orchestration_action(id, activity_function, instance_id, encoded_input)
+            action = ph.new_create_sub_orchestration_action(
+                id, activity_function, instance_id, encoded_input
+            )
         self._pending_actions[id] = action
 
         if fn_task is None:
             if retry_policy is None:
                 fn_task = task.CompletableTask[TOutput]()
             else:
-                fn_task = task.RetryableTask[TOutput](retry_policy=retry_policy, action=action,
-                                                      start_time=self.current_utc_datetime,
-                                                      is_sub_orch=is_sub_orch)
+                fn_task = task.RetryableTask[TOutput](
+                    retry_policy=retry_policy,
+                    action=action,
+                    start_time=self.current_utc_datetime,
+                    is_sub_orch=is_sub_orch,
+                )
         self._pending_tasks[id] = fn_task
 
     def wait_for_external_event(self, name: str) -> task.Task:
@@ -652,7 +760,9 @@ class ExecutionResults:
     actions: list[pb.OrchestratorAction]
     encoded_custom_status: Optional[str]
 
-    def __init__(self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]):
+    def __init__(
+        self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]
+    ):
         self.actions = actions
         self.encoded_custom_status = encoded_custom_status
 
@@ -666,14 +776,23 @@ class _OrchestrationExecutor:
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
 
-    def execute(self, instance_id: str, old_events: Sequence[pb.HistoryEvent], new_events: Sequence[pb.HistoryEvent]) -> ExecutionResults:
+    def execute(
+        self,
+        instance_id: str,
+        old_events: Sequence[pb.HistoryEvent],
+        new_events: Sequence[pb.HistoryEvent],
+    ) -> ExecutionResults:
         if not new_events:
-            raise task.OrchestrationStateError("The new history event list must have at least one event in it.")
+            raise task.OrchestrationStateError(
+                "The new history event list must have at least one event in it."
+            )
 
         ctx = _RuntimeOrchestrationContext(instance_id)
         try:
             # Rebuild local state by replaying old history into the orchestrator function
-            self._logger.debug(f"{instance_id}: Rebuilding local state with {len(old_events)} history event...")
+            self._logger.debug(
+                f"{instance_id}: Rebuilding local state with {len(old_events)} history event..."
+            )
             ctx._is_replaying = True
             for old_event in old_events:
                 self.process_event(ctx, old_event)
@@ -681,7 +800,9 @@ class _OrchestrationExecutor:
             # Get new actions by executing newly received events into the orchestrator function
             if self._logger.level <= logging.DEBUG:
                 summary = _get_new_event_summary(new_events)
-                self._logger.debug(f"{instance_id}: Processing {len(new_events)} new event(s): {summary}")
+                self._logger.debug(
+                    f"{instance_id}: Processing {len(new_events)} new event(s): {summary}"
+                )
             ctx._is_replaying = False
             for new_event in new_events:
                 self.process_event(ctx, new_event)
@@ -693,17 +814,31 @@ class _OrchestrationExecutor:
         if not ctx._is_complete:
             task_count = len(ctx._pending_tasks)
             event_count = len(ctx._pending_events)
-            self._logger.info(f"{instance_id}: Orchestrator yielded with {task_count} task(s) and {event_count} event(s) outstanding.")
-        elif ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
-            completion_status_str = pbh.get_orchestration_status_str(ctx._completion_status)
-            self._logger.info(f"{instance_id}: Orchestration completed with status: {completion_status_str}")
+            self._logger.info(
+                f"{instance_id}: Orchestrator yielded with {task_count} task(s) and {event_count} event(s) outstanding."
+            )
+        elif (
+            ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+        ):
+            completion_status_str = pbh.get_orchestration_status_str(
+                ctx._completion_status
+            )
+            self._logger.info(
+                f"{instance_id}: Orchestration completed with status: {completion_status_str}"
+            )
 
         actions = ctx.get_actions()
         if self._logger.level <= logging.DEBUG:
-            self._logger.debug(f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}")
-        return ExecutionResults(actions=actions, encoded_custom_status=ctx._encoded_custom_status)
+            self._logger.debug(
+                f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}"
+            )
+        return ExecutionResults(
+            actions=actions, encoded_custom_status=ctx._encoded_custom_status
+        )
 
-    def process_event(self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent) -> None:
+    def process_event(
+        self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent
+    ) -> None:
         if self._is_suspended and _is_suspendable(event):
             # We are suspended, so we need to buffer this event until we are resumed
             self._suspended_events.append(event)
@@ -718,14 +853,19 @@ class _OrchestrationExecutor:
                 fn = self._registry.get_orchestrator(event.executionStarted.name)
                 if fn is None:
                     raise OrchestratorNotRegisteredError(
-                        f"A '{event.executionStarted.name}' orchestrator was not registered.")
+                        f"A '{event.executionStarted.name}' orchestrator was not registered."
+                    )
 
                 # deserialize the input, if any
                 input = None
-                if event.executionStarted.input is not None and event.executionStarted.input.value != "":
+                if (
+                    event.executionStarted.input is not None and event.executionStarted.input.value != ""
+                ):
                     input = shared.from_json(event.executionStarted.input.value)
 
-                result = fn(ctx, input)  # this does not execute the generator, only creates it
+                result = fn(
+                    ctx, input
+                )  # this does not execute the generator, only creates it
                 if isinstance(result, GeneratorType):
                     # Start the orchestrator's generator function
                     ctx.run(result)
@@ -738,10 +878,14 @@ class _OrchestrationExecutor:
                 timer_id = event.eventId
                 action = ctx._pending_actions.pop(timer_id, None)
                 if not action:
-                    raise _get_non_determinism_error(timer_id, task.get_name(ctx.create_timer))
+                    raise _get_non_determinism_error(
+                        timer_id, task.get_name(ctx.create_timer)
+                    )
                 elif not action.HasField("createTimer"):
                     expected_method_name = task.get_name(ctx.create_timer)
-                    raise _get_wrong_action_type_error(timer_id, expected_method_name, action)
+                    raise _get_wrong_action_type_error(
+                        timer_id, expected_method_name, action
+                    )
             elif event.HasField("timerFired"):
                 timer_id = event.timerFired.timerId
                 timer_task = ctx._pending_tasks.pop(timer_id, None)
@@ -749,7 +893,8 @@ class _OrchestrationExecutor:
                     # TODO: Should this be an error? When would it ever happen?
                     if not ctx._is_replaying:
                         self._logger.warning(
-                            f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}.")
+                            f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
+                        )
                     return
                 timer_task.complete(None)
                 if timer_task._retryable_parent is not None:
@@ -761,12 +906,15 @@ class _OrchestrationExecutor:
                     else:
                         cur_task = activity_action.createSubOrchestration
                         instance_id = cur_task.instanceId
-                    ctx.call_activity_function_helper(id=activity_action.id, activity_function=cur_task.name,
-                                                      input=cur_task.input.value,
-                                                      retry_policy=timer_task._retryable_parent._retry_policy,
-                                                      is_sub_orch=timer_task._retryable_parent._is_sub_orch,
-                                                      instance_id=instance_id,
-                                                      fn_task=timer_task._retryable_parent)
+                    ctx.call_activity_function_helper(
+                        id=activity_action.id,
+                        activity_function=cur_task.name,
+                        input=cur_task.input.value,
+                        retry_policy=timer_task._retryable_parent._retry_policy,
+                        is_sub_orch=timer_task._retryable_parent._is_sub_orch,
+                        instance_id=instance_id,
+                        fn_task=timer_task._retryable_parent,
+                    )
                 else:
                     ctx.resume()
             elif event.HasField("taskScheduled"):
@@ -776,16 +924,21 @@ class _OrchestrationExecutor:
                 action = ctx._pending_actions.pop(task_id, None)
                 activity_task = ctx._pending_tasks.get(task_id, None)
                 if not action:
-                    raise _get_non_determinism_error(task_id, task.get_name(ctx.call_activity))
+                    raise _get_non_determinism_error(
+                        task_id, task.get_name(ctx.call_activity)
+                    )
                 elif not action.HasField("scheduleTask"):
                     expected_method_name = task.get_name(ctx.call_activity)
-                    raise _get_wrong_action_type_error(task_id, expected_method_name, action)
+                    raise _get_wrong_action_type_error(
+                        task_id, expected_method_name, action
+                    )
                 elif action.scheduleTask.name != event.taskScheduled.name:
                     raise _get_wrong_action_name_error(
                         task_id,
                         method_name=task.get_name(ctx.call_activity),
                         expected_task_name=event.taskScheduled.name,
-                        actual_task_name=action.scheduleTask.name)
+                        actual_task_name=action.scheduleTask.name,
+                    )
             elif event.HasField("taskCompleted"):
                 # This history event contains the result of a completed activity task.
                 task_id = event.taskCompleted.taskScheduledId
@@ -794,7 +947,8 @@ class _OrchestrationExecutor:
                     # TODO: Should this be an error? When would it ever happen?
                     if not ctx.is_replaying:
                         self._logger.warning(
-                            f"{ctx.instance_id}: Ignoring unexpected taskCompleted event with ID = {task_id}.")
+                            f"{ctx.instance_id}: Ignoring unexpected taskCompleted event with ID = {task_id}."
+                        )
                     return
                 result = None
                 if not ph.is_empty(event.taskCompleted.result):
@@ -808,7 +962,8 @@ class _OrchestrationExecutor:
                     # TODO: Should this be an error? When would it ever happen?
                     if not ctx.is_replaying:
                         self._logger.warning(
-                            f"{ctx.instance_id}: Ignoring unexpected taskFailed event with ID = {task_id}.")
+                            f"{ctx.instance_id}: Ignoring unexpected taskFailed event with ID = {task_id}."
+                        )
                     return
 
                 if isinstance(activity_task, task.RetryableTask):
@@ -817,7 +972,8 @@ class _OrchestrationExecutor:
                         if next_delay is None:
                             activity_task.fail(
                                 f"{ctx.instance_id}: Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
-                                event.taskFailed.failureDetails)
+                                event.taskFailed.failureDetails,
+                            )
                             ctx.resume()
                         else:
                             activity_task.increment_attempt_count()
@@ -825,7 +981,8 @@ class _OrchestrationExecutor:
                 elif isinstance(activity_task, task.CompletableTask):
                     activity_task.fail(
                         f"{ctx.instance_id}: Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
-                        event.taskFailed.failureDetails)
+                        event.taskFailed.failureDetails,
+                    )
                     ctx.resume()
                 else:
                     raise TypeError("Unexpected task type")
@@ -835,16 +992,23 @@ class _OrchestrationExecutor:
                 task_id = event.eventId
                 action = ctx._pending_actions.pop(task_id, None)
                 if not action:
-                    raise _get_non_determinism_error(task_id, task.get_name(ctx.call_sub_orchestrator))
+                    raise _get_non_determinism_error(
+                        task_id, task.get_name(ctx.call_sub_orchestrator)
+                    )
                 elif not action.HasField("createSubOrchestration"):
                     expected_method_name = task.get_name(ctx.call_sub_orchestrator)
-                    raise _get_wrong_action_type_error(task_id, expected_method_name, action)
-                elif action.createSubOrchestration.name != event.subOrchestrationInstanceCreated.name:
+                    raise _get_wrong_action_type_error(
+                        task_id, expected_method_name, action
+                    )
+                elif (
+                    action.createSubOrchestration.name != event.subOrchestrationInstanceCreated.name
+                ):
                     raise _get_wrong_action_name_error(
                         task_id,
                         method_name=task.get_name(ctx.call_sub_orchestrator),
                         expected_task_name=event.subOrchestrationInstanceCreated.name,
-                        actual_task_name=action.createSubOrchestration.name)
+                        actual_task_name=action.createSubOrchestration.name,
+                    )
             elif event.HasField("subOrchestrationInstanceCompleted"):
                 task_id = event.subOrchestrationInstanceCompleted.taskScheduledId
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
@@ -852,11 +1016,14 @@ class _OrchestrationExecutor:
                     # TODO: Should this be an error? When would it ever happen?
                     if not ctx.is_replaying:
                         self._logger.warning(
-                            f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceCompleted event with ID = {task_id}.")
+                            f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceCompleted event with ID = {task_id}."
+                        )
                     return
                 result = None
                 if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
-                    result = shared.from_json(event.subOrchestrationInstanceCompleted.result.value)
+                    result = shared.from_json(
+                        event.subOrchestrationInstanceCompleted.result.value
+                    )
                 sub_orch_task.complete(result)
                 ctx.resume()
             elif event.HasField("subOrchestrationInstanceFailed"):
@@ -867,7 +1034,8 @@ class _OrchestrationExecutor:
                     # TODO: Should this be an error? When would it ever happen?
                     if not ctx.is_replaying:
                         self._logger.warning(
-                            f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceFailed event with ID = {task_id}.")
+                            f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceFailed event with ID = {task_id}."
+                        )
                     return
                 if isinstance(sub_orch_task, task.RetryableTask):
                     if sub_orch_task._retry_policy is not None:
@@ -875,7 +1043,8 @@ class _OrchestrationExecutor:
                         if next_delay is None:
                             sub_orch_task.fail(
                                 f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",
-                                failedEvent.failureDetails)
+                                failedEvent.failureDetails,
+                            )
                             ctx.resume()
                         else:
                             sub_orch_task.increment_attempt_count()
@@ -883,7 +1052,8 @@ class _OrchestrationExecutor:
                 elif isinstance(sub_orch_task, task.CompletableTask):
                     sub_orch_task.fail(
                         f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",
-                        failedEvent.failureDetails)
+                        failedEvent.failureDetails,
+                    )
                     ctx.resume()
                 else:
                     raise TypeError("Unexpected sub-orchestration task type")
@@ -912,7 +1082,9 @@ class _OrchestrationExecutor:
                         decoded_result = shared.from_json(event.eventRaised.input.value)
                     event_list.append(decoded_result)
                     if not ctx.is_replaying:
-                        self._logger.info(f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it.")
+                        self._logger.info(
+                            f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it."
+                        )
             elif event.HasField("executionSuspended"):
                 if not self._is_suspended and not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id}: Execution suspended.")
@@ -927,11 +1099,21 @@ class _OrchestrationExecutor:
             elif event.HasField("executionTerminated"):
                 if not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id}: Execution terminating.")
-                encoded_output = event.executionTerminated.input.value if not ph.is_empty(event.executionTerminated.input) else None
-                ctx.set_complete(encoded_output, pb.ORCHESTRATION_STATUS_TERMINATED, is_result_encoded=True)
+                encoded_output = (
+                    event.executionTerminated.input.value
+                    if not ph.is_empty(event.executionTerminated.input)
+                    else None
+                )
+                ctx.set_complete(
+                    encoded_output,
+                    pb.ORCHESTRATION_STATUS_TERMINATED,
+                    is_result_encoded=True,
+                )
             else:
                 eventType = event.WhichOneof("eventType")
-                raise task.OrchestrationStateError(f"Don't know how to handle event of type '{eventType}'")
+                raise task.OrchestrationStateError(
+                    f"Don't know how to handle event of type '{eventType}'"
+                )
         except StopIteration as generatorStopped:
             # The orchestrator generator function completed
             ctx.set_complete(generatorStopped.value, pb.ORCHESTRATION_STATUS_COMPLETED)
@@ -942,12 +1124,22 @@ class _ActivityExecutor:
         self._registry = registry
         self._logger = logger
 
-    def execute(self, orchestration_id: str, name: str, task_id: int, encoded_input: Optional[str]) -> Optional[str]:
+    def execute(
+        self,
+        orchestration_id: str,
+        name: str,
+        task_id: int,
+        encoded_input: Optional[str],
+    ) -> Optional[str]:
         """Executes an activity function and returns the serialized result, if any."""
-        self._logger.debug(f"{orchestration_id}/{task_id}: Executing activity '{name}'...")
+        self._logger.debug(
+            f"{orchestration_id}/{task_id}: Executing activity '{name}'..."
+        )
         fn = self._registry.get_activity(name)
         if not fn:
-            raise ActivityNotRegisteredError(f"Activity function named '{name}' was not registered!")
+            raise ActivityNotRegisteredError(
+                f"Activity function named '{name}' was not registered!"
+            )
 
         activity_input = shared.from_json(encoded_input) if encoded_input else None
         ctx = task.ActivityContext(orchestration_id, task_id)
@@ -955,49 +1147,54 @@ class _ActivityExecutor:
         # Execute the activity function
         activity_output = fn(ctx, activity_input)
 
-        encoded_output = shared.to_json(activity_output) if activity_output is not None else None
+        encoded_output = (
+            shared.to_json(activity_output) if activity_output is not None else None
+        )
         chars = len(encoded_output) if encoded_output else 0
         self._logger.debug(
-            f"{orchestration_id}/{task_id}: Activity '{name}' completed successfully with {chars} char(s) of encoded output.")
+            f"{orchestration_id}/{task_id}: Activity '{name}' completed successfully with {chars} char(s) of encoded output."
+        )
         return encoded_output
 
 
-def _get_non_determinism_error(task_id: int, action_name: str) -> task.NonDeterminismError:
+def _get_non_determinism_error(
+    task_id: int, action_name: str
+) -> task.NonDeterminismError:
     return task.NonDeterminismError(
         f"A previous execution called {action_name} with ID={task_id}, but the current "
         f"execution doesn't have this action with this ID. This problem occurs when either "
         f"the orchestration has non-deterministic logic or if the code was changed after an "
-        f"instance of this orchestration already started running.")
+        f"instance of this orchestration already started running."
+    )
 
 
 def _get_wrong_action_type_error(
-        task_id: int,
-        expected_method_name: str,
-        action: pb.OrchestratorAction) -> task.NonDeterminismError:
+    task_id: int, expected_method_name: str, action: pb.OrchestratorAction
+) -> task.NonDeterminismError:
     unexpected_method_name = _get_method_name_for_action(action)
     return task.NonDeterminismError(
         f"Failed to restore orchestration state due to a history mismatch: A previous execution called "
         f"{expected_method_name} with ID={task_id}, but the current execution is instead trying to call "
         f"{unexpected_method_name} as part of rebuilding it's history. This kind of mismatch can happen if an "
         f"orchestration has non-deterministic logic or if the code was changed after an instance of this "
-        f"orchestration already started running.")
+        f"orchestration already started running."
+    )
 
 
 def _get_wrong_action_name_error(
-        task_id: int,
-        method_name: str,
-        expected_task_name: str,
-        actual_task_name: str) -> task.NonDeterminismError:
+    task_id: int, method_name: str, expected_task_name: str, actual_task_name: str
+) -> task.NonDeterminismError:
     return task.NonDeterminismError(
         f"Failed to restore orchestration state due to a history mismatch: A previous execution called "
         f"{method_name} with name='{expected_task_name}' and sequence number {task_id}, but the current "
         f"execution is instead trying to call {actual_task_name} as part of rebuilding it's history. "
         f"This kind of mismatch can happen if an orchestration has non-deterministic logic or if the code "
-        f"was changed after an instance of this orchestration already started running.")
+        f"was changed after an instance of this orchestration already started running."
+    )
 
 
 def _get_method_name_for_action(action: pb.OrchestratorAction) -> str:
-    action_type = action.WhichOneof('orchestratorActionType')
+    action_type = action.WhichOneof("orchestratorActionType")
     if action_type == "scheduleTask":
         return task.get_name(task.OrchestrationContext.call_activity)
     elif action_type == "createTimer":
@@ -1019,7 +1216,7 @@ def _get_new_event_summary(new_events: Sequence[pb.HistoryEvent]) -> str:
     else:
         counts: dict[str, int] = {}
         for event in new_events:
-            event_type = event.WhichOneof('eventType')
+            event_type = event.WhichOneof("eventType")
             counts[event_type] = counts.get(event_type, 0) + 1
         return f"[{', '.join(f'{name}={count}' for name, count in counts.items())}]"
 
@@ -1033,11 +1230,72 @@ def _get_action_summary(new_actions: Sequence[pb.OrchestratorAction]) -> str:
     else:
         counts: dict[str, int] = {}
         for action in new_actions:
-            action_type = action.WhichOneof('orchestratorActionType')
+            action_type = action.WhichOneof("orchestratorActionType")
             counts[action_type] = counts.get(action_type, 0) + 1
         return f"[{', '.join(f'{name}={count}' for name, count in counts.items())}]"
 
 
 def _is_suspendable(event: pb.HistoryEvent) -> bool:
     """Returns true if the event is one that can be suspended and resumed."""
-    return event.WhichOneof("eventType") not in ["executionResumed", "executionTerminated"]
+    return event.WhichOneof("eventType") not in [
+        "executionResumed",
+        "executionTerminated",
+    ]
+
+
+class _AsyncWorkerManager:
+    def __init__(self, concurrency_options: ConcurrencyOptions):
+        self.activity_semaphore = asyncio.Semaphore(
+            concurrency_options.maximum_concurrent_activity_work_items
+        )
+        self.orchestration_semaphore = asyncio.Semaphore(
+            concurrency_options.maximum_concurrent_orchestration_work_items
+        )
+        self.activity_queue: asyncio.Queue = asyncio.Queue()
+        self.orchestration_queue: asyncio.Queue = asyncio.Queue()
+        self.thread_pool = ThreadPoolExecutor(
+            max_workers=concurrency_options.maximum_thread_pool_workers,
+            thread_name_prefix="DurableTask",
+        )
+        self._shutdown = False
+
+    async def run(self):
+        # Start background consumers for each work type
+        await asyncio.gather(
+            self._consume_queue(self.activity_queue, self.activity_semaphore),
+            self._consume_queue(self.orchestration_queue, self.orchestration_semaphore),
+        )
+
+    async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
+        while True:
+            # Exit if shutdown is set and the queue is empty
+            if self._shutdown and queue.empty():
+                break
+            try:
+                work = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            func, args, kwargs = work
+            async with semaphore:
+                await self._run_func(func, *args, **kwargs)
+            queue.task_done()
+
+    async def _run_func(self, func, *args, **kwargs):
+        if inspect.iscoroutinefunction(func):
+            return await func(*args, **kwargs)
+        else:
+            loop = asyncio.get_running_loop()
+            # Avoid submitting to executor after shutdown
+            if getattr(self, '_shutdown', False) and getattr(self, 'thread_pool', None) and getattr(self.thread_pool, '_shutdown', False):
+                return None
+            return await loop.run_in_executor(self.thread_pool, lambda: func(*args, **kwargs))
+
+    def submit_activity(self, func, *args, **kwargs):
+        self.activity_queue.put_nowait((func, args, kwargs))
+
+    def submit_orchestration(self, func, *args, **kwargs):
+        self.orchestration_queue.put_nowait((func, args, kwargs))
+
+    def shutdown(self):
+        self._shutdown = True
+        self.thread_pool.shutdown(wait=True)

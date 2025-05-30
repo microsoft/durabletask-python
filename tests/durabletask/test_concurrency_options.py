@@ -12,10 +12,11 @@ def test_default_concurrency_options():
     options = ConcurrencyOptions()
     processor_count = os.cpu_count() or 1
     expected_default = 100 * processor_count
+    expected_workers = processor_count + 4
 
     assert options.maximum_concurrent_activity_work_items == expected_default
     assert options.maximum_concurrent_orchestration_work_items == expected_default
-    assert options.max_total_workers == expected_default
+    assert options.maximum_thread_pool_workers == expected_workers
 
 
 def test_custom_concurrency_options():
@@ -23,45 +24,28 @@ def test_custom_concurrency_options():
     options = ConcurrencyOptions(
         maximum_concurrent_activity_work_items=50,
         maximum_concurrent_orchestration_work_items=25,
+        maximum_thread_pool_workers=30,
     )
 
     assert options.maximum_concurrent_activity_work_items == 50
     assert options.maximum_concurrent_orchestration_work_items == 25
-    assert options.max_total_workers == 50  # Max of both values
+    assert options.maximum_thread_pool_workers == 30
 
 
 def test_partial_custom_options():
     """Test that partially specified options use defaults for unspecified values."""
     processor_count = os.cpu_count() or 1
     expected_default = 100 * processor_count
+    expected_workers = processor_count + 4
 
     options = ConcurrencyOptions(
         maximum_concurrent_activity_work_items=30
-        # Leave other options as default
     )
 
     assert options.maximum_concurrent_activity_work_items == 30
     assert options.maximum_concurrent_orchestration_work_items == expected_default
-    assert (
-        options.max_total_workers == expected_default
-    )  # Should be the default since it's larger
+    assert options.maximum_thread_pool_workers == expected_workers
 
-
-def test_max_total_workers_calculation():
-    """Test that max_total_workers returns the maximum of all concurrency limits."""
-    # Case 1: Activity is highest
-    options1 = ConcurrencyOptions(
-        maximum_concurrent_activity_work_items=100,
-        maximum_concurrent_orchestration_work_items=50,
-    )
-    assert options1.max_total_workers == 100
-
-    # Case 2: Orchestration is highest
-    options2 = ConcurrencyOptions(
-        maximum_concurrent_activity_work_items=25,
-        maximum_concurrent_orchestration_work_items=100,
-    )
-    assert options2.max_total_workers == 100
 
 
 def test_worker_with_concurrency_options():
@@ -69,6 +53,7 @@ def test_worker_with_concurrency_options():
     options = ConcurrencyOptions(
         maximum_concurrent_activity_work_items=10,
         maximum_concurrent_orchestration_work_items=20,
+        maximum_thread_pool_workers=15,
     )
 
     worker = TaskHubGrpcWorker(concurrency_options=options)
@@ -82,6 +67,7 @@ def test_worker_default_options():
 
     processor_count = os.cpu_count() or 1
     expected_default = 100 * processor_count
+    expected_workers = processor_count + 4
 
     assert (
         worker.concurrency_options.maximum_concurrent_activity_work_items == expected_default
@@ -89,6 +75,7 @@ def test_worker_default_options():
     assert (
         worker.concurrency_options.maximum_concurrent_orchestration_work_items == expected_default
     )
+    assert worker.concurrency_options.maximum_thread_pool_workers == expected_workers
 
 
 def test_concurrency_options_property_access():
@@ -96,6 +83,7 @@ def test_concurrency_options_property_access():
     options = ConcurrencyOptions(
         maximum_concurrent_activity_work_items=15,
         maximum_concurrent_orchestration_work_items=25,
+        maximum_thread_pool_workers=30,
     )
 
     worker = TaskHubGrpcWorker(concurrency_options=options)
@@ -107,21 +95,5 @@ def test_concurrency_options_property_access():
     # Should have correct values
     assert retrieved_options.maximum_concurrent_activity_work_items == 15
     assert retrieved_options.maximum_concurrent_orchestration_work_items == 25
+    assert retrieved_options.maximum_thread_pool_workers == 30
 
-
-def test_edge_cases():
-    """Test edge cases like zero or very large values."""
-    # Test with zeros (should still work)
-    options_zero = ConcurrencyOptions(
-        maximum_concurrent_activity_work_items=0,
-        maximum_concurrent_orchestration_work_items=0,
-    )
-    assert options_zero.max_total_workers == 0
-
-    # Test with very large values
-    options_large = ConcurrencyOptions(
-        maximum_concurrent_activity_work_items=999999,
-        maximum_concurrent_orchestration_work_items=1,
-    )
-    assert options_large.max_total_workers == 999999
-    assert options_large.max_total_workers == 999999
