@@ -219,7 +219,6 @@ class TaskHubGrpcWorker:
         self._is_running = True
 
     async def _async_run_loop(self):
-        self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options)
         worker_task = asyncio.create_task(self._async_worker_manager.run())
         # Connection state management for retry fix
         current_channel = None
@@ -1245,21 +1244,57 @@ def _is_suspendable(event: pb.HistoryEvent) -> bool:
 
 class _AsyncWorkerManager:
     def __init__(self, concurrency_options: ConcurrencyOptions):
-        self.activity_semaphore = asyncio.Semaphore(
-            concurrency_options.maximum_concurrent_activity_work_items
-        )
-        self.orchestration_semaphore = asyncio.Semaphore(
-            concurrency_options.maximum_concurrent_orchestration_work_items
-        )
+        self.concurrency_options = concurrency_options
+        self.activity_semaphore = None
+        self.orchestration_semaphore = None
         self.activity_queue: asyncio.Queue = asyncio.Queue()
         self.orchestration_queue: asyncio.Queue = asyncio.Queue()
+        self._queue_event_loop: Optional[asyncio.AbstractEventLoop] = None
+        # Try to capture the current event loop when queues are created
+        try:
+            self._queue_event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running when manager was created
+            pass
         self.thread_pool = ThreadPoolExecutor(
             max_workers=concurrency_options.maximum_thread_pool_workers,
             thread_name_prefix="DurableTask",
         )
         self._shutdown = False
 
+    def _ensure_queues_for_current_loop(self):
+        """Ensure queues are bound to the current event loop."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running, can't create queues
+            return
+
+        if self._queue_event_loop is current_loop and hasattr(self, 'activity_queue') and hasattr(self, 'orchestration_queue'):
+            # Queues are already bound to the current loop and exist
+            return
+
+        # Need to recreate queues for the current event loop
+        # Create fresh queues - any items from previous event loops are dropped
+        self.activity_queue = asyncio.Queue()
+        self.orchestration_queue = asyncio.Queue()
+        self._queue_event_loop = current_loop
+
     async def run(self):
+        # Reset shutdown flag in case this manager is being reused
+        self._shutdown = False
+
+        # Ensure queues are properly bound to the current event loop
+        self._ensure_queues_for_current_loop()
+
+        # Create semaphores in the current event loop
+        self.activity_semaphore = asyncio.Semaphore(
+            self.concurrency_options.maximum_concurrent_activity_work_items
+        )
+        self.orchestration_semaphore = asyncio.Semaphore(
+            self.concurrency_options.maximum_concurrent_orchestration_work_items
+        )
+
         # Start background consumers for each work type
         await asyncio.gather(
             self._consume_queue(self.activity_queue, self.activity_semaphore),
@@ -1267,18 +1302,34 @@ class _AsyncWorkerManager:
         )
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
+        # List to track running tasks
+        running_tasks: set[asyncio.Task] = set()
+
         while True:
-            # Exit if shutdown is set and the queue is empty
-            if self._shutdown and queue.empty():
+            # Clean up completed tasks
+            done_tasks = {task for task in running_tasks if task.done()}
+            running_tasks -= done_tasks
+
+            # Exit if shutdown is set and the queue is empty and no tasks are running
+            if self._shutdown and queue.empty() and not running_tasks:
                 break
+
             try:
                 work = await asyncio.wait_for(queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
+
             func, args, kwargs = work
-            async with semaphore:
+            # Create a concurrent task for processing
+            task = asyncio.create_task(self._process_work_item(semaphore, queue, func, args, kwargs))
+            running_tasks.add(task)
+
+    async def _process_work_item(self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, args, kwargs):
+        async with semaphore:
+            try:
                 await self._run_func(func, *args, **kwargs)
-            queue.task_done()
+            finally:
+                queue.task_done()
 
     async def _run_func(self, func, *args, **kwargs):
         if inspect.iscoroutinefunction(func):
@@ -1291,11 +1342,32 @@ class _AsyncWorkerManager:
             return await loop.run_in_executor(self.thread_pool, lambda: func(*args, **kwargs))
 
     def submit_activity(self, func, *args, **kwargs):
+        self._ensure_queues_for_current_loop()
         self.activity_queue.put_nowait((func, args, kwargs))
 
     def submit_orchestration(self, func, *args, **kwargs):
+        self._ensure_queues_for_current_loop()
         self.orchestration_queue.put_nowait((func, args, kwargs))
 
     def shutdown(self):
         self._shutdown = True
         self.thread_pool.shutdown(wait=True)
+
+    def reset_for_new_run(self):
+        """Reset the manager state for a new run."""
+        self._shutdown = False
+        # Clear any existing queues - they'll be recreated when needed
+        if hasattr(self, 'activity_queue'):
+            # Clear existing queue by creating a new one
+            # This ensures no items from previous runs remain
+            try:
+                while not self.activity_queue.empty():
+                    self.activity_queue.get_nowait()
+            except Exception:
+                pass
+        if hasattr(self, 'orchestration_queue'):
+            try:
+                while not self.orchestration_queue.empty():
+                    self.orchestration_queue.get_nowait()
+            except Exception:
+                pass

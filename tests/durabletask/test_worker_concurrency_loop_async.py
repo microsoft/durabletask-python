@@ -63,6 +63,8 @@ def test_worker_concurrency_loop_async():
     activity_requests = [DummyRequest('activity', f'act{i}') for i in range(4)]
 
     async def run_test():
+        # Clear stub state before each run
+        stub.completed.clear()
         worker_task = asyncio.create_task(worker._async_worker_manager.run())
         for req in orchestrator_requests:
             worker._async_worker_manager.submit_orchestration(dummy_orchestrator, req, stub, DummyCompletionToken())
