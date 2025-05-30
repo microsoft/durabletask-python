@@ -3,6 +3,7 @@
 
 import concurrent.futures
 import logging
+import os
 import random
 from datetime import datetime, timedelta
 from threading import Event, Thread
@@ -22,6 +23,53 @@ from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
+
+
+class ConcurrencyOptions:
+    """Configuration options for controlling concurrency of different work item types.
+
+    This class mirrors the .NET DurableTask SDK's ConcurrencyOptions class,
+    providing fine-grained control over concurrent processing limits for
+    activities, orchestrations, and entities.
+    """
+
+    def __init__(self,
+                 maximum_concurrent_activity_work_items: Optional[int] = None,
+                 maximum_concurrent_orchestration_work_items: Optional[int] = None):
+        """Initialize concurrency options.
+
+        Args:
+            maximum_concurrent_activity_work_items: Maximum number of activity work items
+                that can be processed concurrently. Defaults to 100 * processor_count.
+            maximum_concurrent_orchestration_work_items: Maximum number of orchestration work items
+                that can be processed concurrently. Defaults to 100 * processor_count.
+        """
+        processor_count = os.cpu_count() or 1
+        default_concurrency = 100 * processor_count
+
+        self.maximum_concurrent_activity_work_items = (
+            maximum_concurrent_activity_work_items
+            if maximum_concurrent_activity_work_items is not None
+            else default_concurrency
+        )
+
+        self.maximum_concurrent_orchestration_work_items = (
+            maximum_concurrent_orchestration_work_items
+            if maximum_concurrent_orchestration_work_items is not None
+            else default_concurrency
+        )
+
+    @property
+    def max_total_workers(self) -> int:
+        """Calculate the maximum total workers needed for the thread pool.
+
+        Since Python's ThreadPoolExecutor doesn't differentiate between work item types,
+        we use the maximum of all concurrency limits to ensure we have enough workers.
+        """
+        return max(
+            self.maximum_concurrent_activity_work_items,
+            self.maximum_concurrent_orchestration_work_items,
+        )
 
 
 class _Registry:
@@ -93,14 +141,16 @@ class TaskHubGrpcWorker:
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
-                 max_workers: Optional[int] = None):
+                 concurrency_options: Optional[ConcurrencyOptions] = None):
         self._registry = _Registry()
         self._host_address = host_address if host_address else shared.get_default_host_address()
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
-        self._max_workers = max_workers if max_workers is not None else 16
+
+        # Use provided concurrency options or create default ones
+        self._concurrency_options = concurrency_options if concurrency_options is not None else ConcurrencyOptions()
 
         # Determine the interceptors to use
         if interceptors is not None:
@@ -111,6 +161,11 @@ class TaskHubGrpcWorker:
             self._interceptors = [DefaultClientInterceptorImpl(metadata)]
         else:
             self._interceptors = None
+
+    @property
+    def concurrency_options(self) -> ConcurrencyOptions:
+        """Get the current concurrency options for this worker."""
+        return self._concurrency_options
 
     def __enter__(self):
         return self
@@ -211,7 +266,7 @@ class TaskHubGrpcWorker:
 
             # TODO: Investigate whether asyncio could be used to enable greater concurrency for async activity
             #       functions. We'd need to know ahead of time whether a function is async or not.
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="DurableTask") as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self._concurrency_options.max_total_workers, thread_name_prefix="DurableTask") as executor:
                 while not self._shutdown.is_set():
                     # Ensure we have a valid connection before attempting work
                     if current_stub is None:
@@ -231,7 +286,13 @@ class TaskHubGrpcWorker:
                         # Type assertion since we know current_stub is not None at this point
                         assert current_stub is not None, "current_stub should not be None at this point"
                         stub = current_stub  # Local reference for type safety
-                        self._response_stream = stub.GetWorkItems(pb.GetWorkItemsRequest())
+
+                        # Create GetWorkItemsRequest with concurrency limits
+                        get_work_items_request = pb.GetWorkItemsRequest(
+                            maxConcurrentOrchestrationWorkItems=self._concurrency_options.maximum_concurrent_orchestration_work_items,
+                            maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items
+                        )
+                        self._response_stream = stub.GetWorkItems(get_work_items_request)
                         self._logger.info(f'Successfully connected to {self._host_address}. Waiting for work items...')
 
                         # Process work items concurrently as they arrive
