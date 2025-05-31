@@ -1447,3 +1447,10 @@ class _AsyncWorkerManager:
                     self.orchestration_queue.get_nowait()
             except Exception:
                 pass
+
+
+# Export public API
+__all__ = [
+    'ConcurrencyOptions',
+    'TaskHubGrpcWorker'
+]
