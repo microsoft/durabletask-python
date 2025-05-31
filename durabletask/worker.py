@@ -318,9 +318,9 @@ class TaskHubGrpcWorker:
                 current_stub = stubs.TaskHubSidecarServiceStub(current_channel)
                 current_stub.Hello(empty_pb2.Empty())
                 conn_retry_count = 0
-                self._logger.debug(f"Created fresh connection to {self._host_address}")
+                self._logger.info(f"Created fresh connection to {self._host_address}")
             except Exception as e:
-                self._logger.debug(f"Failed to create connection: {e}")
+                self._logger.warning(f"Failed to create connection: {e}")
                 current_channel = None
                 current_stub = None
                 raise
