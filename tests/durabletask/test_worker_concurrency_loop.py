@@ -124,11 +124,16 @@ def test_worker_concurrency_sync():
     t = threading.Thread(target=run_manager)
     t.start()
     time.sleep(1.5)  # Let work process
-    manager.shutdown()
+
+    # Signal shutdown but don't actually call shutdown() yet
+    manager._shutdown = True
     # Unblock the consumers by putting dummy items in the queues
     manager.activity_queue.put_nowait((lambda: None, (), {}))
     manager.orchestration_queue.put_nowait((lambda: None, (), {}))
     t.join(timeout=2)
+
+    # Now shutdown the thread pool
+    manager.thread_pool.shutdown(wait=True)
 
     # Check that all work items completed
     assert len(results) == 10

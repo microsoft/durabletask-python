@@ -185,7 +185,7 @@ class TaskHubGrpcWorker:
         ...     result = yield context.call_activity("my_activity", input="hello")
         ...     return result
         >>>
-        >>> @worker.add_activity 
+        >>> @worker.add_activity
         ... def my_activity(context, input):
         ...     return f"Processed: {input}"
         >>>
@@ -1351,10 +1351,34 @@ class _AsyncWorkerManager:
             return
 
         # Need to recreate queues for the current event loop
-        # Create fresh queues - any items from previous event loops are dropped
+        # First, preserve any existing work items
+        existing_activity_items = []
+        existing_orchestration_items = []
+
+        if hasattr(self, 'activity_queue'):
+            try:
+                while not self.activity_queue.empty():
+                    existing_activity_items.append(self.activity_queue.get_nowait())
+            except Exception:
+                pass
+
+        if hasattr(self, 'orchestration_queue'):
+            try:
+                while not self.orchestration_queue.empty():
+                    existing_orchestration_items.append(self.orchestration_queue.get_nowait())
+            except Exception:
+                pass
+
+        # Create fresh queues for the current event loop
         self.activity_queue = asyncio.Queue()
         self.orchestration_queue = asyncio.Queue()
         self._queue_event_loop = current_loop
+
+        # Restore the work items to the new queues
+        for item in existing_activity_items:
+            self.activity_queue.put_nowait(item)
+        for item in existing_orchestration_items:
+            self.orchestration_queue.put_nowait(item)
 
     async def run(self):
         # Reset shutdown flag in case this manager is being reused
