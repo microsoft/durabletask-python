@@ -210,6 +210,7 @@ class TaskHubGrpcWorker:
         ActivityNotRegisteredError: If an activity work item references an unregistered
             activity function.
     """
+
     _response_stream: Optional[grpc.Future] = None
     _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
@@ -1323,15 +1324,13 @@ class _AsyncWorkerManager:
         self.concurrency_options = concurrency_options
         self.activity_semaphore = None
         self.orchestration_semaphore = None
-        self.activity_queue: asyncio.Queue = asyncio.Queue()
-        self.orchestration_queue: asyncio.Queue = asyncio.Queue()
+        # Don't create queues here - defer until we have an event loop
+        self.activity_queue: Optional[asyncio.Queue] = None
+        self.orchestration_queue: Optional[asyncio.Queue] = None
         self._queue_event_loop: Optional[asyncio.AbstractEventLoop] = None
-        # Try to capture the current event loop when queues are created
-        try:
-            self._queue_event_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No event loop running when manager was created
-            pass
+        # Store work items when no event loop is available
+        self._pending_activity_work: list = []
+        self._pending_orchestration_work: list = []
         self.thread_pool = ThreadPoolExecutor(
             max_workers=concurrency_options.maximum_thread_pool_workers,
             thread_name_prefix="DurableTask",
@@ -1346,26 +1345,30 @@ class _AsyncWorkerManager:
             # No event loop running, can't create queues
             return
 
-        if self._queue_event_loop is current_loop and hasattr(self, 'activity_queue') and hasattr(self, 'orchestration_queue'):
-            # Queues are already bound to the current loop and exist
-            return
+        # Check if queues are already properly set up for current loop
+        if self._queue_event_loop is current_loop:
+            if self.activity_queue is not None and self.orchestration_queue is not None:
+                # Queues are already bound to the current loop and exist
+                return
 
         # Need to recreate queues for the current event loop
         # First, preserve any existing work items
         existing_activity_items = []
         existing_orchestration_items = []
 
-        if hasattr(self, 'activity_queue'):
+        if self.activity_queue is not None:
             try:
                 while not self.activity_queue.empty():
                     existing_activity_items.append(self.activity_queue.get_nowait())
             except Exception:
                 pass
 
-        if hasattr(self, 'orchestration_queue'):
+        if self.orchestration_queue is not None:
             try:
                 while not self.orchestration_queue.empty():
-                    existing_orchestration_items.append(self.orchestration_queue.get_nowait())
+                    existing_orchestration_items.append(
+                        self.orchestration_queue.get_nowait()
+                    )
             except Exception:
                 pass
 
@@ -1379,6 +1382,16 @@ class _AsyncWorkerManager:
             self.activity_queue.put_nowait(item)
         for item in existing_orchestration_items:
             self.orchestration_queue.put_nowait(item)
+
+        # Move pending work items to the queues
+        for item in self._pending_activity_work:
+            self.activity_queue.put_nowait(item)
+        for item in self._pending_orchestration_work:
+            self.orchestration_queue.put_nowait(item)
+
+        # Clear the pending work lists
+        self._pending_activity_work.clear()
+        self._pending_orchestration_work.clear()
 
     async def run(self):
         # Reset shutdown flag in case this manager is being reused
@@ -1396,10 +1409,13 @@ class _AsyncWorkerManager:
         )
 
         # Start background consumers for each work type
-        await asyncio.gather(
-            self._consume_queue(self.activity_queue, self.activity_semaphore),
-            self._consume_queue(self.orchestration_queue, self.orchestration_semaphore),
-        )
+        if self.activity_queue is not None and self.orchestration_queue is not None:
+            await asyncio.gather(
+                self._consume_queue(self.activity_queue, self.activity_semaphore),
+                self._consume_queue(
+                    self.orchestration_queue, self.orchestration_semaphore
+                ),
+            )
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
         # List to track running tasks
@@ -1421,10 +1437,14 @@ class _AsyncWorkerManager:
 
             func, args, kwargs = work
             # Create a concurrent task for processing
-            task = asyncio.create_task(self._process_work_item(semaphore, queue, func, args, kwargs))
+            task = asyncio.create_task(
+                self._process_work_item(semaphore, queue, func, args, kwargs)
+            )
             running_tasks.add(task)
 
-    async def _process_work_item(self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, args, kwargs):
+    async def _process_work_item(
+        self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, args, kwargs
+    ):
         async with semaphore:
             try:
                 await self._run_func(func, *args, **kwargs)
@@ -1437,17 +1457,32 @@ class _AsyncWorkerManager:
         else:
             loop = asyncio.get_running_loop()
             # Avoid submitting to executor after shutdown
-            if getattr(self, '_shutdown', False) and getattr(self, 'thread_pool', None) and getattr(self.thread_pool, '_shutdown', False):
+            if (
+                getattr(self, "_shutdown", False) and getattr(self, "thread_pool", None) and getattr(
+                    self.thread_pool, "_shutdown", False)
+            ):
                 return None
-            return await loop.run_in_executor(self.thread_pool, lambda: func(*args, **kwargs))
+            return await loop.run_in_executor(
+                self.thread_pool, lambda: func(*args, **kwargs)
+            )
 
     def submit_activity(self, func, *args, **kwargs):
+        work_item = (func, args, kwargs)
         self._ensure_queues_for_current_loop()
-        self.activity_queue.put_nowait((func, args, kwargs))
+        if self.activity_queue is not None:
+            self.activity_queue.put_nowait(work_item)
+        else:
+            # No event loop running, store in pending list
+            self._pending_activity_work.append(work_item)
 
     def submit_orchestration(self, func, *args, **kwargs):
+        work_item = (func, args, kwargs)
         self._ensure_queues_for_current_loop()
-        self.orchestration_queue.put_nowait((func, args, kwargs))
+        if self.orchestration_queue is not None:
+            self.orchestration_queue.put_nowait(work_item)
+        else:
+            # No event loop running, store in pending list
+            self._pending_orchestration_work.append(work_item)
 
     def shutdown(self):
         self._shutdown = True
@@ -1457,7 +1492,7 @@ class _AsyncWorkerManager:
         """Reset the manager state for a new run."""
         self._shutdown = False
         # Clear any existing queues - they'll be recreated when needed
-        if hasattr(self, 'activity_queue'):
+        if self.activity_queue is not None:
             # Clear existing queue by creating a new one
             # This ensures no items from previous runs remain
             try:
@@ -1465,16 +1500,16 @@ class _AsyncWorkerManager:
                     self.activity_queue.get_nowait()
             except Exception:
                 pass
-        if hasattr(self, 'orchestration_queue'):
+        if self.orchestration_queue is not None:
             try:
                 while not self.orchestration_queue.empty():
                     self.orchestration_queue.get_nowait()
             except Exception:
                 pass
+        # Clear pending work lists
+        self._pending_activity_work.clear()
+        self._pending_orchestration_work.clear()
 
 
 # Export public API
-__all__ = [
-    'ConcurrencyOptions',
-    'TaskHubGrpcWorker'
-]
+__all__ = ["ConcurrencyOptions", "TaskHubGrpcWorker"]
