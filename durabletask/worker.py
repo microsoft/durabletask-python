@@ -300,6 +300,7 @@ class TaskHubGrpcWorker:
         # Connection state management for retry fix
         current_channel = None
         current_stub = None
+        current_reader_thread = None
         conn_retry_count = 0
         conn_max_retry_delay = 60
 
@@ -327,7 +328,26 @@ class TaskHubGrpcWorker:
                 raise
 
         def invalidate_connection():
-            nonlocal current_channel, current_stub
+            nonlocal current_channel, current_stub, current_reader_thread
+            # Cancel the response stream first to signal the reader thread to stop
+            if self._response_stream is not None:
+                try:
+                    self._response_stream.cancel()
+                except Exception:
+                    pass
+                self._response_stream = None
+
+            # Wait for the reader thread to finish
+            if current_reader_thread is not None:
+                try:
+                    current_reader_thread.join(timeout=2)
+                    if current_reader_thread.is_alive():
+                        self._logger.warning("Stream reader thread did not shut down gracefully")
+                except Exception:
+                    pass
+                current_reader_thread = None
+
+            # Close the channel
             if current_channel:
                 try:
                     current_channel.close()
@@ -389,8 +409,8 @@ class TaskHubGrpcWorker:
 
                 import threading
 
-                reader_thread = threading.Thread(target=stream_reader, daemon=True)
-                reader_thread.start()
+                current_reader_thread = threading.Thread(target=stream_reader, daemon=True)
+                current_reader_thread.start()
                 loop = asyncio.get_running_loop()
                 while not self._shutdown.is_set():
                     try:
@@ -423,21 +443,29 @@ class TaskHubGrpcWorker:
                             )
                     except Exception as e:
                         self._logger.warning(f"Error in work item stream: {e}")
-                        break
-                reader_thread.join(timeout=1)
+                        raise e
+                current_reader_thread.join(timeout=1)
                 self._logger.info("Work item stream ended normally")
             except grpc.RpcError as rpc_error:
                 should_invalidate = should_invalidate_connection(rpc_error)
                 if should_invalidate:
                     invalidate_connection()
                 error_code = rpc_error.code()  # type: ignore
+                error_details = str(rpc_error)
+
                 if error_code == grpc.StatusCode.CANCELLED:
                     self._logger.info(f"Disconnected from {self._host_address}")
                     break
                 elif error_code == grpc.StatusCode.UNAVAILABLE:
-                    self._logger.warning(
-                        f"The sidecar at address {self._host_address} is unavailable - will continue retrying"
-                    )
+                    # Check if this is a connection timeout scenario
+                    if "Timeout occurred" in error_details or "Failed to connect to remote host" in error_details:
+                        self._logger.warning(
+                            f"Connection timeout to {self._host_address}: {error_details} - will retry with fresh connection"
+                        )
+                    else:
+                        self._logger.warning(
+                            f"The sidecar at address {self._host_address} is unavailable: {error_details} - will continue retrying"
+                        )
                 elif should_invalidate:
                     self._logger.warning(
                         f"Connection-level gRPC error ({error_code}): {rpc_error} - resetting connection"
