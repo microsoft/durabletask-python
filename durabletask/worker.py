@@ -28,11 +28,10 @@ TOutput = TypeVar("TOutput")
 
 
 class ConcurrencyOptions:
-    """Configuration options for controlling concurrency of different work item types.
+    """Configuration options for controlling concurrency of different work item types and the thread pool size.
 
-    This class mirrors the .NET DurableTask SDK's ConcurrencyOptions class,
-    providing fine-grained control over concurrent processing limits for
-    activities, orchestrations, and entities.
+    This class provides fine-grained control over concurrent processing limits for
+    activities, orchestrations and the thread pool size.
     """
 
     def __init__(
@@ -134,6 +133,83 @@ class ActivityNotRegisteredError(ValueError):
 
 
 class TaskHubGrpcWorker:
+    """A gRPC-based worker for processing durable task orchestrations and activities.
+
+    This worker connects to a Durable Task backend service via gRPC to receive and process
+    work items including orchestration functions and activity functions. It provides
+    concurrent execution capabilities with configurable limits and automatic retry handling.
+
+    The worker manages the complete lifecycle:
+    - Registers orchestrator and activity functions
+    - Connects to the gRPC backend service
+    - Receives work items and executes them concurrently
+    - Handles failures, retries, and state management
+    - Provides logging and monitoring capabilities
+
+    Args:
+        host_address (Optional[str], optional): The gRPC endpoint address of the backend service.
+            Defaults to the value from environment variables or localhost.
+        metadata (Optional[list[tuple[str, str]]], optional): gRPC metadata to include with
+            requests. Used for authentication and routing. Defaults to None.
+        log_handler (optional): Custom logging handler for worker logs. Defaults to None.
+        log_formatter (Optional[logging.Formatter], optional): Custom log formatter.
+            Defaults to None.
+        secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
+            Defaults to False.
+        interceptors (Optional[Sequence[shared.ClientInterceptor]], optional): Custom gRPC
+            interceptors to apply to the channel. Defaults to None.
+        concurrency_options (Optional[ConcurrencyOptions], optional): Configuration for
+            controlling worker concurrency limits. If None, default settings are used.
+
+    Attributes:
+        concurrency_options (ConcurrencyOptions): The current concurrency configuration.
+
+    Example:
+        Basic worker setup:
+
+        >>> from durabletask import TaskHubGrpcWorker, ConcurrencyOptions
+        >>>
+        >>> # Create worker with custom concurrency settings
+        >>> concurrency = ConcurrencyOptions(
+        ...     maximum_concurrent_activity_work_items=50,
+        ...     maximum_concurrent_orchestration_work_items=20
+        ... )
+        >>> worker = TaskHubGrpcWorker(
+        ...     host_address="localhost:4001",
+        ...     concurrency_options=concurrency
+        ... )
+        >>>
+        >>> # Register functions
+        >>> @worker.add_orchestrator
+        ... def my_orchestrator(context, input):
+        ...     result = yield context.call_activity("my_activity", input="hello")
+        ...     return result
+        >>>
+        >>> @worker.add_activity 
+        ... def my_activity(context, input):
+        ...     return f"Processed: {input}"
+        >>>
+        >>> # Start the worker
+        >>> worker.start()
+        >>> # ... worker runs in background thread
+        >>> worker.stop()
+
+        Using as context manager:
+
+        >>> with TaskHubGrpcWorker() as worker:
+        ...     worker.add_orchestrator(my_orchestrator)
+        ...     worker.add_activity(my_activity)
+        ...     worker.start()
+        ...     # Worker automatically stops when exiting context
+
+    Raises:
+        RuntimeError: If attempting to add orchestrators/activities while the worker is running,
+            or if starting a worker that is already running.
+        OrchestratorNotRegisteredError: If an orchestration work item references an
+            unregistered orchestrator function.
+        ActivityNotRegisteredError: If an activity work item references an unregistered
+            activity function.
+    """
     _response_stream: Optional[grpc.Future] = None
     _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
