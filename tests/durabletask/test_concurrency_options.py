@@ -3,12 +3,12 @@
 
 import os
 
-from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
+from durabletask import worker
 
 
 def test_default_concurrency_options():
     """Test that default concurrency options work correctly."""
-    options = ConcurrencyOptions()
+    options = worker.ConcurrencyOptions()
     processor_count = os.cpu_count() or 1
     expected_default = 100 * processor_count
     expected_workers = processor_count + 4
@@ -20,7 +20,7 @@ def test_default_concurrency_options():
 
 def test_custom_concurrency_options():
     """Test that custom concurrency options work correctly."""
-    options = ConcurrencyOptions(
+    options = worker.ConcurrencyOptions(
         maximum_concurrent_activity_work_items=50,
         maximum_concurrent_orchestration_work_items=25,
         maximum_thread_pool_workers=30,
@@ -37,7 +37,7 @@ def test_partial_custom_options():
     expected_default = 100 * processor_count
     expected_workers = processor_count + 4
 
-    options = ConcurrencyOptions(
+    options = worker.ConcurrencyOptions(
         maximum_concurrent_activity_work_items=30
     )
 
@@ -46,47 +46,46 @@ def test_partial_custom_options():
     assert options.maximum_thread_pool_workers == expected_workers
 
 
-
 def test_worker_with_concurrency_options():
     """Test that TaskHubGrpcWorker accepts concurrency options."""
-    options = ConcurrencyOptions(
+    options = worker.ConcurrencyOptions(
         maximum_concurrent_activity_work_items=10,
         maximum_concurrent_orchestration_work_items=20,
         maximum_thread_pool_workers=15,
     )
 
-    worker = TaskHubGrpcWorker(concurrency_options=options)
+    grpc_worker = worker.TaskHubGrpcWorker(concurrency_options=options)
 
-    assert worker.concurrency_options == options
+    assert grpc_worker.concurrency_options == options
 
 
 def test_worker_default_options():
     """Test that TaskHubGrpcWorker uses default options when no parameters are provided."""
-    worker = TaskHubGrpcWorker()
+    grpc_worker = worker.TaskHubGrpcWorker()
 
     processor_count = os.cpu_count() or 1
     expected_default = 100 * processor_count
     expected_workers = processor_count + 4
 
     assert (
-        worker.concurrency_options.maximum_concurrent_activity_work_items == expected_default
+        grpc_worker.concurrency_options.maximum_concurrent_activity_work_items == expected_default
     )
     assert (
-        worker.concurrency_options.maximum_concurrent_orchestration_work_items == expected_default
+        grpc_worker.concurrency_options.maximum_concurrent_orchestration_work_items == expected_default
     )
-    assert worker.concurrency_options.maximum_thread_pool_workers == expected_workers
+    assert grpc_worker.concurrency_options.maximum_thread_pool_workers == expected_workers
 
 
 def test_concurrency_options_property_access():
     """Test that the concurrency_options property works correctly."""
-    options = ConcurrencyOptions(
+    options = worker.ConcurrencyOptions(
         maximum_concurrent_activity_work_items=15,
         maximum_concurrent_orchestration_work_items=25,
         maximum_thread_pool_workers=30,
     )
 
-    worker = TaskHubGrpcWorker(concurrency_options=options)
-    retrieved_options = worker.concurrency_options
+    grpc_worker = worker.TaskHubGrpcWorker(concurrency_options=options)
+    retrieved_options = grpc_worker.concurrency_options
 
     # Should be the same object
     assert retrieved_options is options
@@ -95,4 +94,3 @@ def test_concurrency_options_property_access():
     assert retrieved_options.maximum_concurrent_activity_work_items == 15
     assert retrieved_options.maximum_concurrent_orchestration_work_items == 25
     assert retrieved_options.maximum_thread_pool_workers == 30
-
