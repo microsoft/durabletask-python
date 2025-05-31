@@ -2,8 +2,7 @@ import asyncio
 import threading
 import time
 
-from durabletask import ConcurrencyOptions
-from durabletask.worker import TaskHubGrpcWorker
+from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 
 
 class DummyStub:

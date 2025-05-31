@@ -3,8 +3,7 @@
 
 import os
 
-from durabletask import ConcurrencyOptions
-from durabletask.worker import TaskHubGrpcWorker
+from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 
 
 def test_default_concurrency_options():

@@ -35,7 +35,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
     Example:
         >>> from azure.identity import DefaultAzureCredential
         >>> from durabletask.azuremanaged import DurableTaskSchedulerWorker
-        >>> from durabletask import ConcurrencyOptions
+        >>> from durabletask.worker import ConcurrencyOptions
         >>> 
         >>> credential = DefaultAzureCredential()
         >>> concurrency = ConcurrencyOptions(max_concurrent_activities=10)
