@@ -1,6 +1,6 @@
 import asyncio
 
-from durabletask import worker
+from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 
 
 class DummyStub:
@@ -38,12 +38,12 @@ class DummyCompletionToken:
 
 
 def test_worker_concurrency_loop_async():
-    options = worker.ConcurrencyOptions(
+    options = ConcurrencyOptions(
         maximum_concurrent_activity_work_items=2,
         maximum_concurrent_orchestration_work_items=1,
         maximum_thread_pool_workers=2,
     )
-    grpc_worker = worker.TaskHubGrpcWorker(concurrency_options=options)
+    grpc_worker = TaskHubGrpcWorker(concurrency_options=options)
     stub = DummyStub()
 
     async def dummy_orchestrator(req, stub, completionToken):

@@ -2,7 +2,7 @@ import asyncio
 import threading
 import time
 
-from durabletask import worker
+from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 
 
 class DummyStub:
@@ -14,6 +14,7 @@ class DummyStub:
 
     def CompleteActivityTask(self, res):
         self.completed.append(('activity', res))
+
 
 class DummyRequest:
     def __init__(self, kind, instance_id):
@@ -33,16 +34,18 @@ class DummyRequest:
     def WhichOneof(self, _):
         return f'{self.kind}Request'
 
+
 class DummyCompletionToken:
     pass
 
+
 def test_worker_concurrency_loop_sync():
-    options = worker.ConcurrencyOptions(
+    options = ConcurrencyOptions(
         maximum_concurrent_activity_work_items=2,
         maximum_concurrent_orchestration_work_items=1,
         maximum_thread_pool_workers=2,
     )
-    grpc_worker = worker.TaskHubGrpcWorker(concurrency_options=options)
+    worker = TaskHubGrpcWorker(concurrency_options=options)
     stub = DummyStub()
 
     def dummy_orchestrator(req, stub, completionToken):
@@ -54,27 +57,28 @@ def test_worker_concurrency_loop_sync():
         stub.CompleteActivityTask('ok')
 
     # Patch the worker's _execute_orchestrator and _execute_activity
-    grpc_worker._execute_orchestrator = dummy_orchestrator
-    grpc_worker._execute_activity = dummy_activity
+    worker._execute_orchestrator = dummy_orchestrator
+    worker._execute_activity = dummy_activity
 
     orchestrator_requests = [DummyRequest('orchestrator', f'orch{i}') for i in range(3)]
     activity_requests = [DummyRequest('activity', f'act{i}') for i in range(4)]
 
     async def run_test():
         # Start the worker manager's run loop in the background
-        worker_task = asyncio.create_task(grpc_worker._async_worker_manager.run())
+        worker_task = asyncio.create_task(worker._async_worker_manager.run())
         for req in orchestrator_requests:
-            grpc_worker._async_worker_manager.submit_orchestration(dummy_orchestrator, req, stub, DummyCompletionToken())
+            worker._async_worker_manager.submit_orchestration(dummy_orchestrator, req, stub, DummyCompletionToken())
         for req in activity_requests:
-            grpc_worker._async_worker_manager.submit_activity(dummy_activity, req, stub, DummyCompletionToken())
+            worker._async_worker_manager.submit_activity(dummy_activity, req, stub, DummyCompletionToken())
         await asyncio.sleep(1.0)
         orchestrator_count = sum(1 for t, _ in stub.completed if t == 'orchestrator')
         activity_count = sum(1 for t, _ in stub.completed if t == 'activity')
         assert orchestrator_count == 3, f"Expected 3 orchestrator completions, got {orchestrator_count}"
         assert activity_count == 4, f"Expected 4 activity completions, got {activity_count}"
-        grpc_worker._async_worker_manager._shutdown = True
+        worker._async_worker_manager._shutdown = True
         await worker_task
     asyncio.run(run_test())
+
 
 # Dummy orchestrator and activity for sync context
 def dummy_orchestrator(ctx, input):
@@ -82,10 +86,12 @@ def dummy_orchestrator(ctx, input):
     time.sleep(0.1)
     return "orchestrator-done"
 
+
 def dummy_activity(ctx, input):
     # Simulate some work
     time.sleep(0.1)
     return "activity-done"
+
 
 def test_worker_concurrency_sync():
     # Use small concurrency to make test observable
@@ -124,16 +130,11 @@ def test_worker_concurrency_sync():
     t = threading.Thread(target=run_manager)
     t.start()
     time.sleep(1.5)  # Let work process
-
-    # Signal shutdown but don't actually call shutdown() yet
-    manager._shutdown = True
+    manager.shutdown()
     # Unblock the consumers by putting dummy items in the queues
     manager.activity_queue.put_nowait((lambda: None, (), {}))
     manager.orchestration_queue.put_nowait((lambda: None, (), {}))
     t.join(timeout=2)
-
-    # Now shutdown the thread pool
-    manager.thread_pool.shutdown(wait=True)
 
     # Check that all work items completed
     assert len(results) == 10
