@@ -35,10 +35,10 @@ class ConcurrencyOptions:
     """
 
     def __init__(
-        self,
-        maximum_concurrent_activity_work_items: Optional[int] = None,
-        maximum_concurrent_orchestration_work_items: Optional[int] = None,
-        maximum_thread_pool_workers: Optional[int] = None,
+            self,
+            maximum_concurrent_activity_work_items: Optional[int] = None,
+            maximum_concurrent_orchestration_work_items: Optional[int] = None,
+            maximum_thread_pool_workers: Optional[int] = None,
     ):
         """Initialize concurrency options.
 
@@ -167,7 +167,7 @@ class TaskHubGrpcWorker:
     Example:
         Basic worker setup:
 
-        >>> from durabletask import TaskHubGrpcWorker, ConcurrencyOptions
+        >>> from durabletask.worker import TaskHubGrpcWorker, ConcurrencyOptions
         >>>
         >>> # Create worker with custom concurrency settings
         >>> concurrency = ConcurrencyOptions(
@@ -215,15 +215,15 @@ class TaskHubGrpcWorker:
     _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
     def __init__(
-        self,
-        *,
-        host_address: Optional[str] = None,
-        metadata: Optional[list[tuple[str, str]]] = None,
-        log_handler=None,
-        log_formatter: Optional[logging.Formatter] = None,
-        secure_channel: bool = False,
-        interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
-        concurrency_options: Optional[ConcurrencyOptions] = None,
+            self,
+            *,
+            host_address: Optional[str] = None,
+            metadata: Optional[list[tuple[str, str]]] = None,
+            log_handler=None,
+            log_formatter: Optional[logging.Formatter] = None,
+            secure_channel: bool = False,
+            interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+            concurrency_options: Optional[ConcurrencyOptions] = None,
     ):
         self._registry = _Registry()
         self._host_address = (
@@ -500,10 +500,10 @@ class TaskHubGrpcWorker:
         self._is_running = False
 
     def _execute_orchestrator(
-        self,
-        req: pb.OrchestratorRequest,
-        stub: stubs.TaskHubSidecarServiceStub,
-        completionToken,
+            self,
+            req: pb.OrchestratorRequest,
+            stub: stubs.TaskHubSidecarServiceStub,
+            completionToken,
     ):
         try:
             executor = _OrchestrationExecutor(self._registry, self._logger)
@@ -538,10 +538,10 @@ class TaskHubGrpcWorker:
             )
 
     def _execute_activity(
-        self,
-        req: pb.ActivityRequest,
-        stub: stubs.TaskHubSidecarServiceStub,
-        completionToken,
+            self,
+            req: pb.ActivityRequest,
+            stub: stubs.TaskHubSidecarServiceStub,
+            completionToken,
     ):
         instance_id = req.orchestrationInstance.instanceId
         try:
@@ -626,10 +626,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self._previous_task = next_task
 
     def set_complete(
-        self,
-        result: Any,
-        status: pb.OrchestrationStatus,
-        is_result_encoded: bool = False,
+            self,
+            result: Any,
+            status: pb.OrchestrationStatus,
+            is_result_encoded: bool = False,
     ):
         if self._is_complete:
             return
@@ -731,9 +731,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return self.create_timer_internal(fire_at)
 
     def create_timer_internal(
-        self,
-        fire_at: Union[datetime, timedelta],
-        retryable_task: Optional[task.RetryableTask] = None,
+            self,
+            fire_at: Union[datetime, timedelta],
+            retryable_task: Optional[task.RetryableTask] = None,
     ) -> task.Task:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
@@ -748,11 +748,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return timer_task
 
     def call_activity(
-        self,
-        activity: Union[task.Activity[TInput, TOutput], str],
-        *,
-        input: Optional[TInput] = None,
-        retry_policy: Optional[task.RetryPolicy] = None,
+            self,
+            activity: Union[task.Activity[TInput, TOutput], str],
+            *,
+            input: Optional[TInput] = None,
+            retry_policy: Optional[task.RetryPolicy] = None,
     ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
 
@@ -762,12 +762,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return self._pending_tasks.get(id, task.CompletableTask())
 
     def call_sub_orchestrator(
-        self,
-        orchestrator: task.Orchestrator[TInput, TOutput],
-        *,
-        input: Optional[TInput] = None,
-        instance_id: Optional[str] = None,
-        retry_policy: Optional[task.RetryPolicy] = None,
+            self,
+            orchestrator: task.Orchestrator[TInput, TOutput],
+            *,
+            input: Optional[TInput] = None,
+            instance_id: Optional[str] = None,
+            retry_policy: Optional[task.RetryPolicy] = None,
     ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
@@ -782,15 +782,15 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return self._pending_tasks.get(id, task.CompletableTask())
 
     def call_activity_function_helper(
-        self,
-        id: Optional[int],
-        activity_function: Union[task.Activity[TInput, TOutput], str],
-        *,
-        input: Optional[TInput] = None,
-        retry_policy: Optional[task.RetryPolicy] = None,
-        is_sub_orch: bool = False,
-        instance_id: Optional[str] = None,
-        fn_task: Optional[task.CompletableTask[TOutput]] = None,
+            self,
+            id: Optional[int],
+            activity_function: Union[task.Activity[TInput, TOutput], str],
+            *,
+            input: Optional[TInput] = None,
+            retry_policy: Optional[task.RetryPolicy] = None,
+            is_sub_orch: bool = False,
+            instance_id: Optional[str] = None,
+            fn_task: Optional[task.CompletableTask[TOutput]] = None,
     ):
         if id is None:
             id = self.next_sequence_number()
@@ -865,7 +865,7 @@ class ExecutionResults:
     encoded_custom_status: Optional[str]
 
     def __init__(
-        self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]
+            self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]
     ):
         self.actions = actions
         self.encoded_custom_status = encoded_custom_status
@@ -881,10 +881,10 @@ class _OrchestrationExecutor:
         self._suspended_events: list[pb.HistoryEvent] = []
 
     def execute(
-        self,
-        instance_id: str,
-        old_events: Sequence[pb.HistoryEvent],
-        new_events: Sequence[pb.HistoryEvent],
+            self,
+            instance_id: str,
+            old_events: Sequence[pb.HistoryEvent],
+            new_events: Sequence[pb.HistoryEvent],
     ) -> ExecutionResults:
         if not new_events:
             raise task.OrchestrationStateError(
@@ -922,7 +922,7 @@ class _OrchestrationExecutor:
                 f"{instance_id}: Orchestrator yielded with {task_count} task(s) and {event_count} event(s) outstanding."
             )
         elif (
-            ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+                ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
         ):
             completion_status_str = pbh.get_orchestration_status_str(
                 ctx._completion_status
@@ -941,7 +941,7 @@ class _OrchestrationExecutor:
         )
 
     def process_event(
-        self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent
+            self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent
     ) -> None:
         if self._is_suspended and _is_suspendable(event):
             # We are suspended, so we need to buffer this event until we are resumed
@@ -963,7 +963,7 @@ class _OrchestrationExecutor:
                 # deserialize the input, if any
                 input = None
                 if (
-                    event.executionStarted.input is not None and event.executionStarted.input.value != ""
+                        event.executionStarted.input is not None and event.executionStarted.input.value != ""
                 ):
                     input = shared.from_json(event.executionStarted.input.value)
 
@@ -1105,7 +1105,7 @@ class _OrchestrationExecutor:
                         task_id, expected_method_name, action
                     )
                 elif (
-                    action.createSubOrchestration.name != event.subOrchestrationInstanceCreated.name
+                        action.createSubOrchestration.name != event.subOrchestrationInstanceCreated.name
                 ):
                     raise _get_wrong_action_name_error(
                         task_id,
@@ -1229,11 +1229,11 @@ class _ActivityExecutor:
         self._logger = logger
 
     def execute(
-        self,
-        orchestration_id: str,
-        name: str,
-        task_id: int,
-        encoded_input: Optional[str],
+            self,
+            orchestration_id: str,
+            name: str,
+            task_id: int,
+            encoded_input: Optional[str],
     ) -> Optional[str]:
         """Executes an activity function and returns the serialized result, if any."""
         self._logger.debug(
@@ -1262,7 +1262,7 @@ class _ActivityExecutor:
 
 
 def _get_non_determinism_error(
-    task_id: int, action_name: str
+        task_id: int, action_name: str
 ) -> task.NonDeterminismError:
     return task.NonDeterminismError(
         f"A previous execution called {action_name} with ID={task_id}, but the current "
@@ -1273,7 +1273,7 @@ def _get_non_determinism_error(
 
 
 def _get_wrong_action_type_error(
-    task_id: int, expected_method_name: str, action: pb.OrchestratorAction
+        task_id: int, expected_method_name: str, action: pb.OrchestratorAction
 ) -> task.NonDeterminismError:
     unexpected_method_name = _get_method_name_for_action(action)
     return task.NonDeterminismError(
@@ -1286,7 +1286,7 @@ def _get_wrong_action_type_error(
 
 
 def _get_wrong_action_name_error(
-    task_id: int, method_name: str, expected_task_name: str, actual_task_name: str
+        task_id: int, method_name: str, expected_task_name: str, actual_task_name: str
 ) -> task.NonDeterminismError:
     return task.NonDeterminismError(
         f"Failed to restore orchestration state due to a history mismatch: A previous execution called "
@@ -1471,7 +1471,7 @@ class _AsyncWorkerManager:
             running_tasks.add(task)
 
     async def _process_work_item(
-        self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, args, kwargs
+            self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, args, kwargs
     ):
         async with semaphore:
             try:
@@ -1486,8 +1486,8 @@ class _AsyncWorkerManager:
             loop = asyncio.get_running_loop()
             # Avoid submitting to executor after shutdown
             if (
-                getattr(self, "_shutdown", False) and getattr(self, "thread_pool", None) and getattr(
-                    self.thread_pool, "_shutdown", False)
+                    getattr(self, "_shutdown", False) and getattr(self, "thread_pool", None) and getattr(
+                        self.thread_pool, "_shutdown", False)
             ):
                 return None
             return await loop.run_in_executor(
