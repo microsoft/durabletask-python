@@ -15,7 +15,6 @@ from typing import Any, Generator, Optional, Sequence, TypeVar, Union
 import grpc
 from google.protobuf import empty_pb2
 
-import durabletask.internal.helpers as pbh
 import durabletask.internal.helpers as ph
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
@@ -511,16 +510,16 @@ class TaskHubGrpcWorker:
             res = pb.OrchestratorResponse(
                 instanceId=req.instanceId,
                 actions=result.actions,
-                customStatus=pbh.get_string_value(result.encoded_custom_status),
+                customStatus=ph.get_string_value(result.encoded_custom_status),
                 completionToken=completionToken,
             )
         except Exception as ex:
             self._logger.exception(
                 f"An error occurred while trying to execute instance '{req.instanceId}': {ex}"
             )
-            failure_details = pbh.new_failure_details(ex)
+            failure_details = ph.new_failure_details(ex)
             actions = [
-                pbh.new_complete_orchestration_action(
+                ph.new_complete_orchestration_action(
                     -1, pb.ORCHESTRATION_STATUS_FAILED, "", failure_details
                 )
             ]
@@ -552,14 +551,14 @@ class TaskHubGrpcWorker:
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
-                result=pbh.get_string_value(result),
+                result=ph.get_string_value(result),
                 completionToken=completionToken,
             )
         except Exception as ex:
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
-                failureDetails=pbh.new_failure_details(ex),
+                failureDetails=ph.new_failure_details(ex),
                 completionToken=completionToken,
             )
 
@@ -924,7 +923,7 @@ class _OrchestrationExecutor:
         elif (
                 ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
         ):
-            completion_status_str = pbh.get_orchestration_status_str(
+            completion_status_str = ph.get_orchestration_status_str(
                 ctx._completion_status
             )
             self._logger.info(
