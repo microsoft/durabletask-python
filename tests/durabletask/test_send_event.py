@@ -241,3 +241,94 @@ def test_send_event_validation():
             assert False, "Expected failure completion action, got different action type"
     else:
         assert False, "Expected at least one action (failure completion)"
+
+
+def test_orchestration_to_orchestration_communication():
+    """Test advanced scenario: orchestration sends event to another waiting orchestration"""
+    
+    # Define the waiting orchestration that waits for an approval event
+    def waiting_orchestration(ctx: task.OrchestrationContext, _):
+        approval_data = yield ctx.wait_for_external_event("approval")
+        return f"Received approval: {approval_data}"
+    
+    # Define the sender orchestration that sends an event to another orchestration
+    def sender_orchestration(ctx: task.OrchestrationContext, target_instance_id: str):
+        approval_payload = {"approved": True, "approver": "manager", "timestamp": "2024-01-01T10:00:00Z"}
+        yield ctx.send_event(target_instance_id, "approval", data=approval_payload)
+        return "Event sent successfully"
+    
+    registry = worker._Registry()
+    waiting_name = registry.add_orchestrator(waiting_orchestration)
+    sender_name = registry.add_orchestrator(sender_orchestration)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    
+    # Instance IDs for our orchestrations
+    waiting_instance_id = "waiting-instance-123"
+    sender_instance_id = "sender-instance-456"
+    
+    # Step 1: Start the waiting orchestration
+    waiting_new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(waiting_name, waiting_instance_id, encoded_input=None),
+    ]
+    waiting_result = executor.execute(waiting_instance_id, [], waiting_new_events)
+    
+    # The waiting orchestration should produce no actions when waiting for an external event
+    assert len(waiting_result.actions) == 0
+    
+    # Step 2: Start the sender orchestration with the waiting instance ID as input
+    sender_new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(sender_name, sender_instance_id, 
+                                           encoded_input=json.dumps(waiting_instance_id)),
+    ]
+    sender_result = executor.execute(sender_instance_id, [], sender_new_events)
+    
+    # The sender orchestration should yield a send_event action
+    assert len(sender_result.actions) == 1
+    send_action = sender_result.actions[0]
+    assert send_action.WhichOneof("orchestratorActionType") == "sendEvent"
+    assert send_action.sendEvent.instance.instanceId == waiting_instance_id
+    assert send_action.sendEvent.name == "approval"
+    
+    # Verify the data payload is correct
+    expected_payload = {"approved": True, "approver": "manager", "timestamp": "2024-01-01T10:00:00Z"}
+    assert send_action.sendEvent.data.value == json.dumps(expected_payload)
+    
+    # Step 3: Complete the send_event action
+    event_sent = helpers.new_event_sent_event(waiting_instance_id, "approval", 
+                                             json.dumps(expected_payload))
+    event_sent.eventId = send_action.id
+    
+    sender_old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(sender_name, sender_instance_id, 
+                                           encoded_input=json.dumps(waiting_instance_id))
+    ]
+    sender_completion_result = executor.execute(sender_instance_id, sender_old_events, [event_sent])
+    
+    # The sender should complete successfully
+    assert len(sender_completion_result.actions) == 1
+    sender_complete_action = sender_completion_result.actions[0]
+    assert sender_complete_action.WhichOneof("orchestratorActionType") == "completeOrchestration"
+    assert sender_complete_action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert sender_complete_action.completeOrchestration.result.value == json.dumps("Event sent successfully")
+    
+    # Step 4: Simulate the event being raised to the waiting orchestration
+    event_raised = helpers.new_event_raised_event("approval", json.dumps(expected_payload))
+    
+    waiting_old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(waiting_name, waiting_instance_id, encoded_input=None)
+    ]
+    waiting_completion_result = executor.execute(waiting_instance_id, waiting_old_events, [event_raised])
+    
+    # The waiting orchestration should complete with the received data
+    assert len(waiting_completion_result.actions) == 1
+    waiting_complete_action = waiting_completion_result.actions[0]
+    assert waiting_complete_action.WhichOneof("orchestratorActionType") == "completeOrchestration"
+    assert waiting_complete_action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    
+    # Verify the data was passed correctly through the event
+    expected_result = f"Received approval: {expected_payload}"
+    assert waiting_complete_action.completeOrchestration.result.value == json.dumps(expected_result)
