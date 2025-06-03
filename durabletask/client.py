@@ -243,7 +243,7 @@ class TaskHubGrpcClient:
             The time to schedule the operation. If not provided, the operation is scheduled immediately.
         """
         entity_id_str = str(entity_id) if hasattr(entity_id, '__str__') else entity_id
-        
+
         req = pb.SignalEntityRequest(
             instanceId=entity_id_str,
             name=operation_name,
@@ -270,7 +270,7 @@ class TaskHubGrpcClient:
             The entity state if it exists, None otherwise.
         """
         entity_id_str = str(entity_id) if hasattr(entity_id, '__str__') else entity_id
-        
+
         req = pb.GetEntityRequest(instanceId=entity_id_str, includeState=include_state)
         res: pb.GetEntityResponse = self._stub.GetEntity(req)
 
@@ -332,9 +332,9 @@ class TaskHubGrpcClient:
             continuation_token=res.continuationToken.value if not helpers.is_empty(res.continuationToken) else None)
 
     def clean_entity_storage(self, *,
-                            remove_empty_entities: bool = True,
-                            release_orphaned_locks: bool = True,
-                            continuation_token: Optional[str] = None) -> tuple[int, int, Optional[str]]:
+                             remove_empty_entities: bool = True,
+                             release_orphaned_locks: bool = True,
+                             continuation_token: Optional[str] = None) -> tuple[int, int, Optional[str]]:
         """Clean up entity storage by removing empty entities and releasing orphaned locks.
 
         Parameters

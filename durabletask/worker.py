@@ -932,7 +932,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                       input: Optional[Any] = None) -> task.Task:
         # Create a signal entity action
         entity_id_str = str(entity_id) if hasattr(entity_id, '__str__') else entity_id
-        
+
         action = pb.OrchestratorAction()
         action.sendEntitySignal.CopyFrom(pb.SendSignalAction(
             instanceId=entity_id_str,

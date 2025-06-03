@@ -519,27 +519,27 @@ class EntityInstanceId:
     """Represents the ID of a durable entity instance."""
     name: str
     key: str
-    
+
     def __str__(self) -> str:
         """Return the string representation in the format: name@key"""
         return f"{self.name}@{self.key}"
-    
+
     @classmethod
     def from_string(cls, instance_id: str) -> 'EntityInstanceId':
         """Parse an entity instance ID from string format (name@key)."""
         if '@' not in instance_id:
             raise ValueError(f"Invalid entity instance ID format: {instance_id}. Expected format: name@key")
-        
+
         parts = instance_id.split('@', 1)
         if len(parts) != 2 or not parts[0] or not parts[1]:
             raise ValueError(f"Invalid entity instance ID format: {instance_id}. Expected format: name@key")
-        
+
         return cls(name=parts[0], key=parts[1])
 
 
 class EntityOperationFailedException(Exception):
     """Exception raised when an entity operation fails."""
-    
+
     def __init__(self, entity_id: EntityInstanceId, operation_name: str, failure_details: FailureDetails):
         self.entity_id = entity_id
         self.operation_name = operation_name
@@ -549,7 +549,7 @@ class EntityOperationFailedException(Exception):
 
 class EntityContext:
     """Context for entity operations, providing access to state and scheduling capabilities."""
-    
+
     def __init__(self, instance_id: str, operation_name: str, is_new_entity: bool = False):
         self._instance_id = instance_id
         self._operation_name = operation_name
@@ -642,7 +642,7 @@ class EntityContext:
         # Store the signal for later processing during entity execution
         if not hasattr(self, '_signals'):
             self._signals = []
-        
+
         entity_id_str = str(entity_id) if isinstance(entity_id, EntityInstanceId) else entity_id
         self._signals.append({
             'entity_id': entity_id_str,
@@ -651,8 +651,8 @@ class EntityContext:
         })
 
     def start_new_orchestration(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
-                               input: Optional[TInput] = None,
-                               instance_id: Optional[str] = None) -> str:
+                                input: Optional[TInput] = None,
+                                instance_id: Optional[str] = None) -> str:
         """Start a new orchestration from within an entity operation.
 
         Parameters
@@ -672,16 +672,16 @@ class EntityContext:
         # Store the orchestration start request for later processing
         if not hasattr(self, '_orchestrations'):
             self._orchestrations = []
-        
+
         orchestrator_name = orchestrator if isinstance(orchestrator, str) else get_name(orchestrator)
         new_instance_id = instance_id or str(uuid.uuid4())
-        
+
         self._orchestrations.append({
             'name': orchestrator_name,
             'input': input,
             'instance_id': new_instance_id
         })
-        
+
         return new_instance_id
 
 
@@ -691,42 +691,43 @@ Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, An
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
 
+
 class EntityBase:
     """Base class for entity implementations that provides method-based dispatch.
-    
+
     This class allows entities to be implemented as classes with methods for each operation,
     similar to the .NET TaskEntity pattern. The entity context is automatically injected
     when methods are called.
     """
-    
+
     def __init__(self):
         self._context: Optional[EntityContext] = None
         self._state: Optional[Any] = None
-    
+
     @property
     def context(self) -> EntityContext:
         """Get the current entity context."""
         if self._context is None:
             raise RuntimeError("Entity context is not available outside of operation execution")
         return self._context
-    
+
     def get_state(self, state_type: type[T] = None) -> Optional[T]:
         """Get the current state of the entity."""
         return self._state
-    
+
     def set_state(self, state: Any) -> None:
         """Set the current state of the entity."""
         self._state = state
-    
+
     def signal_entity(self, entity_id: Union[str, EntityInstanceId], operation_name: str, *,
                       input: Optional[Any] = None) -> None:
         """Signal another entity with an operation."""
         if self._context:
             self._context.signal_entity(entity_id, operation_name, input=input)
-    
+
     def start_new_orchestration(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
-                               input: Optional[TInput] = None,
-                               instance_id: Optional[str] = None) -> str:
+                                input: Optional[TInput] = None,
+                                instance_id: Optional[str] = None) -> str:
         """Start a new orchestration from within an entity operation."""
         if self._context:
             return self._context.start_new_orchestration(orchestrator, input=input, instance_id=instance_id)
@@ -736,12 +737,12 @@ class EntityBase:
 def dispatch_to_entity_method(entity_obj: Any, ctx: EntityContext, input: Any) -> Any:
     """
     Dispatch an entity operation to the appropriate method on an entity object.
-    
+
     This function implements flexible method dispatch similar to the .NET implementation:
     1. Look for an exact method name match (case-insensitive)
     2. If the entity is an EntityBase subclass, inject context and state
     3. Handle method parameters automatically (context, input, or both)
-    
+
     Parameters
     ----------
     entity_obj : Any
@@ -750,44 +751,44 @@ def dispatch_to_entity_method(entity_obj: Any, ctx: EntityContext, input: Any) -
         The entity context
     input : Any
         The operation input
-        
+
     Returns
     -------
     Any
         The result of the operation
     """
     import inspect
-    
+
     # Set up entity base if applicable
     if isinstance(entity_obj, EntityBase):
         entity_obj._context = ctx
         entity_obj._state = ctx.get_state()
-    
+
     # Look for a method with the operation name (case-insensitive)
     operation_name = ctx.operation_name.lower()
     method = None
-    
+
     for attr_name in dir(entity_obj):
         if attr_name.lower() == operation_name and callable(getattr(entity_obj, attr_name)):
             method = getattr(entity_obj, attr_name)
             break
-    
+
     if method is None:
         raise NotImplementedError(f"Entity does not implement operation '{ctx.operation_name}'")
-    
+
     # Inspect method signature to determine parameters
     sig = inspect.signature(method)
     args = []
     kwargs = {}
-    
+
     # Skip 'self' parameter for bound methods
     parameters = list(sig.parameters.values())
     if parameters and parameters[0].name == 'self':
         parameters = parameters[1:]
-    
+
     for param in parameters:
         param_type = param.annotation
-        
+
         # Check for EntityContext parameter
         if param_type == EntityContext or param.name.lower() in ['context', 'ctx']:
             if param.kind == param.POSITIONAL_OR_KEYWORD:
@@ -803,18 +804,18 @@ def dispatch_to_entity_method(entity_obj: Any, ctx: EntityContext, input: Any) -
         # Default positional parameter (assume it's input)
         elif param.kind == param.POSITIONAL_OR_KEYWORD and len(args) == 0:
             args.append(input)
-    
+
     try:
         result = method(*args, **kwargs)
-        
+
         # Update state if entity is EntityBase
         if isinstance(entity_obj, EntityBase):
             ctx.set_state(entity_obj._state)
             entity_obj._context = None  # Clear context after operation
-        
+
         return result
-        
-    except Exception as ex:
+
+    except Exception:
         # Clear context on error
         if isinstance(entity_obj, EntityBase):
             entity_obj._context = None

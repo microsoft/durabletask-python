@@ -5,15 +5,15 @@
 
 from durabletask.worker import ConcurrencyOptions
 from durabletask.task import (
-    EntityContext, EntityState, EntityQuery, EntityQueryResult, 
+    EntityContext, EntityState, EntityQuery, EntityQueryResult,
     EntityInstanceId, EntityOperationFailedException, EntityBase, dispatch_to_entity_method
 )
 
 __all__ = [
-    "ConcurrencyOptions", 
-    "EntityContext", 
-    "EntityState", 
-    "EntityQuery", 
+    "ConcurrencyOptions",
+    "EntityContext",
+    "EntityState",
+    "EntityQuery",
     "EntityQueryResult",
     "EntityInstanceId",
     "EntityOperationFailedException",
