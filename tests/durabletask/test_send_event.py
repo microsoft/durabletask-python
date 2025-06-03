@@ -204,3 +204,40 @@ def test_send_event_with_various_data_types():
     assert action.sendEvent.name == "event1"
     expected_data = json.dumps({"key": "value", "number": 42})
     assert action.sendEvent.data.value == expected_data
+
+
+def test_send_event_validation():
+    """Test send_event input validation"""
+
+    def orchestrator_empty_instance(ctx: task.OrchestrationContext, _):
+        yield ctx.send_event("", "event1", data="test")
+        return "completed"
+
+    registry = worker._Registry()
+    
+    # Test empty instance_id
+    name1 = registry.add_orchestrator(orchestrator_empty_instance)
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name1, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+    
+    # Check if the orchestration failed due to validation error
+    actions = result.actions
+    if len(actions) > 0:
+        action = actions[0]
+        if action.WhichOneof("orchestratorActionType") == "completeOrchestration":
+            complete_action = action.completeOrchestration
+            if complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED:
+                # The orchestration should have failed with the validation error
+                failure_details = complete_action.failureDetails
+                assert "instance_id cannot be None or empty" in failure_details.errorMessage
+            else:
+                assert False, "Expected orchestration to fail with validation error"
+        else:
+            assert False, "Expected failure completion action, got different action type"
+    else:
+        assert False, "Expected at least one action (failure completion)"

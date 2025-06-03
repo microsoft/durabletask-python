@@ -854,6 +854,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def send_event(self, instance_id: str, event_name: str, *,
                    data: Optional[Any] = None) -> task.Task:
+        # Validate inputs similar to .NET implementation
+        if not instance_id:
+            raise ValueError("instance_id cannot be None or empty")
+        if not event_name:
+            raise ValueError("event_name cannot be None or empty")
+        
         id = self.next_sequence_number()
         encoded_data = shared.to_json(data) if data is not None else None
         action = ph.new_send_event_action(id, instance_id, event_name, encoded_data)
