@@ -26,7 +26,8 @@ license = {file = "LICENSE"}
 readme = "README.md"
 dependencies = [
     "grpcio",
-    "protobuf"
+    "protobuf",
+    "asyncio"
 ]
 
 [project.urls]
