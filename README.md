@@ -121,6 +121,10 @@ Orchestrations can wait for external events using the `wait_for_external_event` 
 
 Durable entities are stateful objects that can maintain state across multiple operations. Entities support operations that can read and modify the entity's state. Each entity has a unique entity ID and maintains its state independently.
 
+The Python SDK supports both function-based and class-based entity implementations:
+
+#### Function-based entities (simple)
+
 ```python
 # Define an entity function
 def counter_entity(ctx: task.EntityContext, input):
@@ -133,21 +137,78 @@ def counter_entity(ctx: task.EntityContext, input):
         return ctx.get_state() or 0
 
 # Register the entity with the worker
-worker.add_named_entity("Counter", counter_entity)
-
-# Signal an entity from an orchestrator
-yield ctx.signal_entity("Counter@my-counter", "increment", input=5)
-
-# Or signal an entity directly from a client
-client.signal_entity("Counter@my-counter", "increment", input=10)
-
-# Query entity state
-entity_state = client.get_entity("Counter@my-counter", include_state=True)
-if entity_state and entity_state.exists:
-    print(f"Current count: {entity_state.serialized_state}")
+worker._registry.add_named_entity("Counter", counter_entity)
 ```
 
-You can find the full sample [here](./examples/durable_entities.py).
+#### Class-based entities (advanced)
+
+```python
+import durabletask as dt
+
+class CounterEntity(dt.EntityBase):
+    def increment(self, value: int = 1) -> int:
+        current = self.get_state() or 0
+        new_value = current + value
+        self.set_state(new_value)
+        return new_value
+    
+    def get(self) -> int:
+        return self.get_state() or 0
+    
+    def reset(self) -> int:
+        self.set_state(0)
+        return 0
+
+# Register class-based entity
+worker._registry.add_named_entity("Counter", CounterEntity)
+```
+
+#### Client operations with structured IDs
+
+```python
+# Use structured entity IDs (recommended)
+counter_id = dt.EntityInstanceId("Counter", "my-counter")
+
+# Signal an entity from an orchestrator
+yield ctx.signal_entity(counter_id, "increment", input=5)
+
+# Or signal an entity directly from a client
+client.signal_entity(counter_id, "increment", input=10)
+
+# Query entity state
+entity_state = client.get_entity(counter_id, include_state=True)
+if entity_state and entity_state.exists:
+    print(f"Current count: {entity_state.serialized_state}")
+
+# Query multiple entities
+query = dt.EntityQuery(instance_id_starts_with="Counter@", include_state=True)
+results = client.query_entities(query)
+```
+
+#### Entity-to-entity communication
+
+Entities can signal other entities and start orchestrations:
+
+```python
+class NotificationEntity(dt.EntityBase):
+    def send_notification(self, data):
+        # Process notification
+        notifications = self.get_state() or {"count": 0}
+        notifications["count"] += 1
+        self.set_state(notifications)
+        
+        # Signal another entity
+        counter_id = dt.EntityInstanceId("Counter", f"user-{data['user_id']}")
+        self.signal_entity(counter_id, "increment")
+        
+        # Start an orchestration
+        return self.start_new_orchestration("process_notification", input=data)
+```
+
+You can find comprehensive examples in:
+- [Basic entities](./examples/durable_entities.py)
+- [Class-based entities](./examples/class_based_entities.py)
+- [Complete guide](./docs/entities.md)
 
 ### Continue-as-new (TODO)
 
