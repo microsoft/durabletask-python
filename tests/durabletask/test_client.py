@@ -1,12 +1,13 @@
-from unittest.mock import patch, ANY
+from unittest.mock import ANY, patch
 
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 from durabletask.internal.shared import (get_default_host_address,
                                          get_grpc_channel)
-from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 HOST_ADDRESS = 'localhost:50051'
 METADATA = [('key1', 'value1'), ('key2', 'value2')]
 INTERCEPTORS = [DefaultClientInterceptorImpl(METADATA)]
+
 
 def test_get_grpc_channel_insecure():
     with patch('grpc.insecure_channel') as mock_channel:
