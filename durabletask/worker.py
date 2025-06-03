@@ -75,10 +75,12 @@ class ConcurrencyOptions:
 class _Registry:
     orchestrators: dict[str, task.Orchestrator]
     activities: dict[str, task.Activity]
+    entities: dict[str, task.Entity]
 
     def __init__(self):
         self.orchestrators = {}
         self.activities = {}
+        self.entities = {}
 
     def add_orchestrator(self, fn: task.Orchestrator) -> str:
         if fn is None:
@@ -118,6 +120,25 @@ class _Registry:
     def get_activity(self, name: str) -> Optional[task.Activity]:
         return self.activities.get(name)
 
+    def add_entity(self, fn: task.Entity) -> str:
+        if fn is None:
+            raise ValueError("An entity function argument is required.")
+
+        name = task.get_name(fn)
+        self.add_named_entity(name, fn)
+        return name
+
+    def add_named_entity(self, name: str, fn: task.Entity) -> None:
+        if not name:
+            raise ValueError("A non-empty entity name is required.")
+        if name in self.entities:
+            raise ValueError(f"A '{name}' entity already exists.")
+
+        self.entities[name] = fn
+
+    def get_entity(self, name: str) -> Optional[task.Entity]:
+        return self.entities.get(name)
+
 
 class OrchestratorNotRegisteredError(ValueError):
     """Raised when attempting to start an orchestration that is not registered"""
@@ -127,6 +148,12 @@ class OrchestratorNotRegisteredError(ValueError):
 
 class ActivityNotRegisteredError(ValueError):
     """Raised when attempting to call an activity that is not registered"""
+
+    pass
+
+
+class EntityNotRegisteredError(ValueError):
+    """Raised when attempting to call an entity that is not registered"""
 
     pass
 
@@ -278,6 +305,14 @@ class TaskHubGrpcWorker:
                 "Activities cannot be added while the worker is running."
             )
         return self._registry.add_activity(fn)
+
+    def add_entity(self, fn: task.Entity) -> str:
+        """Registers an entity function with the worker."""
+        if self._is_running:
+            raise RuntimeError(
+                "Entities cannot be added while the worker is running."
+            )
+        return self._registry.add_entity(fn)
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
@@ -434,6 +469,13 @@ class TaskHubGrpcWorker:
                                 stub,
                                 work_item.completionToken,
                             )
+                        elif work_item.HasField("entityRequest"):
+                            self._async_worker_manager.submit_activity(
+                                self._execute_entity,
+                                work_item.entityRequest,
+                                stub,
+                                work_item.completionToken,
+                            )
                         elif work_item.HasField("healthPing"):
                             pass
                         else:
@@ -567,6 +609,34 @@ class TaskHubGrpcWorker:
         except Exception as ex:
             self._logger.exception(
                 f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+            )
+
+    def _execute_entity(
+            self,
+            req: pb.EntityBatchRequest,
+            stub: stubs.TaskHubSidecarServiceStub,
+            completionToken,
+    ):
+        instance_id = req.instanceId
+        try:
+            executor = _EntityExecutor(self._registry, self._logger)
+            result = executor.execute(req)
+            result.completionToken = completionToken
+        except Exception as ex:
+            self._logger.exception(
+                f"An error occurred while trying to execute entity '{instance_id}': {ex}"
+            )
+            failure_details = ph.new_failure_details(ex)
+            result = pb.EntityBatchResult(
+                failureDetails=failure_details,
+                completionToken=completionToken,
+            )
+
+        try:
+            stub.CompleteEntityTask(result)
+        except Exception as ex:
+            self._logger.exception(
+                f"Failed to deliver entity response for entity '{instance_id}' to sidecar: {ex}"
             )
 
 
@@ -857,6 +927,36 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             return
 
         self.set_continued_as_new(new_input, save_events)
+
+    def signal_entity(self, entity_id: str, operation_name: str, *,
+                      input: Optional[Any] = None) -> task.Task:
+        # Create a signal entity action
+        action = pb.OrchestratorAction()
+        action.sendEntitySignal.CopyFrom(pb.SendSignalAction(
+            instanceId=entity_id,
+            name=operation_name,
+            input=ph.get_string_value(shared.to_json(input)) if input is not None else None
+        ))
+
+        # Entity signals don't return values, so we create a completed task
+        signal_task = task.CompletableTask()
+        
+        # Store the action to be executed
+        task_id = self._next_task_id()
+        self._pending_actions[task_id] = action
+        self._pending_tasks[task_id] = signal_task
+        
+        # Mark as complete since signals don't have return values
+        signal_task.complete(None)
+        
+        return signal_task
+
+    def call_entity(self, entity_id: str, operation_name: str, *,
+                    input: Optional[Any] = None,
+                    retry_policy: Optional[task.RetryPolicy] = None) -> task.Task:
+        # For now, entity calls are not directly supported in orchestrations
+        # This would require additional protobuf support
+        raise NotImplementedError("Direct entity calls from orchestrations are not yet supported. Use signal_entity instead.")
 
 
 class ExecutionResults:
@@ -1258,6 +1358,81 @@ class _ActivityExecutor:
             f"{orchestration_id}/{task_id}: Activity '{name}' completed successfully with {chars} char(s) of encoded output."
         )
         return encoded_output
+
+
+class _EntityExecutor:
+    def __init__(self, registry: _Registry, logger: logging.Logger):
+        self._registry = registry
+        self._logger = logger
+
+    def execute(self, req: pb.EntityBatchRequest) -> pb.EntityBatchResult:
+        """Executes entity operations and returns the batch result."""
+        instance_id = req.instanceId
+        self._logger.debug(f"Executing entity batch for '{instance_id}' with {len(req.operations)} operation(s)...")
+
+        # Parse current entity state
+        current_state = shared.from_json(req.entityState.value) if not ph.is_empty(req.entityState) else None
+        
+        # Extract entity type from instance ID (format: entitytype@key)
+        entity_type = "Unknown"
+        if "@" in instance_id:
+            entity_type = instance_id.split("@")[0]
+        
+        results = []
+        actions = []
+        
+        for operation in req.operations:
+            try:
+                # Get the entity function using the entity type from instanceId
+                fn = self._registry.get_entity(entity_type)
+                if not fn:
+                    raise EntityNotRegisteredError(f"Entity function named '{entity_type}' was not registered!")
+
+                # Create entity context
+                ctx = task.EntityContext(
+                    instance_id=instance_id,
+                    operation_name=operation.operation,
+                    is_new_entity=(current_state is None)
+                )
+                ctx.set_state(current_state)
+
+                # Parse operation input
+                operation_input = shared.from_json(operation.input.value) if not ph.is_empty(operation.input) else None
+
+                # Execute the entity operation
+                operation_output = fn(ctx, operation_input)
+
+                # Update state for next operation
+                current_state = ctx.get_state()
+
+                # Create operation result
+                result = pb.OperationResult()
+                if operation_output is not None:
+                    result.success.CopyFrom(pb.OperationResultSuccess(
+                        result=ph.get_string_value(shared.to_json(operation_output))
+                    ))
+                else:
+                    result.success.CopyFrom(pb.OperationResultSuccess())
+                
+                results.append(result)
+
+            except Exception as ex:
+                self._logger.exception(f"Error executing entity operation '{operation.operation}' on entity type '{entity_type}': {ex}")
+                
+                # Create failure result
+                failure_details = ph.new_failure_details(ex)
+                result = pb.OperationResult()
+                result.failure.CopyFrom(pb.OperationResultFailure(
+                    failureDetails=failure_details
+                ))
+                results.append(result)
+
+        # Return batch result
+        return pb.EntityBatchResult(
+            results=results,
+            actions=actions,
+            entityState=ph.get_string_value(shared.to_json(current_state)) if current_state is not None else None
+        )
 
 
 def _get_non_determinism_error(
