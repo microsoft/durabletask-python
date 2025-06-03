@@ -5,16 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.2.0 (Unreleased)
+## v0.3.0
+
+### New
+
+- Added `ConcurrencyOptions` class for fine-grained concurrency control with separate limits for activities and orchestrations. The thread pool worker count can also be configured.
+
+### Fixed
+
+- Fixed an issue where a worker could not recover after its connection was interrupted or severed
+
+## v0.2.1
 
 ### New
 
 - Added `set_custom_status` orchestrator API ([#31](https://github.com/microsoft/durabletask-python/pull/31)) - contributed by [@famarting](https://github.com/famarting)
 - Added `purge_orchestration` client API ([#34](https://github.com/microsoft/durabletask-python/pull/34)) - contributed by [@famarting](https://github.com/famarting)
+- Added new `durabletask-azuremanaged` package for use with the [Durable Task Scheduler](https://learn.microsoft.com/azure/azure-functions/durable/durable-task-scheduler/durable-task-scheduler) - by [@RyanLettieri](https://github.com/RyanLettieri)
 
 ### Changes
 
-- Protos are compiled with gRPC 1.62.3 / protobuf 3.25.X instead of the latest release. This ensures compatibility with a wider range of grpcio versions for better compatibility with other packages / libraries.
+- Protos are compiled with gRPC 1.62.3 / protobuf 3.25.X instead of the latest release. This ensures compatibility with a wider range of grpcio versions for better compatibility with other packages / libraries ([#36](https://github.com/microsoft/durabletask-python/pull/36)) - by [@berndverst](https://github.com/berndverst)
+- Http and grpc protocols and their secure variants are stripped from the host name parameter if provided. Secure mode is enabled if the protocol provided is https or grpcs ([#38](https://github.com/microsoft/durabletask-python/pull/38) - by [@berndverst)(https://github.com/berndverst)
+- Improve ProtoGen by downloading proto file directly instead of using submodule ([#39](https://github.com/microsoft/durabletask-python/pull/39) - by [@berndverst](https://github.com/berndverst)
 
 ### Updates
 

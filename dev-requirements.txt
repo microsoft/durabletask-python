@@ -1,1 +1,1 @@
-grpcio-tools==1.62.3 # 1.62.X is the latest version before protobuf 1.26.X is used which has breaking changes for Python
+grpcio-tools

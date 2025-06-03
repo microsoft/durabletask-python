@@ -1,0 +1,41 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# For more information on pyproject.toml, see https://peps.python.org/pep-0621/
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "durabletask.azuremanaged"
+version = "0.2.0"
+description = "Durable Task Python SDK provider implementation for the Azure Durable Task Scheduler"
+keywords = [
+    "durable",
+    "task",
+    "workflow",
+    "azure"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+]
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+readme = "README.md"
+dependencies = [
+    "durabletask>=0.3.0",
+    "azure-identity>=1.19.0"
+]
+
+[project.urls]
+repository = "https://github.com/microsoft/durabletask-python"
+changelog = "https://github.com/microsoft/durabletask-python/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+include = ["durabletask.azuremanaged", "durabletask.azuremanaged.*"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
