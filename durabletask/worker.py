@@ -852,6 +852,16 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             task_list.append(external_event_task)
         return external_event_task
 
+    def send_event(self, instance_id: str, event_name: str, *,
+                   data: Optional[Any] = None) -> task.Task:
+        id = self.next_sequence_number()
+        encoded_data = shared.to_json(data) if data is not None else None
+        action = ph.new_send_event_action(id, instance_id, event_name, encoded_data)
+        self._pending_actions[id] = action
+        send_event_task = task.CompletableTask()
+        self._pending_tasks[id] = send_event_task
+        return send_event_task
+
     def continue_as_new(self, new_input, *, save_events: bool = False) -> None:
         if self._is_complete:
             return
@@ -1188,6 +1198,17 @@ class _OrchestrationExecutor:
                         self._logger.info(
                             f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it."
                         )
+            elif event.HasField("eventSent"):
+                # This history event confirms that the event was successfully sent.
+                # Complete the corresponding send_event task.
+                event_id = event.eventId
+                send_event_task = ctx._pending_tasks.pop(event_id, None)
+                if send_event_task:
+                    # For send_event, we don't return any meaningful result, just completion
+                    send_event_task.complete(None)
+                    ctx.resume()
+                # Also remove the corresponding action from pending actions
+                ctx._pending_actions.pop(event_id, None)
             elif event.HasField("executionSuspended"):
                 if not self._is_suspended and not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id}: Execution suspended.")
@@ -1304,8 +1325,8 @@ def _get_method_name_for_action(action: pb.OrchestratorAction) -> str:
         return task.get_name(task.OrchestrationContext.create_timer)
     elif action_type == "createSubOrchestration":
         return task.get_name(task.OrchestrationContext.call_sub_orchestrator)
-    # elif action_type == "sendEvent":
-    #    return task.get_name(task.OrchestrationContext.send_event)
+    elif action_type == "sendEvent":
+        return task.get_name(task.OrchestrationContext.send_event)
     else:
         raise NotImplementedError(f"Action type '{action_type}' not supported!")
 
