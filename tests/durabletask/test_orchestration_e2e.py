@@ -323,7 +323,7 @@ def test_continue_as_new():
         result = yield ctx.wait_for_external_event("my_event")
         if not ctx.is_replaying:
             # NOTE: Real orchestrations should never interact with nonlocal variables like this.
-            nonlocal all_results
+            nonlocal all_results  # noqa: F824
             all_results.append(result)
 
         if len(all_results) <= 4:
