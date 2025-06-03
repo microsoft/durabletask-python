@@ -8,6 +8,7 @@ import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
+from dataclasses import dataclass
 
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -176,6 +177,51 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @abstractmethod
+    def signal_entity(self, entity_id: str, operation_name: str, *,
+                      input: Optional[Any] = None) -> Task:
+        """Signal an entity with an operation.
+
+        Parameters
+        ----------
+        entity_id : str
+            The ID of the entity to signal.
+        operation_name : str
+            The name of the operation to perform.
+        input : Optional[Any]
+            The JSON-serializable input to pass to the entity operation.
+
+        Returns
+        -------
+        Task
+            A Durable Task that completes when the entity operation is scheduled.
+        """
+        pass
+
+    @abstractmethod
+    def call_entity(self, entity_id: str, operation_name: str, *,
+                    input: Optional[TInput] = None,
+                    retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
+        """Call an entity operation and wait for the result.
+
+        Parameters
+        ----------
+        entity_id : str
+            The ID of the entity to call.
+        operation_name : str
+            The name of the operation to perform.
+        input : Optional[TInput]
+            The JSON-serializable input to pass to the entity operation.
+        retry_policy : Optional[RetryPolicy]
+            The retry policy to use for this entity call.
+
+        Returns
+        -------
+        Task[TOutput]
+            A Durable Task that completes when the entity operation completes or fails.
+        """
+        pass
+
 
 class FailureDetails:
     def __init__(self, message: str, error_type: str, stack_trace: Optional[str]):
@@ -217,6 +263,40 @@ class NonDeterminismError(Exception):
 
 class OrchestrationStateError(Exception):
     pass
+
+
+@dataclass
+class EntityState:
+    """Represents the state of a durable entity."""
+    instance_id: str
+    last_modified_time: datetime
+    backlog_queue_size: int
+    locked_by: Optional[str]
+    serialized_state: Optional[str]
+
+    @property
+    def exists(self) -> bool:
+        """Returns True if the entity exists (has been created), False otherwise."""
+        return self.serialized_state is not None
+
+
+@dataclass
+class EntityQuery:
+    """Represents a query for durable entities."""
+    instance_id_starts_with: Optional[str] = None
+    last_modified_from: Optional[datetime] = None
+    last_modified_to: Optional[datetime] = None
+    include_state: bool = False
+    include_transient: bool = False
+    page_size: Optional[int] = None
+    continuation_token: Optional[str] = None
+
+
+@dataclass
+class EntityQueryResult:
+    """Represents the result of an entity query."""
+    entities: list[EntityState]
+    continuation_token: Optional[str] = None
 
 
 class Task(ABC, Generic[T]):
@@ -433,11 +513,80 @@ class ActivityContext:
         return self._task_id
 
 
+class EntityContext:
+    def __init__(self, instance_id: str, operation_name: str, is_new_entity: bool = False):
+        self._instance_id = instance_id
+        self._operation_name = operation_name
+        self._is_new_entity = is_new_entity
+        self._state: Optional[Any] = None
+
+    @property
+    def instance_id(self) -> str:
+        """Get the ID of the entity instance.
+
+        Returns
+        -------
+        str
+            The ID of the current entity instance.
+        """
+        return self._instance_id
+
+    @property
+    def operation_name(self) -> str:
+        """Get the name of the operation being performed on the entity.
+
+        Returns
+        -------
+        str
+            The name of the operation.
+        """
+        return self._operation_name
+
+    @property
+    def is_new_entity(self) -> bool:
+        """Get a value indicating whether this is a newly created entity.
+
+        Returns
+        -------
+        bool
+            True if this is the first operation on this entity, False otherwise.
+        """
+        return self._is_new_entity
+
+    def get_state(self, state_type: type[T] = None) -> Optional[T]:
+        """Get the current state of the entity.
+
+        Parameters
+        ----------
+        state_type : type[T], optional
+            The type to deserialize the state to. If not provided, returns the raw state.
+
+        Returns
+        -------
+        Optional[T]
+            The current state of the entity, or None if the entity has no state.
+        """
+        return self._state
+
+    def set_state(self, state: Any) -> None:
+        """Set the current state of the entity.
+
+        Parameters
+        ----------
+        state : Any
+            The new state for the entity. Must be JSON-serializable.
+        """
+        self._state = state
+
+
 # Orchestrators are generators that yield tasks and receive/return any type
 Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, Any, Any], TOutput]]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
+
+# Entities are stateful objects that can receive operations and maintain state
+Entity = Callable[['EntityContext', TInput], TOutput]
 
 
 class RetryPolicy:

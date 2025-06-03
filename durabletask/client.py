@@ -222,3 +222,141 @@ class TaskHubGrpcClient:
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
         self._stub.PurgeInstances(req)
+
+    def signal_entity(self, entity_id: str, operation_name: str, *,
+                      input: Optional[Any] = None,
+                      request_id: Optional[str] = None,
+                      scheduled_time: Optional[datetime] = None):
+        """Signal an entity with an operation.
+
+        Parameters
+        ----------
+        entity_id : str
+            The ID of the entity to signal.
+        operation_name : str
+            The name of the operation to perform.
+        input : Optional[Any]
+            The JSON-serializable input to pass to the entity operation.
+        request_id : Optional[str]
+            A unique request ID for the operation. If not provided, a random UUID will be used.
+        scheduled_time : Optional[datetime]
+            The time to schedule the operation. If not provided, the operation is scheduled immediately.
+        """
+        req = pb.SignalEntityRequest(
+            instanceId=entity_id,
+            name=operation_name,
+            input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input is not None else None,
+            requestId=request_id if request_id else uuid.uuid4().hex,
+            scheduledTime=helpers.new_timestamp(scheduled_time) if scheduled_time else None)
+
+        self._logger.info(f"Signaling entity '{entity_id}' with operation '{operation_name}'.")
+        self._stub.SignalEntity(req)
+
+    def get_entity(self, entity_id: str, *, include_state: bool = True) -> Optional[task.EntityState]:
+        """Get the state of an entity.
+
+        Parameters
+        ----------
+        entity_id : str
+            The ID of the entity to query.
+        include_state : bool
+            Whether to include the entity's state in the response.
+
+        Returns
+        -------
+        Optional[EntityState]
+            The entity state if it exists, None otherwise.
+        """
+        req = pb.GetEntityRequest(instanceId=entity_id, includeState=include_state)
+        res: pb.GetEntityResponse = self._stub.GetEntity(req)
+        
+        if not res.exists:
+            return None
+
+        entity_metadata = res.entity
+        return task.EntityState(
+            instance_id=entity_metadata.instanceId,
+            last_modified_time=entity_metadata.lastModifiedTime.ToDatetime(),
+            backlog_queue_size=entity_metadata.backlogQueueSize,
+            locked_by=entity_metadata.lockedBy.value if not helpers.is_empty(entity_metadata.lockedBy) else None,
+            serialized_state=entity_metadata.serializedState.value if not helpers.is_empty(entity_metadata.serializedState) else None)
+
+    def query_entities(self, query: task.EntityQuery) -> task.EntityQueryResult:
+        """Query entities based on the provided criteria.
+
+        Parameters
+        ----------
+        query : EntityQuery
+            The query criteria for entities.
+
+        Returns
+        -------
+        EntityQueryResult
+            The query result containing matching entities and continuation token.
+        """
+        # Build the protobuf query
+        pb_query = pb.EntityQuery(
+            includeState=query.include_state,
+            includeTransient=query.include_transient)
+
+        if query.instance_id_starts_with is not None:
+            pb_query.instanceIdStartsWith = wrappers_pb2.StringValue(value=query.instance_id_starts_with)
+        if query.last_modified_from is not None:
+            pb_query.lastModifiedFrom = helpers.new_timestamp(query.last_modified_from)
+        if query.last_modified_to is not None:
+            pb_query.lastModifiedTo = helpers.new_timestamp(query.last_modified_to)
+        if query.page_size is not None:
+            pb_query.pageSize = wrappers_pb2.Int32Value(value=query.page_size)
+        if query.continuation_token is not None:
+            pb_query.continuationToken = wrappers_pb2.StringValue(value=query.continuation_token)
+
+        req = pb.QueryEntitiesRequest(query=pb_query)
+        res: pb.QueryEntitiesResponse = self._stub.QueryEntities(req)
+
+        # Convert response to Python objects
+        entities = []
+        for entity_metadata in res.entities:
+            entities.append(task.EntityState(
+                instance_id=entity_metadata.instanceId,
+                last_modified_time=entity_metadata.lastModifiedTime.ToDatetime(),
+                backlog_queue_size=entity_metadata.backlogQueueSize,
+                locked_by=entity_metadata.lockedBy.value if not helpers.is_empty(entity_metadata.lockedBy) else None,
+                serialized_state=entity_metadata.serializedState.value if not helpers.is_empty(entity_metadata.serializedState) else None))
+
+        return task.EntityQueryResult(
+            entities=entities,
+            continuation_token=res.continuationToken.value if not helpers.is_empty(res.continuationToken) else None)
+
+    def clean_entity_storage(self, *,
+                            remove_empty_entities: bool = True,
+                            release_orphaned_locks: bool = True,
+                            continuation_token: Optional[str] = None) -> tuple[int, int, Optional[str]]:
+        """Clean up entity storage by removing empty entities and releasing orphaned locks.
+
+        Parameters
+        ----------
+        remove_empty_entities : bool
+            Whether to remove entities that have no state.
+        release_orphaned_locks : bool
+            Whether to release locks that are no longer held by active orchestrations.
+        continuation_token : Optional[str]
+            A continuation token from a previous cleanup operation.
+
+        Returns
+        -------
+        tuple[int, int, Optional[str]]
+            A tuple containing (empty_entities_removed, orphaned_locks_released, continuation_token).
+        """
+        req = pb.CleanEntityStorageRequest(
+            removeEmptyEntities=remove_empty_entities,
+            releaseOrphanedLocks=release_orphaned_locks)
+
+        if continuation_token is not None:
+            req.continuationToken = wrappers_pb2.StringValue(value=continuation_token)
+
+        self._logger.info("Cleaning entity storage.")
+        res: pb.CleanEntityStorageResponse = self._stub.CleanEntityStorage(req)
+
+        return (res.emptyEntitiesRemoved, 
+                res.orphanedLocksReleased,
+                res.continuationToken.value if not helpers.is_empty(res.continuationToken) else None)
