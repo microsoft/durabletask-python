@@ -1402,7 +1402,20 @@ class _EntityExecutor:
                 operation_input = shared.from_json(operation.input.value) if not ph.is_empty(operation.input) else None
 
                 # Execute the entity operation
-                operation_output = fn(ctx, operation_input)
+                if callable(fn):
+                    # Check if it's a class (entity base) or function
+                    if inspect.isclass(fn):
+                        # Instantiate the entity class
+                        entity_instance = fn()
+                        operation_output = task.dispatch_to_entity_method(entity_instance, ctx, operation_input)
+                    elif hasattr(fn, '__call__') and not inspect.isfunction(fn):
+                        # It's an instance of a class, use method dispatch
+                        operation_output = task.dispatch_to_entity_method(fn, ctx, operation_input)
+                    else:
+                        # It's a regular function
+                        operation_output = fn(ctx, operation_input)
+                else:
+                    raise TypeError(f"Entity '{entity_type}' is not callable")
 
                 # Update state for next operation
                 current_state = ctx.get_state()

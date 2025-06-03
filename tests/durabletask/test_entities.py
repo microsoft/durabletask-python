@@ -273,5 +273,171 @@ class TestEntityWorkerIntegration(unittest.TestCase):
         self.assertIn("increment", str(ex))
         self.assertIn("Counter@test", str(ex))
 
+
+class TestClassBasedEntities(unittest.TestCase):
+    """Test class-based entity implementations using EntityBase."""
+
+    def test_entity_base_creation(self):
+        """Test that EntityBase can be subclassed and instantiated."""
+        class TestEntity(task.EntityBase):
+            def test_operation(self):
+                return "success"
+        
+        entity = TestEntity()
+        self.assertIsInstance(entity, task.EntityBase)
+
+    def test_entity_base_state_management(self):
+        """Test state management in EntityBase."""
+        class StateEntity(task.EntityBase):
+            def set_value(self, value):
+                self.set_state(value)
+                return value
+            
+            def get_value(self):
+                return self.get_state()
+        
+        entity = StateEntity()
+        
+        # Set state
+        entity.set_state(42)
+        self.assertEqual(entity.get_state(), 42)
+        
+        # Test through methods
+        result = entity.set_value(100)
+        self.assertEqual(result, 100)
+        self.assertEqual(entity.get_value(), 100)
+
+    def test_method_dispatch(self):
+        """Test that method dispatch works correctly."""
+        class CounterEntity(task.EntityBase):
+            def increment(self, value=1):
+                current = self.get_state() or 0
+                new_value = current + value
+                self.set_state(new_value)
+                return new_value
+            
+            def get_count(self):
+                return self.get_state() or 0
+        
+        # Create context and entity
+        ctx = task.EntityContext("Counter@test", "increment")
+        ctx.set_state(5)
+        entity = CounterEntity()
+        
+        # Test increment
+        result = task.dispatch_to_entity_method(entity, ctx, 10)
+        self.assertEqual(result, 15)
+        self.assertEqual(ctx.get_state(), 15)
+        
+        # Test get_count
+        ctx._operation_name = "get_count"  # Change operation
+        result = task.dispatch_to_entity_method(entity, ctx, None)
+        self.assertEqual(result, 15)
+
+    def test_method_dispatch_with_context_injection(self):
+        """Test method dispatch with automatic context injection."""
+        class ContextAwareEntity(task.EntityBase):
+            def operation_with_context(self, context: task.EntityContext, value):
+                self.set_state({"operation": context.operation_name, "value": value})
+                return f"{context.operation_name}: {value}"
+            
+            def operation_with_input_only(self, input_value):
+                return input_value * 2
+        
+        entity = ContextAwareEntity()
+        ctx = task.EntityContext("TestEntity@test", "operation_with_context")
+        
+        # Test context injection
+        result = task.dispatch_to_entity_method(entity, ctx, "test_value")
+        self.assertEqual(result, "operation_with_context: test_value")
+        
+        expected_state = {"operation": "operation_with_context", "value": "test_value"}
+        self.assertEqual(ctx.get_state(), expected_state)
+        
+        # Test input-only method
+        ctx._operation_name = "operation_with_input_only"
+        result = task.dispatch_to_entity_method(entity, ctx, 5)
+        self.assertEqual(result, 10)
+
+    def test_method_dispatch_error_handling(self):
+        """Test error handling in method dispatch."""
+        class ErrorEntity(task.EntityBase):
+            def failing_operation(self):
+                raise ValueError("Test error")
+        
+        entity = ErrorEntity()
+        ctx = task.EntityContext("ErrorEntity@test", "failing_operation")
+        
+        with self.assertRaises(ValueError) as cm:
+            task.dispatch_to_entity_method(entity, ctx, None)
+        
+        self.assertEqual(str(cm.exception), "Test error")
+
+    def test_method_dispatch_unknown_operation(self):
+        """Test that unknown operations raise NotImplementedError."""
+        class SimpleEntity(task.EntityBase):
+            def known_operation(self):
+                return "success"
+        
+        entity = SimpleEntity()
+        ctx = task.EntityContext("SimpleEntity@test", "unknown_operation")
+        
+        with self.assertRaises(NotImplementedError) as cm:
+            task.dispatch_to_entity_method(entity, ctx, None)
+        
+        self.assertIn("unknown_operation", str(cm.exception))
+
+    def test_entity_base_context_property(self):
+        """Test that EntityBase provides access to context during operation."""
+        class ContextEntity(task.EntityBase):
+            def get_instance_info(self):
+                return {
+                    "instance_id": self.context.instance_id,
+                    "operation": self.context.operation_name,
+                    "entity_name": self.context.entity_id.name,
+                    "entity_key": self.context.entity_id.key
+                }
+        
+        entity = ContextEntity()
+        ctx = task.EntityContext("TestEntity@mykey", "get_instance_info")
+        
+        result = task.dispatch_to_entity_method(entity, ctx, None)
+        
+        expected = {
+            "instance_id": "TestEntity@mykey",
+            "operation": "get_instance_info",
+            "entity_name": "TestEntity",
+            "entity_key": "mykey"
+        }
+        self.assertEqual(result, expected)
+
+    def test_entity_base_signal_entity(self):
+        """Test that EntityBase can signal other entities."""
+        class SignalingEntity(task.EntityBase):
+            def signal_other(self, target_data):
+                target_id = task.EntityInstanceId(target_data["name"], target_data["key"])
+                self.signal_entity(target_id, target_data["operation"], input=target_data["input"])
+                return "signaled"
+        
+        entity = SignalingEntity()
+        ctx = task.EntityContext("SignalingEntity@test", "signal_other")
+        
+        signal_data = {
+            "name": "Counter",
+            "key": "target",
+            "operation": "increment", 
+            "input": 5
+        }
+        
+        result = task.dispatch_to_entity_method(entity, ctx, signal_data)
+        self.assertEqual(result, "signaled")
+        
+        # Check that signal was stored in context
+        self.assertTrue(hasattr(ctx, '_signals'))
+        self.assertEqual(len(ctx._signals), 1)
+        self.assertEqual(ctx._signals[0]['entity_id'], "Counter@target")
+        self.assertEqual(ctx._signals[0]['operation_name'], "increment")
+        self.assertEqual(ctx._signals[0]['input'], 5)
+
 if __name__ == '__main__':
     unittest.main()

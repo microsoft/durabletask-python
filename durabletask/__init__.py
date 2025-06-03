@@ -6,7 +6,7 @@
 from durabletask.worker import ConcurrencyOptions
 from durabletask.task import (
     EntityContext, EntityState, EntityQuery, EntityQueryResult, 
-    EntityInstanceId, EntityOperationFailedException
+    EntityInstanceId, EntityOperationFailedException, EntityBase, dispatch_to_entity_method
 )
 
 __all__ = [
@@ -16,7 +16,9 @@ __all__ = [
     "EntityQuery", 
     "EntityQueryResult",
     "EntityInstanceId",
-    "EntityOperationFailedException"
+    "EntityOperationFailedException",
+    "EntityBase",
+    "dispatch_to_entity_method"
 ]
 
 PACKAGE_NAME = "durabletask"

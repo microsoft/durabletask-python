@@ -691,6 +691,136 @@ Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, An
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
 
+class EntityBase:
+    """Base class for entity implementations that provides method-based dispatch.
+    
+    This class allows entities to be implemented as classes with methods for each operation,
+    similar to the .NET TaskEntity pattern. The entity context is automatically injected
+    when methods are called.
+    """
+    
+    def __init__(self):
+        self._context: Optional[EntityContext] = None
+        self._state: Optional[Any] = None
+    
+    @property
+    def context(self) -> EntityContext:
+        """Get the current entity context."""
+        if self._context is None:
+            raise RuntimeError("Entity context is not available outside of operation execution")
+        return self._context
+    
+    def get_state(self, state_type: type[T] = None) -> Optional[T]:
+        """Get the current state of the entity."""
+        return self._state
+    
+    def set_state(self, state: Any) -> None:
+        """Set the current state of the entity."""
+        self._state = state
+    
+    def signal_entity(self, entity_id: Union[str, EntityInstanceId], operation_name: str, *,
+                      input: Optional[Any] = None) -> None:
+        """Signal another entity with an operation."""
+        if self._context:
+            self._context.signal_entity(entity_id, operation_name, input=input)
+    
+    def start_new_orchestration(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
+                               input: Optional[TInput] = None,
+                               instance_id: Optional[str] = None) -> str:
+        """Start a new orchestration from within an entity operation."""
+        if self._context:
+            return self._context.start_new_orchestration(orchestrator, input=input, instance_id=instance_id)
+        return ""
+
+
+def dispatch_to_entity_method(entity_obj: Any, ctx: EntityContext, input: Any) -> Any:
+    """
+    Dispatch an entity operation to the appropriate method on an entity object.
+    
+    This function implements flexible method dispatch similar to the .NET implementation:
+    1. Look for an exact method name match (case-insensitive)
+    2. If the entity is an EntityBase subclass, inject context and state
+    3. Handle method parameters automatically (context, input, or both)
+    
+    Parameters
+    ----------
+    entity_obj : Any
+        The entity object to dispatch to
+    ctx : EntityContext
+        The entity context
+    input : Any
+        The operation input
+        
+    Returns
+    -------
+    Any
+        The result of the operation
+    """
+    import inspect
+    
+    # Set up entity base if applicable
+    if isinstance(entity_obj, EntityBase):
+        entity_obj._context = ctx
+        entity_obj._state = ctx.get_state()
+    
+    # Look for a method with the operation name (case-insensitive)
+    operation_name = ctx.operation_name.lower()
+    method = None
+    
+    for attr_name in dir(entity_obj):
+        if attr_name.lower() == operation_name and callable(getattr(entity_obj, attr_name)):
+            method = getattr(entity_obj, attr_name)
+            break
+    
+    if method is None:
+        raise NotImplementedError(f"Entity does not implement operation '{ctx.operation_name}'")
+    
+    # Inspect method signature to determine parameters
+    sig = inspect.signature(method)
+    args = []
+    kwargs = {}
+    
+    # Skip 'self' parameter for bound methods
+    parameters = list(sig.parameters.values())
+    if parameters and parameters[0].name == 'self':
+        parameters = parameters[1:]
+    
+    for param in parameters:
+        param_type = param.annotation
+        
+        # Check for EntityContext parameter
+        if param_type == EntityContext or param.name.lower() in ['context', 'ctx']:
+            if param.kind == param.POSITIONAL_OR_KEYWORD:
+                args.append(ctx)
+            else:
+                kwargs[param.name] = ctx
+        # Check for input parameter
+        elif param.name.lower() in ['input', 'data', 'arg', 'value']:
+            if param.kind == param.POSITIONAL_OR_KEYWORD:
+                args.append(input)
+            else:
+                kwargs[param.name] = input
+        # Default positional parameter (assume it's input)
+        elif param.kind == param.POSITIONAL_OR_KEYWORD and len(args) == 0:
+            args.append(input)
+    
+    try:
+        result = method(*args, **kwargs)
+        
+        # Update state if entity is EntityBase
+        if isinstance(entity_obj, EntityBase):
+            ctx.set_state(entity_obj._state)
+            entity_obj._context = None  # Clear context after operation
+        
+        return result
+        
+    except Exception as ex:
+        # Clear context on error
+        if isinstance(entity_obj, EntityBase):
+            entity_obj._context = None
+        raise
+
+
 # Entities are stateful objects that can receive operations and maintain state
 Entity = Callable[['EntityContext', TInput], TOutput]
 
