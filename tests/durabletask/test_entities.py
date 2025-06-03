@@ -11,16 +11,16 @@ class TestEntityTypes(unittest.TestCase):
 
     def test_entity_context_creation(self):
         """Test that EntityContext can be created with basic properties."""
-        ctx = task.EntityContext("test-entity-1", "increment", is_new_entity=True)
+        ctx = task.EntityContext("Counter@test-entity-1", "increment", is_new_entity=True)
 
-        self.assertEqual(ctx.instance_id, "test-entity-1")
+        self.assertEqual(ctx.instance_id, "Counter@test-entity-1")
         self.assertEqual(ctx.operation_name, "increment")
         self.assertTrue(ctx.is_new_entity)
         self.assertIsNone(ctx.get_state())
 
     def test_entity_context_state_management(self):
         """Test that EntityContext can manage state."""
-        ctx = task.EntityContext("test-entity-1", "increment")
+        ctx = task.EntityContext("Counter@test-entity-1", "increment")
 
         # Initially no state
         self.assertIsNone(ctx.get_state())
@@ -184,10 +184,94 @@ class TestEntityWorkerIntegration(unittest.TestCase):
         self.assertEqual(result.results[0].success.result.value, "5")
         self.assertEqual(result.entityState.value, "5")
 
+    def test_entity_instance_id(self):
+        """Test that EntityInstanceId works correctly."""
+        # Create from name and key
+        entity_id = task.EntityInstanceId("Counter", "user1")
+        self.assertEqual(entity_id.name, "Counter")
+        self.assertEqual(entity_id.key, "user1")
+        self.assertEqual(str(entity_id), "Counter@user1")
 
-if __name__ == '__main__':
-    unittest.main()
+        # Parse from string
+        parsed_id = task.EntityInstanceId.from_string("ShoppingCart@user2")
+        self.assertEqual(parsed_id.name, "ShoppingCart")
+        self.assertEqual(parsed_id.key, "user2")
 
+        # Test invalid formats
+        with self.assertRaises(ValueError):
+            task.EntityInstanceId.from_string("invalid")
+        
+        with self.assertRaises(ValueError):
+            task.EntityInstanceId.from_string("@")
+        
+        with self.assertRaises(ValueError):
+            task.EntityInstanceId.from_string("name@")
+
+    def test_entity_context_entity_id_property(self):
+        """Test that EntityContext provides structured entity ID."""
+        ctx = task.EntityContext("Counter@test-user", "increment")
+        
+        self.assertEqual(ctx.entity_id.name, "Counter")
+        self.assertEqual(ctx.entity_id.key, "test-user")
+        self.assertEqual(str(ctx.entity_id), "Counter@test-user")
+
+    def test_entity_context_signal_entity(self):
+        """Test that EntityContext can signal other entities."""
+        ctx = task.EntityContext("Notification@system", "notify_user")
+        
+        # Signal using string
+        ctx.signal_entity("Counter@user1", "increment", input=5)
+        
+        # Signal using EntityInstanceId
+        counter_id = task.EntityInstanceId("Counter", "user2")
+        ctx.signal_entity(counter_id, "increment", input=10)
+        
+        # Check signals were stored
+        self.assertTrue(hasattr(ctx, '_signals'))
+        self.assertEqual(len(ctx._signals), 2)
+        
+        self.assertEqual(ctx._signals[0]['entity_id'], "Counter@user1")
+        self.assertEqual(ctx._signals[0]['operation_name'], "increment")
+        self.assertEqual(ctx._signals[0]['input'], 5)
+        
+        self.assertEqual(ctx._signals[1]['entity_id'], "Counter@user2")
+        self.assertEqual(ctx._signals[1]['operation_name'], "increment")
+        self.assertEqual(ctx._signals[1]['input'], 10)
+
+    def test_entity_context_start_orchestration(self):
+        """Test that EntityContext can start orchestrations."""
+        ctx = task.EntityContext("OrchestrationStarter@main", "start_workflow")
+        
+        # Start orchestration with custom instance ID
+        instance_id = ctx.start_new_orchestration(
+            "test_orchestrator", 
+            input={"test": True}, 
+            instance_id="custom-instance-123"
+        )
+        
+        self.assertEqual(instance_id, "custom-instance-123")
+        
+        # Check orchestration was stored
+        self.assertTrue(hasattr(ctx, '_orchestrations'))
+        self.assertEqual(len(ctx._orchestrations), 1)
+        
+        orch = ctx._orchestrations[0]
+        self.assertEqual(orch['name'], "test_orchestrator")
+        self.assertEqual(orch['input'], {"test": True})
+        self.assertEqual(orch['instance_id'], "custom-instance-123")
+
+    def test_entity_operation_failed_exception(self):
+        """Test EntityOperationFailedException."""
+        entity_id = task.EntityInstanceId("Counter", "test")
+        failure_details = task.FailureDetails("Test error", "ValueError", "stack trace")
+        
+        ex = task.EntityOperationFailedException(entity_id, "increment", failure_details)
+        
+        self.assertEqual(ex.entity_id, entity_id)
+        self.assertEqual(ex.operation_name, "increment")
+        self.assertEqual(ex.failure_details, failure_details)
+        self.assertIn("increment", str(ex))
+        self.assertIn("Counter@test", str(ex))
 
 if __name__ == '__main__':
     unittest.main()

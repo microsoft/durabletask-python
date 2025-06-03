@@ -928,12 +928,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         self.set_continued_as_new(new_input, save_events)
 
-    def signal_entity(self, entity_id: str, operation_name: str, *,
+    def signal_entity(self, entity_id: Union[str, task.EntityInstanceId], operation_name: str, *,
                       input: Optional[Any] = None) -> task.Task:
         # Create a signal entity action
+        entity_id_str = str(entity_id) if hasattr(entity_id, '__str__') else entity_id
+        
         action = pb.OrchestratorAction()
         action.sendEntitySignal.CopyFrom(pb.SendSignalAction(
-            instanceId=entity_id,
+            instanceId=entity_id_str,
             name=operation_name,
             input=ph.get_string_value(shared.to_json(input)) if input is not None else None
         ))
@@ -951,7 +953,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         return signal_task
 
-    def call_entity(self, entity_id: str, operation_name: str, *,
+    def call_entity(self, entity_id: Union[str, task.EntityInstanceId], operation_name: str, *,
                     input: Optional[Any] = None,
                     retry_policy: Optional[task.RetryPolicy] = None) -> task.Task:
         # For now, entity calls are not directly supported in orchestrations
@@ -1404,6 +1406,28 @@ class _EntityExecutor:
 
                 # Update state for next operation
                 current_state = ctx.get_state()
+
+                # Process entity signals from context
+                if hasattr(ctx, '_signals'):
+                    for signal in ctx._signals:
+                        signal_action = pb.OrchestratorAction()
+                        signal_action.sendEntitySignal.CopyFrom(pb.SendSignalAction(
+                            instanceId=signal['entity_id'],
+                            name=signal['operation_name'],
+                            input=ph.get_string_value(shared.to_json(signal['input'])) if signal['input'] is not None else None
+                        ))
+                        actions.append(signal_action)
+
+                # Process orchestration starts from context
+                if hasattr(ctx, '_orchestrations'):
+                    for orch in ctx._orchestrations:
+                        orch_action = pb.OrchestratorAction()
+                        orch_action.callOrchestrator.CopyFrom(pb.CallOrchestratorAction(
+                            name=orch['name'],
+                            instanceId=orch['instance_id'],
+                            input=ph.get_string_value(shared.to_json(orch['input'])) if orch['input'] is not None else None
+                        ))
+                        actions.append(orch_action)
 
                 # Create operation result
                 result = pb.OperationResult()

@@ -223,7 +223,7 @@ class TaskHubGrpcClient:
         self._logger.info(f"Purging instance '{instance_id}'.")
         self._stub.PurgeInstances(req)
 
-    def signal_entity(self, entity_id: str, operation_name: str, *,
+    def signal_entity(self, entity_id: Union[str, 'task.EntityInstanceId'], operation_name: str, *,
                       input: Optional[Any] = None,
                       request_id: Optional[str] = None,
                       scheduled_time: Optional[datetime] = None):
@@ -231,7 +231,7 @@ class TaskHubGrpcClient:
 
         Parameters
         ----------
-        entity_id : str
+        entity_id : Union[str, task.EntityInstanceId]
             The ID of the entity to signal.
         operation_name : str
             The name of the operation to perform.
@@ -242,22 +242,24 @@ class TaskHubGrpcClient:
         scheduled_time : Optional[datetime]
             The time to schedule the operation. If not provided, the operation is scheduled immediately.
         """
+        entity_id_str = str(entity_id) if hasattr(entity_id, '__str__') else entity_id
+        
         req = pb.SignalEntityRequest(
-            instanceId=entity_id,
+            instanceId=entity_id_str,
             name=operation_name,
             input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input is not None else None,
             requestId=request_id if request_id else uuid.uuid4().hex,
             scheduledTime=helpers.new_timestamp(scheduled_time) if scheduled_time else None)
 
-        self._logger.info(f"Signaling entity '{entity_id}' with operation '{operation_name}'.")
+        self._logger.info(f"Signaling entity '{entity_id_str}' with operation '{operation_name}'.")
         self._stub.SignalEntity(req)
 
-    def get_entity(self, entity_id: str, *, include_state: bool = True) -> Optional[task.EntityState]:
+    def get_entity(self, entity_id: Union[str, 'task.EntityInstanceId'], *, include_state: bool = True) -> Optional[task.EntityState]:
         """Get the state of an entity.
 
         Parameters
         ----------
-        entity_id : str
+        entity_id : Union[str, task.EntityInstanceId]
             The ID of the entity to query.
         include_state : bool
             Whether to include the entity's state in the response.
@@ -267,7 +269,9 @@ class TaskHubGrpcClient:
         Optional[EntityState]
             The entity state if it exists, None otherwise.
         """
-        req = pb.GetEntityRequest(instanceId=entity_id, includeState=include_state)
+        entity_id_str = str(entity_id) if hasattr(entity_id, '__str__') else entity_id
+        
+        req = pb.GetEntityRequest(instanceId=entity_id_str, includeState=include_state)
         res: pb.GetEntityResponse = self._stub.GetEntity(req)
 
         if not res.exists:

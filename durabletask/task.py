@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
@@ -178,13 +179,13 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def signal_entity(self, entity_id: str, operation_name: str, *,
+    def signal_entity(self, entity_id: Union[str, 'EntityInstanceId'], operation_name: str, *,
                       input: Optional[Any] = None) -> Task:
         """Signal an entity with an operation.
 
         Parameters
         ----------
-        entity_id : str
+        entity_id : Union[str, EntityInstanceId]
             The ID of the entity to signal.
         operation_name : str
             The name of the operation to perform.
@@ -199,14 +200,14 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_entity(self, entity_id: str, operation_name: str, *,
+    def call_entity(self, entity_id: Union[str, 'EntityInstanceId'], operation_name: str, *,
                     input: Optional[TInput] = None,
                     retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
         """Call an entity operation and wait for the result.
 
         Parameters
         ----------
-        entity_id : str
+        entity_id : Union[str, EntityInstanceId]
             The ID of the entity to call.
         operation_name : str
             The name of the operation to perform.
@@ -513,12 +514,48 @@ class ActivityContext:
         return self._task_id
 
 
+@dataclass
+class EntityInstanceId:
+    """Represents the ID of a durable entity instance."""
+    name: str
+    key: str
+    
+    def __str__(self) -> str:
+        """Return the string representation in the format: name@key"""
+        return f"{self.name}@{self.key}"
+    
+    @classmethod
+    def from_string(cls, instance_id: str) -> 'EntityInstanceId':
+        """Parse an entity instance ID from string format (name@key)."""
+        if '@' not in instance_id:
+            raise ValueError(f"Invalid entity instance ID format: {instance_id}. Expected format: name@key")
+        
+        parts = instance_id.split('@', 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise ValueError(f"Invalid entity instance ID format: {instance_id}. Expected format: name@key")
+        
+        return cls(name=parts[0], key=parts[1])
+
+
+class EntityOperationFailedException(Exception):
+    """Exception raised when an entity operation fails."""
+    
+    def __init__(self, entity_id: EntityInstanceId, operation_name: str, failure_details: FailureDetails):
+        self.entity_id = entity_id
+        self.operation_name = operation_name
+        self.failure_details = failure_details
+        super().__init__(f"Operation '{operation_name}' on entity '{entity_id}' failed: {failure_details.message}")
+
+
 class EntityContext:
+    """Context for entity operations, providing access to state and scheduling capabilities."""
+    
     def __init__(self, instance_id: str, operation_name: str, is_new_entity: bool = False):
         self._instance_id = instance_id
         self._operation_name = operation_name
         self._is_new_entity = is_new_entity
         self._state: Optional[Any] = None
+        self._entity_instance_id = EntityInstanceId.from_string(instance_id)
 
     @property
     def instance_id(self) -> str:
@@ -530,6 +567,17 @@ class EntityContext:
             The ID of the current entity instance.
         """
         return self._instance_id
+
+    @property
+    def entity_id(self) -> EntityInstanceId:
+        """Get the structured entity instance ID.
+
+        Returns
+        -------
+        EntityInstanceId
+            The structured entity instance ID.
+        """
+        return self._entity_instance_id
 
     @property
     def operation_name(self) -> str:
@@ -577,6 +625,64 @@ class EntityContext:
             The new state for the entity. Must be JSON-serializable.
         """
         self._state = state
+
+    def signal_entity(self, entity_id: Union[str, EntityInstanceId], operation_name: str, *,
+                      input: Optional[Any] = None) -> None:
+        """Signal another entity with an operation (fire-and-forget).
+
+        Parameters
+        ----------
+        entity_id : Union[str, EntityInstanceId]
+            The ID of the entity to signal.
+        operation_name : str
+            The name of the operation to perform.
+        input : Optional[Any]
+            The JSON-serializable input to pass to the entity operation.
+        """
+        # Store the signal for later processing during entity execution
+        if not hasattr(self, '_signals'):
+            self._signals = []
+        
+        entity_id_str = str(entity_id) if isinstance(entity_id, EntityInstanceId) else entity_id
+        self._signals.append({
+            'entity_id': entity_id_str,
+            'operation_name': operation_name,
+            'input': input
+        })
+
+    def start_new_orchestration(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
+                               input: Optional[TInput] = None,
+                               instance_id: Optional[str] = None) -> str:
+        """Start a new orchestration from within an entity operation.
+
+        Parameters
+        ----------
+        orchestrator : Union[Orchestrator[TInput, TOutput], str]
+            The orchestrator function or name to start.
+        input : Optional[TInput]
+            The JSON-serializable input to pass to the orchestration.
+        instance_id : Optional[str]
+            The instance ID for the new orchestration. If not provided, a random UUID will be used.
+
+        Returns
+        -------
+        str
+            The instance ID of the new orchestration.
+        """
+        # Store the orchestration start request for later processing
+        if not hasattr(self, '_orchestrations'):
+            self._orchestrations = []
+        
+        orchestrator_name = orchestrator if isinstance(orchestrator, str) else get_name(orchestrator)
+        new_instance_id = instance_id or str(uuid.uuid4())
+        
+        self._orchestrations.append({
+            'name': orchestrator_name,
+            'input': input,
+            'instance_id': new_instance_id
+        })
+        
+        return new_instance_id
 
 
 # Orchestrators are generators that yield tasks and receive/return any type
