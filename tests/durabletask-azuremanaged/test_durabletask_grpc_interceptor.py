@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import threading
 import unittest
 from concurrent import futures
 from importlib.metadata import version
@@ -9,20 +8,17 @@ from importlib.metadata import version
 import grpc
 
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
-from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
-    DTSDefaultClientInterceptorImpl,
-)
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.internal import orchestrator_service_pb2_grpc as stubs
 
 
 class MockTaskHubSidecarServiceServicer(stubs.TaskHubSidecarServiceServicer):
     """Mock implementation of the TaskHubSidecarService for testing."""
-    
+
     def __init__(self):
         self.captured_metadata = {}
         self.requests_received = 0
-    
+
     def GetInstance(self, request, context):
         """Implementation of GetInstance that captures the metadata."""
         # Store all metadata key-value pairs from the context
@@ -38,7 +34,7 @@ class MockTaskHubSidecarServiceServicer(stubs.TaskHubSidecarServiceServicer):
 
 class TestDurableTaskGrpcInterceptor(unittest.TestCase):
     """Tests for the DTSDefaultClientInterceptorImpl class."""
-    
+
     @classmethod
     def setUpClass(cls):
         # Start a real gRPC server on a free port
@@ -52,11 +48,11 @@ class TestDurableTaskGrpcInterceptor(unittest.TestCase):
 
         # Start the server in a background thread
         cls.server.start()
-    
+
     @classmethod
     def tearDownClass(cls):
         cls.server.stop(grace=None)
-    
+
     def test_user_agent_metadata_passed_in_request(self):
         """Test that the user agent metadata is correctly passed in gRPC requests."""
         # Create a client that connects to our mock server
