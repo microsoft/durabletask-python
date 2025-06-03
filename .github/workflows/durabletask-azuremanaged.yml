@@ -1,4 +1,4 @@
-name: Publish Durable Task Scheduler to PyPI
+name: Durable Task Scheduler SDK (durabletask-azuremanaged)
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
 
   run-docker-tests:
     env:
-      EMULATOR_VERSION: "v0.0.5"  # Define the variable
+      EMULATOR_VERSION: "latest"
     needs: lint
     runs-on: ubuntu-latest
     steps:
