@@ -940,15 +940,15 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         # Entity signals don't return values, so we create a completed task
         signal_task = task.CompletableTask()
-        
+
         # Store the action to be executed
         task_id = self._next_task_id()
         self._pending_actions[task_id] = action
         self._pending_tasks[task_id] = signal_task
-        
+
         # Mark as complete since signals don't have return values
         signal_task.complete(None)
-        
+
         return signal_task
 
     def call_entity(self, entity_id: str, operation_name: str, *,
@@ -1372,15 +1372,15 @@ class _EntityExecutor:
 
         # Parse current entity state
         current_state = shared.from_json(req.entityState.value) if not ph.is_empty(req.entityState) else None
-        
+
         # Extract entity type from instance ID (format: entitytype@key)
         entity_type = "Unknown"
         if "@" in instance_id:
             entity_type = instance_id.split("@")[0]
-        
+
         results = []
         actions = []
-        
+
         for operation in req.operations:
             try:
                 # Get the entity function using the entity type from instanceId
@@ -1413,12 +1413,12 @@ class _EntityExecutor:
                     ))
                 else:
                     result.success.CopyFrom(pb.OperationResultSuccess())
-                
+
                 results.append(result)
 
             except Exception as ex:
                 self._logger.exception(f"Error executing entity operation '{operation.operation}' on entity type '{entity_type}': {ex}")
-                
+
                 # Create failure result
                 failure_details = ph.new_failure_details(ex)
                 result = pb.OperationResult()

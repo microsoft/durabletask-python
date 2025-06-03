@@ -269,7 +269,7 @@ class TaskHubGrpcClient:
         """
         req = pb.GetEntityRequest(instanceId=entity_id, includeState=include_state)
         res: pb.GetEntityResponse = self._stub.GetEntity(req)
-        
+
         if not res.exists:
             return None
 
@@ -357,6 +357,6 @@ class TaskHubGrpcClient:
         self._logger.info("Cleaning entity storage.")
         res: pb.CleanEntityStorageResponse = self._stub.CleanEntityStorage(req)
 
-        return (res.emptyEntitiesRemoved, 
+        return (res.emptyEntitiesRemoved,
                 res.orphanedLocksReleased,
                 res.continuationToken.value if not helpers.is_empty(res.continuationToken) else None)

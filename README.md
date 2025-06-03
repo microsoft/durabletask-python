@@ -117,6 +117,38 @@ Orchestrations can start child orchestrations using the `call_sub_orchestrator` 
 
 Orchestrations can wait for external events using the `wait_for_external_event` API. External events are useful for implementing human interaction patterns, such as waiting for a user to approve an order before continuing.
 
+### Durable entities
+
+Durable entities are stateful objects that can maintain state across multiple operations. Entities support operations that can read and modify the entity's state. Each entity has a unique entity ID and maintains its state independently.
+
+```python
+# Define an entity function
+def counter_entity(ctx: task.EntityContext, input):
+    if ctx.operation_name == "increment":
+        current_count = ctx.get_state() or 0
+        new_count = current_count + (input or 1)
+        ctx.set_state(new_count)
+        return new_count
+    elif ctx.operation_name == "get":
+        return ctx.get_state() or 0
+
+# Register the entity with the worker
+worker.add_named_entity("Counter", counter_entity)
+
+# Signal an entity from an orchestrator
+yield ctx.signal_entity("Counter@my-counter", "increment", input=5)
+
+# Or signal an entity directly from a client
+client.signal_entity("Counter@my-counter", "increment", input=10)
+
+# Query entity state
+entity_state = client.get_entity("Counter@my-counter", include_state=True)
+if entity_state and entity_state.exists:
+    print(f"Current count: {entity_state.serialized_state}")
+```
+
+You can find the full sample [here](./examples/durable_entities.py).
+
 ### Continue-as-new (TODO)
 
 Orchestrations can be continued as new using the `continue_as_new` API. This API allows an orchestration to restart itself from scratch, optionally with a new input.
