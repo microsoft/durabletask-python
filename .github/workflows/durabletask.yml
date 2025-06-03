@@ -25,6 +25,13 @@ jobs:
         pip install setuptools wheel tox
         pip install flake8
     - name: Run flake8 Linter
+      working-directory: durabletask
+      run: flake8 .
+    - name: "Run flake8 linter: tests"
+      working-directory: tests/durabletask
+      run: flake8 .
+    - name: "Run flake8 linter: examples"
+      working-directory: examples
       run: flake8 .
 
   run-e2e-tests:

@@ -28,6 +28,9 @@ jobs:
     - name: Run flake8 Linter
       working-directory: durabletask-azuremanaged
       run: flake8 .
+    - name: Run flake8 Linter
+      working-directory: tests/durabletask-azuremanaged
+      run: flake8 .
 
   run-docker-tests:
     env:
