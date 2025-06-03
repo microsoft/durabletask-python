@@ -2,9 +2,8 @@
 # Licensed under the MIT License.
 
 import json
-import threading
-import time
 import os
+import threading
 from datetime import timedelta
 
 import pytest
@@ -21,6 +20,7 @@ pytestmark = pytest.mark.dts
 taskhub_name = os.getenv("TASKHUB", "default")
 endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
 
+
 def test_empty_orchestration():
 
     invoked = False
@@ -31,12 +31,12 @@ def test_empty_orchestration():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(empty_orchestrator)
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                       taskhub=taskhub_name, token_credential=None)
         id = c.schedule_new_orchestration(empty_orchestrator)
         state = c.wait_for_orchestration_completion(id, timeout=30)
 
@@ -66,13 +66,13 @@ def test_activity_sequence():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(sequence)
         w.add_activity(plus_one)
         w.start()
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(sequence, input=1)
         state = task_hub_client.wait_for_orchestration_completion(
             id, timeout=30)
@@ -113,14 +113,14 @@ def test_activity_error_handling():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(orchestrator)
         w.add_activity(throw)
         w.add_activity(increment_counter)
         w.start()
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(orchestrator, input=1)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
@@ -158,14 +158,14 @@ def test_sub_orchestration_fan_out():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_activity(increment)
         w.add_orchestrator(orchestrator_child)
         w.add_orchestrator(parent_orchestrator)
         w.start()
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(parent_orchestrator, input=10)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
@@ -184,13 +184,13 @@ def test_wait_for_multiple_external_events():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(orchestrator)
         w.start()
 
         # Start the orchestration and immediately raise events to it.
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(orchestrator)
         task_hub_client.raise_orchestration_event(id, 'A', data='a')
         task_hub_client.raise_orchestration_event(id, 'B', data='b')
@@ -285,12 +285,12 @@ def test_terminate():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(orchestrator)
         w.start()
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(orchestrator)
         state = task_hub_client.wait_for_orchestration_start(id, timeout=30)
         assert state is not None
@@ -302,23 +302,25 @@ def test_terminate():
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
         assert state.serialized_output == json.dumps("some reason for termination")
 
+
 def test_terminate_recursive():
     def root(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_sub_orchestrator(child)
         return result
+
     def child(ctx: task.OrchestrationContext, _):
         result = yield ctx.wait_for_external_event("my_event")
         return result
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(root)
         w.add_orchestrator(child)
         w.start()
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(root)
         state = task_hub_client.wait_for_orchestration_start(id, timeout=30)
         assert state is not None
@@ -331,7 +333,7 @@ def test_terminate_recursive():
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
 
         # Verify that child orchestration is also terminated
-        c = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
 
@@ -417,14 +419,14 @@ def test_retry_policies():
         raise RuntimeError("Kah-BOOOOM!!!")
 
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(parent_orchestrator_with_retry)
         w.add_orchestrator(child_orchestrator_with_retry)
         w.add_activity(throw_activity_with_retry)
         w.start()
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(parent_orchestrator_with_retry)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
@@ -460,13 +462,13 @@ def test_retry_timeout():
         raise RuntimeError("Kah-BOOOOM!!!")
 
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(mock_orchestrator)
         w.add_activity(throw_activity)
         w.start()
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                                     taskhub=taskhub_name, token_credential=None)
         id = task_hub_client.schedule_new_orchestration(mock_orchestrator)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
@@ -477,6 +479,7 @@ def test_retry_timeout():
         assert state.failure_details.stack_trace is not None
         assert throw_activity_counter == 4
 
+
 def test_custom_status():
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
@@ -484,12 +487,12 @@ def test_custom_status():
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                taskhub=taskhub_name, token_credential=None) as w:
+                                    taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(empty_orchestrator)
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                   taskhub=taskhub_name, token_credential=None)
+                                       taskhub=taskhub_name, token_credential=None)
         id = c.schedule_new_orchestration(empty_orchestrator)
         state = c.wait_for_orchestration_completion(id, timeout=30)
 

@@ -278,10 +278,12 @@ def test_terminate():
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
         assert state.serialized_output == json.dumps("some reason for termination")
 
+
 def test_terminate_recursive():
     def root(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_sub_orchestrator(child)
         return result
+
     def child(ctx: task.OrchestrationContext, _):
         result = yield ctx.wait_for_external_event("my_event")
         return result
@@ -305,7 +307,7 @@ def test_terminate_recursive():
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
 
         # Verify that child orchestration is also terminated
-        c = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
 
@@ -321,7 +323,7 @@ def test_continue_as_new():
         result = yield ctx.wait_for_external_event("my_event")
         if not ctx.is_replaying:
             # NOTE: Real orchestrations should never interact with nonlocal variables like this.
-            nonlocal all_results
+            nonlocal all_results  # noqa: F824
             all_results.append(result)
 
         if len(all_results) <= 4:
@@ -444,6 +446,7 @@ def test_retry_timeout():
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
         assert throw_activity_counter == 4
+
 
 def test_custom_status():
 

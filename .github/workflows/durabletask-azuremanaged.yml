@@ -1,4 +1,4 @@
-name: Publish Durable Task Scheduler to PyPI
+name: Durable Task Scheduler SDK (durabletask-azuremanaged)
 
 on:
   push:
@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.12
+    - name: Set up Python 3.13
       uses: actions/setup-python@v5
       with:
-        python-version: 3.12
+        python-version: 3.13
     - name: Install dependencies
       working-directory: durabletask-azuremanaged
       run: |
@@ -28,10 +28,17 @@ jobs:
     - name: Run flake8 Linter
       working-directory: durabletask-azuremanaged
       run: flake8 .
+    - name: Run flake8 Linter
+      working-directory: tests/durabletask-azuremanaged
+      run: flake8 .
 
   run-docker-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     env:
-      EMULATOR_VERSION: "v0.0.5"  # Define the variable
+      EMULATOR_VERSION: "latest"
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -84,7 +91,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"  # Adjust Python version as needed
+          python-version: "3.13"  # Adjust Python version as needed
 
       - name: Install dependencies
         run: |
