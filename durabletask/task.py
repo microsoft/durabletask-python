@@ -165,7 +165,7 @@ class OrchestrationContext(ABC):
 
     @abstractmethod
     def send_event(self, instance_id: str, event_name: str, *,
-                   data: Optional[Any] = None) -> Task:
+                   data: Optional[Any] = None) -> None:
         """Send an event to another orchestration instance.
 
         Parameters
@@ -176,11 +176,6 @@ class OrchestrationContext(ABC):
             The name of the event to send.
         data : Optional[Any]
             The optional JSON-serializable data to include with the event.
-
-        Returns
-        -------
-        Task
-            A Durable Task that completes when the event has been sent.
         """
         pass
 
