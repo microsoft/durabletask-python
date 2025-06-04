@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import math
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
+from dataclasses import dataclass
 
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -176,6 +178,70 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @abstractmethod
+    def signal_entity(self, entity_id: Union[str, 'EntityInstanceId'], operation_name: str, *,
+                      input: Optional[Any] = None) -> Task:
+        """Signal an entity with an operation.
+
+        Parameters
+        ----------
+        entity_id : Union[str, EntityInstanceId]
+            The ID of the entity to signal.
+        operation_name : str
+            The name of the operation to perform.
+        input : Optional[Any]
+            The JSON-serializable input to pass to the entity operation.
+
+        Returns
+        -------
+        Task
+            A Durable Task that completes when the entity operation is scheduled.
+        """
+        pass
+
+    @abstractmethod
+    def call_entity(self, entity_id: Union[str, 'EntityInstanceId'], operation_name: str, *,
+                    input: Optional[TInput] = None,
+                    retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
+        """Call an entity operation and wait for the result.
+
+        Parameters
+        ----------
+        entity_id : Union[str, EntityInstanceId]
+            The ID of the entity to call.
+        operation_name : str
+            The name of the operation to perform.
+        input : Optional[TInput]
+            The JSON-serializable input to pass to the entity operation.
+        retry_policy : Optional[RetryPolicy]
+            The retry policy to use for this entity call.
+
+        Returns
+        -------
+        Task[TOutput]
+            A Durable Task that completes when the entity operation completes or fails.
+        """
+        pass
+
+    @abstractmethod
+    def lock_entities(self, *entity_ids: Union[str, 'EntityInstanceId']) -> 'EntityLockContext':
+        """Create a context manager for locking multiple entities.
+
+        This allows orchestrations to lock entities before performing operations
+        on them, preventing race conditions with other orchestrations.
+
+        Parameters
+        ----------
+        *entity_ids : Union[str, EntityInstanceId]
+            Variable number of entity IDs to lock
+
+        Returns
+        -------
+        EntityLockContext
+            A context manager that handles locking and unlocking
+        """
+        pass
+
 
 class FailureDetails:
     def __init__(self, message: str, error_type: str, stack_trace: Optional[str]):
@@ -217,6 +283,40 @@ class NonDeterminismError(Exception):
 
 class OrchestrationStateError(Exception):
     pass
+
+
+@dataclass
+class EntityState:
+    """Represents the state of a durable entity."""
+    instance_id: str
+    last_modified_time: datetime
+    backlog_queue_size: int
+    locked_by: Optional[str]
+    serialized_state: Optional[str]
+
+    @property
+    def exists(self) -> bool:
+        """Returns True if the entity exists (has been created), False otherwise."""
+        return self.serialized_state is not None
+
+
+@dataclass
+class EntityQuery:
+    """Represents a query for durable entities."""
+    instance_id_starts_with: Optional[str] = None
+    last_modified_from: Optional[datetime] = None
+    last_modified_to: Optional[datetime] = None
+    include_state: bool = False
+    include_transient: bool = False
+    page_size: Optional[int] = None
+    continuation_token: Optional[str] = None
+
+
+@dataclass
+class EntityQueryResult:
+    """Represents the result of an entity query."""
+    entities: list[EntityState]
+    continuation_token: Optional[str] = None
 
 
 class Task(ABC, Generic[T]):
@@ -433,11 +533,330 @@ class ActivityContext:
         return self._task_id
 
 
+@dataclass
+class EntityInstanceId:
+    """Represents the ID of a durable entity instance."""
+    name: str
+    key: str
+
+    def __str__(self) -> str:
+        """Return the string representation in the format: name@key"""
+        return f"{self.name}@{self.key}"
+
+    @classmethod
+    def from_string(cls, instance_id: str) -> 'EntityInstanceId':
+        """Parse an entity instance ID from string format (name@key)."""
+        if '@' not in instance_id:
+            raise ValueError(f"Invalid entity instance ID format: {instance_id}. Expected format: name@key")
+
+        parts = instance_id.split('@', 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise ValueError(f"Invalid entity instance ID format: {instance_id}. Expected format: name@key")
+
+        return cls(name=parts[0], key=parts[1])
+
+
+class EntityLockContext(ABC):
+    """Abstract base class for entity locking context managers."""
+
+    @abstractmethod
+    def __enter__(self) -> 'EntityLockContext':
+        """Enter the entity lock context."""
+        pass
+
+    @abstractmethod
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the entity lock context."""
+        pass
+
+
+class EntityOperationFailedException(Exception):
+    """Exception raised when an entity operation fails."""
+
+    def __init__(self, entity_id: EntityInstanceId, operation_name: str, failure_details: FailureDetails):
+        self.entity_id = entity_id
+        self.operation_name = operation_name
+        self.failure_details = failure_details
+        super().__init__(f"Operation '{operation_name}' on entity '{entity_id}' failed: {failure_details.message}")
+
+
+class EntityContext:
+    """Context for entity operations, providing access to state and scheduling capabilities."""
+
+    def __init__(self, instance_id: str, operation_name: str, is_new_entity: bool = False):
+        self._instance_id = instance_id
+        self._operation_name = operation_name
+        self._is_new_entity = is_new_entity
+        self._state: Optional[Any] = None
+        self._entity_instance_id = EntityInstanceId.from_string(instance_id)
+
+    @property
+    def instance_id(self) -> str:
+        """Get the ID of the entity instance.
+
+        Returns
+        -------
+        str
+            The ID of the current entity instance.
+        """
+        return self._instance_id
+
+    @property
+    def entity_id(self) -> EntityInstanceId:
+        """Get the structured entity instance ID.
+
+        Returns
+        -------
+        EntityInstanceId
+            The structured entity instance ID.
+        """
+        return self._entity_instance_id
+
+    @property
+    def operation_name(self) -> str:
+        """Get the name of the operation being performed on the entity.
+
+        Returns
+        -------
+        str
+            The name of the operation.
+        """
+        return self._operation_name
+
+    @property
+    def is_new_entity(self) -> bool:
+        """Get a value indicating whether this is a newly created entity.
+
+        Returns
+        -------
+        bool
+            True if this is the first operation on this entity, False otherwise.
+        """
+        return self._is_new_entity
+
+    def get_state(self, state_type: type[T] = None) -> Optional[T]:
+        """Get the current state of the entity.
+
+        Parameters
+        ----------
+        state_type : type[T], optional
+            The type to deserialize the state to. If not provided, returns the raw state.
+
+        Returns
+        -------
+        Optional[T]
+            The current state of the entity, or None if the entity has no state.
+        """
+        return self._state
+
+    def set_state(self, state: Any) -> None:
+        """Set the current state of the entity.
+
+        Parameters
+        ----------
+        state : Any
+            The new state for the entity. Must be JSON-serializable.
+        """
+        self._state = state
+
+    def signal_entity(self, entity_id: Union[str, EntityInstanceId], operation_name: str, *,
+                      input: Optional[Any] = None) -> None:
+        """Signal another entity with an operation (fire-and-forget).
+
+        Parameters
+        ----------
+        entity_id : Union[str, EntityInstanceId]
+            The ID of the entity to signal.
+        operation_name : str
+            The name of the operation to perform.
+        input : Optional[Any]
+            The JSON-serializable input to pass to the entity operation.
+        """
+        # Store the signal for later processing during entity execution
+        if not hasattr(self, '_signals'):
+            self._signals = []
+
+        entity_id_str = str(entity_id) if isinstance(entity_id, EntityInstanceId) else entity_id
+        self._signals.append({
+            'entity_id': entity_id_str,
+            'operation_name': operation_name,
+            'input': input
+        })
+
+    def start_new_orchestration(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
+                                input: Optional[TInput] = None,
+                                instance_id: Optional[str] = None) -> str:
+        """Start a new orchestration from within an entity operation.
+
+        Parameters
+        ----------
+        orchestrator : Union[Orchestrator[TInput, TOutput], str]
+            The orchestrator function or name to start.
+        input : Optional[TInput]
+            The JSON-serializable input to pass to the orchestration.
+        instance_id : Optional[str]
+            The instance ID for the new orchestration. If not provided, a random UUID will be used.
+
+        Returns
+        -------
+        str
+            The instance ID of the new orchestration.
+        """
+        # Store the orchestration start request for later processing
+        if not hasattr(self, '_orchestrations'):
+            self._orchestrations = []
+
+        orchestrator_name = orchestrator if isinstance(orchestrator, str) else get_name(orchestrator)
+        new_instance_id = instance_id or str(uuid.uuid4())
+
+        self._orchestrations.append({
+            'name': orchestrator_name,
+            'input': input,
+            'instance_id': new_instance_id
+        })
+
+        return new_instance_id
+
+
 # Orchestrators are generators that yield tasks and receive/return any type
 Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, Any, Any], TOutput]]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
+
+
+class EntityBase:
+    """Base class for entity implementations that provides method-based dispatch.
+
+    This class allows entities to be implemented as classes with methods for each operation,
+    similar to the .NET TaskEntity pattern. The entity context is automatically injected
+    when methods are called.
+    """
+
+    def __init__(self):
+        self._context: Optional[EntityContext] = None
+        self._state: Optional[Any] = None
+
+    @property
+    def context(self) -> EntityContext:
+        """Get the current entity context."""
+        if self._context is None:
+            raise RuntimeError("Entity context is not available outside of operation execution")
+        return self._context
+
+    def get_state(self, state_type: type[T] = None) -> Optional[T]:
+        """Get the current state of the entity."""
+        return self._state
+
+    def set_state(self, state: Any) -> None:
+        """Set the current state of the entity."""
+        self._state = state
+
+    def signal_entity(self, entity_id: Union[str, EntityInstanceId], operation_name: str, *,
+                      input: Optional[Any] = None) -> None:
+        """Signal another entity with an operation."""
+        if self._context:
+            self._context.signal_entity(entity_id, operation_name, input=input)
+
+    def start_new_orchestration(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
+                                input: Optional[TInput] = None,
+                                instance_id: Optional[str] = None) -> str:
+        """Start a new orchestration from within an entity operation."""
+        if self._context:
+            return self._context.start_new_orchestration(orchestrator, input=input, instance_id=instance_id)
+        return ""
+
+
+def dispatch_to_entity_method(entity_obj: Any, ctx: EntityContext, input: Any) -> Any:
+    """
+    Dispatch an entity operation to the appropriate method on an entity object.
+
+    This function implements flexible method dispatch similar to the .NET implementation:
+    1. Look for an exact method name match (case-insensitive)
+    2. If the entity is an EntityBase subclass, inject context and state
+    3. Handle method parameters automatically (context, input, or both)
+
+    Parameters
+    ----------
+    entity_obj : Any
+        The entity object to dispatch to
+    ctx : EntityContext
+        The entity context
+    input : Any
+        The operation input
+
+    Returns
+    -------
+    Any
+        The result of the operation
+    """
+    import inspect
+
+    # Set up entity base if applicable
+    if isinstance(entity_obj, EntityBase):
+        entity_obj._context = ctx
+        entity_obj._state = ctx.get_state()
+
+    # Look for a method with the operation name (case-insensitive)
+    operation_name = ctx.operation_name.lower()
+    method = None
+
+    for attr_name in dir(entity_obj):
+        if attr_name.lower() == operation_name and callable(getattr(entity_obj, attr_name)):
+            method = getattr(entity_obj, attr_name)
+            break
+
+    if method is None:
+        raise NotImplementedError(f"Entity does not implement operation '{ctx.operation_name}'")
+
+    # Inspect method signature to determine parameters
+    sig = inspect.signature(method)
+    args = []
+    kwargs = {}
+
+    # Skip 'self' parameter for bound methods
+    parameters = list(sig.parameters.values())
+    if parameters and parameters[0].name == 'self':
+        parameters = parameters[1:]
+
+    for param in parameters:
+        param_type = param.annotation
+
+        # Check for EntityContext parameter
+        if param_type == EntityContext or param.name.lower() in ['context', 'ctx']:
+            if param.kind == param.POSITIONAL_OR_KEYWORD:
+                args.append(ctx)
+            else:
+                kwargs[param.name] = ctx
+        # Check for input parameter
+        elif param.name.lower() in ['input', 'data', 'arg', 'value']:
+            if param.kind == param.POSITIONAL_OR_KEYWORD:
+                args.append(input)
+            else:
+                kwargs[param.name] = input
+        # Default positional parameter (assume it's input)
+        elif param.kind == param.POSITIONAL_OR_KEYWORD and len(args) == 0:
+            args.append(input)
+
+    try:
+        result = method(*args, **kwargs)
+
+        # Update state if entity is EntityBase
+        if isinstance(entity_obj, EntityBase):
+            ctx.set_state(entity_obj._state)
+            entity_obj._context = None  # Clear context after operation
+
+        return result
+
+    except Exception:
+        # Clear context on error
+        if isinstance(entity_obj, EntityBase):
+            entity_obj._context = None
+        raise
+
+
+# Entities are stateful objects that can receive operations and maintain state
+Entity = Callable[['EntityContext', TInput], TOutput]
 
 
 class RetryPolicy:
