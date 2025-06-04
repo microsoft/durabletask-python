@@ -223,6 +223,25 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @abstractmethod
+    def lock_entities(self, *entity_ids: Union[str, 'EntityInstanceId']) -> 'EntityLockContext':
+        """Create a context manager for locking multiple entities.
+
+        This allows orchestrations to lock entities before performing operations
+        on them, preventing race conditions with other orchestrations.
+
+        Parameters
+        ----------
+        *entity_ids : Union[str, EntityInstanceId]
+            Variable number of entity IDs to lock
+
+        Returns
+        -------
+        EntityLockContext
+            A context manager that handles locking and unlocking
+        """
+        pass
+
 
 class FailureDetails:
     def __init__(self, message: str, error_type: str, stack_trace: Optional[str]):
@@ -535,6 +554,20 @@ class EntityInstanceId:
             raise ValueError(f"Invalid entity instance ID format: {instance_id}. Expected format: name@key")
 
         return cls(name=parts[0], key=parts[1])
+
+
+class EntityLockContext(ABC):
+    """Abstract base class for entity locking context managers."""
+
+    @abstractmethod
+    def __enter__(self) -> 'EntityLockContext':
+        """Enter the entity lock context."""
+        pass
+
+    @abstractmethod
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the entity lock context."""
+        pass
 
 
 class EntityOperationFailedException(Exception):

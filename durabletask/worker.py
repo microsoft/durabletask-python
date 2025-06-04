@@ -934,17 +934,18 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         entity_id_str = str(entity_id) if hasattr(entity_id, '__str__') else entity_id
 
         action = pb.OrchestratorAction()
-        action.sendEntitySignal.CopyFrom(pb.SendSignalAction(
-            instanceId=entity_id_str,
+        action.sendEvent.CopyFrom(pb.SendEventAction(
+            instance=pb.OrchestrationInstance(instanceId=entity_id_str),
             name=operation_name,
-            input=ph.get_string_value(shared.to_json(input)) if input is not None else None
+            data=ph.get_string_value(shared.to_json(input)) if input is not None else None
         ))
 
         # Entity signals don't return values, so we create a completed task
         signal_task = task.CompletableTask()
 
         # Store the action to be executed
-        task_id = self._next_task_id()
+        task_id = self.next_sequence_number()
+        action.id = task_id
         self._pending_actions[task_id] = action
         self._pending_tasks[task_id] = signal_task
 
@@ -959,6 +960,53 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # For now, entity calls are not directly supported in orchestrations
         # This would require additional protobuf support
         raise NotImplementedError("Direct entity calls from orchestrations are not yet supported. Use signal_entity instead.")
+
+    def lock_entities(self, *entity_ids: Union[str, task.EntityInstanceId]) -> 'EntityLockContext':
+        """Create a context manager for locking multiple entities.
+
+        This allows orchestrations to lock entities before performing operations
+        on them, preventing race conditions with other orchestrations.
+
+        Args:
+            *entity_ids: Variable number of entity IDs to lock
+
+        Returns:
+            EntityLockContext: A context manager that handles locking and unlocking
+
+        Example:
+            with ctx.lock_entities("Counter@global", "ShoppingCart@user1"):
+                # Perform operations on locked entities
+                yield ctx.signal_entity("Counter@global", "increment", input=1)
+                yield ctx.signal_entity("ShoppingCart@user1", "add_item", input=item)
+        """
+        return EntityLockContext(self, entity_ids)
+
+
+class EntityLockContext(task.EntityLockContext):
+    """Context manager for entity locking in orchestrations.
+
+    This class provides a context manager that handles locking and unlocking
+    of entities during orchestration execution to prevent race conditions.
+    """
+
+    def __init__(self, ctx: '_RuntimeOrchestrationContext', entity_ids: tuple):
+        self._ctx = ctx
+        self._entity_ids = [str(eid) if hasattr(eid, '__str__') else eid for eid in entity_ids]
+        self._lock_instance_id = f"__lock__{ctx.instance_id}_{ctx.next_sequence_number()}"
+
+    def __enter__(self) -> 'EntityLockContext':
+        """Enter the entity lock context by acquiring locks on all specified entities."""
+        # Signal each entity to acquire a lock
+        for entity_id in self._entity_ids:
+            self._ctx.signal_entity(entity_id, "__acquire_lock__", input=self._lock_instance_id)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the entity lock context by releasing locks on all specified entities."""
+        # Signal each entity to release the lock
+        for entity_id in self._entity_ids:
+            self._ctx.signal_entity(entity_id, "__release_lock__", input=self._lock_instance_id)
+        return False  # Don't suppress exceptions
 
 
 class ExecutionResults:
