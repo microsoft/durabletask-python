@@ -280,6 +280,6 @@ This Python implementation provides feature parity with the .NET DurableTask SDK
 | State management | ✅ | ✅ | Complete |
 | Error handling | ✅ | ✅ | Complete |
 | Client operations | ✅ | ✅ | Complete |
-| Entity locking | ✅ | ⏳ | Planned |
+| Entity locking | ✅ | ✅ | Complete |
 
 The Python implementation follows the same patterns and provides equivalent functionality to ensure consistency across Durable Task SDKs.
