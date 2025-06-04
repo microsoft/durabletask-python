@@ -164,6 +164,22 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
+    def send_event(self, instance_id: str, event_name: str, *,
+                   data: Optional[Any] = None) -> None:
+        """Send an event to another orchestration instance.
+
+        Parameters
+        ----------
+        instance_id : str
+            The ID of the orchestration instance to send the event to.
+        event_name : str
+            The name of the event to send.
+        data : Optional[Any]
+            The optional JSON-serializable data to include with the event.
+        """
+        pass
+
+    @abstractmethod
     def continue_as_new(self, new_input: Any, *, save_events: bool = False) -> None:
         """Continue the orchestration execution as a new instance.
 

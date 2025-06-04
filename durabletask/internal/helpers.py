@@ -124,6 +124,14 @@ def new_event_raised_event(name: str, encoded_input: Optional[str] = None) -> pb
     )
 
 
+def new_event_sent_event(instance_id: str, name: str, encoded_input: Optional[str] = None) -> pb.HistoryEvent:
+    return pb.HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        eventSent=pb.EventSentEvent(instanceId=instance_id, name=name, input=get_string_value(encoded_input))
+    )
+
+
 def new_suspend_event() -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
@@ -200,6 +208,14 @@ def new_create_sub_orchestration_action(
         name=name,
         instanceId=instance_id,
         input=get_string_value(encoded_input)
+    ))
+
+
+def new_send_event_action(id: int, instance_id: str, event_name: str, encoded_data: Optional[str]) -> pb.OrchestratorAction:
+    return pb.OrchestratorAction(id=id, sendEvent=pb.SendEventAction(
+        instance=pb.OrchestrationInstance(instanceId=instance_id),
+        name=event_name,
+        data=get_string_value(encoded_data)
     ))
 
 

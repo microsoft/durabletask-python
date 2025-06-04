@@ -629,13 +629,16 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             result: Any,
             status: pb.OrchestrationStatus,
             is_result_encoded: bool = False,
+            preserve_actions: bool = False,
     ):
         if self._is_complete:
             return
 
         self._is_complete = True
         self._completion_status = status
-        self._pending_actions.clear()  # Cancel any pending actions
+
+        if not preserve_actions:
+            self._pending_actions.clear()  # Cancel any pending actions
 
         self._result = result
         result_json: Optional[str] = None
@@ -852,6 +855,18 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             task_list.append(external_event_task)
         return external_event_task
 
+    def send_event(self, instance_id: str, event_name: str, *,
+                   data: Optional[Any] = None) -> None:
+        if not instance_id:
+            raise ValueError("instance_id cannot be None or empty")
+        if not event_name:
+            raise ValueError("event_name cannot be None or empty")
+
+        id = self.next_sequence_number()
+        encoded_data = shared.to_json(data) if data is not None else None
+        action = ph.new_send_event_action(id, instance_id, event_name, encoded_data)
+        self._pending_actions[id] = action
+
     def continue_as_new(self, new_input, *, save_events: bool = False) -> None:
         if self._is_complete:
             return
@@ -973,8 +988,9 @@ class _OrchestrationExecutor:
                     # Start the orchestrator's generator function
                     ctx.run(result)
                 else:
-                    # This is an orchestrator that doesn't schedule any tasks
-                    ctx.set_complete(result, pb.ORCHESTRATION_STATUS_COMPLETED)
+                    # This is an orchestrator that doesn't use generators (async tasks)
+                    # but it may have scheduled actions like send_event
+                    ctx.set_complete(result, pb.ORCHESTRATION_STATUS_COMPLETED, preserve_actions=True)
             elif event.HasField("timerCreated"):
                 # This history event confirms that the timer was successfully scheduled.
                 # Remove the timerCreated event from the pending action list so we don't schedule it again.
@@ -1304,8 +1320,8 @@ def _get_method_name_for_action(action: pb.OrchestratorAction) -> str:
         return task.get_name(task.OrchestrationContext.create_timer)
     elif action_type == "createSubOrchestration":
         return task.get_name(task.OrchestrationContext.call_sub_orchestrator)
-    # elif action_type == "sendEvent":
-    #    return task.get_name(task.OrchestrationContext.send_event)
+    elif action_type == "sendEvent":
+        return task.get_name(task.OrchestrationContext.send_event)
     else:
         raise NotImplementedError(f"Action type '{action_type}' not supported!")
 
