@@ -123,8 +123,8 @@ class TaskHubGrpcClient:
                                    input: Optional[TInput] = None,
                                    instance_id: Optional[str] = None,
                                    start_at: Optional[datetime] = None,
-                                   tags: Optional[dict[str, str]] = None,
-                                   reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None) -> str:
+                                   reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None,
+                                   tags: Optional[dict[str, str]] = None) -> str:
 
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
 
