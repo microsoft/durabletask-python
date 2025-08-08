@@ -123,6 +123,7 @@ class TaskHubGrpcClient:
                                    input: Optional[TInput] = None,
                                    instance_id: Optional[str] = None,
                                    start_at: Optional[datetime] = None,
+                                   tags: Optional[dict[str, str]] = None,
                                    reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None) -> str:
 
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
@@ -134,6 +135,7 @@ class TaskHubGrpcClient:
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
             version=wrappers_pb2.StringValue(value=""),
             orchestrationIdReusePolicy=reuse_id_policy,
+            tags=tags,
         )
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
