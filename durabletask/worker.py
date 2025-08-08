@@ -752,11 +752,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             *,
             input: Optional[TInput] = None,
             retry_policy: Optional[task.RetryPolicy] = None,
+            tags: Optional[dict[str, str]] = None,
     ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
 
         self.call_activity_function_helper(
-            id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False
+            id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False, tags=tags
         )
         return self._pending_tasks.get(id, task.CompletableTask())
 
@@ -787,6 +788,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             *,
             input: Optional[TInput] = None,
             retry_policy: Optional[task.RetryPolicy] = None,
+            tags: Optional[dict[str, str]] = None,
             is_sub_orch: bool = False,
             instance_id: Optional[str] = None,
             fn_task: Optional[task.CompletableTask[TOutput]] = None,
@@ -806,7 +808,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 if isinstance(activity_function, str)
                 else task.get_name(activity_function)
             )
-            action = ph.new_schedule_task_action(id, name, encoded_input)
+            action = ph.new_schedule_task_action(id, name, encoded_input, tags)
         else:
             if instance_id is None:
                 # Create a deteministic instance ID based on the parent instance ID

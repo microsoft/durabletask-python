@@ -19,14 +19,16 @@ def new_orchestrator_started_event(timestamp: Optional[datetime] = None) -> pb.H
     return pb.HistoryEvent(eventId=-1, timestamp=ts, orchestratorStarted=pb.OrchestratorStartedEvent())
 
 
-def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None) -> pb.HistoryEvent:
+def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None,
+                                tags: Optional[dict[str, str]] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
         executionStarted=pb.ExecutionStartedEvent(
             name=name,
             input=get_string_value(encoded_input),
-            orchestrationInstance=pb.OrchestrationInstance(instanceId=instance_id)))
+            orchestrationInstance=pb.OrchestrationInstance(instanceId=instance_id),
+            tags=tags))
 
 
 def new_timer_created_event(timer_id: int, fire_at: datetime) -> pb.HistoryEvent:
@@ -178,10 +180,12 @@ def new_create_timer_action(id: int, fire_at: datetime) -> pb.OrchestratorAction
     return pb.OrchestratorAction(id=id, createTimer=pb.CreateTimerAction(fireAt=timestamp))
 
 
-def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str]) -> pb.OrchestratorAction:
+def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
+                             tags: Optional[dict[str, str]]) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, scheduleTask=pb.ScheduleTaskAction(
         name=name,
-        input=get_string_value(encoded_input)
+        input=get_string_value(encoded_input),
+        tags=tags
     ))
 
 

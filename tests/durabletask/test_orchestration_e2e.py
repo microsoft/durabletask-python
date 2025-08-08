@@ -29,7 +29,7 @@ def test_empty_orchestration():
         w.start()
 
         c = client.TaskHubGrpcClient()
-        id = c.schedule_new_orchestration(empty_orchestrator)
+        id = c.schedule_new_orchestration(empty_orchestrator, tags={'Tagged': 'true'})
         state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert invoked
@@ -52,7 +52,7 @@ def test_activity_sequence():
         numbers = [start_val]
         current = start_val
         for _ in range(10):
-            current = yield ctx.call_activity(plus_one, input=current)
+            current = yield ctx.call_activity(plus_one, input=current, tags={'Activity': 'PlusOne'})
             numbers.append(current)
         return numbers
 
@@ -63,7 +63,7 @@ def test_activity_sequence():
         w.start()
 
         task_hub_client = client.TaskHubGrpcClient()
-        id = task_hub_client.schedule_new_orchestration(sequence, input=1)
+        id = task_hub_client.schedule_new_orchestration(sequence, input=1, tags={'Orchestration': 'Sequence'})
         state = task_hub_client.wait_for_orchestration_completion(
             id, timeout=30)
 

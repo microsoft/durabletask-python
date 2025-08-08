@@ -100,7 +100,8 @@ class OrchestrationContext(ABC):
     @abstractmethod
     def call_activity(self, activity: Union[Activity[TInput, TOutput], str], *,
                       input: Optional[TInput] = None,
-                      retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
+                      retry_policy: Optional[RetryPolicy] = None,
+                      tags: Optional[dict[str, str]] = None) -> Task[TOutput]:
         """Schedule an activity for execution.
 
         Parameters
@@ -111,6 +112,8 @@ class OrchestrationContext(ABC):
             The JSON-serializable input (or None) to pass to the activity.
         retry_policy: Optional[RetryPolicy]
             The retry policy to use for this activity call.
+        tags: Optional[dict[str, str]]
+            Optional tags to associate with the activity invocation.
 
         Returns
         -------
