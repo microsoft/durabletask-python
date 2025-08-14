@@ -126,7 +126,8 @@ class OrchestrationContext(ABC):
     def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
                               input: Optional[TInput] = None,
                               instance_id: Optional[str] = None,
-                              retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
+                              retry_policy: Optional[RetryPolicy] = None,
+                              version: Optional[str] = None) -> Task[TOutput]:
         """Schedule sub-orchestrator function for execution.
 
         Parameters

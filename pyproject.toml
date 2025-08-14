@@ -27,7 +27,8 @@ readme = "README.md"
 dependencies = [
     "grpcio",
     "protobuf",
-    "asyncio"
+    "asyncio",
+    "packaging"
 ]
 
 [project.urls]

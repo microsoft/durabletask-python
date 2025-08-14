@@ -17,7 +17,8 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  host_address: str,
                  taskhub: str,
                  token_credential: Optional[TokenCredential],
-                 secure_channel: bool = True):
+                 secure_channel: bool = True,
+                 default_version: Optional[str] = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
@@ -30,4 +31,5 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
             host_address=host_address,
             secure_channel=secure_channel,
             metadata=None,
-            interceptors=interceptors)
+            interceptors=interceptors,
+            default_version=default_version)
