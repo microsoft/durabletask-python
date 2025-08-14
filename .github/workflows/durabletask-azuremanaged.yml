@@ -72,6 +72,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install durabletask-azuremanaged locally
+        working-directory: durabletask-azuremanaged
+        run: |
+          pip install . --no-deps --force-reinstall
+
       - name: Run the tests
         working-directory: tests/durabletask-azuremanaged
         run: |
