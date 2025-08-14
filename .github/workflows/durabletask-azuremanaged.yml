@@ -77,6 +77,10 @@ jobs:
         run: |
           pip install . --no-deps --force-reinstall
 
+      - name: Install durabletask locally
+        run: |
+          pip install . --no-deps --force-reinstall
+
       - name: Run the tests
         working-directory: tests/durabletask-azuremanaged
         run: |
