@@ -573,7 +573,7 @@ class TaskHubGrpcWorker:
                 customStatus=ph.get_string_value(result.encoded_custom_status),
                 completionToken=completionToken,
             )
-        except pe.AbandonOrchestrationError as ex:
+        except pe.AbandonOrchestrationError:
             self._logger.info(
                 f"Abandoning orchestration. InstanceId = '{req.instanceId}'. Completion token = '{completionToken}'"
             )
