@@ -90,10 +90,6 @@ class VersionFailureStrategy(Enum):
     FAIL = 2
 
 
-class VersionFailureException(Exception):
-    pass
-
-
 class VersioningOptions:
     """Configuration options for orchestrator and activity versioning.
 
@@ -994,7 +990,7 @@ class _OrchestrationExecutor:
                         f"Error action = '{self._registry.versioning.failure_strategy}'. "
                         f"Version error = '{version_failure}'"
                     )
-                    raise VersionFailureException
+                    raise pe.VersionFailureException
 
             # Get new actions by executing newly received events into the orchestrator function
             if self._logger.level <= logging.DEBUG:
@@ -1006,7 +1002,7 @@ class _OrchestrationExecutor:
             for new_event in new_events:
                 self.process_event(ctx, new_event)
 
-        except VersionFailureException as ex:
+        except pe.VersionFailureException as ex:
             if self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
                 if version_failure:
                     ctx.set_failed(version_failure)
