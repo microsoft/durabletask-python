@@ -154,6 +154,60 @@ def test_upper_version_worker_succeeds():
 
 def test_upper_version_worker_strict_fails():
     # Start a worker, which will connect to the sidecar in a background thread
+    instance_id: str = ''
+    thrown = False
+    try:
+        with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                        taskhub=taskhub_name, token_credential=None) as w:
+            w.add_orchestrator(single_activity)
+            w.add_activity(plus_one)
+            w.use_versioning(worker.VersioningOptions(
+                version="1.0.0",
+                default_version="1.1.0",
+                match_strategy=worker.VersionMatchStrategy.STRICT,
+                failure_strategy=worker.VersionFailureStrategy.REJECT
+            ))
+            w.start()
+
+            task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                         taskhub=taskhub_name, token_credential=None,
+                                                         default_version="1.1.0")
+            instance_id = task_hub_client.schedule_new_orchestration(single_activity, input=1)
+            state = task_hub_client.wait_for_orchestration_completion(
+                instance_id, timeout=5)
+    except TimeoutError as e:
+        thrown = True
+        assert str(e).find("Timed-out waiting for the orchestration to complete") >= 0
+
+    assert thrown is True
+
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(single_activity)
+        w.add_activity(plus_one)
+        w.use_versioning(worker.VersioningOptions(
+            version="1.1.0",
+            default_version="1.1.0",
+            match_strategy=worker.VersionMatchStrategy.STRICT,
+            failure_strategy=worker.VersionFailureStrategy.REJECT
+        ))
+        w.start()
+
+        task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                     taskhub=taskhub_name, token_credential=None,
+                                                     default_version="1.1.0")
+        state = task_hub_client.wait_for_orchestration_completion(
+            instance_id, timeout=5)
+
+    assert state is not None
+    assert state.name == task.get_name(single_activity)
+    assert state.instance_id == instance_id
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+
+
+def test_reject_abandons_and_reprocess():
+    # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(single_activity)
@@ -179,6 +233,9 @@ def test_upper_version_worker_strict_fails():
     assert state.runtime_status == client.OrchestrationStatus.FAILED
     assert state.failure_details is not None
     assert state.failure_details.message.find("The orchestration version '1.0.0' does not match the worker version '1.1.0'.") >= 0
+
+
+# Sub-orchestration tests
 
 
 def sequence_suborchestator(ctx: task.OrchestrationContext, start_val: int):

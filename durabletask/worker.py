@@ -18,6 +18,7 @@ import grpc
 from google.protobuf import empty_pb2
 
 import durabletask.internal.helpers as ph
+import durabletask.internal.exceptions as pe
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
@@ -113,10 +114,10 @@ class VersioningOptions:
         """Initialize versioning options.
 
         Args:
-            version: The specific version to use for orchestrators and activities.
-            default_version: The default version to use if no specific version is provided.
-            match_strategy: The strategy to use for matching versions.
-            failure_strategy: The strategy to use if versioning fails.
+            version: The version of orchestrations that the worker can work on.
+            default_version: The default version that will be used for starting new orchestrations.
+            match_strategy: The versioning strategy for the Durable Task worker.
+            failure_strategy: The versioning failure strategy for the Durable Task worker.
         """
         self.version = version
         self.default_version = default_version
@@ -333,7 +334,7 @@ class TaskHubGrpcWorker:
         return self._registry.add_activity(fn)
 
     def use_versioning(self, version: VersioningOptions) -> None:
-        """Sets the default version for orchestrators and activities."""
+        """Initializes versioning options for sub-orchestrators and activities."""
         if self._is_running:
             raise RuntimeError("Cannot set default version while the worker is running.")
         self._registry.versioning = version
@@ -564,7 +565,7 @@ class TaskHubGrpcWorker:
             completionToken,
     ):
         try:
-            executor = _OrchestrationExecutor(self._registry, self._logger)
+            executor = _OrchestrationExecutor(self._registry, self._logger, stub)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
             res = pb.OrchestratorResponse(
                 instanceId=req.instanceId,
@@ -572,6 +573,16 @@ class TaskHubGrpcWorker:
                 customStatus=ph.get_string_value(result.encoded_custom_status),
                 completionToken=completionToken,
             )
+        except pe.AbandonOrchestrationError as ex:
+            self._logger.info(
+                f"Abandoning orchestration. InstanceId = '{req.instanceId}'. Completion token = '{completionToken}'"
+            )
+            stub.AbandonTaskOrchestratorWorkItem(
+                pb.AbandonOrchestrationTaskRequest(
+                    completionToken=completionToken
+                )
+            )
+            return
         except Exception as ex:
             self._logger.exception(
                 f"An error occurred while trying to execute instance '{req.instanceId}': {ex}"
@@ -633,7 +644,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
 
-    def __init__(self, instance_id: str):
+    def __init__(self, instance_id: str, registry: _Registry):
         self._generator = None
         self._is_replaying = True
         self._is_complete = False
@@ -643,6 +654,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
+        self._registry = registry
         self._completion_status: Optional[pb.OrchestrationStatus] = None
         self._received_events: dict[str, list[Any]] = {}
         self._pending_events: dict[str, list[task.CompletableTask]] = {}
@@ -831,6 +843,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
+        default_version = self._registry.versioning.default_version if self._registry.versioning else None
+        orchestrator_version = version if version else default_version
         self.call_activity_function_helper(
             id,
             orchestrator_name,
@@ -838,7 +852,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             retry_policy=retry_policy,
             is_sub_orch=True,
             instance_id=instance_id,
-            version=version,
+            version=orchestrator_version
         )
         return self._pending_tasks.get(id, task.CompletableTask())
 
@@ -937,11 +951,12 @@ class ExecutionResults:
 class _OrchestrationExecutor:
     _generator: Optional[task.Orchestrator] = None
 
-    def __init__(self, registry: _Registry, logger: logging.Logger):
+    def __init__(self, registry: _Registry, logger: logging.Logger, stub: stubs.TaskHubSidecarServiceStub):
         self._registry = registry
         self._logger = logger
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
+        self._stub = stub
 
     def execute(
             self,
@@ -954,9 +969,18 @@ class _OrchestrationExecutor:
                 "The new history event list must have at least one event in it."
             )
 
-        ctx = _RuntimeOrchestrationContext(instance_id)
+        ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
         version_failure = None
         try:
+            # Rebuild local state by replaying old history into the orchestrator function
+            self._logger.debug(
+                f"{instance_id}: Rebuilding local state with {len(old_events)} history event..."
+            )
+            ctx._is_replaying = True
+            for old_event in old_events:
+                self.process_event(ctx, old_event)
+
+            # Process versioning if applicable
             execution_started_events = [e.executionStarted for e in old_events if e.HasField("executionStarted")]
             if self._registry.versioning and len(execution_started_events) > 0:
                 execution_started_event = execution_started_events[-1]
@@ -970,19 +994,7 @@ class _OrchestrationExecutor:
                         f"Error action = '{self._registry.versioning.failure_strategy}'. "
                         f"Version error = '{version_failure}'"
                     )
-                    if self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
-                        raise VersionFailureException
-                    elif self._registry.versioning.failure_strategy == VersionFailureStrategy.REJECT:
-                        # TODO: We don't have abandoned orchestrations yet, so we just fail
-                        raise VersionFailureException
-
-            # Rebuild local state by replaying old history into the orchestrator function
-            self._logger.debug(
-                f"{instance_id}: Rebuilding local state with {len(old_events)} history event..."
-            )
-            ctx._is_replaying = True
-            for old_event in old_events:
-                self.process_event(ctx, old_event)
+                    raise VersionFailureException
 
             # Get new actions by executing newly received events into the orchestrator function
             if self._logger.level <= logging.DEBUG:
@@ -995,10 +1007,13 @@ class _OrchestrationExecutor:
                 self.process_event(ctx, new_event)
 
         except VersionFailureException as ex:
-            if version_failure:
-                ctx.set_failed(version_failure)
-            else:
-                ctx.set_failed(ex)
+            if self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
+                if version_failure:
+                    ctx.set_failed(version_failure)
+                else:
+                    ctx.set_failed(ex)
+            elif self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.REJECT:
+                raise pe.AbandonOrchestrationError
 
         except Exception as ex:
             # Unhandled exceptions fail the orchestration
