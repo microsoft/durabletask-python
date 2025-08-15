@@ -561,7 +561,7 @@ class TaskHubGrpcWorker:
             completionToken,
     ):
         try:
-            executor = _OrchestrationExecutor(self._registry, self._logger, stub)
+            executor = _OrchestrationExecutor(self._registry, self._logger)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
             res = pb.OrchestratorResponse(
                 instanceId=req.instanceId,
@@ -947,12 +947,11 @@ class ExecutionResults:
 class _OrchestrationExecutor:
     _generator: Optional[task.Orchestrator] = None
 
-    def __init__(self, registry: _Registry, logger: logging.Logger, stub: stubs.TaskHubSidecarServiceStub):
+    def __init__(self, registry: _Registry, logger: logging.Logger):
         self._registry = registry
         self._logger = logger
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
-        self._stub = stub
 
     def execute(
             self,
