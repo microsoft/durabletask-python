@@ -37,6 +37,21 @@ class OrchestrationContext(ABC):
 
     @property
     @abstractmethod
+    def version(self) -> Optional[str]:
+        """Get the version of the orchestration instance.
+
+        This version is set when the orchestration is scheduled and can be used
+        to determine which version of the orchestrator function is being executed.
+
+        Returns
+        -------
+        Optional[str]
+            The version of the orchestration instance, or None if not set.
+        """
+        pass
+
+    @property
+    @abstractmethod
     def current_utc_datetime(self) -> datetime:
         """Get the current date/time as UTC.
 
@@ -126,7 +141,8 @@ class OrchestrationContext(ABC):
     def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
                               input: Optional[TInput] = None,
                               instance_id: Optional[str] = None,
-                              retry_policy: Optional[RetryPolicy] = None) -> Task[TOutput]:
+                              retry_policy: Optional[RetryPolicy] = None,
+                              version: Optional[str] = None) -> Task[TOutput]:
         """Schedule sub-orchestrator function for execution.
 
         Parameters

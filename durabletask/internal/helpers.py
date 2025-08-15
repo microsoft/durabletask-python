@@ -199,11 +199,13 @@ def new_create_sub_orchestration_action(
         id: int,
         name: str,
         instance_id: Optional[str],
-        encoded_input: Optional[str]) -> pb.OrchestratorAction:
+        encoded_input: Optional[str],
+        version: Optional[str]) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, createSubOrchestration=pb.CreateSubOrchestrationAction(
         name=name,
         instanceId=instance_id,
-        input=get_string_value(encoded_input)
+        input=get_string_value(encoded_input),
+        version=get_string_value(version)
     ))
 
 

@@ -10,12 +10,15 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Event, Thread
 from types import GeneratorType
+from enum import Enum
 from typing import Any, Generator, Optional, Sequence, TypeVar, Union
+from packaging.version import InvalidVersion, parse
 
 import grpc
 from google.protobuf import empty_pb2
 
 import durabletask.internal.helpers as ph
+import durabletask.internal.exceptions as pe
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
@@ -72,9 +75,56 @@ class ConcurrencyOptions:
         )
 
 
+class VersionMatchStrategy(Enum):
+    """Enumeration for version matching strategies."""
+
+    NONE = 1
+    STRICT = 2
+    CURRENT_OR_OLDER = 3
+
+
+class VersionFailureStrategy(Enum):
+    """Enumeration for version failure strategies."""
+
+    REJECT = 1
+    FAIL = 2
+
+
+class VersioningOptions:
+    """Configuration options for orchestrator and activity versioning.
+
+    This class provides options to control how versioning is handled for orchestrators
+    and activities, including whether to use the default version and how to compare versions.
+    """
+
+    version: Optional[str] = None
+    default_version: Optional[str] = None
+    match_strategy: Optional[VersionMatchStrategy] = None
+    failure_strategy: Optional[VersionFailureStrategy] = None
+
+    def __init__(self, version: Optional[str] = None,
+                 default_version: Optional[str] = None,
+                 match_strategy: Optional[VersionMatchStrategy] = None,
+                 failure_strategy: Optional[VersionFailureStrategy] = None
+                 ):
+        """Initialize versioning options.
+
+        Args:
+            version: The version of orchestrations that the worker can work on.
+            default_version: The default version that will be used for starting new orchestrations.
+            match_strategy: The versioning strategy for the Durable Task worker.
+            failure_strategy: The versioning failure strategy for the Durable Task worker.
+        """
+        self.version = version
+        self.default_version = default_version
+        self.match_strategy = match_strategy
+        self.failure_strategy = failure_strategy
+
+
 class _Registry:
     orchestrators: dict[str, task.Orchestrator]
     activities: dict[str, task.Activity]
+    versioning: Optional[VersioningOptions] = None
 
     def __init__(self):
         self.orchestrators = {}
@@ -278,6 +328,12 @@ class TaskHubGrpcWorker:
                 "Activities cannot be added while the worker is running."
             )
         return self._registry.add_activity(fn)
+
+    def use_versioning(self, version: VersioningOptions) -> None:
+        """Initializes versioning options for sub-orchestrators and activities."""
+        if self._is_running:
+            raise RuntimeError("Cannot set default version while the worker is running.")
+        self._registry.versioning = version
 
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
@@ -513,6 +569,16 @@ class TaskHubGrpcWorker:
                 customStatus=ph.get_string_value(result.encoded_custom_status),
                 completionToken=completionToken,
             )
+        except pe.AbandonOrchestrationError:
+            self._logger.info(
+                f"Abandoning orchestration. InstanceId = '{req.instanceId}'. Completion token = '{completionToken}'"
+            )
+            stub.AbandonTaskOrchestratorWorkItem(
+                pb.AbandonOrchestrationTaskRequest(
+                    completionToken=completionToken
+                )
+            )
+            return
         except Exception as ex:
             self._logger.exception(
                 f"An error occurred while trying to execute instance '{req.instanceId}': {ex}"
@@ -574,7 +640,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
 
-    def __init__(self, instance_id: str):
+    def __init__(self, instance_id: str, registry: _Registry):
         self._generator = None
         self._is_replaying = True
         self._is_complete = False
@@ -584,6 +650,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
+        self._registry = registry
+        self._version: Optional[str] = None
         self._completion_status: Optional[pb.OrchestrationStatus] = None
         self._received_events: dict[str, list[Any]] = {}
         self._pending_events: dict[str, list[task.CompletableTask]] = {}
@@ -646,7 +714,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         )
         self._pending_actions[action.id] = action
 
-    def set_failed(self, ex: Exception):
+    def set_failed(self, ex: Union[Exception, pb.TaskFailureDetails]):
         if self._is_complete:
             return
 
@@ -658,7 +726,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self.next_sequence_number(),
             pb.ORCHESTRATION_STATUS_FAILED,
             None,
-            ph.new_failure_details(ex),
+            ph.new_failure_details(ex) if isinstance(ex, Exception) else ex,
         )
         self._pending_actions[action.id] = action
 
@@ -708,6 +776,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     @property
     def instance_id(self) -> str:
         return self._instance_id
+
+    @property
+    def version(self) -> Optional[str]:
+        return self._version
 
     @property
     def current_utc_datetime(self) -> datetime:
@@ -768,9 +840,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             input: Optional[TInput] = None,
             instance_id: Optional[str] = None,
             retry_policy: Optional[task.RetryPolicy] = None,
+            version: Optional[str] = None,
     ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
         orchestrator_name = task.get_name(orchestrator)
+        default_version = self._registry.versioning.default_version if self._registry.versioning else None
+        orchestrator_version = version if version else default_version
         self.call_activity_function_helper(
             id,
             orchestrator_name,
@@ -778,6 +853,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             retry_policy=retry_policy,
             is_sub_orch=True,
             instance_id=instance_id,
+            version=orchestrator_version
         )
         return self._pending_tasks.get(id, task.CompletableTask())
 
@@ -792,6 +868,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             is_sub_orch: bool = False,
             instance_id: Optional[str] = None,
             fn_task: Optional[task.CompletableTask[TOutput]] = None,
+            version: Optional[str] = None,
     ):
         if id is None:
             id = self.next_sequence_number()
@@ -816,7 +893,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             if not isinstance(activity_function, str):
                 raise ValueError("Orchestrator function name must be a string")
             action = ph.new_create_sub_orchestration_action(
-                id, activity_function, instance_id, encoded_input
+                id, activity_function, instance_id, encoded_input, version
             )
         self._pending_actions[id] = action
 
@@ -892,7 +969,8 @@ class _OrchestrationExecutor:
                 "The new history event list must have at least one event in it."
             )
 
-        ctx = _RuntimeOrchestrationContext(instance_id)
+        ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
+        version_failure = None
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
@@ -901,6 +979,23 @@ class _OrchestrationExecutor:
             ctx._is_replaying = True
             for old_event in old_events:
                 self.process_event(ctx, old_event)
+
+            # Process versioning if applicable
+            execution_started_events = [e.executionStarted for e in old_events if e.HasField("executionStarted")]
+            # We only check versioning if there are executionStarted events - otherwise, on the first replay when
+            # ctx.version will be Null, we may invalidate orchestrations early depending on the versioning strategy.
+            if self._registry.versioning and len(execution_started_events) > 0:
+                version_failure = self.evaluate_orchestration_versioning(
+                    self._registry.versioning,
+                    ctx.version
+                )
+                if version_failure:
+                    self._logger.warning(
+                        f"Orchestration version did not meet worker versioning requirements. "
+                        f"Error action = '{self._registry.versioning.failure_strategy}'. "
+                        f"Version error = '{version_failure}'"
+                    )
+                    raise pe.VersionFailureException
 
             # Get new actions by executing newly received events into the orchestrator function
             if self._logger.level <= logging.DEBUG:
@@ -911,6 +1006,15 @@ class _OrchestrationExecutor:
             ctx._is_replaying = False
             for new_event in new_events:
                 self.process_event(ctx, new_event)
+
+        except pe.VersionFailureException as ex:
+            if self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
+                if version_failure:
+                    ctx.set_failed(version_failure)
+                else:
+                    ctx.set_failed(ex)
+            elif self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.REJECT:
+                raise pe.AbandonOrchestrationError
 
         except Exception as ex:
             # Unhandled exceptions fail the orchestration
@@ -960,6 +1064,9 @@ class _OrchestrationExecutor:
                     raise OrchestratorNotRegisteredError(
                         f"A '{event.executionStarted.name}' orchestrator was not registered."
                     )
+
+                if event.executionStarted.version:
+                    ctx._version = event.executionStarted.version.value
 
                 # deserialize the input, if any
                 input = None
@@ -1222,6 +1329,48 @@ class _OrchestrationExecutor:
         except StopIteration as generatorStopped:
             # The orchestrator generator function completed
             ctx.set_complete(generatorStopped.value, pb.ORCHESTRATION_STATUS_COMPLETED)
+
+    def evaluate_orchestration_versioning(self, versioning: Optional[VersioningOptions], orchestration_version: Optional[str]) -> Optional[pb.TaskFailureDetails]:
+        if versioning is None:
+            return None
+        version_comparison = self.compare_versions(orchestration_version, versioning.version)
+        if versioning.match_strategy == VersionMatchStrategy.NONE:
+            return None
+        elif versioning.match_strategy == VersionMatchStrategy.STRICT:
+            if version_comparison != 0:
+                return pb.TaskFailureDetails(
+                    errorType="VersionMismatch",
+                    errorMessage=f"The orchestration version '{orchestration_version}' does not match the worker version '{versioning.version}'.",
+                    isNonRetriable=True,
+                )
+        elif versioning.match_strategy == VersionMatchStrategy.CURRENT_OR_OLDER:
+            if version_comparison > 0:
+                return pb.TaskFailureDetails(
+                    errorType="VersionMismatch",
+                    errorMessage=f"The orchestration version '{orchestration_version}' is greater than the worker version '{versioning.version}'.",
+                    isNonRetriable=True,
+                )
+        else:
+            # If there is a type of versioning we don't understand, it is better to treat it as a versioning failure.
+            return pb.TaskFailureDetails(
+                errorType="VersionMismatch",
+                errorMessage=f"The version match strategy '{versioning.match_strategy}' is unknown.",
+                isNonRetriable=True,
+            )
+
+    def compare_versions(self, source_version: Optional[str], default_version: Optional[str]) -> int:
+        if not source_version and not default_version:
+            return 0
+        if not source_version:
+            return -1
+        if not default_version:
+            return 1
+        try:
+            source_version_parsed = parse(source_version)
+            default_version_parsed = parse(default_version)
+            return (source_version_parsed > default_version_parsed) - (source_version_parsed < default_version_parsed)
+        except InvalidVersion:
+            return (source_version > default_version) - (source_version < default_version)
 
 
 class _ActivityExecutor:

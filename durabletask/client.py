@@ -98,7 +98,8 @@ class TaskHubGrpcClient:
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None):
+                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+                 default_version: Optional[str] = None):
 
         # If the caller provided metadata, we need to create a new interceptor for it and
         # add it to the list of interceptors.
@@ -118,13 +119,15 @@ class TaskHubGrpcClient:
         )
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
+        self.default_version = default_version
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Optional[TInput] = None,
                                    instance_id: Optional[str] = None,
                                    start_at: Optional[datetime] = None,
                                    reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None,
-                                   tags: Optional[dict[str, str]] = None) -> str:
+                                   tags: Optional[dict[str, str]] = None,
+                                   version: Optional[str] = None) -> str:
 
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
 
@@ -133,9 +136,9 @@ class TaskHubGrpcClient:
             instanceId=instance_id if instance_id else uuid.uuid4().hex,
             input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input is not None else None,
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
-            version=wrappers_pb2.StringValue(value=""),
+            version=helpers.get_string_value(version if version else self.default_version),
             orchestrationIdReusePolicy=reuse_id_policy,
-            tags=tags,
+            tags=tags
         )
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")

@@ -30,5 +30,6 @@
         "jacoco.xml",
         "coverage.cobertura.xml"
     ],
-    "makefile.configureOnOpen": false
+    "makefile.configureOnOpen": false,
+    "debugpy.debugJustMyCode": false
 }

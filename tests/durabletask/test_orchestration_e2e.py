@@ -11,7 +11,8 @@ import pytest
 from durabletask import client, task, worker
 
 # NOTE: These tests assume a sidecar process is running. Example command:
-#       docker run --name durabletask-sidecar -p 4001:4001 --env 'DURABLETASK_SIDECAR_LOGLEVEL=Debug' --rm cgillum/durabletask-sidecar:latest start --backend Emulator
+#       go install github.com/microsoft/durabletask-go@main
+#       durabletask-go --port 4001
 pytestmark = pytest.mark.e2e
 
 
