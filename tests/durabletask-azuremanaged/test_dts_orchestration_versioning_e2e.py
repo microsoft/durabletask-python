@@ -23,6 +23,10 @@ def plus_one(_: task.ActivityContext, input: int) -> int:
     return input + 1
 
 
+def plus_two(_: task.ActivityContext, input: int) -> int:
+    return input + 2
+
+
 def single_activity(ctx: task.OrchestrationContext, start_val: int):
     yield ctx.call_activity(plus_one, input=start_val)
     return "Success"
@@ -154,6 +158,35 @@ def test_upper_version_worker_succeeds():
 
 def test_upper_version_worker_strict_fails():
     # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(single_activity)
+        w.add_activity(plus_one)
+        w.use_versioning(worker.VersioningOptions(
+            version="1.1.0",
+            default_version="1.1.0",
+            match_strategy=worker.VersionMatchStrategy.STRICT,
+            failure_strategy=worker.VersionFailureStrategy.FAIL
+        ))
+        w.start()
+
+        task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                     taskhub=taskhub_name, token_credential=None,
+                                                     default_version="1.1.0")
+        id = task_hub_client.schedule_new_orchestration(single_activity, input=1, version="1.0.0")
+        state = task_hub_client.wait_for_orchestration_completion(
+            id, timeout=30)
+
+    assert state is not None
+    assert state.name == task.get_name(single_activity)
+    assert state.instance_id == id
+    assert state.runtime_status == client.OrchestrationStatus.FAILED
+    assert state.failure_details is not None
+    assert state.failure_details.message.find("The orchestration version '1.0.0' does not match the worker version '1.1.0'.") >= 0
+
+
+def test_reject_abandons_and_reprocess():
+    # Start a worker, which will connect to the sidecar in a background thread
     instance_id: str = ''
     thrown = False
     try:
@@ -206,16 +239,27 @@ def test_upper_version_worker_strict_fails():
     assert state.failure_details is None
 
 
-def test_reject_abandons_and_reprocess():
+def multiversion_sequence(ctx: task.OrchestrationContext, start_val: int):
+    if ctx.version == "1.0.0":
+        result = yield ctx.call_activity(plus_one, input=start_val)
+    elif ctx.version == "1.1.0":
+        result = yield ctx.call_activity(plus_two, input=start_val)
+    else:
+        raise ValueError(f"Unsupported version: {ctx.version}")
+    return result
+
+
+def test_multiversion_orchestration_succeeds():
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
-        w.add_orchestrator(single_activity)
+        w.add_orchestrator(multiversion_sequence)
         w.add_activity(plus_one)
+        w.add_activity(plus_two)
         w.use_versioning(worker.VersioningOptions(
             version="1.1.0",
             default_version="1.1.0",
-            match_strategy=worker.VersionMatchStrategy.STRICT,
+            match_strategy=worker.VersionMatchStrategy.CURRENT_OR_OLDER,
             failure_strategy=worker.VersionFailureStrategy.FAIL
         ))
         w.start()
@@ -223,19 +267,30 @@ def test_reject_abandons_and_reprocess():
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                                      taskhub=taskhub_name, token_credential=None,
                                                      default_version="1.1.0")
-        id = task_hub_client.schedule_new_orchestration(single_activity, input=1, version="1.0.0")
-        state = task_hub_client.wait_for_orchestration_completion(
-            id, timeout=30)
+        id = task_hub_client.schedule_new_orchestration(multiversion_sequence, input=1, version="1.0.0")
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+        id_2 = task_hub_client.schedule_new_orchestration(multiversion_sequence, input=1, version="1.1.0")
+        state_2 = task_hub_client.wait_for_orchestration_completion(id_2, timeout=30)
+
+    print(state.failure_details.message if state and state.failure_details else "State is None")
+    print(state_2.failure_details.message if state_2 and state_2.failure_details else "State is None")
 
     assert state is not None
-    assert state.name == task.get_name(single_activity)
+    assert state.name == task.get_name(multiversion_sequence)
     assert state.instance_id == id
-    assert state.runtime_status == client.OrchestrationStatus.FAILED
-    assert state.failure_details is not None
-    assert state.failure_details.message.find("The orchestration version '1.0.0' does not match the worker version '1.1.0'.") >= 0
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    assert state.serialized_input == json.dumps(1)
+    assert state.serialized_output == json.dumps(2)
 
-
-# Sub-orchestration tests
+    assert state_2 is not None
+    assert state_2.name == task.get_name(multiversion_sequence)
+    assert state_2.instance_id == id_2
+    assert state_2.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state_2.failure_details is None
+    assert state_2.serialized_input == json.dumps(1)
+    assert state_2.serialized_output == json.dumps(3)
 
 
 def sequence_suborchestator(ctx: task.OrchestrationContext, start_val: int):

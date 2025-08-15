@@ -37,6 +37,21 @@ class OrchestrationContext(ABC):
 
     @property
     @abstractmethod
+    def version(self) -> Optional[str]:
+        """Get the version of the orchestration instance.
+
+        This version is set when the orchestration is scheduled and can be used
+        to determine which version of the orchestrator function is being executed.
+
+        Returns
+        -------
+        Optional[str]
+            The version of the orchestration instance, or None if not set.
+        """
+        pass
+
+    @property
+    @abstractmethod
     def current_utc_datetime(self) -> datetime:
         """Get the current date/time as UTC.
 

@@ -651,6 +651,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._registry = registry
+        self._version: Optional[str] = None
         self._completion_status: Optional[pb.OrchestrationStatus] = None
         self._received_events: dict[str, list[Any]] = {}
         self._pending_events: dict[str, list[task.CompletableTask]] = {}
@@ -775,6 +776,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     @property
     def instance_id(self) -> str:
         return self._instance_id
+
+    @property
+    def version(self) -> Optional[str]:
+        return self._version
 
     @property
     def current_utc_datetime(self) -> datetime:
@@ -977,11 +982,12 @@ class _OrchestrationExecutor:
 
             # Process versioning if applicable
             execution_started_events = [e.executionStarted for e in old_events if e.HasField("executionStarted")]
+            # We only check versioning if there are executionStarted events - otherwise, on the first replay when
+            # ctx.version will be Null, we may invalidate orchestrations early depending on the versioning strategy.
             if self._registry.versioning and len(execution_started_events) > 0:
-                execution_started_event = execution_started_events[-1]
                 version_failure = self.evaluate_orchestration_versioning(
                     self._registry.versioning,
-                    execution_started_event.version.value if execution_started_event.version else None,
+                    ctx.version
                 )
                 if version_failure:
                     self._logger.warning(
@@ -1058,6 +1064,9 @@ class _OrchestrationExecutor:
                     raise OrchestratorNotRegisteredError(
                         f"A '{event.executionStarted.name}' orchestrator was not registered."
                     )
+
+                if event.executionStarted.version:
+                    ctx._version = event.executionStarted.version.value
 
                 # deserialize the input, if any
                 input = None
