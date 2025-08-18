@@ -1,10 +1,15 @@
 """End-to-end sample that demonstrates how to configure an orchestrator
 that a dynamic number activity functions in parallel, waits for them all
 to complete, and prints an aggregate summary of the outputs."""
+import os
 import random
 import time
 
-from durabletask import client, task, worker
+from azure.identity import DefaultAzureCredential
+
+from durabletask import client, task
+from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
 def get_work_items(ctx: task.ActivityContext, _) -> list[str]:
@@ -45,18 +50,32 @@ def orchestrator(ctx: task.OrchestrationContext, _):
     }
 
 
-# configure and start the worker
-with worker.TaskHubGrpcWorker() as w:
+# Use environment variables if provided, otherwise use default emulator values
+taskhub_name = os.getenv("TASKHUB", "default")
+endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
+
+print(f"Using taskhub: {taskhub_name}")
+print(f"Using endpoint: {endpoint}")
+
+# Set credential to None for emulator, or DefaultAzureCredential for Azure
+credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
+
+# configure and start the worker - use secure_channel=False for emulator
+secure_channel = endpoint != "http://localhost:8080"
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
+                                taskhub=taskhub_name, token_credential=credential) as w:
     w.add_orchestrator(orchestrator)
     w.add_activity(process_work_item)
     w.add_activity(get_work_items)
     w.start()
 
     # create a client, start an orchestration, and wait for it to finish
-    c = client.TaskHubGrpcClient()
+    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=secure_channel,
+                                   taskhub=taskhub_name, token_credential=credential)
     instance_id = c.schedule_new_orchestration(orchestrator)
     state = c.wait_for_orchestration_completion(instance_id, timeout=30)
     if state and state.runtime_status == client.OrchestrationStatus.COMPLETED:
         print(f'Orchestration completed! Result: {state.serialized_output}')
     elif state:
         print(f'Orchestration failed: {state.failure_details}')
+    exit()
