@@ -119,7 +119,7 @@ if __name__ == "__main__":
         # Configure and start the worker - use secure_channel=False for emulator
         secure_channel = endpoint != "http://localhost:8080"
         with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
-                                       taskhub=taskhub_name, token_credential=credential) as w:
+                                        taskhub=taskhub_name, token_credential=credential) as w:
             w.add_orchestrator(purchase_order_workflow)
             w.add_activity(send_approval_request)
             w.add_activity(place_order)
@@ -127,12 +127,12 @@ if __name__ == "__main__":
 
             # Construct the client and run the orchestrations
             c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=secure_channel,
-                                          taskhub=taskhub_name, token_credential=credential)
+                                           taskhub=taskhub_name, token_credential=credential)
 
             # Start a purchase order workflow using the user input
             order = Order(args.cost, "MyProduct", 1)
             instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
-            
+
             def prompt_for_approval():
                 input("Press [ENTER] to approve the order...\n")
                 approval_event = namedtuple("Approval", ["approver"])(args.approver)

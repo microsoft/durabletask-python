@@ -5,12 +5,14 @@ from azure.identity import DefaultAzureCredential
 from durabletask import task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
+
 def get_orders(ctx, _) -> list[str]:
     """Activity function that returns a list of work items"""
     # return a random number of work items
     count = random.randint(2, 10)
     print(f'generating {count} orders...')
     return [f'order {i}' for i in range(count)]
+
 
 def check_and_update_inventory(ctx, order: str) -> str:
     """Activity function that checks inventory for a given order"""
@@ -22,6 +24,7 @@ def check_and_update_inventory(ctx, order: str) -> str:
     # return a random boolean indicating if the item is in stock
     return random.choices([True, False], weights=[9, 1])
 
+
 def charge_payment(ctx, order: str) -> bool:
     """Activity function that charges payment for a given order"""
     print(f'charging payment for order: {order}')
@@ -31,6 +34,7 @@ def charge_payment(ctx, order: str) -> bool:
 
     # return a random boolean indicating if the payment was successful
     return random.choices([True, False], weights=[9, 1])
+
 
 def ship_order(ctx, order: str) -> bool:
     """Activity function that ships a given order"""
@@ -42,6 +46,7 @@ def ship_order(ctx, order: str) -> bool:
     # return a random boolean indicating if the shipping was successful
     return random.choices([True, False], weights=[9, 1])
 
+
 def notify_customer(ctx, order: str) -> bool:
     """Activity function that notifies the customer about the order status"""
     print(f'notifying customer about order: {order}')
@@ -52,11 +57,12 @@ def notify_customer(ctx, order: str) -> bool:
     # return a random boolean indicating if the notification was successful
     return random.choices([True, False], weights=[9, 1])
 
+
 def process_order(ctx, order: str) -> dict:
     """Sub-orchestration function that processes a given order by performing all steps"""
     print(f'processing order: {order}')
 
-     # Check inventory
+    # Check inventory
     inventory_checked = yield ctx.call_activity('check_and_update_inventory', input=order)
 
     if not inventory_checked:
@@ -83,6 +89,7 @@ def process_order(ctx, order: str) -> dict:
     # Return success status
     return {'order': order, 'status': 'completed'}
 
+
 def orchestrator(ctx, _):
     """Orchestrator function that calls the 'get_orders' and 'process_order'
     sub-orchestration functions in parallel, waits for them all to complete, and prints
@@ -103,6 +110,7 @@ def orchestrator(ctx, _):
         'details': results,
     }
 
+
 # Use environment variables if provided, otherwise use default emulator values
 taskhub_name = os.getenv("TASKHUB", "default")
 endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
@@ -116,7 +124,7 @@ credential = None if endpoint == "http://localhost:8080" else DefaultAzureCreden
 # Configure and start the worker
 with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                 taskhub=taskhub_name, token_credential=credential) as w:
-    
+
     w.add_orchestrator(orchestrator)
     w.add_orchestrator(process_order)
     w.add_activity(get_orders)

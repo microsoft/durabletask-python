@@ -6,8 +6,6 @@
 
 This repo contains a Python SDK for use with the [Azure Durable Task Scheduler](https://github.com/Azure/Durable-Task-Scheduler). With this SDK, you can define, schedule, and manage durable orchestrations using ordinary Python code.
 
-⚠️ This SDK is currently under active development and is evolving rapidly. While it's not yet ready for production use, we are excited about its potential and look forward to your feedback as we continue to improve it. ⚠️
-
 > Note that this SDK is **not** currently compatible with [Azure Durable Functions](https://learn.microsoft.com/azure/azure-functions/durable/durable-functions-overview). If you are looking for a Python SDK for Azure Durable Functions, please see [this repo](https://github.com/Azure/azure-functions-durable-python).
 
 # References
