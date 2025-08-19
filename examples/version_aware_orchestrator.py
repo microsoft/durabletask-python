@@ -2,7 +2,6 @@
 that a dynamic number activity functions in parallel, waits for them all
 to complete, and prints an aggregate summary of the outputs."""
 import os
-import random
 
 from azure.identity import DefaultAzureCredential
 
