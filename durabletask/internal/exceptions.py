@@ -1,4 +1,4 @@
-import orchestrator_service_pb2 as pb
+import durabletask.internal.orchestrator_service_pb2 as pb
 
 
 class VersionFailureException(Exception):
