@@ -980,23 +980,6 @@ class _OrchestrationExecutor:
             for old_event in old_events:
                 self.process_event(ctx, old_event)
 
-            # Process versioning if applicable
-            execution_started_events = [e.executionStarted for e in old_events if e.HasField("executionStarted")]
-            # We only check versioning if there are executionStarted events - otherwise, on the first replay when
-            # ctx.version will be Null, we may invalidate orchestrations early depending on the versioning strategy.
-            if self._registry.versioning and len(execution_started_events) > 0:
-                version_failure = self.evaluate_orchestration_versioning(
-                    self._registry.versioning,
-                    ctx.version
-                )
-                if version_failure:
-                    self._logger.warning(
-                        f"Orchestration version did not meet worker versioning requirements. "
-                        f"Error action = '{self._registry.versioning.failure_strategy}'. "
-                        f"Version error = '{version_failure}'"
-                    )
-                    raise pe.VersionFailureException
-
             # Get new actions by executing newly received events into the orchestrator function
             if self._logger.level <= logging.DEBUG:
                 summary = _get_new_event_summary(new_events)
@@ -1067,6 +1050,19 @@ class _OrchestrationExecutor:
 
                 if event.executionStarted.version:
                     ctx._version = event.executionStarted.version.value
+
+                if self._registry.versioning:
+                    version_failure = self.evaluate_orchestration_versioning(
+                        self._registry.versioning,
+                        ctx.version
+                    )
+                    if version_failure:
+                        self._logger.warning(
+                            f"Orchestration version did not meet worker versioning requirements. "
+                            f"Error action = '{self._registry.versioning.failure_strategy}'. "
+                            f"Version error = '{version_failure}'"
+                        )
+                        raise pe.VersionFailureException
 
                 # deserialize the input, if any
                 input = None
