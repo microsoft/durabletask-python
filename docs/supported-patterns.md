@@ -20,7 +20,7 @@ def sequence(ctx: task.OrchestrationContext, _):
     return [result1, result2, result3]
 ```
 
-You can find the full sample [here](../examples/activity_sequence.py).
+Link to the full [function chaining example](../examples/activity_sequence.py).
 
 ### Fan-out/fan-in
 
@@ -48,7 +48,7 @@ def orchestrator(ctx: task.OrchestrationContext, _):
     return {'work_items': work_items, 'results': results, 'total': sum(results)}
 ```
 
-You can find the full sample [here](../examples/fanout_fanin.py).
+Link to the full [fan-out sample](../examples/fanout_fanin.py).
 
 ### Human interaction and durable timers
 
@@ -79,4 +79,43 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
 
 As an aside, you'll also notice that the example orchestration above works with custom business objects. Support for custom business objects includes support for custom classes, custom data classes, and named tuples. Serialization and deserialization of these objects is handled automatically by the SDK.
 
-You can find the full sample [here](../examples/human_interaction.py).
+Link to the full [human interaction sample](../examples/human_interaction.py).
+
+### Version-aware orchestrator
+
+When utilizing orchestration versioning, it is possible for an orchestrator to remain backwards-compatible with orchestrations created using the previously defined version. For instance, consider an orchestration defined with the following signature:
+
+```python
+def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
+    """Dummy orchestrator function illustrating old logic"""
+    yield ctx.call_activity(activity_one)
+    yield ctx.call_activity(activity_two) 
+    return "Success"
+```
+
+Assume that any orchestrations created using this orchestrator were versioned 1.0.0. If the signature of this method needs to be updated to call activity_three between the calls to activity_one and activity_two, ordinarily this would break any running orchestrations at the time of deployment. However, the following orchestrator will be able to process both orchestraions versioned 1.0.0 and 2.0.0 after the change:
+
+```python
+def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
+    """Version-aware dummy orchestrator capable of processing both old and new orchestrations"""
+    yield ctx.call_activity(activity_one)
+    if ctx.version > '1.0.0':
+        yield ctx.call_activity(activity_three)
+    yield ctx.call_activity(activity_two) 
+```
+
+Alternatively, if the orchestrator changes completely, the following syntax might be preferred:
+
+```python
+def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
+    if ctx.version == '1.0.0':
+        yield ctx.call_activity(activity_one)
+        yield ctx.call_activity(activity_two)
+        return "Success
+    yield ctx.call_activity(activity_one)
+    yield ctx.call_activity(activity_three)
+    yield ctx.call_activity(activity_two) 
+    return "Success"        
+```
+
+Link to the full [version-aware orchestrator sample](../examples/version_aware_orchestrator.py)
