@@ -111,7 +111,7 @@ class VersioningOptions:
 
         Args:
             version: The version of orchestrations that the worker can work on.
-            default_version: The default version that will be used for starting new orchestrations.
+            default_version: The default version that will be used for starting new sub-orchestrations.
             match_strategy: The versioning strategy for the Durable Task worker.
             failure_strategy: The versioning failure strategy for the Durable Task worker.
         """
