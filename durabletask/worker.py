@@ -970,7 +970,6 @@ class _OrchestrationExecutor:
             )
 
         ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
-        version_failure = None
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
@@ -992,8 +991,8 @@ class _OrchestrationExecutor:
 
         except pe.VersionFailureException as ex:
             if self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
-                if version_failure:
-                    ctx.set_failed(version_failure)
+                if ex.error_details:
+                    ctx.set_failed(ex.error_details)
                 else:
                     ctx.set_failed(ex)
             elif self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.REJECT:
@@ -1062,7 +1061,7 @@ class _OrchestrationExecutor:
                             f"Error action = '{self._registry.versioning.failure_strategy}'. "
                             f"Version error = '{version_failure}'"
                         )
-                        raise pe.VersionFailureException
+                        raise pe.VersionFailureException(version_failure)
 
                 # deserialize the input, if any
                 input = None
