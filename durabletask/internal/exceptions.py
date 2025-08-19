@@ -1,7 +1,11 @@
+import durabletask.internal.orchestrator_service_pb2 as pb
+
+
 class VersionFailureException(Exception):
-    pass
+    def __init__(self, error_details: pb.TaskFailureDetails) -> None:
+        super().__init__()
+        self.error_details = error_details
 
 
 class AbandonOrchestrationError(Exception):
-    def __init__(self, *args: object) -> None:
-        super().__init__(*args)
+    pass

@@ -970,7 +970,6 @@ class _OrchestrationExecutor:
             )
 
         ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
-        version_failure = None
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
@@ -979,23 +978,6 @@ class _OrchestrationExecutor:
             ctx._is_replaying = True
             for old_event in old_events:
                 self.process_event(ctx, old_event)
-
-            # Process versioning if applicable
-            execution_started_events = [e.executionStarted for e in old_events if e.HasField("executionStarted")]
-            # We only check versioning if there are executionStarted events - otherwise, on the first replay when
-            # ctx.version will be Null, we may invalidate orchestrations early depending on the versioning strategy.
-            if self._registry.versioning and len(execution_started_events) > 0:
-                version_failure = self.evaluate_orchestration_versioning(
-                    self._registry.versioning,
-                    ctx.version
-                )
-                if version_failure:
-                    self._logger.warning(
-                        f"Orchestration version did not meet worker versioning requirements. "
-                        f"Error action = '{self._registry.versioning.failure_strategy}'. "
-                        f"Version error = '{version_failure}'"
-                    )
-                    raise pe.VersionFailureException
 
             # Get new actions by executing newly received events into the orchestrator function
             if self._logger.level <= logging.DEBUG:
@@ -1009,8 +991,8 @@ class _OrchestrationExecutor:
 
         except pe.VersionFailureException as ex:
             if self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
-                if version_failure:
-                    ctx.set_failed(version_failure)
+                if ex.error_details:
+                    ctx.set_failed(ex.error_details)
                 else:
                     ctx.set_failed(ex)
             elif self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.REJECT:
@@ -1067,6 +1049,19 @@ class _OrchestrationExecutor:
 
                 if event.executionStarted.version:
                     ctx._version = event.executionStarted.version.value
+
+                if self._registry.versioning:
+                    version_failure = self.evaluate_orchestration_versioning(
+                        self._registry.versioning,
+                        ctx.version
+                    )
+                    if version_failure:
+                        self._logger.warning(
+                            f"Orchestration version did not meet worker versioning requirements. "
+                            f"Error action = '{self._registry.versioning.failure_strategy}'. "
+                            f"Version error = '{version_failure}'"
+                        )
+                        raise pe.VersionFailureException(version_failure)
 
                 # deserialize the input, if any
                 input = None
