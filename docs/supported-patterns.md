@@ -20,7 +20,7 @@ def sequence(ctx: task.OrchestrationContext, _):
     return [result1, result2, result3]
 ```
 
-Link to the full [function chaining example](../examples/activity_sequence.py).
+See the full [function chaining example](../examples/activity_sequence.py).
 
 ### Fan-out/fan-in
 
@@ -48,7 +48,7 @@ def orchestrator(ctx: task.OrchestrationContext, _):
     return {'work_items': work_items, 'results': results, 'total': sum(results)}
 ```
 
-Link to the full [fan-out sample](../examples/fanout_fanin.py).
+See the full [fan-out sample](../examples/fanout_fanin.py).
 
 ### Human interaction and durable timers
 
@@ -79,7 +79,7 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
 
 As an aside, you'll also notice that the example orchestration above works with custom business objects. Support for custom business objects includes support for custom classes, custom data classes, and named tuples. Serialization and deserialization of these objects is handled automatically by the SDK.
 
-Link to the full [human interaction sample](../examples/human_interaction.py).
+See the full [human interaction sample](../examples/human_interaction.py).
 
 ### Version-aware orchestrator
 
@@ -118,4 +118,4 @@ def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
     return "Success"        
 ```
 
-Link to the full [version-aware orchestrator sample](../examples/version_aware_orchestrator.py)
+See the full [version-aware orchestrator sample](../examples/version_aware_orchestrator.py)
