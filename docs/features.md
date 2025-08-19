@@ -10,6 +10,32 @@ Orchestrators are implemented using ordinary Python functions that take an `Orch
 
 Orchestrations may be assigned a version when they are first created. If an orchestration is given a version, it will continually be checked during its lifecycle to ensure that it remains compatible with the underlying orchestrator code. If the orchestrator code is updated while an orchestration is running, rules can be set that will define the behavior - whether the orchestration should fail, abandon for reprocessing at a later time, or attempt to run anyway. For more information, see [The provided examples](./supported-patterns.md). For more information about versioning in the context of Durable Functions, see [Orchestration versioning in Durable Functions](https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-functions-orchestration-versioning) (Note that concepts specific to Azure Functions, such as host.json settings, do not apply to this SDK).
 
+##### Orchestration versioning options
+
+Both the Durable worker and durable client have versioning configuration available. Because versioning checks are handled by the worker, the only information the client needs is a default_version, taken in its constructor, to use as the version for new orchestrations unless otherwise specified. The worker takes a VersioningOptions object with a `default_version` for new sub-orchestrations, a `version` used by the worker for orchestration version comparisons, and two more options giving control over versioning behavior in case of match failures, a `VersionMatchStrategy` and `VersionFailureStrategy`.
+
+**VersionMatchStrategy**
+
+| VersionMatchStrategy.NONE | VersionMatchStrategy.STRICT | VersionMatchStrategy.CURRENT_OR_OLDER |
+|-|-|-|
+| Do not compare orchestration versions | Only allow orchestrations with the same version as the worker | Allow orchestrations with the same or older version as the worker |
+
+**VersionFailureStrategy**
+
+| VersionFailureStrategy.REJECT | VersionFailureStrategy.FAIL |
+|-|-|
+| Abandon execution of the orchestrator, but allow it to be reprocessed later | Fail the orchestration |
+
+**Strategy examples**
+
+Scenario 1: You are implementing versioning for the first time in your worker. You want to have a default version for new orchestrations, but do not care about comparing versions with currently running ones. Choose VersionMatchStrategy.NONE, and VersionFailureStrategy does not matter.
+
+Scenario 2: You are updating an orchestrator's code, and you do not want old orchestrations to continue to be processed on the new code. Bump the default version and the worker version, set VersionMatchStrategy.STRICT and VersionFailureStrategy.FAIL.
+
+Scenario 3: You are updating an orchestrator's code, and you have ensured the code is version-aware so that it remains backward-compatible with existing orchestrations. Bump the default version and the worker version, and set VersionMatchStrategy.CURRENT_OR_OLDER and VersionFailureStrategy.FAIL.
+
+Scenario 4: You are performing a high-availability deployment, and your orchestrator code contains breaking changes making it not backward-compatible. Bump the default version and the worker version, and set VersionFailureStrategy.REJECT and VersionMatchStrategy.STRICT. Ensure that at least a few of the previous version of workers remain available to continue processing the older orchestrations - eventually, all older orchestrations _should_ land on the correct workers for processing. Once all remaining old orchestrations have been processed, shut down the remaining old workers.
+
 ### Activities
 
 Activities are implemented using ordinary Python functions that take an `ActivityContext` as their first parameter. Activity functions are scheduled by orchestrations and have at-least-once execution guarantees, meaning that they will be executed at least once but may be executed multiple times in the event of a transient failure. Activity functions are where the real "work" of any orchestration is done.
