@@ -7,8 +7,11 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
+from typing import Any, Callable, Generator, Generic, Optional, Type, TypeVar, Union
 
+from durabletask.entities.entity_instance_id import EntityInstanceId
+from durabletask.internal.entity_lock_releaser import EntityLockReleaser
+from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
 
@@ -134,6 +137,55 @@ class OrchestrationContext(ABC):
         -------
         Task
             A Durable Task that completes when the called activity function completes or fails.
+        """
+        pass
+
+    @abstractmethod
+    def call_entity(self, entity: EntityInstanceId, *,
+                    input: Optional[TInput] = None):
+        """Schedule entity function for execution.
+
+        Parameters
+        ----------
+        entity: EntityInstanceId
+            The ID of the entity instance to call.
+        input: Optional[TInput]
+            The optional JSON-serializable input to pass to the entity function.
+
+        Returns
+        -------
+        Task
+            A Durable Task that completes when the called entity function completes or fails.
+        """
+        pass
+
+    @abstractmethod
+    def signal_entity(
+            self,
+            entity_id: EntityInstanceId
+    ) -> None:
+        """Signal an entity function for execution.
+
+        Parameters
+        ----------
+        entity_id: EntityInstanceId
+            The ID of the entity instance to signal.
+        """
+        pass
+
+    @abstractmethod
+    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLockReleaser:
+        """Lock the specified entity instances for the duration of the orchestration.
+
+        Parameters
+        ----------
+        entities: list[EntityInstanceId]
+            The list of entity instance IDs to lock.
+
+        Returns
+        -------
+        EntityLockReleaser
+            A context manager that releases the locks when disposed.
         """
         pass
 
@@ -452,11 +504,64 @@ class ActivityContext:
         return self._task_id
 
 
+class EntityContext:
+    def __init__(self, orchestration_id: str, operation: str, state: StateShim, entity_id: EntityInstanceId):
+        self._orchestration_id = orchestration_id
+        self._operation = operation
+        self._state = state
+        self._entity_id = entity_id
+
+    @property
+    def orchestration_id(self) -> str:
+        """Get the ID of the orchestration instance that scheduled this entity.
+
+        Returns
+        -------
+        str
+            The ID of the current orchestration instance.
+        """
+        return self._orchestration_id
+
+    @property
+    def operation(self) -> str:
+        """Get the operation associated with this entity invocation.
+
+        The operation is a string that identifies the specific action being
+        performed on the entity. It can be used to distinguish between
+        multiple operations that are part of the same entity invocation.
+
+        Returns
+        -------
+        str
+            The operation associated with this entity invocation.
+        """
+        return self._operation
+
+    def get_state(self, intended_type: Optional[Type] = None):
+        return self._state.get_state(intended_type)
+
+    def set_state(self, new_state):
+        self._state.set_state(new_state)
+
+    @property
+    def entity_id(self) -> EntityInstanceId:
+        """Get the ID of the entity instance.
+
+        Returns
+        -------
+        str
+            The ID of the current entity instance.
+        """
+        return self._entity_id
+
+
 # Orchestrators are generators that yield tasks and receive/return any type
 Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, Any, Any], TOutput]]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
+
+Entity = Callable[[EntityContext, TInput], TOutput]
 
 
 class RetryPolicy:

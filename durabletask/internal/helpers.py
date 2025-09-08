@@ -159,6 +159,12 @@ def get_string_value(val: Optional[str]) -> Optional[wrappers_pb2.StringValue]:
         return wrappers_pb2.StringValue(value=val)
 
 
+def get_string_value_or_empty(val: Optional[str]) -> wrappers_pb2.StringValue:
+    if val is None:
+        return wrappers_pb2.StringValue(value="")
+    return wrappers_pb2.StringValue(value=val)
+
+
 def new_complete_orchestration_action(
         id: int,
         status: pb.OrchestrationStatus,
@@ -187,6 +193,52 @@ def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
         input=get_string_value(encoded_input),
         tags=tags
     ))
+
+
+def new_call_entity_action(id: int, name: str, encoded_input: Optional[str]):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
+        requestId=None,
+        targetInstanceId=get_string_value(name),
+        input=get_string_value(encoded_input)
+    )))
+
+
+def new_signal_entity_action(id: int, name: str):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
+        requestId=None,
+        targetInstanceId=get_string_value(name)
+    )))
+
+
+def new_lock_entities_action(id: int, instance_id: str, critical_section_id: str, entity_ids: list[str]):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityLockRequested=pb.EntityLockRequestedEvent(
+        parentInstanceId=get_string_value(instance_id),
+        criticalSectionId=critical_section_id,
+        lockSet=entity_ids,
+        position=0
+    )))
+
+
+def convert_to_entity_batch_request(req: pb.EntityRequest) -> tuple[pb.EntityBatchRequest, list[pb.OperationInfo]]:
+    batch_request = pb.EntityBatchRequest(entityState=req.entityState, instanceId=req.instanceId, operations=[])
+
+    operation_infos: list[pb.OperationInfo] = []
+
+    for op in req.operationRequests:
+        if op.HasField("entityOperationSignaled"):
+            batch_request.operations.append(pb.OperationRequest(requestId=op.entityOperationSignaled.requestId,
+                                                                operation=op.entityOperationSignaled.operation,
+                                                                input=op.entityOperationSignaled.input))
+            operation_infos.append(pb.OperationInfo(requestId=op.entityOperationSignaled.requestId,
+                                                    responseDestination=None))
+        elif op.HasField("entityOperationCalled"):
+            batch_request.operations.append(pb.OperationRequest(requestId=op.entityOperationCalled.requestId,
+                                                                operation=op.entityOperationCalled.operation,
+                                                                input=op.entityOperationCalled.input))
+            operation_infos.append(pb.OperationInfo(requestId=op.entityOperationCalled.requestId,
+                                                    responseDestination=None))
+
+    return batch_request, operation_infos
 
 
 def new_timestamp(dt: datetime) -> timestamp_pb2.Timestamp:

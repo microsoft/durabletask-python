@@ -4,13 +4,14 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, Sequence, TypeVar, Union
 
 import grpc
 from google.protobuf import wrappers_pb2
 
+from durabletask.entities.entity_instance_id import EntityInstanceId
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
@@ -227,3 +228,16 @@ class TaskHubGrpcClient:
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
         self._stub.PurgeInstances(req)
+
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation_name: str, input: Optional[Any] = None, signal_entity_options=None, cancellation=None):
+        scheduled_time = signal_entity_options.scheduled_time if signal_entity_options and signal_entity_options.scheduled_time else None
+        req = pb.SignalEntityRequest(
+            instanceId=str(entity_instance_id),
+            requestId=str(uuid.uuid4()),
+            name=operation_name,
+            input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input else None,
+            scheduledTime=scheduled_time,
+            requestTime=helpers.new_timestamp(datetime.now(timezone.utc))
+        )
+        self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
+        self._stub.SignalEntity(req, timeout=cancellation.timeout if cancellation else None)

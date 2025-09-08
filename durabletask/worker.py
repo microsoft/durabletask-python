@@ -3,20 +3,28 @@
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, Optional, Sequence, TypeVar, Union
+from typing import Any, Generator, List, Optional, Sequence, TypeVar, Union
+import uuid
 from packaging.version import InvalidVersion, parse
 
 import grpc
 from google.protobuf import empty_pb2
 
+from durabletask.internal import helpers
+from durabletask.internal.entity_state_shim import StateShim
+from durabletask.internal.helpers import new_timestamp
+from durabletask.entities.entity_instance_id import EntityInstanceId
+from durabletask.internal.entity_lock_releaser import EntityLockReleaser
+from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
 import durabletask.internal.helpers as ph
 import durabletask.internal.exceptions as pe
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -124,11 +132,13 @@ class VersioningOptions:
 class _Registry:
     orchestrators: dict[str, task.Orchestrator]
     activities: dict[str, task.Activity]
+    entities: dict[str, task.Entity]
     versioning: Optional[VersioningOptions] = None
 
     def __init__(self):
         self.orchestrators = {}
         self.activities = {}
+        self.entities = {}
 
     def add_orchestrator(self, fn: task.Orchestrator) -> str:
         if fn is None:
@@ -168,6 +178,25 @@ class _Registry:
     def get_activity(self, name: str) -> Optional[task.Activity]:
         return self.activities.get(name)
 
+    def add_entity(self, fn: task.Entity) -> str:
+        if fn is None:
+            raise ValueError("An entity function argument is required.")
+
+        name = task.get_name(fn)
+        self.add_named_entity(name, fn)
+        return name
+
+    def add_named_entity(self, name: str, fn: task.Entity) -> None:
+        if not name:
+            raise ValueError("A non-empty entity name is required.")
+        if name in self.entities:
+            raise ValueError(f"A '{name}' entity already exists.")
+
+        self.entities[name] = fn
+
+    def get_entity(self, name: str) -> Optional[task.Entity]:
+        return self.entities.get(name)
+
 
 class OrchestratorNotRegisteredError(ValueError):
     """Raised when attempting to start an orchestration that is not registered"""
@@ -177,6 +206,12 @@ class OrchestratorNotRegisteredError(ValueError):
 
 class ActivityNotRegisteredError(ValueError):
     """Raised when attempting to call an activity that is not registered"""
+
+    pass
+
+
+class EntityNotRegisteredError(ValueError):
+    """Raised when attempting to call an entity that is not registered"""
 
     pass
 
@@ -328,6 +363,14 @@ class TaskHubGrpcWorker:
                 "Activities cannot be added while the worker is running."
             )
         return self._registry.add_activity(fn)
+
+    def add_entity(self, fn: task.Entity) -> str:
+        """Registers an entity function with the worker."""
+        if self._is_running:
+            raise RuntimeError(
+                "Entities cannot be added while the worker is running."
+            )
+        return self._registry.add_entity(fn)
 
     def use_versioning(self, version: VersioningOptions) -> None:
         """Initializes versioning options for sub-orchestrators and activities."""
@@ -490,6 +533,20 @@ class TaskHubGrpcWorker:
                                 stub,
                                 work_item.completionToken,
                             )
+                        elif work_item.HasField("entityRequest"):
+                            self._async_worker_manager.submit_activity(
+                                self._execute_entity_batch,
+                                work_item.entityRequest,
+                                stub,
+                                work_item.completionToken,
+                            )
+                        elif work_item.HasField("entityRequestV2"):
+                            self._async_worker_manager.submit_activity(
+                                self._execute_entity_batch,
+                                work_item.entityRequestV2,
+                                stub,
+                                work_item.completionToken
+                            )
                         elif work_item.HasField("healthPing"):
                             pass
                         else:
@@ -635,12 +692,80 @@ class TaskHubGrpcWorker:
                 f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
             )
 
+    def _execute_entity_batch(
+            self,
+            req: Union[pb.EntityBatchRequest, pb.EntityRequest],
+            stub: stubs.TaskHubSidecarServiceStub,
+            completionToken,
+    ):
+        if isinstance(req, pb.EntityRequest):
+            req, operation_infos = helpers.convert_to_entity_batch_request(req)
+
+        entity_state = StateShim(shared.from_json(req.entityState.value) if req.entityState.value else None)
+
+        instance_id = req.instanceId
+
+        results: list[pb.OperationResult] = []
+        for operation in req.operations:
+            start_time = datetime.now(timezone.utc)
+            executor = _EntityExecutor(self._registry, self._logger)
+            entity_instance_id = EntityInstanceId.parse(instance_id)
+            if not entity_instance_id:
+                raise RuntimeError(f"Invalid entity instance ID '{operation.requestId}' in entity operation request.")
+
+            operation_result = None
+
+            try:
+                entity_result = executor.execute(
+                    instance_id, entity_instance_id, operation.operation, entity_state, operation.input.value
+                )
+
+                entity_result = ph.get_string_value_or_empty(entity_result)
+                operation_result = pb.OperationResult(success=pb.OperationResultSuccess(
+                    result=entity_result,
+                    startTimeUtc=new_timestamp(start_time),
+                    endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                ))
+                results.append(operation_result)
+
+                entity_state.commit()
+            except Exception as ex:
+                self._logger.exception(ex)
+                operation_result = pb.OperationResult(failure=pb.OperationResultFailure(
+                    failureDetails=ph.new_failure_details(ex),
+                    startTimeUtc=new_timestamp(start_time),
+                    endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                ))
+                results.append(operation_result)
+
+                entity_state.rollback()
+
+            try:
+                stub.CompleteEntityTask(operation_result)
+            except Exception as ex:
+                self._logger.exception(
+                    f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+                )
+
+        batch_result = pb.EntityBatchResult(
+            results=results,
+            actions=None,  # TODO: Context should also provide actions like signaling another entity or starting sub-orchestrations
+            entityState=helpers.get_string_value(shared.to_json(entity_state._current_state)) if entity_state._current_state else None,
+            failureDetails=None,
+            operationInfos=operation_infos,
+            completionToken=completionToken,
+        )
+
+        # TODO: Reset context
+
+        return batch_result
+
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
 
-    def __init__(self, instance_id: str, registry: _Registry):
+    def __init__(self, instance_id: str, registry: _Registry, entity_context: OrchestrationEntityContext):
         self._generator = None
         self._is_replaying = True
         self._is_complete = False
@@ -651,6 +776,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._registry = registry
+        self._entity_context = entity_context
         self._version: Optional[str] = None
         self._completion_status: Optional[pb.OrchestrationStatus] = None
         self._received_events: dict[str, list[Any]] = {}
@@ -833,6 +959,41 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         )
         return self._pending_tasks.get(id, task.CompletableTask())
 
+    def call_entity(
+            self,
+            entity_id: EntityInstanceId,
+            *,
+            input: Optional[TInput] = None,
+    ) -> task.Task:
+        id = self.next_sequence_number()
+
+        self.call_entity_function_helper(
+            id, entity_id, input=input
+        )
+
+        return self._pending_tasks.get(id, task.CompletableTask())
+
+    def signal_entity(
+            self,
+            entity_id: EntityInstanceId
+    ) -> None:
+        id = self.next_sequence_number()
+
+        self.signal_entity_function_helper(
+            id, entity_id
+        )
+
+    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLockReleaser:
+        id = self.next_sequence_number()
+
+        self.lock_entities_function_helper(
+            id, entities
+        )
+
+        # Todo: EntityLockReleaser should be a disposable that uses python's using statement
+        # and should release the locks when disposed
+        return EntityLockReleaser(entities)
+
     def call_sub_orchestrator(
             self,
             orchestrator: task.Orchestrator[TInput, TOutput],
@@ -909,6 +1070,70 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 )
         self._pending_tasks[id] = fn_task
 
+    def call_entity_function_helper(
+            self,
+            id: Optional[int],
+            entity_id: EntityInstanceId,
+            *,
+            input: Optional[TInput] = None
+    ):
+        if id is None:
+            id = self.next_sequence_number()
+
+        transition_valid, error_message = self._entity_context.validate_operation_transition(entity_id, False)
+        if not transition_valid:
+            raise RuntimeError(error_message)
+
+        encoded_input = shared.to_json(input) if input is not None else None
+        action = ph.new_call_entity_action(id, str(entity_id), encoded_input)
+        self._pending_actions[id] = action
+
+        fn_task = task.CompletableTask()
+        self._pending_tasks[id] = fn_task
+
+    def signal_entity_function_helper(
+            self,
+            id: Optional[int],
+            entity_id: EntityInstanceId
+    ) -> None:
+        if id is None:
+            id = self.next_sequence_number()
+
+        transition_valid, error_message = self._entity_context.validate_operation_transition(entity_id, True)
+
+        if not transition_valid:
+            raise RuntimeError(error_message)
+
+        action = ph.new_signal_entity_action(id, str(entity_id))
+        self._pending_actions[id] = action
+
+    def lock_entities_function_helper(
+            self,
+            id: Optional[int],
+            entity_ids: List[EntityInstanceId]
+    ):
+        if id is None:
+            id = self.next_sequence_number()
+
+        transition_valid, error_message = self._entity_context.validate_acquire_transition()
+        if not transition_valid:
+            raise RuntimeError(error_message)
+
+        # Acquire the locks in a globally fixed order to avoid deadlocks
+        # Also remove duplicates - this can be optimized for perf if necessary
+        entity_ids = sorted(entity_ids)
+        entity_ids_dedup = []
+        for i, entity_id in enumerate(entity_ids):
+            if entity_id != entity_ids[i - 1] if i > 0 else None:
+                entity_ids_dedup.append(entity_id)
+
+        # Use a deterministically replayable unique ID for this lock request
+        # TODO: Implement deterministically replayable IDs
+        critical_section_id = str(uuid.uuid4())
+
+        action = ph.new_lock_entities_action(id, self.instance_id, critical_section_id, [str(eid) for eid in entity_ids_dedup])
+        self._pending_actions[id] = action
+
     def wait_for_external_event(self, name: str) -> task.Task:
         # Check to see if this event has already been received, in which case we
         # can return it immediately. Otherwise, record out intent to receive an
@@ -957,6 +1182,7 @@ class _OrchestrationExecutor:
         self._logger = logger
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
+        self._entity_state: Optional[OrchestrationEntityContext] = None
 
     def execute(
             self,
@@ -964,12 +1190,14 @@ class _OrchestrationExecutor:
             old_events: Sequence[pb.HistoryEvent],
             new_events: Sequence[pb.HistoryEvent],
     ) -> ExecutionResults:
+        self._entity_state = OrchestrationEntityContext(instance_id)
+
         if not new_events:
             raise task.OrchestrationStateError(
                 "The new history event list must have at least one event in it."
             )
 
-        ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
+        ctx = _RuntimeOrchestrationContext(instance_id, self._registry, self._entity_state)
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
@@ -1316,6 +1544,57 @@ class _OrchestrationExecutor:
                     pb.ORCHESTRATION_STATUS_TERMINATED,
                     is_result_encoded=True,
                 )
+            elif event.HasField("entityOperationCalled"):
+                entity_call_id = event.eventId
+                action = ctx._pending_actions.pop(entity_call_id, None)
+                entity_task = ctx._pending_tasks.get(entity_call_id, None)
+                if not action:
+                    raise _get_non_determinism_error(
+                        entity_call_id, task.get_name(ctx.call_entity)
+                    )
+                elif not action.HasField("callEntity"):
+                    expected_method_name = task.get_name(ctx.call_entity)
+                    raise _get_wrong_action_type_error(
+                        entity_call_id, expected_method_name, action
+                    )
+                # TODO: Validate entity ID
+            elif event.HasField("entityOperationSignaled"):
+                entity_signal_id = event.eventId
+                action = ctx._pending_actions.pop(entity_signal_id, None)
+                if not action:
+                    raise _get_non_determinism_error(
+                        entity_signal_id, task.get_name(ctx.signal_entity)
+                    )
+                elif not action.HasField("signalEntity"):
+                    expected_method_name = task.get_name(ctx.signal_entity)
+                    raise _get_wrong_action_type_error(
+                        entity_signal_id, expected_method_name, action
+                    )
+            elif event.HasField("entityLockRequested"):
+                if not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Entity lock requested.")
+                    self._logger.info(f"Data: {json.dumps(event.entityLockRequested)}")
+                pass
+            elif event.HasField("entityUnlockSent"):
+                if not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Entity unlock sent.")
+                    self._logger.info(f"Data: {json.dumps(event.entityUnlockSent)}")
+                pass
+            elif event.HasField("entityLockGranted"):
+                if not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Entity lock granted.")
+                    self._logger.info(f"Data: {json.dumps(event.entityLockGranted)}")
+                pass
+            elif event.HasField("entityOperationCompleted"):
+                if not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Entity operation completed.")
+                    self._logger.info(f"Data: {json.dumps(event.entityOperationCompleted)}")
+                pass
+            elif event.HasField("entityOperationFailed"):
+                if not ctx.is_replaying:
+                    self._logger.info(f"{ctx.instance_id}: Entity operation failed.")
+                    self._logger.info(f"Data: {json.dumps(event.entityOperationFailed)}")
+                pass
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(
@@ -1402,6 +1681,45 @@ class _ActivityExecutor:
         chars = len(encoded_output) if encoded_output else 0
         self._logger.debug(
             f"{orchestration_id}/{task_id}: Activity '{name}' completed successfully with {chars} char(s) of encoded output."
+        )
+        return encoded_output
+
+
+class _EntityExecutor:
+    def __init__(self, registry: _Registry, logger: logging.Logger):
+        self._registry = registry
+        self._logger = logger
+
+    def execute(
+            self,
+            orchestration_id: str,
+            entity_id: EntityInstanceId,
+            operation: str,
+            state: StateShim,
+            encoded_input: Optional[str],
+    ) -> Optional[str]:
+        """Executes an entity function and returns the serialized result, if any."""
+        self._logger.debug(
+            f"{orchestration_id}: Executing entity '{entity_id}'..."
+        )
+        fn = self._registry.get_entity(entity_id.entity)
+        if not fn:
+            raise EntityNotRegisteredError(
+                f"Entity function named '{entity_id.entity}' was not registered!"
+            )
+
+        entity_input = shared.from_json(encoded_input) if encoded_input else None
+        ctx = task.EntityContext(orchestration_id, operation, state, entity_id)
+
+        # Execute the entity function
+        entity_output = fn(ctx, entity_input)
+
+        encoded_output = (
+            shared.to_json(entity_output) if entity_output is not None else None
+        )
+        chars = len(encoded_output) if encoded_output else 0
+        self._logger.debug(
+            f"{orchestration_id}: Entity '{entity_id}' completed successfully with {chars} char(s) of encoded output."
         )
         return encoded_output
 
