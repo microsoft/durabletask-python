@@ -7,6 +7,7 @@ from typing import Optional
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
+from durabletask.entities.entity_instance_id import EntityInstanceId
 import durabletask.internal.orchestrator_service_pb2 as pb
 
 # TODO: The new_xxx_event methods are only used by test code and should be moved elsewhere
@@ -195,26 +196,30 @@ def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
     ))
 
 
-def new_call_entity_action(id: int, name: str, encoded_input: Optional[str]):
+def new_call_entity_action(id: int, parent_instance_id: str, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
-        requestId=None,
-        targetInstanceId=get_string_value(name),
+        requestId=f"{parent_instance_id}:{id}",
+        parentInstanceId=get_string_value(parent_instance_id),
+        targetInstanceId=get_string_value(str(entity_id)),
+        input=get_string_value(encoded_input),
+        operation=operation
+    )))
+
+
+def new_signal_entity_action(id: int, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
+        requestId=f"{entity_id}:{id}",
+        targetInstanceId=get_string_value(str(entity_id)),
+        operation=operation,
         input=get_string_value(encoded_input)
     )))
 
 
-def new_signal_entity_action(id: int, name: str):
-    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
-        requestId=None,
-        targetInstanceId=get_string_value(name)
-    )))
-
-
-def new_lock_entities_action(id: int, instance_id: str, critical_section_id: str, entity_ids: list[str]):
+def new_lock_entities_action(id: int, parent_instance_id: str, critical_section_id: str, entity_ids: list[EntityInstanceId]):
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityLockRequested=pb.EntityLockRequestedEvent(
-        parentInstanceId=get_string_value(instance_id),
+        parentInstanceId=get_string_value(parent_instance_id),
         criticalSectionId=critical_section_id,
-        lockSet=entity_ids,
+        lockSet=[str(eid) for eid in entity_ids],
         position=0
     )))
 
@@ -236,7 +241,10 @@ def convert_to_entity_batch_request(req: pb.EntityRequest) -> tuple[pb.EntityBat
                                                                 operation=op.entityOperationCalled.operation,
                                                                 input=op.entityOperationCalled.input))
             operation_infos.append(pb.OperationInfo(requestId=op.entityOperationCalled.requestId,
-                                                    responseDestination=None))
+                                                    responseDestination=pb.OrchestrationInstance(
+                                                        instanceId=op.entityOperationCalled.parentInstanceId.value,
+                                                        executionId=op.entityOperationCalled.parentExecutionId
+                                                    )))
 
     return batch_request, operation_infos
 

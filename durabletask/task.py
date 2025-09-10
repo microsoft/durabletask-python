@@ -141,7 +141,8 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_entity(self, entity: EntityInstanceId, *,
+    def call_entity(self, entity: EntityInstanceId, 
+                    operation: str, *,
                     input: Optional[TInput] = None):
         """Schedule entity function for execution.
 
@@ -149,6 +150,8 @@ class OrchestrationContext(ABC):
         ----------
         entity: EntityInstanceId
             The ID of the entity instance to call.
+        operation: str
+            The name of the operation to invoke on the entity.
         input: Optional[TInput]
             The optional JSON-serializable input to pass to the entity function.
 
@@ -162,7 +165,9 @@ class OrchestrationContext(ABC):
     @abstractmethod
     def signal_entity(
             self,
-            entity_id: EntityInstanceId
+            entity_id: EntityInstanceId,
+            operation_name: str,
+            input: Optional[TInput] = None
     ) -> None:
         """Signal an entity function for execution.
 
@@ -170,6 +175,10 @@ class OrchestrationContext(ABC):
         ----------
         entity_id: EntityInstanceId
             The ID of the entity instance to signal.
+        operation_name: str
+            The name of the operation to invoke on the entity.
+        input: Optional[TInput]
+            The optional JSON-serializable input to pass to the entity function.
         """
         pass
 

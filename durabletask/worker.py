@@ -48,6 +48,7 @@ class ConcurrencyOptions:
             self,
             maximum_concurrent_activity_work_items: Optional[int] = None,
             maximum_concurrent_orchestration_work_items: Optional[int] = None,
+            maximum_concurrent_entity_work_items: Optional[int] = None,
             maximum_thread_pool_workers: Optional[int] = None,
     ):
         """Initialize concurrency options.
@@ -73,6 +74,12 @@ class ConcurrencyOptions:
         self.maximum_concurrent_orchestration_work_items = (
             maximum_concurrent_orchestration_work_items
             if maximum_concurrent_orchestration_work_items is not None
+            else default_concurrency
+        )
+
+        self.maximum_concurrent_entity_work_items = (
+            maximum_concurrent_entity_work_items
+            if maximum_concurrent_entity_work_items is not None
             else default_concurrency
         )
 
@@ -534,14 +541,14 @@ class TaskHubGrpcWorker:
                                 work_item.completionToken,
                             )
                         elif work_item.HasField("entityRequest"):
-                            self._async_worker_manager.submit_activity(
+                            self._async_worker_manager.submit_entity_batch(
                                 self._execute_entity_batch,
                                 work_item.entityRequest,
                                 stub,
                                 work_item.completionToken,
                             )
                         elif work_item.HasField("entityRequestV2"):
-                            self._async_worker_manager.submit_activity(
+                            self._async_worker_manager.submit_entity_batch(
                                 self._execute_entity_batch,
                                 work_item.entityRequestV2,
                                 stub,
@@ -740,21 +747,21 @@ class TaskHubGrpcWorker:
 
                 entity_state.rollback()
 
-            try:
-                stub.CompleteEntityTask(operation_result)
-            except Exception as ex:
-                self._logger.exception(
-                    f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}"
-                )
-
         batch_result = pb.EntityBatchResult(
             results=results,
             actions=None,  # TODO: Context should also provide actions like signaling another entity or starting sub-orchestrations
             entityState=helpers.get_string_value(shared.to_json(entity_state._current_state)) if entity_state._current_state else None,
             failureDetails=None,
-            operationInfos=operation_infos,
             completionToken=completionToken,
+            operationInfos=operation_infos,
         )
+
+        try:
+            stub.CompleteEntityTask(batch_result)
+        except Exception as ex:
+            self._logger.exception(
+                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+            )
 
         # TODO: Reset context
 
@@ -772,6 +779,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._result = None
         self._pending_actions: dict[int, pb.OrchestratorAction] = {}
         self._pending_tasks: dict[int, task.CompletableTask] = {}
+        self._entity_task_id_map: dict[str, int] = {}
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
@@ -962,25 +970,28 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def call_entity(
             self,
             entity_id: EntityInstanceId,
+            operation: str,
             *,
             input: Optional[TInput] = None,
     ) -> task.Task:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
-            id, entity_id, input=input
+            id, entity_id, operation, input=input
         )
 
         return self._pending_tasks.get(id, task.CompletableTask())
 
     def signal_entity(
             self,
-            entity_id: EntityInstanceId
+            entity_id: EntityInstanceId,
+            operation: str,
+            input: Optional[TInput] = None
     ) -> None:
         id = self.next_sequence_number()
 
         self.signal_entity_function_helper(
-            id, entity_id
+            id, entity_id, operation, input
         )
 
     def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLockReleaser:
@@ -1074,8 +1085,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self,
             id: Optional[int],
             entity_id: EntityInstanceId,
+            operation: str,
             *,
-            input: Optional[TInput] = None
+            input: Optional[TInput] = None,
     ):
         if id is None:
             id = self.next_sequence_number()
@@ -1083,18 +1095,21 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         transition_valid, error_message = self._entity_context.validate_operation_transition(entity_id, False)
         if not transition_valid:
             raise RuntimeError(error_message)
-
+    
         encoded_input = shared.to_json(input) if input is not None else None
-        action = ph.new_call_entity_action(id, str(entity_id), encoded_input)
+        action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input)
         self._pending_actions[id] = action
 
         fn_task = task.CompletableTask()
         self._pending_tasks[id] = fn_task
 
+
     def signal_entity_function_helper(
             self,
             id: Optional[int],
-            entity_id: EntityInstanceId
+            entity_id: EntityInstanceId,
+            operation: str,
+            input: Optional[TInput]
     ) -> None:
         if id is None:
             id = self.next_sequence_number()
@@ -1104,7 +1119,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if not transition_valid:
             raise RuntimeError(error_message)
 
-        action = ph.new_signal_entity_action(id, str(entity_id))
+        encoded_input = shared.to_json(input) if input is not None else None
+
+        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input)
         self._pending_actions[id] = action
 
     def lock_entities_function_helper(
@@ -1131,7 +1148,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # TODO: Implement deterministically replayable IDs
         critical_section_id = str(uuid.uuid4())
 
-        action = ph.new_lock_entities_action(id, self.instance_id, critical_section_id, [str(eid) for eid in entity_ids_dedup])
+        action = ph.new_lock_entities_action(id, self.instance_id, critical_section_id, entity_ids_dedup)
         self._pending_actions[id] = action
 
     def wait_for_external_event(self, name: str) -> task.Task:
@@ -1545,6 +1562,8 @@ class _OrchestrationExecutor:
                     is_result_encoded=True,
                 )
             elif event.HasField("entityOperationCalled"):
+                # This history event confirms that the entity operation was successfully scheduled.
+                # Remove the entityOperationCalled event from the pending action list so we don't schedule it again
                 entity_call_id = event.eventId
                 action = ctx._pending_actions.pop(entity_call_id, None)
                 entity_task = ctx._pending_tasks.get(entity_call_id, None)
@@ -1552,20 +1571,23 @@ class _OrchestrationExecutor:
                     raise _get_non_determinism_error(
                         entity_call_id, task.get_name(ctx.call_entity)
                     )
-                elif not action.HasField("callEntity"):
+                elif not action.HasField("sendEntityMessage") or not action.sendEntityMessage.HasField("entityOperationCalled"):
                     expected_method_name = task.get_name(ctx.call_entity)
                     raise _get_wrong_action_type_error(
                         entity_call_id, expected_method_name, action
                     )
+                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = entity_call_id
                 # TODO: Validate entity ID
             elif event.HasField("entityOperationSignaled"):
+                # This history event confirms that the entity signal was successfully scheduled.
+                # Remove the entityOperationSignaled event from the pending action list so we don't schedule it
                 entity_signal_id = event.eventId
                 action = ctx._pending_actions.pop(entity_signal_id, None)
                 if not action:
                     raise _get_non_determinism_error(
                         entity_signal_id, task.get_name(ctx.signal_entity)
                     )
-                elif not action.HasField("signalEntity"):
+                elif not action.HasField("sendEntityMessage") or not action.sendEntityMessage.HasField("entityOperationSignaled"):
                     expected_method_name = task.get_name(ctx.signal_entity)
                     raise _get_wrong_action_type_error(
                         entity_signal_id, expected_method_name, action
@@ -1586,10 +1608,22 @@ class _OrchestrationExecutor:
                     self._logger.info(f"Data: {json.dumps(event.entityLockGranted)}")
                 pass
             elif event.HasField("entityOperationCompleted"):
-                if not ctx.is_replaying:
-                    self._logger.info(f"{ctx.instance_id}: Entity operation completed.")
-                    self._logger.info(f"Data: {json.dumps(event.entityOperationCompleted)}")
-                pass
+                request_id = event.entityOperationCompleted.requestId
+                task_id = ctx._entity_task_id_map.pop(request_id, None)
+                if not task_id:
+                    raise RuntimeError(f"Could not find matching task ID for entity operation with request ID '{request_id}'")
+                entity_task = ctx._pending_tasks.pop(task_id, None)
+                if not entity_task:
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected entityOperationCompleted event with request ID = {request_id}."
+                        )
+                    return
+                result = None
+                if not ph.is_empty(event.entityOperationCompleted.output):
+                    result = shared.from_json(event.entityOperationCompleted.output.value)
+                entity_task.complete(result)
+                ctx.resume()
             elif event.HasField("entityOperationFailed"):
                 if not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id}: Entity operation failed.")
@@ -1815,13 +1849,16 @@ class _AsyncWorkerManager:
         self.concurrency_options = concurrency_options
         self.activity_semaphore = None
         self.orchestration_semaphore = None
+        self.entity_semaphore = None
         # Don't create queues here - defer until we have an event loop
         self.activity_queue: Optional[asyncio.Queue] = None
         self.orchestration_queue: Optional[asyncio.Queue] = None
+        self.entity_batch_queue: Optional[asyncio.Queue] = None
         self._queue_event_loop: Optional[asyncio.AbstractEventLoop] = None
         # Store work items when no event loop is available
         self._pending_activity_work: list = []
         self._pending_orchestration_work: list = []
+        self._pending_entity_batch_work: list = []
         self.thread_pool = ThreadPoolExecutor(
             max_workers=concurrency_options.maximum_thread_pool_workers,
             thread_name_prefix="DurableTask",
@@ -1838,7 +1875,7 @@ class _AsyncWorkerManager:
 
         # Check if queues are already properly set up for current loop
         if self._queue_event_loop is current_loop:
-            if self.activity_queue is not None and self.orchestration_queue is not None:
+            if self.activity_queue is not None and self.orchestration_queue is not None and self.entity_batch_queue is not None:
                 # Queues are already bound to the current loop and exist
                 return
 
@@ -1846,6 +1883,7 @@ class _AsyncWorkerManager:
         # First, preserve any existing work items
         existing_activity_items = []
         existing_orchestration_items = []
+        existing_entity_batch_items = []
 
         if self.activity_queue is not None:
             try:
@@ -1863,9 +1901,19 @@ class _AsyncWorkerManager:
             except Exception:
                 pass
 
+        if self.entity_batch_queue is not None:
+            try:
+                while not self.entity_batch_queue.empty():
+                    existing_entity_batch_items.append(
+                        self.entity_batch_queue.get_nowait()
+                    )
+            except Exception:
+                pass
+
         # Create fresh queues for the current event loop
         self.activity_queue = asyncio.Queue()
         self.orchestration_queue = asyncio.Queue()
+        self.entity_batch_queue = asyncio.Queue()
         self._queue_event_loop = current_loop
 
         # Restore the work items to the new queues
@@ -1873,16 +1921,21 @@ class _AsyncWorkerManager:
             self.activity_queue.put_nowait(item)
         for item in existing_orchestration_items:
             self.orchestration_queue.put_nowait(item)
+        for item in existing_entity_batch_items:
+            self.entity_batch_queue.put_nowait(item)
 
         # Move pending work items to the queues
         for item in self._pending_activity_work:
             self.activity_queue.put_nowait(item)
         for item in self._pending_orchestration_work:
             self.orchestration_queue.put_nowait(item)
+        for item in self._pending_entity_batch_work:
+            self.entity_batch_queue.put_nowait(item)
 
         # Clear the pending work lists
         self._pending_activity_work.clear()
         self._pending_orchestration_work.clear()
+        self._pending_entity_batch_work.clear()
 
     async def run(self):
         # Reset shutdown flag in case this manager is being reused
@@ -1898,14 +1951,21 @@ class _AsyncWorkerManager:
         self.orchestration_semaphore = asyncio.Semaphore(
             self.concurrency_options.maximum_concurrent_orchestration_work_items
         )
+        self.entity_semaphore = asyncio.Semaphore(
+            self.concurrency_options.maximum_concurrent_entity_work_items
+        )
 
         # Start background consumers for each work type
-        if self.activity_queue is not None and self.orchestration_queue is not None:
+        if self.activity_queue is not None and self.orchestration_queue is not None \
+                and self.entity_batch_queue is not None:
             await asyncio.gather(
                 self._consume_queue(self.activity_queue, self.activity_semaphore),
                 self._consume_queue(
                     self.orchestration_queue, self.orchestration_semaphore
                 ),
+                self._consume_queue(
+                    self.entity_batch_queue, self.entity_semaphore
+                )
             )
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
@@ -1974,6 +2034,15 @@ class _AsyncWorkerManager:
         else:
             # No event loop running, store in pending list
             self._pending_orchestration_work.append(work_item)
+
+    def submit_entity_batch(self, func, *args, **kwargs):
+        work_item = (func, args, kwargs)
+        self._ensure_queues_for_current_loop()
+        if self.entity_batch_queue is not None:
+            self.entity_batch_queue.put_nowait(work_item)
+        else:
+            # No event loop running, store in pending list
+            self._pending_entity_batch_work.append(work_item)
 
     def shutdown(self):
         self._shutdown = True
