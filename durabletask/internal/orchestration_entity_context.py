@@ -1,6 +1,8 @@
 from datetime import datetime
-from typing import Generator, List, Optional, Tuple
+from typing import Generator, List, Optional, Tuple, Union
 
+from durabletask.internal.helpers import get_string_value
+import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 
@@ -63,8 +65,28 @@ class OrchestrationEntityContext:
                              request_time: Optional[datetime] = None, create_trace: bool = False):
         raise NotImplementedError()
 
-    def emit_acquire_message(self, lock_request_id: str, entities: List[str]):
-        raise NotImplementedError()
+    def emit_acquire_message(self, critical_section_id: str, entities: List[EntityInstanceId]) -> Union[Tuple[None, None, None], Tuple[str, pb.SendEntityMessageAction, pb.OrchestrationInstance]]:
+        if not entities:
+            return None, None, None
+        
+        # Acquire the locks in a globally fixed order to avoid deadlocks
+        # Also remove duplicates - this can be optimized for perf if necessary
+        entity_ids = sorted(entities)
+        entity_ids_dedup = []
+        for i, entity_id in enumerate(entity_ids):
+            if entity_id != entity_ids[i - 1] if i > 0 else True:
+                entity_ids_dedup.append(entity_id)
+
+        target = pb.OrchestrationInstance(instanceId=str(entity_ids_dedup[0]))
+        request = pb.SendEntityMessageAction(entityLockRequested=pb.EntityLockRequestedEvent(
+            criticalSectionId=critical_section_id,
+            parentInstanceId=get_string_value(self.instance_id),
+            lockSet=entity_ids_dedup,
+            position=0,
+        ))
+
+        return "op", request, target
+        
 
     def complete_acquire(self, result, critical_section_id):
         # TODO: HashSet or equivalent

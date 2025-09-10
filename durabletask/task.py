@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Generator, Generic, Optional, Type, TypeVar, Union
 
 from durabletask.entities.entity_instance_id import EntityInstanceId
-from durabletask.internal.entity_lock_releaser import EntityLockReleaser
+from durabletask.entities.entity_lock import EntityLock
 from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -183,7 +183,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLockReleaser:
+    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLock:
         """Lock the specified entity instances for the duration of the orchestration.
 
         Parameters
@@ -193,8 +193,8 @@ class OrchestrationContext(ABC):
 
         Returns
         -------
-        EntityLockReleaser
-            A context manager that releases the locks when disposed.
+        EntityLock
+            A disposable object that acquires and releases the locks when initialized or disposed.
         """
         pass
 

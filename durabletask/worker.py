@@ -14,6 +14,7 @@ from types import GeneratorType
 from enum import Enum
 from typing import Any, Generator, List, Optional, Sequence, TypeVar, Union
 import uuid
+from durabletask.entities.entity_lock import EntityLock
 from packaging.version import InvalidVersion, parse
 
 import grpc
@@ -23,7 +24,6 @@ from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities.entity_instance_id import EntityInstanceId
-from durabletask.internal.entity_lock_releaser import EntityLockReleaser
 from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
 import durabletask.internal.helpers as ph
 import durabletask.internal.exceptions as pe
@@ -994,7 +994,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             id, entity_id, operation, input
         )
 
-    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLockReleaser:
+    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLock:
         id = self.next_sequence_number()
 
         self.lock_entities_function_helper(
@@ -1003,7 +1003,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         # Todo: EntityLockReleaser should be a disposable that uses python's using statement
         # and should release the locks when disposed
-        return EntityLockReleaser(entities)
+        return EntityLock(self._entity_context, entities)
 
     def call_sub_orchestrator(
             self,
@@ -1129,26 +1129,22 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             id: Optional[int],
             entity_ids: List[EntityInstanceId]
     ):
+        valid, message = self._entity_context.validate_acquire_transition()
+        if not valid:
+            raise RuntimeError(message)
+        
         if id is None:
             id = self.next_sequence_number()
 
-        transition_valid, error_message = self._entity_context.validate_acquire_transition()
-        if not transition_valid:
-            raise RuntimeError(error_message)
-
-        # Acquire the locks in a globally fixed order to avoid deadlocks
-        # Also remove duplicates - this can be optimized for perf if necessary
-        entity_ids = sorted(entity_ids)
-        entity_ids_dedup = []
-        for i, entity_id in enumerate(entity_ids):
-            if entity_id != entity_ids[i - 1] if i > 0 else None:
-                entity_ids_dedup.append(entity_id)
-
         # Use a deterministically replayable unique ID for this lock request
-        # TODO: Implement deterministically replayable IDs
-        critical_section_id = str(uuid.uuid4())
+        critical_section_id = f"{self.instance_id}:{id}"
 
-        action = ph.new_lock_entities_action(id, self.instance_id, critical_section_id, entity_ids_dedup)
+        event_name, request, target = self._entity_context.emit_acquire_message(critical_section_id, entity_ids)
+
+        if not event_name or not request or not target:
+            raise RuntimeError("Failed to create entity lock request.")
+
+        action = ph.new_lock_entities_action(id, request)
         self._pending_actions[id] = action
 
     def wait_for_external_event(self, name: str) -> task.Task:

@@ -215,13 +215,8 @@ def new_signal_entity_action(id: int, entity_id: EntityInstanceId, operation: st
     )))
 
 
-def new_lock_entities_action(id: int, parent_instance_id: str, critical_section_id: str, entity_ids: list[EntityInstanceId]):
-    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityLockRequested=pb.EntityLockRequestedEvent(
-        parentInstanceId=get_string_value(parent_instance_id),
-        criticalSectionId=critical_section_id,
-        lockSet=[str(eid) for eid in entity_ids],
-        position=0
-    )))
+def new_lock_entities_action(id: int, entity_message: pb.SendEntityMessageAction):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=entity_message)
 
 
 def convert_to_entity_batch_request(req: pb.EntityRequest) -> tuple[pb.EntityBatchRequest, list[pb.OperationInfo]]:
