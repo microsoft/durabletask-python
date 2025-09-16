@@ -7,10 +7,9 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Callable, Generator, Generic, Optional, Type, TypeVar, Union
+from typing import Any, Callable, Generator, Generic, Optional, Type, TypeVar, Union, overload
 
-from durabletask.entities.entity_instance_id import EntityInstanceId
-from durabletask.entities.entity_lock import EntityLock
+from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock
 from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -18,6 +17,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 T = TypeVar('T')
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
+TState = TypeVar("TState")
 
 
 class OrchestrationContext(ABC):
@@ -545,11 +545,17 @@ class EntityContext:
             The operation associated with this entity invocation.
         """
         return self._operation
+    
+    @overload
+    def get_state(self, intended_type: Type[TState]) -> Optional[TState]: ...
+    
+    @overload
+    def get_state(self, intended_type: None = None) -> Any: ...
 
-    def get_state(self, intended_type: Optional[Type] = None):
+    def get_state(self, intended_type: Optional[Type[TState]] = None) -> Optional[TState] | Any:
         return self._state.get_state(intended_type)
 
-    def set_state(self, new_state):
+    def set_state(self, new_state: Any):
         self._state.set_state(new_state)
 
     @property
@@ -570,7 +576,7 @@ Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, An
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
 
-Entity = Callable[[EntityContext, TInput], TOutput]
+Entity = Union[Callable[[EntityContext, TInput], TOutput], type[DurableEntity]]
 
 
 class RetryPolicy:

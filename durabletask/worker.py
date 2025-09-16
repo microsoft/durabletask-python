@@ -12,9 +12,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, List, Optional, Sequence, TypeVar, Union
-import uuid
-from durabletask.entities.entity_lock import EntityLock
+from typing import Any, Generator, Optional, Sequence, TypeVar, Union
 from packaging.version import InvalidVersion, parse
 
 import grpc
@@ -23,7 +21,7 @@ from google.protobuf import empty_pb2
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
-from durabletask.entities.entity_instance_id import EntityInstanceId
+from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId
 from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
 import durabletask.internal.helpers as ph
 import durabletask.internal.exceptions as pe
@@ -140,12 +138,14 @@ class _Registry:
     orchestrators: dict[str, task.Orchestrator]
     activities: dict[str, task.Activity]
     entities: dict[str, task.Entity]
+    entity_instances: dict[str, DurableEntity]
     versioning: Optional[VersioningOptions] = None
 
     def __init__(self):
         self.orchestrators = {}
         self.activities = {}
         self.entities = {}
+        self.entity_instances = {}
 
     def add_orchestrator(self, fn: task.Orchestrator) -> str:
         if fn is None:
@@ -189,8 +189,12 @@ class _Registry:
         if fn is None:
             raise ValueError("An entity function argument is required.")
 
-        name = task.get_name(fn)
-        self.add_named_entity(name, fn)
+        if isinstance(fn, type) and issubclass(fn, DurableEntity):
+            name = fn.__name__
+            self.add_named_entity(name, fn)
+        else:
+            name = task.get_name(fn)
+            self.add_named_entity(name, fn)
         return name
 
     def add_named_entity(self, name: str, fn: task.Entity) -> None:
@@ -994,16 +998,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             id, entity_id, operation, input
         )
 
-    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLock:
+    def lock_entities(self, entities: list[EntityInstanceId]) -> task.Task[EntityLock]:
         id = self.next_sequence_number()
-
+        
         self.lock_entities_function_helper(
             id, entities
         )
-
-        # Todo: EntityLockReleaser should be a disposable that uses python's using statement
-        # and should release the locks when disposed
-        return EntityLock(self._entity_context, entities)
+        return self._pending_tasks.get(id, task.CompletableTask())
 
     def call_sub_orchestrator(
             self,
@@ -1124,28 +1125,28 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input)
         self._pending_actions[id] = action
 
-    def lock_entities_function_helper(
-            self,
-            id: Optional[int],
-            entity_ids: List[EntityInstanceId]
-    ):
-        valid, message = self._entity_context.validate_acquire_transition()
-        if not valid:
-            raise RuntimeError(message)
-        
+
+    def lock_entities_function_helper(self, id: int, entities: list[EntityInstanceId]) -> None:
         if id is None:
             id = self.next_sequence_number()
+        
+        transition_valid, error_message = self._entity_context.validate_acquire_transition()
+        if not transition_valid:
+            raise RuntimeError(error_message)
+        
+        critical_section_id = f"{self.instance_id}:{id:04x}"
 
-        # Use a deterministically replayable unique ID for this lock request
-        critical_section_id = f"{self.instance_id}:{id}"
+        request, target = self._entity_context.emit_acquire_message(critical_section_id, entities)
 
-        event_name, request, target = self._entity_context.emit_acquire_message(critical_section_id, entity_ids)
-
-        if not event_name or not request or not target:
+        if not request or not target:
             raise RuntimeError("Failed to create entity lock request.")
 
         action = ph.new_lock_entities_action(id, request)
         self._pending_actions[id] = action
+
+        fn_task = task.CompletableTask[EntityLock]()
+        self._pending_tasks[id] = fn_task
+
 
     def wait_for_external_event(self, name: str) -> task.Task:
         # Check to see if this event has already been received, in which case we
@@ -1589,20 +1590,41 @@ class _OrchestrationExecutor:
                         entity_signal_id, expected_method_name, action
                     )
             elif event.HasField("entityLockRequested"):
-                if not ctx.is_replaying:
-                    self._logger.info(f"{ctx.instance_id}: Entity lock requested.")
-                    self._logger.info(f"Data: {json.dumps(event.entityLockRequested)}")
-                pass
+                section_id = event.entityLockRequested.criticalSectionId
+                task_id = ctx._entity_task_id_map.get(section_id, None)
+                if not task_id:
+                    raise RuntimeError(f"Unexpected entityLockRequested event for criticalSectionId '{section_id}'")
+                action = ctx._pending_actions.pop(task_id, None)
+                entity_task = ctx._pending_tasks.get(task_id, None)
+                if not action:
+                    raise _get_non_determinism_error(
+                        task_id, task.get_name(ctx.lock_entities)
+                    )
+                elif not action.HasField("sendEntityMessage") or not action.sendEntityMessage.HasField("entityLockRequested"):
+                    expected_method_name = task.get_name(ctx.lock_entities)
+                    raise _get_wrong_action_type_error(
+                        task_id, expected_method_name, action
+                    )
             elif event.HasField("entityUnlockSent"):
                 if not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id}: Entity unlock sent.")
                     self._logger.info(f"Data: {json.dumps(event.entityUnlockSent)}")
+                # I don't think there's anything we need to do here - if we decide we need to send the lock 
+                # release messages before continuing replay, we can confirm that they were processed here
                 pass
             elif event.HasField("entityLockGranted"):
-                if not ctx.is_replaying:
-                    self._logger.info(f"{ctx.instance_id}: Entity lock granted.")
-                    self._logger.info(f"Data: {json.dumps(event.entityLockGranted)}")
-                pass
+                section_id = event.entityLockGranted.criticalSectionId
+                task_id = ctx._entity_task_id_map.pop(section_id, None)
+                if not task_id:
+                    raise RuntimeError(f"Unexpected entityLockGranted event for criticalSectionId '{section_id}'")
+                entity_task = ctx._pending_tasks.pop(task_id, None)
+                if not entity_task:
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected entityLockGranted event for criticalSectionId '{section_id}'."
+                        )
+                    return
+                entity_task.complete(EntityLock(ctx))
             elif event.HasField("entityOperationCompleted"):
                 request_id = event.entityOperationCompleted.requestId
                 task_id = ctx._entity_task_id_map.pop(request_id, None)
@@ -1741,8 +1763,23 @@ class _EntityExecutor:
         entity_input = shared.from_json(encoded_input) if encoded_input else None
         ctx = task.EntityContext(orchestration_id, operation, state, entity_id)
 
-        # Execute the entity function
-        entity_output = fn(ctx, entity_input)
+        if isinstance(fn, type) and issubclass(fn, DurableEntity):
+            if self._registry.entity_instances.get(str(entity_id), None):
+                entity_instance = self._registry.entity_instances[str(entity_id)]
+            else:
+                entity_instance = fn()
+                self._registry.entity_instances[str(entity_id)] = entity_instance
+            if not hasattr(entity_instance, operation):
+                raise AttributeError(f"Entity '{entity_id}' does not have operation '{operation}'")
+            method = getattr(entity_instance, operation)
+            if not callable(method):
+                raise TypeError(f"Entity operation '{operation}' is not callable")
+            # Execute the entity method
+            entity_instance._initialize_entity_context(ctx)
+            entity_output = method(entity_input)
+        else:
+            # Execute the entity function
+            entity_output = fn(ctx, entity_input)
 
         encoded_output = (
             shared.to_json(entity_output) if entity_output is not None else None

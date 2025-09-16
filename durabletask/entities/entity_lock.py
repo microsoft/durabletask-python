@@ -1,14 +1,19 @@
+import durabletask.internal.helpers as ph
+
 from durabletask.entities.entity_instance_id import EntityInstanceId
-from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
+import durabletask.internal.orchestrator_service_pb2 as pb
 
 
 class EntityLock:
-    def __init__(self, entity_context: OrchestrationEntityContext, entities: list[EntityInstanceId]):
-        self.entity_context = entity_context
-        self.entities = entities
+    def __init__(self, context):
+        self._context = context
 
     def __enter__(self):
-        print(f"Locking entities: {self.entities}")
+        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        print(f"Unlocking entities: {self.entities}")
+    def __exit__(self, exc_type, exc_val, exc_tb): # TODO: Handle exceptions?
+        print(f"Unlocking entities: {self._context._entity_context.critical_section_locks}")
+        for entity_unlock_message in self._context._entity_context.emit_lock_release_messages():
+            task_id = self._context.next_sequence_number()
+            action = pb.OrchestratorAction(task_id, sendEntityMessage=entity_unlock_message)
+            self._context._pending_actions[task_id] = action

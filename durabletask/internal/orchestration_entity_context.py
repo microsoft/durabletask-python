@@ -13,14 +13,14 @@ class OrchestrationEntityContext:
         self.lock_acquisition_pending = False
 
         self.critical_section_id = None
-        self.critical_section_locks = []
-        self.available_locks = []
+        self.critical_section_locks: list[EntityInstanceId] = []
+        self.available_locks: list[EntityInstanceId] = []
 
     @property
     def is_inside_critical_section(self) -> bool:
         return self.critical_section_id is not None
 
-    def get_available_entities(self) -> Generator[str, None, None]:
+    def get_available_entities(self) -> Generator[EntityInstanceId, None, None]:
         if self.is_inside_critical_section:
             for available_lock in self.available_locks:
                 yield available_lock
@@ -58,16 +58,27 @@ class OrchestrationEntityContext:
             self.available_locks.append(target_instance_id)
 
     def emit_lock_release_messages(self):
-        raise NotImplementedError()
+        if self.is_inside_critical_section:
+            for entity_id in self.critical_section_locks:
+                unlock_event = pb.SendEntityMessageAction(entityUnlockSent=pb.EntityUnlockSentEvent(
+                    criticalSectionId=self.critical_section_id,
+                    targetInstanceId=get_string_value(str(entity_id))
+                ))
+                yield unlock_event
+
+            # TODO: Emit the actual release messages (?)
+            self.critical_section_locks = []
+            self.available_locks = []
+            self.critical_section_id = None
 
     def emit_request_message(self, target, operation_name: str, one_way: bool, operation_id: str,
                              scheduled_time_utc: datetime, input: Optional[str],
                              request_time: Optional[datetime] = None, create_trace: bool = False):
         raise NotImplementedError()
 
-    def emit_acquire_message(self, critical_section_id: str, entities: List[EntityInstanceId]) -> Union[Tuple[None, None, None], Tuple[str, pb.SendEntityMessageAction, pb.OrchestrationInstance]]:
+    def emit_acquire_message(self, critical_section_id: str, entities: List[EntityInstanceId]) -> Union[Tuple[None, None], Tuple[pb.SendEntityMessageAction, pb.OrchestrationInstance]]:
         if not entities:
-            return None, None, None
+            return None, None
         
         # Acquire the locks in a globally fixed order to avoid deadlocks
         # Also remove duplicates - this can be optimized for perf if necessary
@@ -81,12 +92,15 @@ class OrchestrationEntityContext:
         request = pb.SendEntityMessageAction(entityLockRequested=pb.EntityLockRequestedEvent(
             criticalSectionId=critical_section_id,
             parentInstanceId=get_string_value(self.instance_id),
-            lockSet=entity_ids_dedup,
+            lockSet=[str(eid) for eid in entity_ids_dedup],
             position=0,
         ))
 
-        return "op", request, target
-        
+        self.critical_section_id = critical_section_id
+        self.critical_section_locks = entity_ids_dedup
+        self.lock_acquisition_pending = True
+
+        return request, target
 
     def complete_acquire(self, result, critical_section_id):
         # TODO: HashSet or equivalent
