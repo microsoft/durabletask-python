@@ -11,13 +11,16 @@ class DurableEntity:
         self.entity_context = context
 
     @overload
-    def get_state(self, intended_type: Type[TState], default: TState) -> TState: ...
+    def get_state(self, intended_type: Type[TState], default: TState) -> TState:
+        ...
 
     @overload
-    def get_state(self, intended_type: Type[TState]) -> Optional[TState]: ...
+    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+        ...
 
     @overload
-    def get_state(self, intended_type: None = None, default: Any = None) -> Any: ...
+    def get_state(self, intended_type: None = None, default: Any = None) -> Any:
+        ...
 
     def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Optional[TState] | Any:
         return self.entity_context.get_state(intended_type, default)

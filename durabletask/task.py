@@ -549,13 +549,16 @@ class EntityContext:
         return self._operation
 
     @overload
-    def get_state(self, intended_type: Type[TState], default: TState) -> TState: ...
+    def get_state(self, intended_type: Type[TState], default: TState) -> TState:
+        ...
 
     @overload
-    def get_state(self, intended_type: Type[TState]) -> Optional[TState]: ...
+    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+        ...
 
     @overload
-    def get_state(self, intended_type: None = None, default: Any = None) -> Any: ...
+    def get_state(self, intended_type: None = None, default: Any = None) -> Any:
+        ...
 
     def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Optional[TState] | Any:
         return self._state.get_state(intended_type, default)
