@@ -1,7 +1,7 @@
 
 from typing import Any, Optional, Type, TypeVar, overload
 import uuid
-from durabletask.entities import EntityInstanceId
+from durabletask.entities.entity_instance_id import EntityInstanceId
 from durabletask.internal import helpers, shared
 from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.orchestrator_service_pb2 as pb

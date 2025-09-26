@@ -1,6 +1,7 @@
 from typing import Any, Optional, Type, TypeVar, overload
 
-from durabletask.entities import EntityContext, EntityInstanceId
+from durabletask.entities.entity_context import EntityContext
+from durabletask.entities.entity_instance_id import EntityInstanceId
 
 TState = TypeVar("TState")
 
