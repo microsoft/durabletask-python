@@ -66,7 +66,7 @@ Entities can be defined using either function-based or class-based syntax.
 
 ```python
 # Funtion-based entity
-def counter(ctx: task.EntityContext, input: int):
+def counter(ctx: entities.EntityContext, input: int):
     state = ctx.get_state(int, 0)
     if ctx.operation == "add":
         state += input

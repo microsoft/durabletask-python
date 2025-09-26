@@ -10,7 +10,7 @@ from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
-def counter(ctx: task.EntityContext, input: int) -> Optional[int]:
+def counter(ctx: entities.EntityContext, input: int) -> Optional[int]:
     if ctx.operation == "set":
         ctx.set_state(input)
     if ctx.operation == "add":

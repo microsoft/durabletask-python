@@ -19,7 +19,7 @@ endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
 def test_client_signal_entity():
     invoked = False
 
-    def empty_entity(ctx: task.EntityContext, _):
+    def empty_entity(ctx: entities.EntityContext, _):
         nonlocal invoked  # don't do this in a real app!
         if ctx.operation == "do_nothing":
             invoked = True
@@ -42,7 +42,7 @@ def test_client_signal_entity():
 def test_orchestration_signal_entity():
     invoked = False
 
-    def empty_entity(ctx: task.EntityContext, _):
+    def empty_entity(ctx: entities.EntityContext, _):
         if ctx.operation == "do_nothing":
             nonlocal invoked  # don't do this in a real app!
             invoked = True
@@ -78,7 +78,7 @@ def test_orchestration_signal_entity():
 def test_orchestration_call_entity():
     invoked = False
 
-    def empty_entity(ctx: task.EntityContext, _):
+    def empty_entity(ctx: entities.EntityContext, _):
         if ctx.operation == "do_nothing":
             nonlocal invoked  # don't do this in a real app!
             invoked = True
@@ -113,7 +113,7 @@ def test_orchestration_call_entity():
 def test_orchestration_call_entity_with_lock():
     invoked = False
 
-    def empty_entity(ctx: task.EntityContext, _):
+    def empty_entity(ctx: entities.EntityContext, _):
         if ctx.operation == "do_nothing":
             nonlocal invoked  # don't do this in a real app!
             invoked = True
@@ -162,7 +162,7 @@ def test_orchestration_call_entity_with_lock():
 def test_orchestration_entity_signals_entity():
     invoked = False
 
-    def empty_entity(ctx: task.EntityContext, _):
+    def empty_entity(ctx: entities.EntityContext, _):
         if ctx.operation == "do_nothing":
             nonlocal invoked  # don't do this in a real app!
             invoked = True
@@ -200,7 +200,7 @@ def test_orchestration_entity_signals_entity():
 def test_entity_starts_orchestration():
     invoked = False
 
-    def empty_entity(ctx: task.EntityContext, _):
+    def empty_entity(ctx: entities.EntityContext, _):
         if ctx.operation == "start_orchestration":
             ctx.schedule_new_orchestration("empty_orchestrator")
 
@@ -224,7 +224,7 @@ def test_entity_starts_orchestration():
 
 
 def test_entity_locking_behavior():
-    def empty_entity(ctx: task.EntityContext, _):
+    def empty_entity(ctx: entities.EntityContext, _):
         pass
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):

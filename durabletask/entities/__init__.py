@@ -6,7 +6,8 @@
 from durabletask.entities.entity_instance_id import EntityInstanceId
 from durabletask.entities.durable_entity import DurableEntity
 from durabletask.entities.entity_lock import EntityLock
+from durabletask.entities.entity_context import EntityContext
 
-__all__ = ["EntityInstanceId", "DurableEntity", "EntityLock"]
+__all__ = ["EntityInstanceId", "DurableEntity", "EntityLock", "EntityContext"]
 
 PACKAGE_NAME = "durabletask.entities"

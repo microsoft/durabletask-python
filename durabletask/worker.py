@@ -21,7 +21,7 @@ from google.protobuf import empty_pb2
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
-from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId
+from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
 from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
 import durabletask.internal.helpers as ph
 import durabletask.internal.exceptions as pe
@@ -978,7 +978,6 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self,
             entity_id: EntityInstanceId,
             operation: str,
-            *,
             input: Optional[TInput] = None,
     ) -> task.Task:
         id = self.next_sequence_number()
@@ -1774,7 +1773,7 @@ class _EntityExecutor:
             )
 
         entity_input = shared.from_json(encoded_input) if encoded_input else None
-        ctx = task.EntityContext(orchestration_id, operation, state, entity_id)
+        ctx = EntityContext(orchestration_id, operation, state, entity_id)
 
         if isinstance(fn, type) and issubclass(fn, DurableEntity):
             if self._registry.entity_instances.get(str(entity_id), None):

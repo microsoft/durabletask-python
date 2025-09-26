@@ -3,7 +3,7 @@ from typing import Generator, List, Optional, Tuple, Union
 
 from durabletask.internal.helpers import get_string_value
 import durabletask.internal.orchestrator_service_pb2 as pb
-from durabletask.entities.entity_instance_id import EntityInstanceId
+from durabletask.entities import EntityInstanceId
 
 
 class OrchestrationEntityContext:

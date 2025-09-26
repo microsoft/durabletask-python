@@ -11,7 +11,7 @@ from typing import Any, Optional, Sequence, TypeVar, Union
 import grpc
 from google.protobuf import wrappers_pb2
 
-from durabletask.entities.entity_instance_id import EntityInstanceId
+from durabletask.entities import EntityInstanceId
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
