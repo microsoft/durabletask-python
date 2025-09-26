@@ -48,6 +48,88 @@ Orchestrations can schedule durable timers using the `create_timer` API. These t
 
 Orchestrations can start child orchestrations using the `call_sub_orchestrator` API. Child orchestrations are useful for encapsulating complex logic and for breaking up large orchestrations into smaller, more manageable pieces. Sub-orchestrations can also be versioned in a similar manner to their parent orchestrations, however, they do not inherit the parent orchestrator's version. Instead, they will use the default_version defined in the current worker's VersioningOptions unless otherwise specified during `call_sub_orchestrator`.
 
+### Entities
+
+#### Concepts
+
+Durable Entities provide a way to model small, stateful objects within your orchestration workflows. Each entity has a unique identity and maintains its own state, which is persisted durably. Entities can be interacted with by sending them operations (messages) that mutate or query their state. These operations are processed sequentially, ensuring consistency. Examples of uses for durable entities include counters, accumulators, or any other operation which requires state to persist across orchestrations.
+
+Entities can be invoked from durable clients directly, or from durable orchestrators. They support features like automatic state persistence, concurrency control, and can be locked for exclusive access during critical operations.
+
+Entities are accessed by a unique ID, implemented here as EntityInstanceId. This ID is comprised of two parts, an entity name referring to the function or class that defines the behavior of the entity, and a key which is any string defined in your code. Each entity instance, represented by a distinct EntityInstanceId, has its own state.
+
+#### Syntax
+
+##### Defining Entities
+
+Entities can be defined using either function-based or class-based syntax.
+
+```python
+# Funtion-based entity
+def counter(ctx: task.EntityContext, input: int):
+    state = ctx.get_state(int, 0)
+    if ctx.operation == "add":
+        state += input
+        ctx.set_state(state)
+    elif operation == "get":
+        return state
+
+# Class-based entity
+class Counter(entities.DurableEntity):
+    def __init__(self):
+        self.set_state(0)
+
+    def add(self, amount: int):
+        self.set_state(self.get_state(int, 0) + amount)
+
+    def get(self):
+        return self.get_state(int, 0)
+```
+
+> Note that the object properties of class-based entities may not be preserved across invocations. Use the derived get_state and set_state methods to access the persisted entity data. 
+
+##### Invoking entities
+
+Entities are invoked using the `signal_entity` or `call_entity` APIs. The Durable Client only allows `signal_entity`: 
+
+```python
+c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                taskhub=taskhub_name, token_credential=None)
+entity_id = entities.EntityInstanceId("my_entity_function", "myEntityId")
+c.signal_entity(entity_id, "do_nothing")
+```
+
+Whereas orchestrators can choose to use `signal_entity` or `call_entity`:
+
+```python
+# Signal an entity (fire-and-forget)
+entity_id = entities.EntityInstanceId("my_entity_function", "myEntityId")
+ctx.signal_entity(entity_id, operation_name="add", input=5)
+
+# Call an entity (wait for result)
+entity_id = entities.EntityInstanceId("my_entity_function", "myEntityId")
+result = yield ctx.call_entity(entity_id, operation_name="get")
+```
+
+##### Entity actions
+
+Entities can perform actions such signaling other entities or starting new orchestrations
+
+- `ctx.signal_entity(entity_id, operation, input)`
+- `ctx.schedule_new_orchestration(orchestrator_name, input)`
+
+##### Locking and concurrency
+
+Because entites can be accessed from multiple running orchestrations at the same time, entities may also be locked by a single orchestrator ensuring exclusive access during the duration of the lock (also known as a critical section). Think semaphores:
+
+```python
+with (yield ctx.lock_entities([entity_id_1, entity_id_2]):
+        # Perform entity call operations that require exclusive access
+        ...
+```
+
+Note that locked entities may not be signalled, and every call to a locked entity must return a result before another call to the same entity may be made from within the critical section. For more details and advanced usage, see the examples and API documentation.
+
 ### External events
 
 Orchestrations can wait for external events using the `wait_for_external_event` API. External events are useful for implementing human interaction patterns, such as waiting for a user to approve an order before continuing.

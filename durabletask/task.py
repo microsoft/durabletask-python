@@ -144,8 +144,8 @@ class OrchestrationContext(ABC):
 
     @abstractmethod
     def call_entity(self, entity: EntityInstanceId,
-                    operation: str, *,
-                    input: Optional[TInput] = None):
+                    operation: str,
+                    input: Optional[TInput] = None) -> Task:
         """Schedule entity function for execution.
 
         Parameters
@@ -549,13 +549,16 @@ class EntityContext:
         return self._operation
 
     @overload
+    def get_state(self, intended_type: Type[TState], default: TState) -> TState: ...
+
+    @overload
     def get_state(self, intended_type: Type[TState]) -> Optional[TState]: ...
 
     @overload
-    def get_state(self, intended_type: None = None) -> Any: ...
+    def get_state(self, intended_type: None = None, default: Any = None) -> Any: ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None) -> Optional[TState] | Any:
-        return self._state.get_state(intended_type)
+    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Optional[TState] | Any:
+        return self._state.get_state(intended_type, default)
 
     def set_state(self, new_state: Any):
         self._state.set_state(new_state)
@@ -575,12 +578,14 @@ class EntityContext:
             )
         )
 
-    def schedule_new_orchestration(self, orchestration_name: str, input: Optional[Any] = None, instance_id: Optional[str] = None) -> None:
+    def schedule_new_orchestration(self, orchestration_name: str, input: Optional[Any] = None, instance_id: Optional[str] = None) -> str:
         encoded_input = shared.to_json(input) if input is not None else None
+        if not instance_id:
+            instance_id = uuid.uuid4().hex
         self._state.add_operation_action(
             pb.OperationAction(
                 startNewOrchestration=pb.StartNewOrchestrationAction(
-                    instanceId=instance_id if instance_id else uuid.uuid4().hex,  # TODO: Should this be non-none?
+                    instanceId=instance_id,
                     name=orchestration_name,
                     input=pbh.get_string_value(encoded_input),
                     version=None,
@@ -590,6 +595,7 @@ class EntityContext:
                 )
             )
         )
+        return instance_id
 
     @property
     def entity_id(self) -> EntityInstanceId:
