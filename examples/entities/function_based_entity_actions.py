@@ -46,7 +46,7 @@ def counter_orchestrator(ctx: task.OrchestrationContext, _):
 
 
 def hello_orchestrator(ctx: task.OrchestrationContext, _):
-    return f"Hello world!"
+    return "Hello world!"
 
 
 # Use environment variables if provided, otherwise use default emulator values
