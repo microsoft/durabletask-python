@@ -8,8 +8,10 @@ import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Callable, Generator, Generic, Optional, Type, TypeVar, Union, overload
+import uuid
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock
+from durabletask.internal import shared
 from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -141,7 +143,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_entity(self, entity: EntityInstanceId, 
+    def call_entity(self, entity: EntityInstanceId,
                     operation: str, *,
                     input: Optional[TInput] = None):
         """Schedule entity function for execution.
@@ -545,10 +547,10 @@ class EntityContext:
             The operation associated with this entity invocation.
         """
         return self._operation
-    
+
     @overload
     def get_state(self, intended_type: Type[TState]) -> Optional[TState]: ...
-    
+
     @overload
     def get_state(self, intended_type: None = None) -> Any: ...
 
@@ -557,6 +559,37 @@ class EntityContext:
 
     def set_state(self, new_state: Any):
         self._state.set_state(new_state)
+
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Optional[Any] = None) -> None:
+        encoded_input = shared.to_json(input) if input is not None else None
+        self._state.add_operation_action(
+            pb.OperationAction(
+                sendSignal=pb.SendSignalAction(
+                    instanceId=str(entity_instance_id),
+                    name=operation,
+                    input=pbh.get_string_value(encoded_input),
+                    scheduledTime=None,
+                    requestTime=None,
+                    parentTraceContext=None,
+                )
+            )
+        )
+
+    def schedule_new_orchestration(self, orchestration_name: str, input: Optional[Any] = None, instance_id: Optional[str] = None) -> None:
+        encoded_input = shared.to_json(input) if input is not None else None
+        self._state.add_operation_action(
+            pb.OperationAction(
+                startNewOrchestration=pb.StartNewOrchestrationAction(
+                    instanceId=instance_id if instance_id else uuid.uuid4().hex,  # TODO: Should this be non-none?
+                    name=orchestration_name,
+                    input=pbh.get_string_value(encoded_input),
+                    version=None,
+                    scheduledTime=None,
+                    requestTime=None,
+                    parentTraceContext=None
+                )
+            )
+        )
 
     @property
     def entity_id(self) -> EntityInstanceId:

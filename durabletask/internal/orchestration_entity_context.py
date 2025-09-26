@@ -62,7 +62,8 @@ class OrchestrationEntityContext:
             for entity_id in self.critical_section_locks:
                 unlock_event = pb.SendEntityMessageAction(entityUnlockSent=pb.EntityUnlockSentEvent(
                     criticalSectionId=self.critical_section_id,
-                    targetInstanceId=get_string_value(str(entity_id))
+                    targetInstanceId=get_string_value(str(entity_id)),
+                    parentInstanceId=get_string_value(self.instance_id)
                 ))
                 yield unlock_event
 
@@ -79,7 +80,7 @@ class OrchestrationEntityContext:
     def emit_acquire_message(self, critical_section_id: str, entities: List[EntityInstanceId]) -> Union[Tuple[None, None], Tuple[pb.SendEntityMessageAction, pb.OrchestrationInstance]]:
         if not entities:
             return None, None
-        
+
         # Acquire the locks in a globally fixed order to avoid deadlocks
         # Also remove duplicates - this can be optimized for perf if necessary
         entity_ids = sorted(entities)
@@ -102,8 +103,10 @@ class OrchestrationEntityContext:
 
         return request, target
 
-    def complete_acquire(self, result, critical_section_id):
+    def complete_acquire(self, critical_section_id):
         # TODO: HashSet or equivalent
+        if self.critical_section_id != critical_section_id:
+            raise RuntimeError(f"Unexpected lock acquire for critical section ID '{critical_section_id}' (expected '{self.critical_section_id}')")
         self.available_locks = self.critical_section_locks
         self.lock_acquisition_pending = False
 

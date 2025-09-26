@@ -199,19 +199,22 @@ def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
 def new_call_entity_action(id: int, parent_instance_id: str, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
         requestId=f"{parent_instance_id}:{id}",
-        parentInstanceId=get_string_value(parent_instance_id),
-        targetInstanceId=get_string_value(str(entity_id)),
+        operation=operation,
+        scheduledTime=None,
         input=get_string_value(encoded_input),
-        operation=operation
+        parentInstanceId=get_string_value(parent_instance_id),
+        parentExecutionId=None,
+        targetInstanceId=get_string_value(str(entity_id)),
     )))
 
 
 def new_signal_entity_action(id: int, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
         requestId=f"{entity_id}:{id}",
-        targetInstanceId=get_string_value(str(entity_id)),
         operation=operation,
-        input=get_string_value(encoded_input)
+        scheduledTime=None,
+        input=get_string_value(encoded_input),
+        targetInstanceId=get_string_value(str(entity_id)),
     )))
 
 

@@ -229,15 +229,15 @@ class TaskHubGrpcClient:
         self._logger.info(f"Purging instance '{instance_id}'.")
         self._stub.PurgeInstances(req)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation_name: str, input: Optional[Any] = None, signal_entity_options=None, cancellation=None):
-        scheduled_time = signal_entity_options.scheduled_time if signal_entity_options and signal_entity_options.scheduled_time else None
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation_name: str, input: Optional[Any] = None):
         req = pb.SignalEntityRequest(
             instanceId=str(entity_instance_id),
-            requestId=str(uuid.uuid4()),
             name=operation_name,
             input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input else None,
-            scheduledTime=scheduled_time,
+            requestId=str(uuid.uuid4()),
+            scheduledTime=None,
+            parentTraceContext=None,
             requestTime=helpers.new_timestamp(datetime.now(timezone.utc))
         )
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
-        self._stub.SignalEntity(req, timeout=cancellation.timeout if cancellation else None)
+        self._stub.SignalEntity(req, None)  # TODO: Cancellation timeout?

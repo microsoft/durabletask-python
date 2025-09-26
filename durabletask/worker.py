@@ -753,7 +753,7 @@ class TaskHubGrpcWorker:
 
         batch_result = pb.EntityBatchResult(
             results=results,
-            actions=None,  # TODO: Context should also provide actions like signaling another entity or starting sub-orchestrations
+            actions=entity_state.get_operation_actions(),
             entityState=helpers.get_string_value(shared.to_json(entity_state._current_state)) if entity_state._current_state else None,
             failureDetails=None,
             completionToken=completionToken,
@@ -783,7 +783,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._result = None
         self._pending_actions: dict[int, pb.OrchestratorAction] = {}
         self._pending_tasks: dict[int, task.CompletableTask] = {}
-        self._entity_task_id_map: dict[str, int] = {}
+        # Maps entity ID to task ID
+        self._entity_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
+        # Maps criticalSectionId to task ID
+        self._entity_lock_id_map: dict[str, int] = {}
         self._sequence_number = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
@@ -1000,7 +1003,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def lock_entities(self, entities: list[EntityInstanceId]) -> task.Task[EntityLock]:
         id = self.next_sequence_number()
-        
+
         self.lock_entities_function_helper(
             id, entities
         )
@@ -1096,14 +1099,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         transition_valid, error_message = self._entity_context.validate_operation_transition(entity_id, False)
         if not transition_valid:
             raise RuntimeError(error_message)
-    
+
         encoded_input = shared.to_json(input) if input is not None else None
         action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input)
         self._pending_actions[id] = action
 
         fn_task = task.CompletableTask()
         self._pending_tasks[id] = fn_task
-
 
     def signal_entity_function_helper(
             self,
@@ -1125,15 +1127,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input)
         self._pending_actions[id] = action
 
-
     def lock_entities_function_helper(self, id: int, entities: list[EntityInstanceId]) -> None:
         if id is None:
             id = self.next_sequence_number()
-        
+
         transition_valid, error_message = self._entity_context.validate_acquire_transition()
         if not transition_valid:
             raise RuntimeError(error_message)
-        
+
         critical_section_id = f"{self.instance_id}:{id:04x}"
 
         request, target = self._entity_context.emit_acquire_message(critical_section_id, entities)
@@ -1146,7 +1147,6 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         fn_task = task.CompletableTask[EntityLock]()
         self._pending_tasks[id] = fn_task
-
 
     def wait_for_external_event(self, name: str) -> task.Task:
         # Check to see if this event has already been received, in which case we
@@ -1573,8 +1573,10 @@ class _OrchestrationExecutor:
                     raise _get_wrong_action_type_error(
                         entity_call_id, expected_method_name, action
                     )
-                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = entity_call_id
-                # TODO: Validate entity ID
+                entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
+                if not entity_id:
+                    raise RuntimeError(f"Could not parse entity ID from targetInstanceId '{event.entityOperationCalled.targetInstanceId.value}'")
+                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id)
             elif event.HasField("entityOperationSignaled"):
                 # This history event confirms that the entity signal was successfully scheduled.
                 # Remove the entityOperationSignaled event from the pending action list so we don't schedule it
@@ -1591,9 +1593,7 @@ class _OrchestrationExecutor:
                     )
             elif event.HasField("entityLockRequested"):
                 section_id = event.entityLockRequested.criticalSectionId
-                task_id = ctx._entity_task_id_map.get(section_id, None)
-                if not task_id:
-                    raise RuntimeError(f"Unexpected entityLockRequested event for criticalSectionId '{section_id}'")
+                task_id = event.eventId
                 action = ctx._pending_actions.pop(task_id, None)
                 entity_task = ctx._pending_tasks.get(task_id, None)
                 if not action:
@@ -1605,18 +1605,26 @@ class _OrchestrationExecutor:
                     raise _get_wrong_action_type_error(
                         task_id, expected_method_name, action
                     )
+                ctx._entity_lock_id_map[section_id] = task_id
             elif event.HasField("entityUnlockSent"):
-                if not ctx.is_replaying:
-                    self._logger.info(f"{ctx.instance_id}: Entity unlock sent.")
-                    self._logger.info(f"Data: {json.dumps(event.entityUnlockSent)}")
-                # I don't think there's anything we need to do here - if we decide we need to send the lock 
-                # release messages before continuing replay, we can confirm that they were processed here
-                pass
+                # Remove the unlock tasks as they have already been processed
+                tasks_to_remove = []
+                for task_id, action in ctx._pending_actions.items():
+                    if action.HasField("sendEntityMessage") and action.sendEntityMessage.HasField("entityUnlockSent"):
+                        if action.sendEntityMessage.entityUnlockSent.criticalSectionId == event.entityUnlockSent.criticalSectionId:
+                            tasks_to_remove.append(task_id)
+                for task_to_remove in tasks_to_remove:
+                    ctx._pending_actions.pop(task_to_remove, None)
             elif event.HasField("entityLockGranted"):
                 section_id = event.entityLockGranted.criticalSectionId
-                task_id = ctx._entity_task_id_map.pop(section_id, None)
+                task_id = ctx._entity_lock_id_map.pop(section_id, None)
                 if not task_id:
-                    raise RuntimeError(f"Unexpected entityLockGranted event for criticalSectionId '{section_id}'")
+                    # TODO: Should this be an error? When would it ever happen?
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected entityLockGranted event for criticalSectionId '{section_id}'."
+                        )
+                    return
                 entity_task = ctx._pending_tasks.pop(task_id, None)
                 if not entity_task:
                     if not ctx.is_replaying:
@@ -1624,10 +1632,14 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected entityLockGranted event for criticalSectionId '{section_id}'."
                         )
                     return
+                ctx._entity_context.complete_acquire(section_id)
                 entity_task.complete(EntityLock(ctx))
+                ctx.resume()
             elif event.HasField("entityOperationCompleted"):
                 request_id = event.entityOperationCompleted.requestId
-                task_id = ctx._entity_task_id_map.pop(request_id, None)
+                entity_id, task_id = ctx._entity_task_id_map.pop(request_id, (None, None))
+                if not entity_id:
+                    raise RuntimeError(f"Could not parse entity ID from request ID '{request_id}'")
                 if not task_id:
                     raise RuntimeError(f"Could not find matching task ID for entity operation with request ID '{request_id}'")
                 entity_task = ctx._pending_tasks.pop(task_id, None)
@@ -1640,6 +1652,7 @@ class _OrchestrationExecutor:
                 result = None
                 if not ph.is_empty(event.entityOperationCompleted.output):
                     result = shared.from_json(event.entityOperationCompleted.output.value)
+                ctx._entity_context.recover_lock_after_call(entity_id)
                 entity_task.complete(result)
                 ctx.resume()
             elif event.HasField("entityOperationFailed"):
