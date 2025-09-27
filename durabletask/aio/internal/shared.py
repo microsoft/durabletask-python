@@ -44,5 +44,3 @@ def get_grpc_aio_channel(
         channel = grpc_aio.insecure_channel(host_address, interceptors=interceptors)
 
     return channel
-
-

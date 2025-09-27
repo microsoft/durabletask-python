@@ -53,5 +53,3 @@ class DefaultAioClientInterceptorImpl(
     async def intercept_stream_stream(self, continuation, client_call_details, request_iterator):
         new_client_call_details = self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request_iterator)
-
-

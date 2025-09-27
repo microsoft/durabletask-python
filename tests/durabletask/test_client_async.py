@@ -101,5 +101,3 @@ def test_async_client_construct_with_metadata():
         interceptors = kwargs['interceptors']
         assert isinstance(interceptors[0], DefaultAioClientInterceptorImpl)
         assert interceptors[0]._metadata == METADATA
-
-

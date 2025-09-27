@@ -1,7 +1,7 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Optional, Sequence, TypeVar, Union
+from typing import Any, Optional, Sequence, Union
 
 import grpc
 from google.protobuf import wrappers_pb2
@@ -118,8 +118,12 @@ class AsyncTaskHubGrpcClient:
             else:
                 raise
 
-    async def raise_orchestration_event(self, instance_id: str, event_name: str, *,
-                                         data: Optional[Any] = None):
+    async def raise_orchestration_event(
+            self,
+            instance_id: str,
+            event_name: str,
+            *,
+            data: Optional[Any] = None):
         req = pb.RaiseEventRequest(
             instanceId=instance_id,
             name=event_name,
@@ -153,5 +157,3 @@ class AsyncTaskHubGrpcClient:
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
         await self._stub.PurgeInstances(req)
-
-
