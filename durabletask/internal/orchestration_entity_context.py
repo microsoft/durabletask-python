@@ -67,7 +67,6 @@ class OrchestrationEntityContext:
                 ))
                 yield unlock_event
 
-            # TODO: Emit the actual release messages (?)
             self.critical_section_locks = []
             self.available_locks = []
             self.critical_section_id = None
@@ -104,7 +103,6 @@ class OrchestrationEntityContext:
         return request, target
 
     def complete_acquire(self, critical_section_id):
-        # TODO: HashSet or equivalent
         if self.critical_section_id != critical_section_id:
             raise RuntimeError(f"Unexpected lock acquire for critical section ID '{critical_section_id}' (expected '{self.critical_section_id}')")
         self.available_locks = self.critical_section_locks
