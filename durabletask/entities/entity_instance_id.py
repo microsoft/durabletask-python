@@ -21,6 +21,18 @@ class EntityInstanceId:
 
     @staticmethod
     def parse(entity_id: str) -> Optional["EntityInstanceId"]:
+        """Parse a string representation of an entity ID into an EntityInstanceId object.
+
+        Parameters
+        ----------
+        entity_id : str
+            The string representation of the entity ID, in the format '@entity@key'.
+
+        Returns
+        -------
+        Optional[EntityInstanceId]
+            The parsed EntityInstanceId object, or None if the input is None.
+        """
         try:
             _, entity, key = entity_id.split("@", 2)
             return EntityInstanceId(entity=entity, key=key)

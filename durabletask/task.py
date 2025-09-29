@@ -181,8 +181,12 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLock:
-        """Lock the specified entity instances for the duration of the orchestration.
+    def lock_entities(self, entities: list[EntityInstanceId]) -> Task[EntityLock]:
+        """Creates a Task object that locks the specified entity instances.
+
+        The locks will be acquired the next time the orchestrator yields. 
+        Best practice is to immediately yield this Task and enter the returned EntityLock.
+        The lock is released when the EntityLock is exited.
 
         Parameters
         ----------
@@ -192,7 +196,7 @@ class OrchestrationContext(ABC):
         Returns
         -------
         EntityLock
-            A disposable object that acquires and releases the locks when initialized or disposed.
+            A context manager object that releases the locks when exited.
         """
         pass
 
