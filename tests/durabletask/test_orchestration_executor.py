@@ -406,8 +406,8 @@ def test_activity_retry_policies():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 7
-    assert actions[0].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
-    assert actions[0].id == 7
+    assert actions[-1].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
+    assert actions[-1].id == 7
 
 
 def test_nondeterminism_expected_timer():
