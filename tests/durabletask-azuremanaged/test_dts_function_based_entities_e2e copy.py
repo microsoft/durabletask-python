@@ -1,7 +1,9 @@
+from datetime import timedelta
 import os
 import time
 
 import pytest
+from azure.identity import DefaultAzureCredential
 
 from durabletask import client, entities, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
@@ -14,6 +16,8 @@ pytestmark = pytest.mark.dts
 # Read the environment variables
 taskhub_name = os.getenv("TASKHUB", "default")
 endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
+# endpoint = os.getenv("ENDPOINT", "https://andy-dts-testin-byaje2c8.northcentralus.durabletask.io")
+credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
 
 
 def test_client_signal_entity():
@@ -256,3 +260,99 @@ def test_entity_locking_behavior():
     assert state.serialized_input is None
     assert state.serialized_output is None
     assert state.serialized_custom_status is None
+
+
+def test_entity_unlocks_when_user_code_throws():
+    invoke_count = 0
+
+    def empty_entity(ctx: entities.EntityContext, _):
+        nonlocal invoke_count  # don't do this in a real app!
+        invoke_count += 1
+
+    def empty_orchestrator(ctx: task.OrchestrationContext, _):
+        entity_id = entities.EntityInstanceId("empty_entity", "testEntity3")
+        with (yield ctx.lock_entities([entity_id])):
+            yield ctx.call_entity(entity_id, "do_nothing")
+            raise Exception("Simulated exception")
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(empty_orchestrator)
+        w.add_entity(empty_entity)
+        w.start()
+
+        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                       taskhub=taskhub_name, token_credential=None)
+        time.sleep(2)  # wait for the signal and orchestration to be processed
+        id = c.schedule_new_orchestration(empty_orchestrator)
+        c.wait_for_orchestration_completion(id, timeout=30)
+        id = c.schedule_new_orchestration(empty_orchestrator)
+        c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert invoke_count == 2
+
+
+def test_entity_unlocks_when_user_mishandles_lock():
+    invoke_count = 0
+
+    def empty_entity(ctx: entities.EntityContext, _):
+        nonlocal invoke_count  # don't do this in a real app!
+        invoke_count += 1
+
+    def empty_orchestrator(ctx: task.OrchestrationContext, _):
+        entity_id = entities.EntityInstanceId("empty_entity", "testEntity3")
+        yield ctx.lock_entities([entity_id])
+        yield ctx.call_entity(entity_id, "do_nothing")
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(empty_orchestrator)
+        w.add_entity(empty_entity)
+        w.start()
+
+        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                       taskhub=taskhub_name, token_credential=None)
+        time.sleep(2)  # wait for the signal and orchestration to be processed
+        id = c.schedule_new_orchestration(empty_orchestrator)
+        c.wait_for_orchestration_completion(id, timeout=30)
+        id = c.schedule_new_orchestration(empty_orchestrator)
+        c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert invoke_count == 2
+
+
+# TODO: Uncomment this test
+# Will not pass until https://msazure.visualstudio.com/One/_git/AAPT-DTMB/pullrequest/13610881 is merged and deployed to the docker image
+# def test_entity_unlocks_when_user_calls_continue_as_new():
+#     invoke_count = 0
+
+#     def empty_entity(ctx: entities.EntityContext, _):
+#         nonlocal invoke_count  # don't do this in a real app!
+#         invoke_count += 1
+
+#     def empty_orchestrator(ctx: task.OrchestrationContext, entity_call_count: int):
+#         entity_id = entities.EntityInstanceId("empty_entity", "testEntity6")
+#         nonlocal invoke_count
+#         if not ctx.is_replaying:
+#             invoke_count += 1
+#         with (yield ctx.lock_entities([entity_id])):
+#             yield ctx.call_entity(entity_id, "do_nothing")
+#             if entity_call_count > 0:
+#                 ctx.continue_as_new(entity_call_count - 1, save_events=True)
+
+#     # Start a worker, which will connect to the sidecar in a background thread
+#     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+#                                     taskhub=taskhub_name, token_credential=credential) as w:
+#         w.add_orchestrator(empty_orchestrator)
+#         w.add_entity(empty_entity)
+#         w.start()
+
+#         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+#                                        taskhub=taskhub_name, token_credential=credential)
+#         time.sleep(2)  # wait for the signal and orchestration to be processed
+#         id = c.schedule_new_orchestration(empty_orchestrator, input=2)
+#         c.wait_for_orchestration_completion(id, timeout=500)
+
+#     assert invoke_count == 6

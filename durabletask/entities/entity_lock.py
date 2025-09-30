@@ -9,7 +9,4 @@ class EntityLock:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):  # TODO: Handle exceptions?
-        for entity_unlock_message in self._context._entity_context.emit_lock_release_messages():
-            task_id = self._context.next_sequence_number()
-            action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)
-            self._context._pending_actions[task_id] = action
+        self._context._exit_critical_section()

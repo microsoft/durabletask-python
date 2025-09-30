@@ -842,9 +842,15 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if self._is_complete:
             return
 
+        # If the user code returned without yielding the entity unlock, do that now
+        if self._entity_context.is_inside_critical_section:
+            self._exit_critical_section()
+
         self._is_complete = True
         self._completion_status = status
-        self._pending_actions.clear()  # Cancel any pending actions
+        # This is probably a bug - an orchestrator may complete with some actions remaining that the user still
+        # wants to execute - for example, signaling an entity. So we shouldn't clear the pending actions here.
+        # self._pending_actions.clear()  # Cancel any pending actions
 
         self._result = result
         result_json: Optional[str] = None
@@ -859,8 +865,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if self._is_complete:
             return
 
+        # If the user code crashed inside a critical section, or did not exit it, do that now
+        if self._entity_context.is_inside_critical_section:
+            self._exit_critical_section()
+
         self._is_complete = True
-        self._pending_actions.clear()  # Cancel any pending actions
+        # We also cannot cancel the pending actions in the failure case - if the user code had released an entity
+        # lock, we *must* send that action to the sidecar.
+        # self._pending_actions.clear()  # Cancel any pending actions
         self._completion_status = pb.ORCHESTRATION_STATUS_FAILED
 
         action = ph.new_complete_orchestration_action(
@@ -875,13 +887,20 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if self._is_complete:
             return
 
+        # If the user code called continue_as_new while holding an entity lock, unlock it now
+        if self._entity_context.is_inside_critical_section:
+            self._exit_critical_section()
+
         self._is_complete = True
-        self._pending_actions.clear()  # Cancel any pending actions
+        # We also cannot cancel the pending actions in the continue as new case - if the user code had released an
+        # entity lock, we *must* send that action to the sidecar.
+        # self._pending_actions.clear()  # Cancel any pending actions
         self._completion_status = pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
         self._new_input = new_input
         self._save_events = save_events
 
     def get_actions(self) -> list[pb.OrchestratorAction]:
+        current_actions = list(self._pending_actions.values())
         if self._completion_status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             # When continuing-as-new, we only return a single completion action.
             carryover_events: Optional[list[pb.HistoryEvent]] = None
@@ -906,9 +925,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 failure_details=None,
                 carryover_events=carryover_events,
             )
-            return [action]
-        else:
-            return list(self._pending_actions.values())
+            # We must return the existing tasks as well, to capture entity unlocks
+            current_actions.append(action)
+        return current_actions
 
     def next_sequence_number(self) -> int:
         self._sequence_number += 1
@@ -1146,6 +1165,17 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         fn_task = task.CompletableTask[EntityLock]()
         self._pending_tasks[id] = fn_task
+
+    def _exit_critical_section(self) -> None:
+        if not self._entity_context.is_inside_critical_section:
+            # Possible if the user calls continue_as_new inside the lock - in the success case, we will call
+            # _exit_critical_section both from the EntityLock and the exit logic. We must keep both calls in
+            # case the user code crashes after calling continue_as_new but before the EntityLock object is exited.
+            return
+        for entity_unlock_message in self._entity_context.emit_lock_release_messages():
+            task_id = self.next_sequence_number()
+            action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)
+            self._pending_actions[task_id] = action
 
     def wait_for_external_event(self, name: str) -> task.Task:
         # Check to see if this event has already been received, in which case we

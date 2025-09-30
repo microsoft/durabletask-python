@@ -81,3 +81,13 @@ class DurableEntity:
             The instance ID of the scheduled orchestration.
         """
         return self.entity_context.schedule_new_orchestration(orchestration_name, input, instance_id=instance_id)
+
+    def delete(self, input: Any = None) -> None:
+        """Delete the entity instance.
+
+        Parameters
+        ----------
+        input : Any, optional
+            Unused: The input for the entity "delete" operation.
+        """
+        self.set_state(None)
