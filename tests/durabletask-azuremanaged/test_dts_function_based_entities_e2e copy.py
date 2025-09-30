@@ -2,7 +2,6 @@ import os
 import time
 
 import pytest
-from azure.identity import DefaultAzureCredential
 
 from durabletask import client, entities, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
@@ -15,8 +14,6 @@ pytestmark = pytest.mark.dts
 # Read the environment variables
 taskhub_name = os.getenv("TASKHUB", "default")
 endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
-# endpoint = os.getenv("ENDPOINT", "https://andy-dts-testin-byaje2c8.northcentralus.durabletask.io")
-credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
 
 
 def test_client_signal_entity():
@@ -51,7 +48,7 @@ def test_orchestration_signal_entity():
             invoked = True
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
+        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
         ctx.signal_entity(entity_id, "do_nothing")
 
     # Start a worker, which will connect to the sidecar in a background thread
@@ -87,7 +84,7 @@ def test_orchestration_call_entity():
             invoked = True
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
+        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
         yield ctx.call_entity(entity_id, "do_nothing")
 
     # Start a worker, which will connect to the sidecar in a background thread
@@ -122,7 +119,7 @@ def test_orchestration_call_entity_with_lock():
             invoked = True
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
+        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
         with (yield ctx.lock_entities([entity_id])):
             yield ctx.call_entity(entity_id, "do_nothing")
 
@@ -170,11 +167,12 @@ def test_orchestration_entity_signals_entity():
             nonlocal invoked  # don't do this in a real app!
             invoked = True
         elif ctx.operation == "signal_other":
-            entity_id = entities.EntityInstanceId("empty_entity", "otherEntity")
+            entity_id = entities.EntityInstanceId("empty_entity",
+                                                  ctx.entity_id.key.replace("_testEntity", "_otherEntity"))
             ctx.signal_entity(entity_id, "do_nothing")
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
+        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
         yield ctx.call_entity(entity_id, "signal_other")
 
     # Start a worker, which will connect to the sidecar in a background thread
@@ -231,13 +229,14 @@ def test_entity_locking_behavior():
         pass
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
+        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
         with (yield ctx.lock_entities([entity_id])):
             # Cannot signal entities that have been locked
             assert pytest.raises(Exception, ctx.signal_entity, entity_id, "do_nothing")
-            ctx.call_entity(entity_id, "do_nothing")
+            entity_call_task = ctx.call_entity(entity_id, "do_nothing")
             # Cannot call entities that have been locked and already called, but not yet returned a result
             assert pytest.raises(Exception, ctx.call_entity, entity_id, "do_nothing")
+            yield entity_call_task
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
@@ -269,7 +268,7 @@ def test_entity_unlocks_when_user_code_throws():
         invoke_count += 1
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity3")
+        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
         with (yield ctx.lock_entities([entity_id])):
             yield ctx.call_entity(entity_id, "do_nothing")
             raise Exception("Simulated exception")
@@ -300,7 +299,7 @@ def test_entity_unlocks_when_user_mishandles_lock():
         invoke_count += 1
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity3")
+        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
         yield ctx.lock_entities([entity_id])
         yield ctx.call_entity(entity_id, "do_nothing")
 
@@ -323,7 +322,8 @@ def test_entity_unlocks_when_user_mishandles_lock():
 
 
 # TODO: Uncomment this test
-# Will not pass until https://msazure.visualstudio.com/One/_git/AAPT-DTMB/pullrequest/13610881 is merged and deployed to the docker image
+# Will not pass until https://msazure.visualstudio.com/One/_git/AAPT-DTMB/pullrequest/13610881 is merged and
+# deployed to the docker image
 # def test_entity_unlocks_when_user_calls_continue_as_new():
 #     invoke_count = 0
 
@@ -332,7 +332,7 @@ def test_entity_unlocks_when_user_mishandles_lock():
 #         invoke_count += 1
 
 #     def empty_orchestrator(ctx: task.OrchestrationContext, entity_call_count: int):
-#         entity_id = entities.EntityInstanceId("empty_entity", "testEntity6")
+#         entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
 #         nonlocal invoke_count
 #         if not ctx.is_replaying:
 #             invoke_count += 1
@@ -343,15 +343,15 @@ def test_entity_unlocks_when_user_mishandles_lock():
 
 #     # Start a worker, which will connect to the sidecar in a background thread
 #     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-#                                     taskhub=taskhub_name, token_credential=credential) as w:
+#                                     taskhub=taskhub_name, token_credential=None) as w:
 #         w.add_orchestrator(empty_orchestrator)
 #         w.add_entity(empty_entity)
 #         w.start()
 
 #         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-#                                        taskhub=taskhub_name, token_credential=credential)
+#                                        taskhub=taskhub_name, token_credential=None)
 #         time.sleep(2)  # wait for the signal and orchestration to be processed
 #         id = c.schedule_new_orchestration(empty_orchestrator, input=2)
-#         c.wait_for_orchestration_completion(id, timeout=500)
+#         c.wait_for_orchestration_completion(id, timeout=30)
 
 #     assert invoke_count == 6
