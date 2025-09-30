@@ -258,6 +258,10 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @abstractmethod
+    def _exit_critical_section(self) -> None:
+        pass
+
 
 class FailureDetails:
     def __init__(self, message: str, error_type: str, stack_trace: Optional[str]):

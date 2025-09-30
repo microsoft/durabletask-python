@@ -1169,7 +1169,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def _exit_critical_section(self) -> None:
         if not self._entity_context.is_inside_critical_section:
             # Possible if the user calls continue_as_new inside the lock - in the success case, we will call
-            # _exit_critical_section both from the EntityLock and the exit logic. We must keep both calls in
+            # _exit_critical_section both from the EntityLock and the continue_as_new logic. We must keep both calls in
             # case the user code crashes after calling continue_as_new but before the EntityLock object is exited.
             return
         for entity_unlock_message in self._entity_context.emit_lock_release_messages():
