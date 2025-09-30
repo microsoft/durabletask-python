@@ -1,4 +1,4 @@
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Union
 from typing import Optional, Type, overload
 
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -25,7 +25,7 @@ class StateShim:
     def get_state(self, intended_type: None = None, default: Any = None) -> Any:
         ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Optional[TState] | Any:
+    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Union[None, TState, Any]:
         if self._current_state is None and default is not None:
             return default
 

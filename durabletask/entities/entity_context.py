@@ -1,5 +1,5 @@
 
-from typing import Any, Optional, Type, TypeVar, overload
+from typing import Any, Optional, Type, TypeVar, Union, overload
 import uuid
 from durabletask.entities.entity_instance_id import EntityInstanceId
 from durabletask.internal import helpers, shared
@@ -54,7 +54,7 @@ class EntityContext:
     def get_state(self, intended_type: None = None, default: Any = None) -> Any:
         ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Optional[TState] | Any:
+    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Union[None, TState, Any]:
         """Get the current state of the entity, optionally converting it to a specified type.
 
         Parameters
