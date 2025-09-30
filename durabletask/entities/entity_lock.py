@@ -1,6 +1,3 @@
-import durabletask.internal.orchestrator_service_pb2 as pb
-
-
 class EntityLock:
     def __init__(self, context):
         self._context = context
