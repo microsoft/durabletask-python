@@ -184,7 +184,7 @@ class OrchestrationContext(ABC):
     def lock_entities(self, entities: list[EntityInstanceId]) -> Task[EntityLock]:
         """Creates a Task object that locks the specified entity instances.
 
-        The locks will be acquired the next time the orchestrator yields. 
+        The locks will be acquired the next time the orchestrator yields.
         Best practice is to immediately yield this Task and enter the returned EntityLock.
         The lock is released when the EntityLock is exited.
 
