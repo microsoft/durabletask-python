@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
 
+from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
 
@@ -138,6 +139,68 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
+    def call_entity(self, entity: EntityInstanceId,
+                    operation: str,
+                    input: Optional[TInput] = None) -> Task:
+        """Schedule entity function for execution.
+
+        Parameters
+        ----------
+        entity: EntityInstanceId
+            The ID of the entity instance to call.
+        operation: str
+            The name of the operation to invoke on the entity.
+        input: Optional[TInput]
+            The optional JSON-serializable input to pass to the entity function.
+
+        Returns
+        -------
+        Task
+            A Durable Task that completes when the called entity function completes or fails.
+        """
+        pass
+
+    @abstractmethod
+    def signal_entity(
+            self,
+            entity_id: EntityInstanceId,
+            operation_name: str,
+            input: Optional[TInput] = None
+    ) -> None:
+        """Signal an entity function for execution.
+
+        Parameters
+        ----------
+        entity_id: EntityInstanceId
+            The ID of the entity instance to signal.
+        operation_name: str
+            The name of the operation to invoke on the entity.
+        input: Optional[TInput]
+            The optional JSON-serializable input to pass to the entity function.
+        """
+        pass
+
+    @abstractmethod
+    def lock_entities(self, entities: list[EntityInstanceId]) -> Task[EntityLock]:
+        """Creates a Task object that locks the specified entity instances.
+
+        The locks will be acquired the next time the orchestrator yields.
+        Best practice is to immediately yield this Task and enter the returned EntityLock.
+        The lock is released when the EntityLock is exited.
+
+        Parameters
+        ----------
+        entities: list[EntityInstanceId]
+            The list of entity instance IDs to lock.
+
+        Returns
+        -------
+        EntityLock
+            A context manager object that releases the locks when exited.
+        """
+        pass
+
+    @abstractmethod
     def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
                               input: Optional[TInput] = None,
                               instance_id: Optional[str] = None,
@@ -193,6 +256,10 @@ class OrchestrationContext(ABC):
         save_events : bool
             A flag indicating whether to add any unprocessed external events in the new orchestration history.
         """
+        pass
+
+    @abstractmethod
+    def _exit_critical_section(self) -> None:
         pass
 
 
@@ -457,6 +524,8 @@ Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, An
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
+
+Entity = Union[Callable[[EntityContext, TInput], TOutput], type[DurableEntity]]
 
 
 class RetryPolicy:

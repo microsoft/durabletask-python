@@ -40,7 +40,7 @@ def test_orchestrator_inputs():
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result is not None
 
@@ -62,7 +62,7 @@ def test_complete_orchestration_actions():
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == '"done"'  # results are JSON-encoded
 
@@ -77,7 +77,7 @@ def test_orchestrator_not_registered():
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == "OrchestratorNotRegisteredError"
     assert complete_action.failureDetails.errorMessage
@@ -137,7 +137,7 @@ def test_timer_fired_completion():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result is not None
     assert complete_action.result.value == '"done"'  # results are JSON-encoded
@@ -196,7 +196,7 @@ def test_activity_task_completion():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == encoded_output
 
@@ -225,7 +225,7 @@ def test_activity_task_failed():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
@@ -405,9 +405,9 @@ def test_activity_retry_policies():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    assert len(actions) == 1
-    assert actions[0].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
-    assert actions[0].id == 7
+    assert len(actions) == 7
+    assert actions[-1].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
+    assert actions[-1].id == 7
 
 
 def test_nondeterminism_expected_timer():
@@ -433,7 +433,7 @@ def test_nondeterminism_expected_timer():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
@@ -461,7 +461,7 @@ def test_nondeterminism_expected_activity_call_no_task_id():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
@@ -491,7 +491,7 @@ def test_nondeterminism_expected_activity_call_wrong_task_type():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
@@ -522,7 +522,7 @@ def test_nondeterminism_wrong_activity_name():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
@@ -556,7 +556,7 @@ def test_sub_orchestration_task_completion():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == "42"
 
@@ -586,7 +586,7 @@ def test_sub_orchestration_task_failed():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
@@ -617,7 +617,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_no_task():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
@@ -647,7 +647,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_wrong_task_ty
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
@@ -682,7 +682,7 @@ def test_raise_event():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == "42"
 
@@ -718,7 +718,7 @@ def test_raise_event_buffered():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == "42"
 
@@ -753,7 +753,7 @@ def test_suspend_resume():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == "42"
 
@@ -779,7 +779,7 @@ def test_terminate():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_TERMINATED
     assert complete_action.result.value == json.dumps("terminated!")
 
@@ -808,7 +808,7 @@ def test_continue_as_new(save_events: bool):
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
     assert complete_action.result.value == json.dumps(2)
     assert len(complete_action.carryoverEvents) == (3 if save_events else 0)
@@ -893,7 +893,7 @@ def test_fan_in():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == "[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]"
 
@@ -935,7 +935,7 @@ def test_fan_in_with_single_failure():
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Is this the right error type?
     assert str(ex) in complete_action.failureDetails.errorMessage
@@ -983,7 +983,7 @@ def test_when_any():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == encoded_output
 
@@ -993,7 +993,7 @@ def test_when_any():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == encoded_output
 
@@ -1078,7 +1078,7 @@ def test_when_any_with_retry():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(3, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == encoded_output
 
@@ -1177,14 +1177,14 @@ def test_when_all_with_retry():
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
-    complete_action = get_and_validate_single_complete_orchestration_action(actions)
+    complete_action = get_and_validate_complete_orchestration_action_list(4, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
 
 
-def get_and_validate_single_complete_orchestration_action(actions: list[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
-    assert len(actions) == 1
-    assert type(actions[0]) is pb.OrchestratorAction
-    assert actions[0].HasField("completeOrchestration")
-    return actions[0].completeOrchestration
+def get_and_validate_complete_orchestration_action_list(expected_action_count: int, actions: list[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
+    assert len(actions) == expected_action_count
+    assert type(actions[-1]) is pb.OrchestratorAction
+    assert actions[-1].HasField("completeOrchestration")
+    return actions[-1].completeOrchestration

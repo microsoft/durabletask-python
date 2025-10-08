@@ -7,6 +7,7 @@ from typing import Optional
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
+from durabletask.entities import EntityInstanceId
 import durabletask.internal.orchestrator_service_pb2 as pb
 
 # TODO: The new_xxx_event methods are only used by test code and should be moved elsewhere
@@ -159,6 +160,12 @@ def get_string_value(val: Optional[str]) -> Optional[wrappers_pb2.StringValue]:
         return wrappers_pb2.StringValue(value=val)
 
 
+def get_string_value_or_empty(val: Optional[str]) -> wrappers_pb2.StringValue:
+    if val is None:
+        return wrappers_pb2.StringValue(value="")
+    return wrappers_pb2.StringValue(value=val)
+
+
 def new_complete_orchestration_action(
         id: int,
         status: pb.OrchestrationStatus,
@@ -187,6 +194,57 @@ def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
         input=get_string_value(encoded_input),
         tags=tags
     ))
+
+
+def new_call_entity_action(id: int, parent_instance_id: str, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
+        requestId=f"{parent_instance_id}:{id}",
+        operation=operation,
+        scheduledTime=None,
+        input=get_string_value(encoded_input),
+        parentInstanceId=get_string_value(parent_instance_id),
+        parentExecutionId=None,
+        targetInstanceId=get_string_value(str(entity_id)),
+    )))
+
+
+def new_signal_entity_action(id: int, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
+        requestId=f"{entity_id}:{id}",
+        operation=operation,
+        scheduledTime=None,
+        input=get_string_value(encoded_input),
+        targetInstanceId=get_string_value(str(entity_id)),
+    )))
+
+
+def new_lock_entities_action(id: int, entity_message: pb.SendEntityMessageAction):
+    return pb.OrchestratorAction(id=id, sendEntityMessage=entity_message)
+
+
+def convert_to_entity_batch_request(req: pb.EntityRequest) -> tuple[pb.EntityBatchRequest, list[pb.OperationInfo]]:
+    batch_request = pb.EntityBatchRequest(entityState=req.entityState, instanceId=req.instanceId, operations=[])
+
+    operation_infos: list[pb.OperationInfo] = []
+
+    for op in req.operationRequests:
+        if op.HasField("entityOperationSignaled"):
+            batch_request.operations.append(pb.OperationRequest(requestId=op.entityOperationSignaled.requestId,
+                                                                operation=op.entityOperationSignaled.operation,
+                                                                input=op.entityOperationSignaled.input))
+            operation_infos.append(pb.OperationInfo(requestId=op.entityOperationSignaled.requestId,
+                                                    responseDestination=None))
+        elif op.HasField("entityOperationCalled"):
+            batch_request.operations.append(pb.OperationRequest(requestId=op.entityOperationCalled.requestId,
+                                                                operation=op.entityOperationCalled.operation,
+                                                                input=op.entityOperationCalled.input))
+            operation_infos.append(pb.OperationInfo(requestId=op.entityOperationCalled.requestId,
+                                                    responseDestination=pb.OrchestrationInstance(
+                                                        instanceId=op.entityOperationCalled.parentInstanceId.value,
+                                                        executionId=op.entityOperationCalled.parentExecutionId
+                                                    )))
+
+    return batch_request, operation_infos
 
 
 def new_timestamp(dt: datetime) -> timestamp_pb2.Timestamp:
