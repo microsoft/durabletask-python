@@ -52,13 +52,21 @@ def test_worker_concurrency_loop_sync():
         time.sleep(0.1)
         stub.CompleteOrchestratorTask('ok')
 
+    def cancel_dummy_orchestrator(req, stub, completionToken):
+        pass
+
     def dummy_activity(req, stub, completionToken):
         time.sleep(0.1)
         stub.CompleteActivityTask('ok')
 
+    def cancel_dummy_activity(req, stub, completionToken):
+        pass
+
     # Patch the worker's _execute_orchestrator and _execute_activity
     worker._execute_orchestrator = dummy_orchestrator
+    worker._cancel_orchestrator = cancel_dummy_orchestrator
     worker._execute_activity = dummy_activity
+    worker._cancel_activity = cancel_dummy_activity
 
     orchestrator_requests = [DummyRequest('orchestrator', f'orch{i}') for i in range(3)]
     activity_requests = [DummyRequest('activity', f'act{i}') for i in range(4)]
@@ -67,9 +75,9 @@ def test_worker_concurrency_loop_sync():
         # Start the worker manager's run loop in the background
         worker_task = asyncio.create_task(worker._async_worker_manager.run())
         for req in orchestrator_requests:
-            worker._async_worker_manager.submit_orchestration(dummy_orchestrator, req, stub, DummyCompletionToken())
+            worker._async_worker_manager.submit_orchestration(dummy_orchestrator, cancel_dummy_orchestrator, req, stub, DummyCompletionToken())
         for req in activity_requests:
-            worker._async_worker_manager.submit_activity(dummy_activity, req, stub, DummyCompletionToken())
+            worker._async_worker_manager.submit_activity(dummy_activity, cancel_dummy_activity, req, stub, DummyCompletionToken())
         await asyncio.sleep(1.0)
         orchestrator_count = sum(1 for t, _ in stub.completed if t == 'orchestrator')
         activity_count = sum(1 for t, _ in stub.completed if t == 'activity')
