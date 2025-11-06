@@ -1411,7 +1411,7 @@ class _OrchestrationExecutor:
                 timer_id = event.timerFired.timerId
                 timer_task = ctx._pending_tasks.pop(timer_id, None)
                 if not timer_task:
-                    # TODO: Should this be an error?  would it ever happen?
+                    # TODO: Should this be an error? When would it ever happen?
                     if not ctx._is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
