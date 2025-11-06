@@ -73,6 +73,11 @@ def test_worker_concurrency_loop_async():
         # Clear stub state before each run
         stub.completed.clear()
         worker_task = asyncio.create_task(grpc_worker._async_worker_manager.run())
+        # Need to yield to that thread in order to let it start up on the second run
+        startup_attempts = 0
+        while grpc_worker._async_worker_manager._shutdown and startup_attempts < 10:
+            await asyncio.sleep(0.1)
+            startup_attempts += 1
         for req in orchestrator_requests:
             grpc_worker._async_worker_manager.submit_orchestration(dummy_orchestrator, cancel_dummy_orchestrator, req, stub, DummyCompletionToken())
         for req in activity_requests:
