@@ -2150,7 +2150,7 @@ class _AsyncWorkerManager:
         async with semaphore:
             try:
                 await self._run_func(func, *args, **kwargs)
-            except Exception as work_exception:
+            except Exception:
                 await self._run_func(cancellation_func, *args, **kwargs)
             finally:
                 queue.task_done()
