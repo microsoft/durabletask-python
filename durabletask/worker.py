@@ -2089,7 +2089,7 @@ class _AsyncWorkerManager:
                     )
                 )
         except Exception as queue_exception:
-            self._logger.error(f"Uncaught error in activity manager thread pool: {queue_exception}")
+            self._logger.error(f"Shutting down worker - Uncaught error in activity manager thread pool: {queue_exception}")
             while self.activity_queue is not None and not self.activity_queue.empty():
                 try:
                     func, cancellation_func, args, kwargs = self.activity_queue.get_nowait()
