@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import logging
+
 from typing import Optional
 
 from azure.core.credentials import TokenCredential
@@ -18,7 +20,9 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  taskhub: str,
                  token_credential: Optional[TokenCredential],
                  secure_channel: bool = True,
-                 default_version: Optional[str] = None):
+                 default_version: Optional[str] = None,
+                 log_handler=None,
+                 log_formatter: Optional[logging.Formatter] = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
@@ -31,5 +35,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
             host_address=host_address,
             secure_channel=secure_channel,
             metadata=None,
+            log_handler=log_handler,
+            log_formatter=log_formatter,
             interceptors=interceptors,
             default_version=default_version)

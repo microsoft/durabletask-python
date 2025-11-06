@@ -1238,7 +1238,7 @@ class _OrchestrationExecutor:
         if len(orchestration_started_events) >= 1:
             orchestration_name = orchestration_started_events[0].executionStarted.name
 
-        self._logger.info(
+        self._logger.debug(
             f"{instance_id}: Beginning replay for orchestrator {orchestration_name}..."
         )
 
@@ -1279,7 +1279,7 @@ class _OrchestrationExecutor:
 
         except Exception as ex:
             # Unhandled exceptions fail the orchestration
-            self._logger.info(f"{instance_id}: Orchestration {orchestration_name} failed")
+            self._logger.debug(f"{instance_id}: Orchestration {orchestration_name} failed")
             ctx.set_failed(ex)
 
         if not ctx._is_complete:
@@ -1295,7 +1295,7 @@ class _OrchestrationExecutor:
             completion_status_str = ph.get_orchestration_status_str(
                 ctx._completion_status
             )
-            self._logger.info(
+            self._logger.debug(
                 f"{instance_id}: Orchestration {orchestration_name} completed with status: {completion_status_str}"
             )
 
@@ -1764,7 +1764,7 @@ class _ActivityExecutor:
             encoded_input: Optional[str],
     ) -> Optional[str]:
         """Executes an activity function and returns the serialized result, if any."""
-        self._logger.info(
+        self._logger.debug(
             f"{orchestration_id}/{task_id}: Executing activity '{name}'..."
         )
         fn = self._registry.get_activity(name)
@@ -1783,7 +1783,7 @@ class _ActivityExecutor:
             shared.to_json(activity_output) if activity_output is not None else None
         )
         chars = len(encoded_output) if encoded_output else 0
-        self._logger.info(
+        self._logger.debug(
             f"{orchestration_id}/{task_id}: Activity '{name}' completed successfully with {chars} char(s) of encoded output."
         )
         return encoded_output
@@ -1803,7 +1803,7 @@ class _EntityExecutor:
             encoded_input: Optional[str],
     ) -> Optional[str]:
         """Executes an entity function and returns the serialized result, if any."""
-        self._logger.info(
+        self._logger.debug(
             f"{orchestration_id}: Executing entity '{entity_id}'..."
         )
         fn = self._registry.get_entity(entity_id.entity)
@@ -1837,7 +1837,7 @@ class _EntityExecutor:
             shared.to_json(entity_output) if entity_output is not None else None
         )
         chars = len(encoded_output) if encoded_output else 0
-        self._logger.info(
+        self._logger.debug(
             f"{orchestration_id}: Entity '{entity_id}' completed successfully with {chars} char(s) of encoded output."
         )
         return encoded_output
