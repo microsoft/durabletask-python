@@ -2117,6 +2117,7 @@ class _AsyncWorkerManager:
                     pass
                 except Exception as cancellation_exception:
                     self._logger.error(f"Uncaught error while cancelling entity batch work item: {cancellation_exception}")
+            self.shutdown()
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
         # List to track running tasks
@@ -2139,16 +2140,18 @@ class _AsyncWorkerManager:
             func, cancellation_func, args, kwargs = work
             # Create a concurrent task for processing
             task = asyncio.create_task(
-                self._process_work_item(semaphore, queue, func, args, kwargs)
+                self._process_work_item(semaphore, queue, func, cancellation_func, args, kwargs)
             )
             running_tasks.add(task)
 
     async def _process_work_item(
-            self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, args, kwargs
+            self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, cancellation_func, args, kwargs
     ):
         async with semaphore:
             try:
                 await self._run_func(func, *args, **kwargs)
+            except Exception as work_exception:
+                await self._run_func(cancellation_func, *args, **kwargs)
             finally:
                 queue.task_done()
 
@@ -2168,6 +2171,8 @@ class _AsyncWorkerManager:
             )
 
     def submit_activity(self, func, cancellation_func, *args, **kwargs):
+        if self._shutdown:
+            raise RuntimeError("Cannot submit new work items after shutdown has been initiated.")
         work_item = (func, cancellation_func, args, kwargs)
         self._ensure_queues_for_current_loop()
         if self.activity_queue is not None:
@@ -2177,6 +2182,8 @@ class _AsyncWorkerManager:
             self._pending_activity_work.append(work_item)
 
     def submit_orchestration(self, func, cancellation_func, *args, **kwargs):
+        if self._shutdown:
+            raise RuntimeError("Cannot submit new work items after shutdown has been initiated.")
         work_item = (func, cancellation_func, args, kwargs)
         self._ensure_queues_for_current_loop()
         if self.orchestration_queue is not None:
@@ -2186,6 +2193,8 @@ class _AsyncWorkerManager:
             self._pending_orchestration_work.append(work_item)
 
     def submit_entity_batch(self, func, cancellation_func, *args, **kwargs):
+        if self._shutdown:
+            raise RuntimeError("Cannot submit new work items after shutdown has been initiated.")
         work_item = (func, cancellation_func, args, kwargs)
         self._ensure_queues_for_current_loop()
         if self.entity_batch_queue is not None:
