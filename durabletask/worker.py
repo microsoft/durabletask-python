@@ -1235,7 +1235,7 @@ class _OrchestrationExecutor:
     ) -> ExecutionResults:
         orchestration_name = "<unknown>"
         orchestration_started_events = [e for e in old_events if e.HasField("executionStarted")]
-        if len(orchestration_started_events) > 1:
+        if len(orchestration_started_events) >= 1:
             orchestration_name = orchestration_started_events[0].executionStarted.name
 
         self._logger.info(
