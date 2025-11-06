@@ -1295,7 +1295,7 @@ class _OrchestrationExecutor:
             completion_status_str = ph.get_orchestration_status_str(
                 ctx._completion_status
             )
-            self._logger.debug(
+            self._logger.info(
                 f"{instance_id}: Orchestration {orchestration_name} completed with status: {completion_status_str}"
             )
 
