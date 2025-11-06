@@ -194,7 +194,7 @@ def test_sub_orchestrator_by_name():
 
         task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                                      taskhub=taskhub_name, token_credential=None)
-        id = task_hub_client.schedule_new_orchestration(parent_orchestrator, input=10)
+        id = task_hub_client.schedule_new_orchestration(parent_orchestrator, input=None)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
