@@ -46,18 +46,18 @@ def test_worker_concurrency_loop_async():
     grpc_worker = TaskHubGrpcWorker(concurrency_options=options)
     stub = DummyStub()
 
-    async def dummy_orchestrator(self, req, stub, completionToken):
+    async def dummy_orchestrator(req, stub, completionToken):
         await asyncio.sleep(0.1)
         stub.CompleteOrchestratorTask('ok')
 
-    async def cancel_dummy_orchestrator(self, req, stub, completionToken):
+    async def cancel_dummy_orchestrator(req, stub, completionToken):
         pass
 
-    async def dummy_activity(self, req, stub, completionToken):
+    async def dummy_activity(req, stub, completionToken):
         await asyncio.sleep(0.1)
         stub.CompleteActivityTask('ok')
 
-    async def cancel_dummy_activity(self, req, stub, completionToken):
+    async def cancel_dummy_activity(req, stub, completionToken):
         pass
 
     # Patch the worker's _execute_orchestrator and _execute_activity

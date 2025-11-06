@@ -803,7 +803,7 @@ class TaskHubGrpcWorker:
 
     def _cancel_entity_batch(
             self,
-            req: pb.EntityBatchRequest,
+            req: Union[pb.EntityBatchRequest, pb.EntityRequest],
             stub: stubs.TaskHubSidecarServiceStub,
             completionToken,
     ):
@@ -812,7 +812,7 @@ class TaskHubGrpcWorker:
                 completionToken=completionToken
             )
         )
-        self._logger.info(f"Cancelled entity batch task for entity instance ID: {req.instanceId}")
+        self._logger.info(f"Cancelled entity batch task for instance ID: {req.instanceId}")
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
@@ -2089,13 +2089,14 @@ class _AsyncWorkerManager:
                     )
                 )
         except Exception as queue_exception:
-            self._logger.error(f"Shutting down worker - Uncaught error in activity manager thread pool: {queue_exception}")
+            self._logger.error(f"Shutting down worker - Uncaught error in worker manager: {queue_exception}")
             while self.activity_queue is not None and not self.activity_queue.empty():
                 try:
                     func, cancellation_func, args, kwargs = self.activity_queue.get_nowait()
                     await self._run_func(cancellation_func, *args, **kwargs)
                     self._logger.error(f"Activity work item args: {args}, kwargs: {kwargs}")
                 except asyncio.QueueEmpty:
+                    # Queue was empty, no cancellation needed
                     pass
                 except Exception as cancellation_exception:
                     self._logger.error(f"Uncaught error while cancelling activity work item: {cancellation_exception}")
@@ -2105,6 +2106,7 @@ class _AsyncWorkerManager:
                     await self._run_func(cancellation_func, *args, **kwargs)
                     self._logger.error(f"Orchestration work item args: {args}, kwargs: {kwargs}")
                 except asyncio.QueueEmpty:
+                    # Queue was empty, no cancellation needed
                     pass
                 except Exception as cancellation_exception:
                     self._logger.error(f"Uncaught error while cancelling orchestration work item: {cancellation_exception}")
@@ -2114,6 +2116,7 @@ class _AsyncWorkerManager:
                     await self._run_func(cancellation_func, *args, **kwargs)
                     self._logger.error(f"Entity batch work item args: {args}, kwargs: {kwargs}")
                 except asyncio.QueueEmpty:
+                    # Queue was empty, no cancellation needed
                     pass
                 except Exception as cancellation_exception:
                     self._logger.error(f"Uncaught error while cancelling entity batch work item: {cancellation_exception}")
@@ -2150,7 +2153,8 @@ class _AsyncWorkerManager:
         async with semaphore:
             try:
                 await self._run_func(func, *args, **kwargs)
-            except Exception:
+            except Exception as work_exception:
+                self._logger.error(f"Uncaught error while processing work item, item will be abandoned: {work_exception}")
                 await self._run_func(cancellation_func, *args, **kwargs)
             finally:
                 queue.task_done()
@@ -2218,22 +2222,22 @@ class _AsyncWorkerManager:
                 while not self.activity_queue.empty():
                     func, cancellation_func, args, kwargs = self.activity_queue.get_nowait()
                     await self._run_func(cancellation_func, *args, **kwargs)
-            except Exception:
-                pass
+            except Exception as reset_exception:
+                self._logger.warning(f"Error while clearing activity queue during reset: {reset_exception}")
         if self.orchestration_queue is not None:
             try:
                 while not self.orchestration_queue.empty():
                     func, cancellation_func, args, kwargs = self.orchestration_queue.get_nowait()
                     await self._run_func(cancellation_func, *args, **kwargs)
-            except Exception:
-                pass
+            except Exception as reset_exception:
+                self._logger.warning(f"Error while clearing orchestration queue during reset: {reset_exception}")
         if self.entity_batch_queue is not None:
             try:
                 while not self.entity_batch_queue.empty():
                     func, cancellation_func, args, kwargs = self.entity_batch_queue.get_nowait()
                     await self._run_func(cancellation_func, *args, **kwargs)
-            except Exception:
-                pass
+            except Exception as reset_exception:
+                self._logger.warning(f"Error while clearing entity queue during reset: {reset_exception}")
         # Clear pending work lists
         self._pending_activity_work.clear()
         self._pending_orchestration_work.clear()
