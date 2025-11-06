@@ -128,8 +128,8 @@ def test_worker_concurrency_sync():
 
     # Submit more work than concurrency allows
     for i in range(5):
-        manager.submit_orchestration(make_work("orch", i))
-        manager.submit_activity(make_work("act", i))
+        manager.submit_orchestration(make_work("orch", i), lambda *a, **k: None)
+        manager.submit_activity(make_work("act", i), lambda *a, **k: None)
 
     # Run the manager loop in a thread (sync context)
     def run_manager():
@@ -139,6 +139,11 @@ def test_worker_concurrency_sync():
     t.start()
     time.sleep(1.5)  # Let work process
     manager.shutdown()
+
+    # Ensure the queues have been started
+    if (manager.activity_queue is None or manager.orchestration_queue is None):
+        raise RuntimeError("Worker manager queues not initialized")
+
     # Unblock the consumers by putting dummy items in the queues
     manager.activity_queue.put_nowait((lambda: None, (), {}))
     manager.orchestration_queue.put_nowait((lambda: None, (), {}))

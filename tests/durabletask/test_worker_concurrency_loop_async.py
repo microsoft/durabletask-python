@@ -46,25 +46,25 @@ def test_worker_concurrency_loop_async():
     grpc_worker = TaskHubGrpcWorker(concurrency_options=options)
     stub = DummyStub()
 
-    async def dummy_orchestrator(req, stub, completionToken):
+    async def dummy_orchestrator(self, req, stub, completionToken):
         await asyncio.sleep(0.1)
         stub.CompleteOrchestratorTask('ok')
 
-    async def cancel_dummy_orchestrator(req, stub, completionToken):
+    async def cancel_dummy_orchestrator(self, req, stub, completionToken):
         pass
 
-    async def dummy_activity(req, stub, completionToken):
+    async def dummy_activity(self, req, stub, completionToken):
         await asyncio.sleep(0.1)
         stub.CompleteActivityTask('ok')
 
-    async def cancel_dummy_activity(req, stub, completionToken):
+    async def cancel_dummy_activity(self, req, stub, completionToken):
         pass
 
     # Patch the worker's _execute_orchestrator and _execute_activity
-    grpc_worker._execute_orchestrator = dummy_orchestrator
-    grpc_worker._cancel_orchestrator = cancel_dummy_orchestrator
-    grpc_worker._execute_activity = dummy_activity
-    grpc_worker._cancel_activity = cancel_dummy_activity
+    grpc_worker._execute_orchestrator = dummy_orchestrator.__get__(grpc_worker, TaskHubGrpcWorker)
+    grpc_worker._cancel_orchestrator = cancel_dummy_orchestrator.__get__(grpc_worker, TaskHubGrpcWorker)
+    grpc_worker._execute_activity = dummy_activity.__get__(grpc_worker, TaskHubGrpcWorker)
+    grpc_worker._cancel_activity = cancel_dummy_activity.__get__(grpc_worker, TaskHubGrpcWorker)
 
     orchestrator_requests = [DummyRequest('orchestrator', f'orch{i}') for i in range(3)]
     activity_requests = [DummyRequest('activity', f'act{i}') for i in range(4)]
