@@ -1029,7 +1029,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_sub_orchestrator(
             self,
-            orchestrator: task.Orchestrator[TInput, TOutput],
+            orchestrator: Union[task.Orchestrator[TInput, TOutput], str],
             *,
             input: Optional[TInput] = None,
             instance_id: Optional[str] = None,
@@ -1037,7 +1037,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             version: Optional[str] = None,
     ) -> task.Task[TOutput]:
         id = self.next_sequence_number()
-        orchestrator_name = task.get_name(orchestrator)
+        if isinstance(orchestrator, str):
+            orchestrator_name = orchestrator
+        else:
+            orchestrator_name = task.get_name(orchestrator)
         default_version = self._registry.versioning.default_version if self._registry.versioning else None
         orchestrator_version = version if version else default_version
         self.call_activity_function_helper(
