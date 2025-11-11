@@ -246,7 +246,7 @@ class TaskHubGrpcWorker:
             Defaults to the value from environment variables or localhost.
         metadata (Optional[list[tuple[str, str]]], optional): gRPC metadata to include with
             requests. Used for authentication and routing. Defaults to None.
-        log_handler (optional): Custom logging handler for worker logs. Defaults to None.
+        log_handler (optional[logging.Handler]): Custom logging handler for worker logs. Defaults to None.
         log_formatter (Optional[logging.Formatter], optional): Custom log formatter.
             Defaults to None.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
@@ -314,7 +314,7 @@ class TaskHubGrpcWorker:
             *,
             host_address: Optional[str] = None,
             metadata: Optional[list[tuple[str, str]]] = None,
-            log_handler=None,
+            log_handler: Optional[logging.Handler] = None,
             log_formatter: Optional[logging.Formatter] = None,
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
@@ -1236,13 +1236,21 @@ class _OrchestrationExecutor:
             old_events: Sequence[pb.HistoryEvent],
             new_events: Sequence[pb.HistoryEvent],
     ) -> ExecutionResults:
+        orchestration_name = "<unknown>"
+        orchestration_started_events = [e for e in old_events if e.HasField("executionStarted")]
+        if len(orchestration_started_events) >= 1:
+            orchestration_name = orchestration_started_events[0].executionStarted.name
+
+        self._logger.debug(
+            f"{instance_id}: Beginning replay for orchestrator {orchestration_name}..."
+        )
+
         self._entity_state = OrchestrationEntityContext(instance_id)
 
         if not new_events:
             raise task.OrchestrationStateError(
                 "The new history event list must have at least one event in it."
             )
-
         ctx = _RuntimeOrchestrationContext(instance_id, self._registry, self._entity_state)
         try:
             # Rebuild local state by replaying old history into the orchestrator function
@@ -1274,13 +1282,15 @@ class _OrchestrationExecutor:
 
         except Exception as ex:
             # Unhandled exceptions fail the orchestration
+            self._logger.debug(f"{instance_id}: Orchestration {orchestration_name} failed")
             ctx.set_failed(ex)
 
         if not ctx._is_complete:
             task_count = len(ctx._pending_tasks)
             event_count = len(ctx._pending_events)
             self._logger.info(
-                f"{instance_id}: Orchestrator yielded with {task_count} task(s) and {event_count} event(s) outstanding."
+                f"{instance_id}: Orchestrator {orchestration_name} yielded with {task_count} task(s) "
+                f"and {event_count} event(s) outstanding."
             )
         elif (
                 ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
@@ -1289,7 +1299,7 @@ class _OrchestrationExecutor:
                 ctx._completion_status
             )
             self._logger.info(
-                f"{instance_id}: Orchestration completed with status: {completion_status_str}"
+                f"{instance_id}: Orchestration {orchestration_name} completed with status: {completion_status_str}"
             )
 
         actions = ctx.get_actions()

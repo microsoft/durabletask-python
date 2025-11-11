@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import logging
+
 from typing import Optional
 
 from azure.core.credentials import TokenCredential
@@ -28,6 +30,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         concurrency_options (Optional[ConcurrencyOptions], optional): Configuration
             for controlling worker concurrency limits. If None, default concurrency
             settings will be used.
+        log_handler (Optional[logging.Handler], optional): Custom logging handler for worker logs.
+        log_formatter (Optional[logging.Formatter], optional): Custom log formatter for worker logs.
 
     Raises:
         ValueError: If taskhub is empty or None.
@@ -52,12 +56,15 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         parameter is set to None since authentication is handled by the
         DTS interceptor.
     """
+
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
                  token_credential: Optional[TokenCredential],
                  secure_channel: bool = True,
-                 concurrency_options: Optional[ConcurrencyOptions] = None):
+                 concurrency_options: Optional[ConcurrencyOptions] = None,
+                 log_handler: Optional[logging.Handler] = None,
+                 log_formatter: Optional[logging.Formatter] = None):
 
         if not taskhub:
             raise ValueError("The taskhub value cannot be empty.")
@@ -70,5 +77,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             host_address=host_address,
             secure_channel=secure_channel,
             metadata=None,
+            log_handler=log_handler,
+            log_formatter=log_formatter,
             interceptors=interceptors,
             concurrency_options=concurrency_options)
