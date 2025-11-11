@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-# v0.5.0
+## v1.0.0
+
+- Allow calling sub-orchestrators by name
+- Improve execution logging
+- Drop Python 3.9, add 3.14
+- Abandon workitems if unhandled exception occurs in client
+- Reduce exposure of Entity context internally
+
+## v0.5.0
 
 - Added support for Durable Entities
 
