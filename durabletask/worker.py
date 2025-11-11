@@ -246,7 +246,7 @@ class TaskHubGrpcWorker:
             Defaults to the value from environment variables or localhost.
         metadata (Optional[list[tuple[str, str]]], optional): gRPC metadata to include with
             requests. Used for authentication and routing. Defaults to None.
-        log_handler (optional): Custom logging handler for worker logs. Defaults to None.
+        log_handler (optional[logging.Handler]): Custom logging handler for worker logs. Defaults to None.
         log_formatter (Optional[logging.Formatter], optional): Custom log formatter.
             Defaults to None.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
@@ -314,7 +314,7 @@ class TaskHubGrpcWorker:
             *,
             host_address: Optional[str] = None,
             metadata: Optional[list[tuple[str, str]]] = None,
-            log_handler=None,
+            log_handler: Optional[logging.Handler] = None,
             log_formatter: Optional[logging.Formatter] = None,
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,

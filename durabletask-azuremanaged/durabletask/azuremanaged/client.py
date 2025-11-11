@@ -21,7 +21,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  token_credential: Optional[TokenCredential],
                  secure_channel: bool = True,
                  default_version: Optional[str] = None,
-                 log_handler=None,
+                 log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None):
 
         if not taskhub:

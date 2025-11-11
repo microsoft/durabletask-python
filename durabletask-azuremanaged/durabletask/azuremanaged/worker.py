@@ -30,6 +30,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         concurrency_options (Optional[ConcurrencyOptions], optional): Configuration
             for controlling worker concurrency limits. If None, default concurrency
             settings will be used.
+        log_handler (Optional[logging.Handler], optional): Custom logging handler for worker logs.
+        log_formatter (Optional[logging.Formatter], optional): Custom log formatter for worker logs.
 
     Raises:
         ValueError: If taskhub is empty or None.
@@ -61,7 +63,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  token_credential: Optional[TokenCredential],
                  secure_channel: bool = True,
                  concurrency_options: Optional[ConcurrencyOptions] = None,
-                 log_handler=None,
+                 log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None):
 
         if not taskhub:
