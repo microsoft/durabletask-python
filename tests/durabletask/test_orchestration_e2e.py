@@ -10,6 +10,8 @@ import pytest
 
 from durabletask import client, task, worker
 
+from grpc._channel import _InactiveRpcError
+
 # NOTE: These tests assume a sidecar process is running. Example command:
 #       go install github.com/microsoft/durabletask-go@main
 #       durabletask-go --port 4001
@@ -162,6 +164,32 @@ def test_sub_orchestration_fan_out():
     assert activity_counter == 30
 
 
+def test_sub_orchestrator_by_name():
+    sub_orchestrator_counter = 0
+
+    def orchestrator_child(ctx: task.OrchestrationContext, _):
+        nonlocal sub_orchestrator_counter
+        sub_orchestrator_counter += 1
+
+    def parent_orchestrator(ctx: task.OrchestrationContext, _):
+        yield ctx.call_sub_orchestrator("orchestrator_child")
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(orchestrator_child)
+        w.add_orchestrator(parent_orchestrator)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient()
+        id = task_hub_client.schedule_new_orchestration(parent_orchestrator, input=None)
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    assert sub_orchestrator_counter == 1
+
+
 def test_wait_for_multiple_external_events():
     def orchestrator(ctx: task.OrchestrationContext, _):
         a = yield ctx.wait_for_external_event('A')
@@ -246,7 +274,7 @@ def test_suspend_and_resume():
         try:
             state = task_hub_client.wait_for_orchestration_completion(id, timeout=3)
             assert False, "Orchestration should not have completed"
-        except TimeoutError:
+        except (TimeoutError, _InactiveRpcError):
             pass
 
         # Resume the orchestration and wait for it to complete
