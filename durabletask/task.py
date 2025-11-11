@@ -201,7 +201,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput], *,
+    def call_sub_orchestrator(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
                               input: Optional[TInput] = None,
                               instance_id: Optional[str] = None,
                               retry_policy: Optional[RetryPolicy] = None,
