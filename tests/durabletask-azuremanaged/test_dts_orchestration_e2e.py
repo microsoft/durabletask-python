@@ -265,9 +265,9 @@ def test_wait_for_multiple_external_events():
 #         # Raise an event to the orchestration and confirm that it does NOT complete
 #         task_hub_client.raise_orchestration_event(id, "my_event", data=42)
 #         try:
-#             state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+#             state = task_hub_client.wait_for_orchestration_completion(id, timeout=3)
 #             assert False, "Orchestration should not have completed"
-#         except TimeoutError:
+#         except (TimeoutError, _InactiveRpcError):
 #             pass
 
 #         # Resume the orchestration and wait for it to complete
