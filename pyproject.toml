@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "durabletask"
-version = "0.5.0"
+version = "1.0.0"
 description = "A Durable Task Client SDK for Python"
 keywords = [
     "durable",
@@ -17,7 +17,7 @@ keywords = [
     "workflow"
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
 ]
