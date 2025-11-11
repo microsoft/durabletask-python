@@ -149,3 +149,20 @@ Orchestrations can be suspended using the `suspend_orchestration` client API and
 ### Retry policies
 
 Orchestrations can specify retry policies for activities and sub-orchestrations. These policies control how many times and how frequently an activity or sub-orchestration will be retried in the event of a transient error.
+
+### Logging configuration
+
+Both the TaskHubGrpcWorker and TaskHubGrpcClient (as well as DurableTaskSchedulerWorker and DurableTaskSchedulerClient for durabletask-azuremanaged) accept a log_handler and log_formatter object from `logging`. These can be used to customize verbosity, output location, and format of logs emitted by these sources.
+
+For example, to output logs to a file called `worker.log` at level `DEBUG`, the following syntax might apply:
+
+```python
+log_handler = logging.FileHandler('durable.log', encoding='utf-8')
+log_handler.setLevel(logging.DEBUG)
+
+with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
+                                taskhub=taskhub_name, token_credential=credential, log_handler=log_handler) as w:
+```
+
+**NOTE**
+The worker and client output many logs at the `DEBUG` level that will be useful when understanding orchestration flow and diagnosing issues with Durable applications. Before submitting issues, please attempt a repro of the issue with debug logging enabled.
