@@ -819,7 +819,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
 
-    def __init__(self, instance_id: str, registry: _Registry, entity_context: OrchestrationEntityContext):
+    def __init__(self, instance_id: str, registry: _Registry):
         self._generator = None
         self._is_replaying = True
         self._is_complete = False
@@ -834,7 +834,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._registry = registry
-        self._entity_context = entity_context
+        self._entity_context = OrchestrationEntityContext(instance_id)
         self._version: Optional[str] = None
         self._completion_status: Optional[pb.OrchestrationStatus] = None
         self._received_events: dict[str, list[Any]] = {}
@@ -1271,7 +1271,6 @@ class _OrchestrationExecutor:
         self._logger = logger
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
-        self._entity_state: Optional[OrchestrationEntityContext] = None
 
     def execute(
             self,
@@ -1288,13 +1287,12 @@ class _OrchestrationExecutor:
             f"{instance_id}: Beginning replay for orchestrator {orchestration_name}..."
         )
 
-        self._entity_state = OrchestrationEntityContext(instance_id)
-
         if not new_events:
             raise task.OrchestrationStateError(
                 "The new history event list must have at least one event in it."
             )
-        ctx = _RuntimeOrchestrationContext(instance_id, self._registry, self._entity_state)
+
+        ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
