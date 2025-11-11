@@ -346,7 +346,7 @@ class TaskHubGrpcWorker:
         else:
             self._interceptors = None
 
-        self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options)
+        self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options, self._logger)
 
     @property
     def concurrency_options(self) -> ConcurrencyOptions:
@@ -533,6 +533,7 @@ class TaskHubGrpcWorker:
                         if work_item.HasField("orchestratorRequest"):
                             self._async_worker_manager.submit_orchestration(
                                 self._execute_orchestrator,
+                                self._cancel_orchestrator,
                                 work_item.orchestratorRequest,
                                 stub,
                                 work_item.completionToken,
@@ -540,6 +541,7 @@ class TaskHubGrpcWorker:
                         elif work_item.HasField("activityRequest"):
                             self._async_worker_manager.submit_activity(
                                 self._execute_activity,
+                                self._cancel_activity,
                                 work_item.activityRequest,
                                 stub,
                                 work_item.completionToken,
@@ -547,6 +549,7 @@ class TaskHubGrpcWorker:
                         elif work_item.HasField("entityRequest"):
                             self._async_worker_manager.submit_entity_batch(
                                 self._execute_entity_batch,
+                                self._cancel_entity_batch,
                                 work_item.entityRequest,
                                 stub,
                                 work_item.completionToken,
@@ -554,6 +557,7 @@ class TaskHubGrpcWorker:
                         elif work_item.HasField("entityRequestV2"):
                             self._async_worker_manager.submit_entity_batch(
                                 self._execute_entity_batch,
+                                self._cancel_entity_batch,
                                 work_item.entityRequestV2,
                                 stub,
                                 work_item.completionToken
@@ -670,6 +674,19 @@ class TaskHubGrpcWorker:
                 f"Failed to deliver orchestrator response for '{req.instanceId}' to sidecar: {ex}"
             )
 
+    def _cancel_orchestrator(
+            self,
+            req: pb.OrchestratorRequest,
+            stub: stubs.TaskHubSidecarServiceStub,
+            completionToken,
+    ):
+        stub.AbandonTaskOrchestratorWorkItem(
+            pb.AbandonOrchestrationTaskRequest(
+                completionToken=completionToken
+            )
+        )
+        self._logger.info(f"Cancelled orchestration task for invocation ID: {req.instanceId}")
+
     def _execute_activity(
             self,
             req: pb.ActivityRequest,
@@ -702,6 +719,19 @@ class TaskHubGrpcWorker:
             self._logger.exception(
                 f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
             )
+
+    def _cancel_activity(
+            self,
+            req: pb.ActivityRequest,
+            stub: stubs.TaskHubSidecarServiceStub,
+            completionToken,
+    ):
+        stub.AbandonTaskActivityWorkItem(
+            pb.AbandonActivityTaskRequest(
+                completionToken=completionToken
+            )
+        )
+        self._logger.info(f"Cancelled activity task for task ID: {req.taskId} on orchestration ID: {req.orchestrationInstance.instanceId}")
 
     def _execute_entity_batch(
             self,
@@ -770,6 +800,19 @@ class TaskHubGrpcWorker:
         # TODO: Reset context
 
         return batch_result
+
+    def _cancel_entity_batch(
+            self,
+            req: Union[pb.EntityBatchRequest, pb.EntityRequest],
+            stub: stubs.TaskHubSidecarServiceStub,
+            completionToken,
+    ):
+        stub.AbandonTaskEntityWorkItem(
+            pb.AbandonEntityTaskRequest(
+                completionToken=completionToken
+            )
+        )
+        self._logger.info(f"Cancelled entity batch task for instance ID: {req.instanceId}")
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
@@ -1933,8 +1976,10 @@ def _is_suspendable(event: pb.HistoryEvent) -> bool:
 
 
 class _AsyncWorkerManager:
-    def __init__(self, concurrency_options: ConcurrencyOptions):
+    def __init__(self, concurrency_options: ConcurrencyOptions, logger: logging.Logger):
         self.concurrency_options = concurrency_options
+        self._logger = logger
+
         self.activity_semaphore = None
         self.orchestration_semaphore = None
         self.entity_semaphore = None
@@ -2044,17 +2089,51 @@ class _AsyncWorkerManager:
         )
 
         # Start background consumers for each work type
-        if self.activity_queue is not None and self.orchestration_queue is not None \
-                and self.entity_batch_queue is not None:
-            await asyncio.gather(
-                self._consume_queue(self.activity_queue, self.activity_semaphore),
-                self._consume_queue(
-                    self.orchestration_queue, self.orchestration_semaphore
-                ),
-                self._consume_queue(
-                    self.entity_batch_queue, self.entity_semaphore
+        try:
+            if self.activity_queue is not None and self.orchestration_queue is not None \
+                    and self.entity_batch_queue is not None:
+                await asyncio.gather(
+                    self._consume_queue(self.activity_queue, self.activity_semaphore),
+                    self._consume_queue(
+                        self.orchestration_queue, self.orchestration_semaphore
+                    ),
+                    self._consume_queue(
+                        self.entity_batch_queue, self.entity_semaphore
+                    )
                 )
-            )
+        except Exception as queue_exception:
+            self._logger.error(f"Shutting down worker - Uncaught error in worker manager: {queue_exception}")
+            while self.activity_queue is not None and not self.activity_queue.empty():
+                try:
+                    func, cancellation_func, args, kwargs = self.activity_queue.get_nowait()
+                    await self._run_func(cancellation_func, *args, **kwargs)
+                    self._logger.error(f"Activity work item args: {args}, kwargs: {kwargs}")
+                except asyncio.QueueEmpty:
+                    # Queue was empty, no cancellation needed
+                    pass
+                except Exception as cancellation_exception:
+                    self._logger.error(f"Uncaught error while cancelling activity work item: {cancellation_exception}")
+            while self.orchestration_queue is not None and not self.orchestration_queue.empty():
+                try:
+                    func, cancellation_func, args, kwargs = self.orchestration_queue.get_nowait()
+                    await self._run_func(cancellation_func, *args, **kwargs)
+                    self._logger.error(f"Orchestration work item args: {args}, kwargs: {kwargs}")
+                except asyncio.QueueEmpty:
+                    # Queue was empty, no cancellation needed
+                    pass
+                except Exception as cancellation_exception:
+                    self._logger.error(f"Uncaught error while cancelling orchestration work item: {cancellation_exception}")
+            while self.entity_batch_queue is not None and not self.entity_batch_queue.empty():
+                try:
+                    func, cancellation_func, args, kwargs = self.entity_batch_queue.get_nowait()
+                    await self._run_func(cancellation_func, *args, **kwargs)
+                    self._logger.error(f"Entity batch work item args: {args}, kwargs: {kwargs}")
+                except asyncio.QueueEmpty:
+                    # Queue was empty, no cancellation needed
+                    pass
+                except Exception as cancellation_exception:
+                    self._logger.error(f"Uncaught error while cancelling entity batch work item: {cancellation_exception}")
+            self.shutdown()
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
         # List to track running tasks
@@ -2074,19 +2153,22 @@ class _AsyncWorkerManager:
             except asyncio.TimeoutError:
                 continue
 
-            func, args, kwargs = work
+            func, cancellation_func, args, kwargs = work
             # Create a concurrent task for processing
             task = asyncio.create_task(
-                self._process_work_item(semaphore, queue, func, args, kwargs)
+                self._process_work_item(semaphore, queue, func, cancellation_func, args, kwargs)
             )
             running_tasks.add(task)
 
     async def _process_work_item(
-            self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, args, kwargs
+            self, semaphore: asyncio.Semaphore, queue: asyncio.Queue, func, cancellation_func, args, kwargs
     ):
         async with semaphore:
             try:
                 await self._run_func(func, *args, **kwargs)
+            except Exception as work_exception:
+                self._logger.error(f"Uncaught error while processing work item, item will be abandoned: {work_exception}")
+                await self._run_func(cancellation_func, *args, **kwargs)
             finally:
                 queue.task_done()
 
@@ -2105,8 +2187,10 @@ class _AsyncWorkerManager:
                 self.thread_pool, lambda: func(*args, **kwargs)
             )
 
-    def submit_activity(self, func, *args, **kwargs):
-        work_item = (func, args, kwargs)
+    def submit_activity(self, func, cancellation_func, *args, **kwargs):
+        if self._shutdown:
+            raise RuntimeError("Cannot submit new work items after shutdown has been initiated.")
+        work_item = (func, cancellation_func, args, kwargs)
         self._ensure_queues_for_current_loop()
         if self.activity_queue is not None:
             self.activity_queue.put_nowait(work_item)
@@ -2114,8 +2198,10 @@ class _AsyncWorkerManager:
             # No event loop running, store in pending list
             self._pending_activity_work.append(work_item)
 
-    def submit_orchestration(self, func, *args, **kwargs):
-        work_item = (func, args, kwargs)
+    def submit_orchestration(self, func, cancellation_func, *args, **kwargs):
+        if self._shutdown:
+            raise RuntimeError("Cannot submit new work items after shutdown has been initiated.")
+        work_item = (func, cancellation_func, args, kwargs)
         self._ensure_queues_for_current_loop()
         if self.orchestration_queue is not None:
             self.orchestration_queue.put_nowait(work_item)
@@ -2123,8 +2209,10 @@ class _AsyncWorkerManager:
             # No event loop running, store in pending list
             self._pending_orchestration_work.append(work_item)
 
-    def submit_entity_batch(self, func, *args, **kwargs):
-        work_item = (func, args, kwargs)
+    def submit_entity_batch(self, func, cancellation_func, *args, **kwargs):
+        if self._shutdown:
+            raise RuntimeError("Cannot submit new work items after shutdown has been initiated.")
+        work_item = (func, cancellation_func, args, kwargs)
         self._ensure_queues_for_current_loop()
         if self.entity_batch_queue is not None:
             self.entity_batch_queue.put_nowait(work_item)
@@ -2136,7 +2224,7 @@ class _AsyncWorkerManager:
         self._shutdown = True
         self.thread_pool.shutdown(wait=True)
 
-    def reset_for_new_run(self):
+    async def reset_for_new_run(self):
         """Reset the manager state for a new run."""
         self._shutdown = False
         # Clear any existing queues - they'll be recreated when needed
@@ -2145,18 +2233,28 @@ class _AsyncWorkerManager:
             # This ensures no items from previous runs remain
             try:
                 while not self.activity_queue.empty():
-                    self.activity_queue.get_nowait()
-            except Exception:
-                pass
+                    func, cancellation_func, args, kwargs = self.activity_queue.get_nowait()
+                    await self._run_func(cancellation_func, *args, **kwargs)
+            except Exception as reset_exception:
+                self._logger.warning(f"Error while clearing activity queue during reset: {reset_exception}")
         if self.orchestration_queue is not None:
             try:
                 while not self.orchestration_queue.empty():
-                    self.orchestration_queue.get_nowait()
-            except Exception:
-                pass
+                    func, cancellation_func, args, kwargs = self.orchestration_queue.get_nowait()
+                    await self._run_func(cancellation_func, *args, **kwargs)
+            except Exception as reset_exception:
+                self._logger.warning(f"Error while clearing orchestration queue during reset: {reset_exception}")
+        if self.entity_batch_queue is not None:
+            try:
+                while not self.entity_batch_queue.empty():
+                    func, cancellation_func, args, kwargs = self.entity_batch_queue.get_nowait()
+                    await self._run_func(cancellation_func, *args, **kwargs)
+            except Exception as reset_exception:
+                self._logger.warning(f"Error while clearing entity queue during reset: {reset_exception}")
         # Clear pending work lists
         self._pending_activity_work.clear()
         self._pending_orchestration_work.clear()
+        self._pending_entity_batch_work.clear()
 
 
 # Export public API

@@ -50,13 +50,21 @@ def test_worker_concurrency_loop_async():
         await asyncio.sleep(0.1)
         stub.CompleteOrchestratorTask('ok')
 
+    async def cancel_dummy_orchestrator(req, stub, completionToken):
+        pass
+
     async def dummy_activity(req, stub, completionToken):
         await asyncio.sleep(0.1)
         stub.CompleteActivityTask('ok')
 
+    async def cancel_dummy_activity(req, stub, completionToken):
+        pass
+
     # Patch the worker's _execute_orchestrator and _execute_activity
-    grpc_worker._execute_orchestrator = dummy_orchestrator
-    grpc_worker._execute_activity = dummy_activity
+    grpc_worker._execute_orchestrator = dummy_orchestrator.__get__(grpc_worker, TaskHubGrpcWorker)
+    grpc_worker._cancel_orchestrator = cancel_dummy_orchestrator.__get__(grpc_worker, TaskHubGrpcWorker)
+    grpc_worker._execute_activity = dummy_activity.__get__(grpc_worker, TaskHubGrpcWorker)
+    grpc_worker._cancel_activity = cancel_dummy_activity.__get__(grpc_worker, TaskHubGrpcWorker)
 
     orchestrator_requests = [DummyRequest('orchestrator', f'orch{i}') for i in range(3)]
     activity_requests = [DummyRequest('activity', f'act{i}') for i in range(4)]
@@ -65,10 +73,15 @@ def test_worker_concurrency_loop_async():
         # Clear stub state before each run
         stub.completed.clear()
         worker_task = asyncio.create_task(grpc_worker._async_worker_manager.run())
+        # Need to yield to that thread in order to let it start up on the second run
+        startup_attempts = 0
+        while grpc_worker._async_worker_manager._shutdown and startup_attempts < 10:
+            await asyncio.sleep(0.1)
+            startup_attempts += 1
         for req in orchestrator_requests:
-            grpc_worker._async_worker_manager.submit_orchestration(dummy_orchestrator, req, stub, DummyCompletionToken())
+            grpc_worker._async_worker_manager.submit_orchestration(dummy_orchestrator, cancel_dummy_orchestrator, req, stub, DummyCompletionToken())
         for req in activity_requests:
-            grpc_worker._async_worker_manager.submit_activity(dummy_activity, req, stub, DummyCompletionToken())
+            grpc_worker._async_worker_manager.submit_activity(dummy_activity, cancel_dummy_activity, req, stub, DummyCompletionToken())
         await asyncio.sleep(1.0)
         orchestrator_count = sum(1 for t, _ in stub.completed if t == 'orchestrator')
         activity_count = sum(1 for t, _ in stub.completed if t == 'activity')
