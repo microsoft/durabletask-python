@@ -15,13 +15,11 @@ ADDED:
 CHANGED:
 
 - Improve execution logging
-- Drop Python 3.9, add 3.14
+- Supported Python versions are now 3.10- 3.14. Python 3.9 is end of life and has been removed.
 
 FIXED:
 
 - Reduce exposure of Entity context internally
-
-REMOVED:
 
 ## v0.5.0
 
