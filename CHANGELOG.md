@@ -7,11 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v1.0.0
 
+ADDED:
+
 - Allow calling sub-orchestrators by name
+- Abandon workitems if unhandled exception occurs in client
+
+CHANGED:
+
 - Improve execution logging
 - Drop Python 3.9, add 3.14
-- Abandon workitems if unhandled exception occurs in client
+
+FIXED:
+
 - Reduce exposure of Entity context internally
+
+REMOVED:
 
 ## v0.5.0
 

@@ -7,10 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v1.0.0
 
+ADDED:
+
+CHANGED:
+
 - Drop Python 3.9, add 3.14
 - Updates base dependency to durabletask v1.0.0
   - See durabletask changelog for more details
 - Allow logging configuration for DurableTaskSchedulerClient
+
+FIXED:
+
+REMOVED:
 
 ## v0.4.0
 
