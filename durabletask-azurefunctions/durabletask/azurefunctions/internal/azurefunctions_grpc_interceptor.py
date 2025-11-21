@@ -6,7 +6,7 @@ from importlib.metadata import version
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 
-class AzureFunctionsDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
+class AzureFunctionsDefaultClientInterceptorImpl(DefaultClientInterceptorImpl):
     """The class implements a UnaryUnaryClientInterceptor, UnaryStreamClientInterceptor,
     StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an
     interceptor to add additional headers to all calls as needed."""

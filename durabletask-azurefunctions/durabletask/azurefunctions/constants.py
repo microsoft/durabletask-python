@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Constants used to determine the local running context."""
 # TODO: Remove unused constants after module is complete
 DEFAULT_LOCAL_HOST: str = 'localhost:7071'

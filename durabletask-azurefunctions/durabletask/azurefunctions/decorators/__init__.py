@@ -8,4 +8,4 @@ import durabletask.azurefunctions.decorators.metadata as metadata
 
 __all__ = ["durable_app", "metadata"]
 
-PACKAGE_NAME = "durabletask.entities"
+PACKAGE_NAME = "durabletask.azurefunctions.decorators"
