@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Any, Optional
 from durabletask.entities.entity_instance_id import EntityInstanceId
-from durabletask.internal.helpers import get_string_value
 
 import durabletask.internal.orchestrator_service_pb2 as pb
 
