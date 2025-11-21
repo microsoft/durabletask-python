@@ -9,7 +9,7 @@ from durabletask.worker import TaskHubGrpcWorker
 
 # Worker class used for Durable Task Scheduler (DTS)
 class DurableFunctionsWorker(TaskHubGrpcWorker):
-    """TOOD: Docs
+    """TODO: Docs
     """
 
     def __init__(self):
@@ -27,6 +27,6 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         self._interceptors = None
 
     def add_named_orchestrator(self, name: str, func):
-        """TOOD: Docs
+        """TODO: Docs
         """
         self._registry.add_named_orchestrator(name, func)

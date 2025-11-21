@@ -1,8 +1,11 @@
-from typing import Any, Callable
+from typing import Callable
 
 
 class ProtoTaskHubSidecarServiceStub(object):
-    """TODO: Docs"""
+    """A stub class roughly matching the TaskHubSidecarServiceStub generated from the .proto file.
+    Used by Azure Functions during orchestration and entity executions to inject custom behavior,
+    as no real sidecar stub is available.
+    """
 
     def __init__(self):
         """Constructor.

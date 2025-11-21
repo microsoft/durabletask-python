@@ -1,15 +1,14 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 from durabletask.internal.ProtoTaskHubSidecarServiceStub import ProtoTaskHubSidecarServiceStub
 
 
 class AzureFunctionsNullStub(ProtoTaskHubSidecarServiceStub):
-    """Missing associated documentation comment in .proto file."""
+    """A task hub sidecar stub class that implements all methods as no-ops."""
 
     def __init__(self):
         """Constructor.
-
-        Args:
-            channel: A grpc.Channel.
         """
         self.Hello = lambda *args, **kwargs: None
         self.StartInstance = lambda *args, **kwargs: None

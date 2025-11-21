@@ -1,5 +1,6 @@
 #  Copyright (c) Microsoft Corporation. All rights reserved.
 #  Licensed under the MIT License.
+
 import base64
 from functools import wraps
 
@@ -76,7 +77,16 @@ class Blueprint(TriggerApi, BindingApi):
                     nonlocal response
                     response = stub_response
                 stub.CompleteOrchestratorTask = stub_complete
-                execution_started_events = [e for e in [e1 for e1 in request.newEvents] + [e2 for e2 in request.pastEvents] if e.HasField("executionStarted")]
+                execution_started_events = []
+                for e in request.pastEvents:
+                    if e.HasField("executionStarted"):
+                        execution_started_events.append(e)
+                for e in request.newEvents:
+                    if e.HasField("executionStarted"):
+                        execution_started_events.append(e)
+                if len(execution_started_events) == 0:
+                    raise Exception("No ExecutionStarted event found in orchestration request.")
+
                 function_name = execution_started_events[-1].executionStarted.name
                 worker.add_named_orchestrator(function_name, orchestrator_func)
                 worker._execute_orchestrator(request, stub, None)
