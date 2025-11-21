@@ -1,10 +1,19 @@
 #  Copyright (c) Microsoft Corporation. All rights reserved.
 #  Licensed under the MIT License.
+import base64
+from functools import wraps
+
+from durabletask.internal.orchestrator_service_pb2 import OrchestratorRequest, OrchestratorResponse
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
 from typing import Callable, Optional
 from typing import Union
-from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel, OrchestrationContext
+from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
+
+# TODO: Use __init__.py to optimize imports
+from durabletask.azurefunctions.client import DurableFunctionsClient
+from durabletask.azurefunctions.worker import DurableFunctionsWorker
+from durabletask.azurefunctions.internal.azurefunctions_null_stub import AzureFunctionsNullStub
 
 
 class Blueprint(TriggerApi, BindingApi):
@@ -37,9 +46,6 @@ class Blueprint(TriggerApi, BindingApi):
     def _configure_orchestrator_callable(self, wrap) -> Callable:
         """Obtain decorator to construct an Orchestrator class from a user-defined Function.
 
-        In the old programming model, this decorator's logic was unavoidable boilerplate
-        in user-code. Now, this is handled internally by the framework.
-
         Parameters
         ----------
         wrap: Callable
@@ -54,14 +60,31 @@ class Blueprint(TriggerApi, BindingApi):
         def decorator(orchestrator_func):
             # Construct an orchestrator based on the end-user code
 
-            # TODO: Extract this logic (?)
-            def handle(context: OrchestrationContext) -> str:
+            # TODO: Move this logic somewhere better
+            def handle(context) -> str:
                 context_body = getattr(context, "body", None)
                 if context_body is None:
                     context_body = context
                 orchestration_context = context_body
-                # TODO: Run the orchestration using the context
-                return ""
+                request = OrchestratorRequest()
+                request.ParseFromString(base64.b64decode(orchestration_context))
+                stub = AzureFunctionsNullStub()
+                worker = DurableFunctionsWorker()
+                response: Optional[OrchestratorResponse] = None
+
+                def stub_complete(stub_response):
+                    nonlocal response
+                    response = stub_response
+                stub.CompleteOrchestratorTask = stub_complete
+                execution_started_events = [e for e in [e1 for e1 in request.newEvents] + [e2 for e2 in request.pastEvents] if e.HasField("executionStarted")]
+                function_name = execution_started_events[-1].executionStarted.name
+                worker.add_named_orchestrator(function_name, orchestrator_func)
+                worker._execute_orchestrator(request, stub, None)
+
+                if response is None:
+                    raise Exception("Orchestrator execution did not produce a response.")
+                # The Python worker returns the input as type "json", so double-encoding is necessary
+                return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
 
             handle.orchestrator_function = orchestrator_func
 
@@ -70,6 +93,55 @@ class Blueprint(TriggerApi, BindingApi):
             return wrap(handle)
 
         return decorator
+
+    def _configure_entity_callable(self, wrap) -> Callable:
+        """Obtain decorator to construct an Entity class from a user-defined Function.
+
+        Parameters
+        ----------
+        wrap: Callable
+            The next decorator to be applied.
+
+        Returns
+        -------
+        Callable
+            The function to construct an Entity class from the user-defined Function,
+            wrapped by the next decorator in the sequence.
+        """
+        def decorator(entity_func):
+            # TODO: Implement entity support - similar to orchestrators (?)
+            raise NotImplementedError()
+
+        return decorator
+
+    def _add_rich_client(self, fb, parameter_name,
+                         client_constructor):
+        # Obtain user-code and force type annotation on the client-binding parameter to be `str`.
+        # This ensures a passing type-check of that specific parameter,
+        # circumventing a limitation of the worker in type-checking rich DF Client objects.
+        # TODO: Once rich-binding type checking is possible, remove the annotation change.
+        user_code = fb._function._func
+        user_code.__annotations__[parameter_name] = str
+
+        # `wraps` This ensures we re-export the same method-signature as the decorated method
+        @wraps(user_code)
+        async def df_client_middleware(*args, **kwargs):
+
+            # Obtain JSON-string currently passed as DF Client,
+            # construct rich object from it,
+            # and assign parameter to that rich object
+            starter = kwargs[parameter_name]
+            client = client_constructor(starter)
+            kwargs[parameter_name] = client
+
+            # Invoke user code with rich DF Client binding
+            return await user_code(*args, **kwargs)
+
+        # TODO: Is there a better way to support retrieving the unwrapped user code?
+        df_client_middleware.client_function = fb._function._func  # type: ignore
+
+        user_code_with_rich_client = df_client_middleware
+        fb._function._func = user_code_with_rich_client
 
     def orchestration_trigger(self, context_name: str,
                               orchestration: Optional[str] = None):
@@ -133,6 +205,7 @@ class Blueprint(TriggerApi, BindingApi):
             Name of Entity Function.
             The value is None by default, in which case the name of the method is used.
         """
+        @self._configure_entity_callable
         @self._configure_function_builder
         def wrap(fb):
             def decorator():
@@ -171,7 +244,7 @@ class Blueprint(TriggerApi, BindingApi):
         @self._configure_function_builder
         def wrap(fb):
             def decorator():
-                # self._add_rich_client(fb, client_name, DurableOrchestrationClient)
+                self._add_rich_client(fb, client_name, DurableFunctionsClient)
 
                 fb.add_binding(
                     binding=DurableClient(name=client_name,

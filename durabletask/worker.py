@@ -19,6 +19,7 @@ import grpc
 from google.protobuf import empty_pb2
 
 from durabletask.internal import helpers
+from durabletask.internal.ProtoTaskHubSidecarServiceStub import ProtoTaskHubSidecarServiceStub
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
@@ -625,7 +626,7 @@ class TaskHubGrpcWorker:
     def _execute_orchestrator(
             self,
             req: pb.OrchestratorRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         try:
@@ -1688,6 +1689,9 @@ class _OrchestrationExecutor:
                 if not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id}: Entity operation failed.")
                     self._logger.info(f"Data: {json.dumps(event.entityOperationFailed)}")
+                pass
+            elif event.HasField("orchestratorCompleted"):
+                # Added in Functions only (for some reason) and does not affect orchestrator flow
                 pass
             else:
                 eventType = event.WhichOneof("eventType")
