@@ -37,4 +37,4 @@ class EntityInstanceId:
             _, entity, key = entity_id.split("@", 2)
             return EntityInstanceId(entity=entity, key=key)
         except ValueError as ex:
-            raise ValueError("Invalid entity ID format", ex)
+            raise ValueError(f"Invalid entity ID format: {entity_id}", ex)
