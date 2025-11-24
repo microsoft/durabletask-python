@@ -38,7 +38,7 @@ class EntityMetadata:
         self.id = id
         self.last_modified = last_modified
         self.backlog_queue_size = backlog_queue_size
-        self.locked_by = locked_by
+        self._locked_by = locked_by
         self.includes_state = includes_state
         self._state = state
 
@@ -81,3 +81,17 @@ class EntityMetadata:
             raise TypeError(
                 f"Could not convert state of type '{type(self._state).__name__}' to '{intended_type.__name__}'"
             ) from ex
+
+    def get_locked_by(self) -> Optional[EntityInstanceId]:
+        """Get the identifier of the worker that currently holds the lock on the entity.
+
+        Returns
+        -------
+        str
+            The identifier of the worker that currently holds the lock on the entity.
+        """
+        if not self._locked_by:
+            return None
+
+        # Will throw ValueError if the format is invalid
+        return EntityInstanceId.parse(self._locked_by)

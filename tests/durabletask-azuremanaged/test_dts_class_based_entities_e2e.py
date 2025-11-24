@@ -63,7 +63,7 @@ def test_client_get_class_entity():
         state = c.get_entity(entity_id)
         assert state is not None
         assert state.id == entity_id
-        assert state.locked_by is None
+        assert state.get_locked_by() is None
         assert state.last_modified > datetime.now(timezone.utc)
         assert state.get_state(int) == 1
 
