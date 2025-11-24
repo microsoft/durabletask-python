@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import os
 import time
 
@@ -35,6 +36,36 @@ def test_client_signal_entity():
         entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
         c.signal_entity(entity_id, "do_nothing")
         time.sleep(2)  # wait for the signal to be processed
+
+    assert invoked
+
+
+def test_client_get_entity():
+    invoked = False
+
+    def empty_entity(ctx: entities.EntityContext, _):
+        nonlocal invoked  # don't do this in a real app!
+        if ctx.operation == "do_nothing":
+            invoked = True
+            ctx.set_state(1)
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_entity(empty_entity)
+        w.start()
+
+        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                       taskhub=taskhub_name, token_credential=None)
+        entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
+        c.signal_entity(entity_id, "do_nothing")
+        time.sleep(2)  # wait for the signal to be processed
+        state = c.get_entity(entity_id)
+        assert state is not None
+        assert state.id == entity_id
+        assert state.locked_by is None
+        assert state.last_modified > datetime.now(timezone.utc)
+        assert state.get_state(int) == 1
 
     assert invoked
 
