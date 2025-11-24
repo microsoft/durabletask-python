@@ -64,7 +64,7 @@ def test_client_get_entity():
         assert state is not None
         assert state.id == entity_id
         assert state.get_locked_by() is None
-        assert state.last_modified > datetime.now(timezone.utc)
+        assert state.last_modified < datetime.now(timezone.utc)
         assert state.get_state(int) == 1
 
     assert invoked
