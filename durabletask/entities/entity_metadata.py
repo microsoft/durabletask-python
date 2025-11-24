@@ -1,8 +1,10 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Type, TypeVar, Union, overload
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 import durabletask.internal.orchestrator_service_pb2 as pb
+
+TState = TypeVar("TState")
 
 
 class EntityMetadata:
@@ -28,7 +30,7 @@ class EntityMetadata:
                  locked_by: str,
                  includes_state: bool,
                  state: Optional[Any]):
-        """Initializes a new instance of the EntityState class.
+        """Initializes a new instance of the EntityMetadata class.
 
         Args:
             value: The initial state value of the entity.
@@ -38,7 +40,7 @@ class EntityMetadata:
         self.backlog_queue_size = backlog_queue_size
         self.locked_by = locked_by
         self.includes_state = includes_state
-        self.state = state
+        self._state = state
 
     @staticmethod
     def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool):
@@ -47,12 +49,35 @@ class EntityMetadata:
             raise ValueError("Invalid entity instance ID in entity response.")
         entity_state = None
         if includes_state:
-            entity_state = str(entity_response.entity.serializedState)
+            entity_state = entity_response.entity.serializedState.value
         return EntityMetadata(
             id=entity_id,
             last_modified=entity_response.entity.lastModifiedTime.ToDatetime(),
             backlog_queue_size=entity_response.entity.backlogQueueSize,
-            locked_by=str(entity_response.entity.lockedBy),
+            locked_by=entity_response.entity.lockedBy.value,
             includes_state=includes_state,
             state=entity_state
         )
+
+    @overload
+    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+        ...
+
+    @overload
+    def get_state(self, intended_type: None = None) -> Any:
+        ...
+
+    def get_state(self, intended_type: Optional[Type[TState]] = None) -> Union[None, TState, Any]:
+        """Get the current state of the entity, optionally converting it to a specified type."""
+        if intended_type is None or self._state is None:
+            return self._state
+
+        if isinstance(self._state, intended_type):
+            return self._state
+
+        try:
+            return intended_type(self._state)  # type: ignore[call-arg]
+        except Exception as ex:
+            raise TypeError(
+                f"Could not convert state of type '{type(self._state).__name__}' to '{intended_type.__name__}'"
+            ) from ex
