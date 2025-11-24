@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Type, TypeVar, Union, overload
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
@@ -52,7 +52,7 @@ class EntityMetadata:
             entity_state = entity_response.entity.serializedState.value
         return EntityMetadata(
             id=entity_id,
-            last_modified=entity_response.entity.lastModifiedTime.ToDatetime(),
+            last_modified=entity_response.entity.lastModifiedTime.ToDatetime(timezone.utc),
             backlog_queue_size=entity_response.entity.backlogQueueSize,
             locked_by=entity_response.entity.lockedBy.value,
             includes_state=includes_state,
