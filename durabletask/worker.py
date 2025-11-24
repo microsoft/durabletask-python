@@ -737,7 +737,7 @@ class TaskHubGrpcWorker:
     def _execute_entity_batch(
             self,
             req: Union[pb.EntityBatchRequest, pb.EntityRequest],
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         if isinstance(req, pb.EntityRequest):

@@ -4,7 +4,7 @@
 import base64
 from functools import wraps
 
-from durabletask.internal.orchestrator_service_pb2 import OrchestratorRequest, OrchestratorResponse
+from durabletask.internal.orchestrator_service_pb2 import EntityRequest, EntityBatchRequest, EntityBatchResult, OrchestratorRequest, OrchestratorResponse
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
 from typing import Callable, Optional
@@ -119,8 +119,49 @@ class Blueprint(TriggerApi, BindingApi):
             wrapped by the next decorator in the sequence.
         """
         def decorator(entity_func):
-            # TODO: Implement entity support - similar to orchestrators (?)
-            raise NotImplementedError()
+            # Construct an orchestrator based on the end-user code
+
+            # TODO: Move this logic somewhere better
+            # TODO: Because this handle method is the one actually exposed to the Functions SDK decorator,
+            #       the parameter name will always be "context" here, even if the user specified a different name.
+            #       We need to find a way to allow custom context names (like "ctx").
+            def handle(context) -> str:
+                context_body = getattr(context, "body", None)
+                if context_body is None:
+                    context_body = context
+                orchestration_context = context_body
+                request = EntityBatchRequest()
+                request_2 = EntityRequest()
+                try:
+                    request.ParseFromString(base64.b64decode(orchestration_context))
+                except Exception:
+                    pass
+                try:
+                    request_2.ParseFromString(base64.b64decode(orchestration_context))
+                except Exception:
+                    pass
+                stub = AzureFunctionsNullStub()
+                worker = DurableFunctionsWorker()
+                response: Optional[EntityBatchResult] = None
+
+                def stub_complete(stub_response: EntityBatchResult):
+                    nonlocal response
+                    response = stub_response
+                stub.CompleteEntityTask = stub_complete
+
+                worker.add_entity(entity_func)
+                worker._execute_entity_batch(request, stub, None)
+
+                if response is None:
+                    raise Exception("Entity execution did not produce a response.")
+                # The Python worker returns the input as type "json", so double-encoding is necessary
+                return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
+
+            handle.entity_function = entity_func
+
+            # invoke next decorator, with the Entity as input
+            handle.__name__ = entity_func.__name__
+            return wrap(handle)
 
         return decorator
 
