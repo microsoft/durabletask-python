@@ -1593,33 +1593,52 @@ class _OrchestrationExecutor:
                 else:
                     raise TypeError("Unexpected sub-orchestration task type")
             elif event.HasField("eventRaised"):
-                # event names are case-insensitive
-                event_name = event.eventRaised.name.casefold()
-                if not ctx.is_replaying:
-                    self._logger.info(f"{ctx.instance_id} Event raised: {event_name}")
-                task_list = ctx._pending_events.get(event_name, None)
-                decoded_result: Optional[Any] = None
-                if task_list:
-                    event_task = task_list.pop(0)
+                if event.eventRaised.name in ctx._entity_task_id_map:
+                    # This eventRaised represents the result of an entity operation after being translated to the old
+                    # entity protocol by the Durable WebJobs extension
+                    entity_id, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None))
+                    if entity_id is None:
+                        raise RuntimeError(f"Could not retrieve entity ID for entity-related eventRaised with ID '{event.eventId}'")
+                    if task_id is None:
+                        raise RuntimeError(f"Could not retrieve task ID for entity-related eventRaised with ID '{event.eventId}'")
+                    entity_task = ctx._pending_tasks.pop(task_id, None)
+                    if not entity_task:
+                        raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
+                    result = None
                     if not ph.is_empty(event.eventRaised.input):
-                        decoded_result = shared.from_json(event.eventRaised.input.value)
-                    event_task.complete(decoded_result)
-                    if not task_list:
-                        del ctx._pending_events[event_name]
+                        # TODO: Investigate why the event result is wrapped in a dict with "result" key
+                        result = shared.from_json(event.eventRaised.input.value)["result"]
+                    ctx._entity_context.recover_lock_after_call(entity_id)
+                    entity_task.complete(result)
                     ctx.resume()
                 else:
-                    # buffer the event
-                    event_list = ctx._received_events.get(event_name, None)
-                    if not event_list:
-                        event_list = []
-                        ctx._received_events[event_name] = event_list
-                    if not ph.is_empty(event.eventRaised.input):
-                        decoded_result = shared.from_json(event.eventRaised.input.value)
-                    event_list.append(decoded_result)
+                    # event names are case-insensitive
+                    event_name = event.eventRaised.name.casefold()
                     if not ctx.is_replaying:
-                        self._logger.info(
-                            f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it."
-                        )
+                        self._logger.info(f"{ctx.instance_id} Event raised: {event_name}")
+                    task_list = ctx._pending_events.get(event_name, None)
+                    decoded_result: Optional[Any] = None
+                    if task_list:
+                        event_task = task_list.pop(0)
+                        if not ph.is_empty(event.eventRaised.input):
+                            decoded_result = shared.from_json(event.eventRaised.input.value)
+                        event_task.complete(decoded_result)
+                        if not task_list:
+                            del ctx._pending_events[event_name]
+                        ctx.resume()
+                    else:
+                        # buffer the event
+                        event_list = ctx._received_events.get(event_name, None)
+                        if not event_list:
+                            event_list = []
+                            ctx._received_events[event_name] = event_list
+                        if not ph.is_empty(event.eventRaised.input):
+                            decoded_result = shared.from_json(event.eventRaised.input.value)
+                        event_list.append(decoded_result)
+                        if not ctx.is_replaying:
+                            self._logger.info(
+                                f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it."
+                            )
             elif event.HasField("executionSuspended"):
                 if not self._is_suspended and not ctx.is_replaying:
                     self._logger.info(f"{ctx.instance_id}: Execution suspended.")
@@ -1750,11 +1769,15 @@ class _OrchestrationExecutor:
                 # Added in Functions only (for some reason) and does not affect orchestrator flow
                 pass
             elif event.HasField("eventSent"):
-                # Added in Functions only (for some reason) and does not affect orchestrator flow
-                pass
-            elif event.HasField("eventRaised"):
-                # Added in Functions only (for some reason) and does not affect orchestrator flow
-                pass
+                # Check if this eventSent corresponds to an entity operation call after being translated to the old
+                # entity protocol by the Durable WebJobs extension. If so, treat this message similarly to 
+                # entityOperationCalled and remove the pending action. Also store the entity id and event id for later
+                action = ctx._pending_actions.pop(event.eventId, None)
+                if action and action.HasField("sendEntityMessage") and action.sendEntityMessage.HasField("entityOperationCalled"):
+                    entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
+                    event_id = json.loads(event.eventSent.input.value)["id"]
+                    ctx._entity_task_id_map[event_id] = (entity_id, event.eventId)
+                    return
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(

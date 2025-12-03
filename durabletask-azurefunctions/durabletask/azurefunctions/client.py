@@ -83,7 +83,7 @@ class DurableFunctionsClient(TaskHubGrpcClient):
     @staticmethod
     def _get_instance_status_url(request: func.HttpRequest, instance_id: str) -> str:
         request_url = urlparse(request.url)
-        location_url = f"{request_url.scheme}://{request_url.netloc}{request_url.path}"
+        location_url = f"{request_url.scheme}://{request_url.netloc}"
         encoded_instance_id = quote(instance_id)
         location_url = location_url + "/runtime/webhooks/durabletask/instances/" + encoded_instance_id
         return location_url
