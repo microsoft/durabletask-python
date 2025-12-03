@@ -13,6 +13,7 @@ from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
 from typing import Any, Generator, Optional, Sequence, TypeVar, Union
+import uuid
 from packaging.version import InvalidVersion, parse
 
 import grpc
@@ -740,6 +741,7 @@ class TaskHubGrpcWorker:
             stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
+        operation_infos = None
         if isinstance(req, pb.EntityRequest):
             req, operation_infos = helpers.convert_to_entity_batch_request(req)
 
@@ -1200,7 +1202,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if not transition_valid:
             raise RuntimeError(error_message)
 
-        critical_section_id = f"{self.instance_id}:{id:04x}"
+        critical_section_id = str(uuid.uuid4())
 
         request, target = self._entity_context.emit_acquire_message(critical_section_id, entities)
 
@@ -1745,6 +1747,12 @@ class _OrchestrationExecutor:
                     self._logger.info(f"Data: {json.dumps(event.entityOperationFailed)}")
                 pass
             elif event.HasField("orchestratorCompleted"):
+                # Added in Functions only (for some reason) and does not affect orchestrator flow
+                pass
+            elif event.HasField("eventSent"):
+                # Added in Functions only (for some reason) and does not affect orchestrator flow
+                pass
+            elif event.HasField("eventRaised"):
                 # Added in Functions only (for some reason) and does not affect orchestrator flow
                 pass
             else:

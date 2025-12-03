@@ -96,7 +96,7 @@ class Blueprint(TriggerApi, BindingApi):
                 # The Python worker returns the input as type "json", so double-encoding is necessary
                 return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
 
-            handle.orchestrator_function = orchestrator_func
+            handle.orchestrator_function = orchestrator_func  # type: ignore
 
             # invoke next decorator, with the Orchestrator as input
             handle.__name__ = orchestrator_func.__name__
@@ -131,15 +131,7 @@ class Blueprint(TriggerApi, BindingApi):
                     context_body = context
                 orchestration_context = context_body
                 request = EntityBatchRequest()
-                request_2 = EntityRequest()
-                try:
-                    request.ParseFromString(base64.b64decode(orchestration_context))
-                except Exception:
-                    pass
-                try:
-                    request_2.ParseFromString(base64.b64decode(orchestration_context))
-                except Exception:
-                    pass
+                request.ParseFromString(base64.b64decode(orchestration_context))
                 stub = AzureFunctionsNullStub()
                 worker = DurableFunctionsWorker()
                 response: Optional[EntityBatchResult] = None
@@ -157,7 +149,7 @@ class Blueprint(TriggerApi, BindingApi):
                 # The Python worker returns the input as type "json", so double-encoding is necessary
                 return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
 
-            handle.entity_function = entity_func
+            handle.entity_function = entity_func  # type: ignore
 
             # invoke next decorator, with the Entity as input
             handle.__name__ = entity_func.__name__

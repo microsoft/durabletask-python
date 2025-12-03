@@ -6,10 +6,12 @@ import json
 from datetime import timedelta
 from typing import Any, Optional
 import azure.functions as func
+from urllib.parse import urlparse, quote
 
 from durabletask.entities import EntityInstanceId
 from durabletask.client import TaskHubGrpcClient
 from durabletask.azurefunctions.internal.azurefunctions_grpc_interceptor import AzureFunctionsDefaultClientInterceptorImpl
+from durabletask.azurefunctions.http import HttpManagementPayload
 
 
 # Client class used for Durable Functions
@@ -56,30 +58,32 @@ class DurableFunctionsClient(TaskHubGrpcClient):
             request (func.HttpRequest): The incoming HTTP request.
             instance_id (str): The ID of the Durable Function instance.
         """
-        raise NotImplementedError("This method is not implemented yet.")
+        location_url = self._get_instance_status_url(request, instance_id)
+        return func.HttpResponse(
+            body=str(self._get_client_response_links(request, instance_id)),
+            status_code=501,
+            headers={
+                'content-type': 'application/json',
+                'Location': location_url,
+            },
+        )
 
-    def create_http_management_payload(self, instance_id: str) -> dict[str, str]:
+    def create_http_management_payload(self, request: func.HttpRequest, instance_id: str) -> HttpManagementPayload:
         """Creates an HTTP management payload for a Durable Function instance.
 
         Args:
             instance_id (str): The ID of the Durable Function instance.
         """
-        raise NotImplementedError("This method is not implemented yet.")
+        return self._get_client_response_links(request, instance_id)
 
-    def read_entity_state(
-        self,
-        entity_id: EntityInstanceId,
-        task_hub_name: Optional[str],
-        connection_name: Optional[str]
-    ) -> tuple[bool, Any]:
-        """Reads the state of a Durable Entity.
+    def _get_client_response_links(self, request: func.HttpRequest, instance_id: str) -> HttpManagementPayload:
+        instance_status_url = self._get_instance_status_url(request, instance_id)
+        return HttpManagementPayload(instance_id, instance_status_url, self.requiredQueryStringParameters)
 
-        Args:
-            entity_id (str): The ID of the Durable Entity.
-            task_hub_name (Optional[str]): The name of the task hub.
-            connection_name (Optional[str]): The name of the connection.
-
-        Returns:
-            (bool, Any): A tuple containing a boolean indicating if the entity exists and its state.
-        """
-        raise NotImplementedError("This method is not implemented yet.")
+    @staticmethod
+    def _get_instance_status_url(request: func.HttpRequest, instance_id: str) -> str:
+        request_url = urlparse(request.url)
+        location_url = f"{request_url.scheme}://{request_url.netloc}{request_url.path}"
+        encoded_instance_id = quote(instance_id)
+        location_url = location_url + "/runtime/webhooks/durabletask/instances/" + encoded_instance_id
+        return location_url

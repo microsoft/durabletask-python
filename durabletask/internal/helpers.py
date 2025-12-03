@@ -4,6 +4,7 @@
 import traceback
 from datetime import datetime
 from typing import Optional
+import uuid
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -197,8 +198,9 @@ def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
 
 
 def new_call_entity_action(id: int, parent_instance_id: str, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
+    request_id = str(uuid.uuid4())
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
-        requestId=f"{parent_instance_id}:{id}",
+        requestId=request_id,
         operation=operation,
         scheduledTime=None,
         input=get_string_value(encoded_input),
@@ -209,8 +211,9 @@ def new_call_entity_action(id: int, parent_instance_id: str, entity_id: EntityIn
 
 
 def new_signal_entity_action(id: int, entity_id: EntityInstanceId, operation: str, encoded_input: Optional[str]):
+    request_id = str(uuid.uuid4())
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
-        requestId=f"{entity_id}:{id}",
+        requestId=request_id,
         operation=operation,
         scheduledTime=None,
         input=get_string_value(encoded_input),
