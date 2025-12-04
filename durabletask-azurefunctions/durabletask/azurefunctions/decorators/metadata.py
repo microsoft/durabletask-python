@@ -31,6 +31,7 @@ class OrchestrationTrigger(Trigger):
                  durable_requires_grpc=True,
                  ) -> None:
         self.orchestration = orchestration
+        self.durable_requires_grpc = durable_requires_grpc
         super().__init__(name=name)
 
 
@@ -57,6 +58,7 @@ class ActivityTrigger(Trigger):
                  durable_requires_grpc=True,
                  ) -> None:
         self.activity = activity
+        self.durable_requires_grpc = durable_requires_grpc
         super().__init__(name=name)
 
 
@@ -83,6 +85,7 @@ class EntityTrigger(Trigger):
                  durable_requires_grpc=True,
                  ) -> None:
         self.entity_name = entity_name
+        self.durable_requires_grpc = durable_requires_grpc
         super().__init__(name=name)
 
 
@@ -111,4 +114,5 @@ class DurableClient(InputBinding):
                  ) -> None:
         self.task_hub = task_hub
         self.connection_name = connection_name
+        self.durable_requires_grpc = durable_requires_grpc
         super().__init__(name=name)
