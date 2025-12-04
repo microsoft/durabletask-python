@@ -35,6 +35,7 @@ from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
+DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 
 
 class ConcurrencyOptions:
@@ -797,7 +798,7 @@ class TaskHubGrpcWorker:
             stub.CompleteEntityTask(batch_result)
         except Exception as ex:
             self._logger.exception(
-                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+                f"Failed to deliver entity response for orchestration ID '{instance_id}' to sidecar: {ex}"
             )
 
         # TODO: Reset context
@@ -830,10 +831,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_actions: dict[int, pb.OrchestratorAction] = {}
         self._pending_tasks: dict[int, task.CompletableTask] = {}
         # Maps entity ID to task ID
-        self._entity_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
+        self._entity_task_id_map: dict[str, tuple[EntityInstanceId, int, Optional[str]]] = {}
         # Maps criticalSectionId to task ID
         self._entity_lock_id_map: dict[str, int] = {}
         self._sequence_number = 0
+        self._new_uuid_counter = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._registry = registry
@@ -1041,14 +1043,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_entity(
             self,
-            entity_id: EntityInstanceId,
+            entity: EntityInstanceId,
             operation: str,
             input: Optional[TInput] = None,
     ) -> task.Task:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
-            id, entity_id, operation, input=input
+            id, entity, operation, input=input
         )
 
         return self._pending_tasks.get(id, task.CompletableTask())
@@ -1056,13 +1058,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def signal_entity(
             self,
             entity_id: EntityInstanceId,
-            operation: str,
+            operation_name: str,
             input: Optional[TInput] = None
     ) -> None:
         id = self.next_sequence_number()
 
         self.signal_entity_function_helper(
-            id, entity_id, operation, input
+            id, entity_id, operation_name, input
         )
 
     def lock_entities(self, entities: list[EntityInstanceId]) -> task.Task[EntityLock]:
@@ -1168,7 +1170,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             raise RuntimeError(error_message)
 
         encoded_input = shared.to_json(input) if input is not None else None
-        action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input)
+        action = ph.new_call_entity_action(id,
+                                           self.instance_id,
+                                           entity_id,
+                                           operation,
+                                           encoded_input,
+                                           self.new_uuid())
         self._pending_actions[id] = action
 
         fn_task = task.CompletableTask()
@@ -1191,7 +1198,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         encoded_input = shared.to_json(input) if input is not None else None
 
-        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input)
+        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
     def lock_entities_function_helper(self, id: int, entities: list[EntityInstanceId]) -> None:
@@ -1202,7 +1209,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if not transition_valid:
             raise RuntimeError(error_message)
 
-        critical_section_id = str(uuid.uuid4())
+        critical_section_id = self.new_uuid()
 
         request, target = self._entity_context.emit_acquire_message(critical_section_id, entities)
 
@@ -1253,6 +1260,17 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             return
 
         self.set_continued_as_new(new_input, save_events)
+
+    def new_uuid(self) -> str:
+        URL_NAMESPACE: str = "9e952958-5e33-4daf-827f-2fa12937b875"
+
+        uuid_name_value = \
+            f"{self._instance_id}" \
+            f"_{self.current_utc_datetime.strftime(DATETIME_STRING_FORMAT)}" \
+            f"_{self._new_uuid_counter}"
+        self._new_uuid_counter += 1
+        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_OID, URL_NAMESPACE)
+        return str(uuid.uuid5(namespace_uuid, uuid_name_value))
 
 
 class ExecutionResults:
@@ -1596,7 +1614,7 @@ class _OrchestrationExecutor:
                 if event.eventRaised.name in ctx._entity_task_id_map:
                     # This eventRaised represents the result of an entity operation after being translated to the old
                     # entity protocol by the Durable WebJobs extension
-                    entity_id, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None))
+                    entity_id, task_id, action_type = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None, None))
                     if entity_id is None:
                         raise RuntimeError(f"Could not retrieve entity ID for entity-related eventRaised with ID '{event.eventId}'")
                     if task_id is None:
@@ -1608,9 +1626,18 @@ class _OrchestrationExecutor:
                     if not ph.is_empty(event.eventRaised.input):
                         # TODO: Investigate why the event result is wrapped in a dict with "result" key
                         result = shared.from_json(event.eventRaised.input.value)["result"]
-                    ctx._entity_context.recover_lock_after_call(entity_id)
-                    entity_task.complete(result)
-                    ctx.resume()
+                    if action_type == "entityOperationCalled":
+                        ctx._entity_context.recover_lock_after_call(entity_id)
+                        entity_task.complete(result)
+                        ctx.resume()
+                    elif action_type == "entityLockRequested":
+                        ctx._entity_context.complete_acquire(event.eventRaised.name)
+                        entity_task.complete(EntityLock(ctx))
+                        ctx.resume()
+                    else:
+                        raise RuntimeError(f"Unknown action type '{action_type}' for entity-related eventRaised "
+                                           f"with ID '{event.eventId}'")
+
                 else:
                     # event names are case-insensitive
                     event_name = event.eventRaised.name.casefold()
@@ -1681,7 +1708,7 @@ class _OrchestrationExecutor:
                 entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
                 if not entity_id:
                     raise RuntimeError(f"Could not parse entity ID from targetInstanceId '{event.entityOperationCalled.targetInstanceId.value}'")
-                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id)
+                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id, None)
             elif event.HasField("entityOperationSignaled"):
                 # This history event confirms that the entity signal was successfully scheduled.
                 # Remove the entityOperationSignaled event from the pending action list so we don't schedule it
@@ -1742,7 +1769,7 @@ class _OrchestrationExecutor:
                 ctx.resume()
             elif event.HasField("entityOperationCompleted"):
                 request_id = event.entityOperationCompleted.requestId
-                entity_id, task_id = ctx._entity_task_id_map.pop(request_id, (None, None))
+                entity_id, task_id, _ = ctx._entity_task_id_map.pop(request_id, (None, None, None))
                 if not entity_id:
                     raise RuntimeError(f"Could not parse entity ID from request ID '{request_id}'")
                 if not task_id:
@@ -1770,14 +1797,20 @@ class _OrchestrationExecutor:
                 pass
             elif event.HasField("eventSent"):
                 # Check if this eventSent corresponds to an entity operation call after being translated to the old
-                # entity protocol by the Durable WebJobs extension. If so, treat this message similarly to 
+                # entity protocol by the Durable WebJobs extension. If so, treat this message similarly to
                 # entityOperationCalled and remove the pending action. Also store the entity id and event id for later
                 action = ctx._pending_actions.pop(event.eventId, None)
-                if action and action.HasField("sendEntityMessage") and action.sendEntityMessage.HasField("entityOperationCalled"):
+                if action and action.HasField("sendEntityMessage"):
+                    if action.sendEntityMessage.HasField("entityOperationCalled"):
+                        action_type = "entityOperationCalled"
+                    elif action.sendEntityMessage.HasField("entityLockRequested"):
+                        action_type = "entityLockRequested"
+                    else:
+                        return
+
                     entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
                     event_id = json.loads(event.eventSent.input.value)["id"]
-                    ctx._entity_task_id_map[event_id] = (entity_id, event.eventId)
-                    return
+                    ctx._entity_task_id_map[event_id] = (entity_id, event.eventId, action_type)
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(

@@ -259,6 +259,22 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
+    def new_uuid(self) -> str:
+        """Create a new UUID that is safe for replay within an orchestration or operation.
+
+        The default implementation of this method creates a name-based UUID
+        using the algorithm from RFC 4122 §4.3. The name input used to generate
+        this value is a combination of the orchestration instance ID and an
+        internally managed sequence number.
+
+        Returns
+        -------
+        str
+            New UUID that is safe for replay within an orchestration or operation.
+        """
+        pass
+
+    @abstractmethod
     def _exit_critical_section(self) -> None:
         pass
 

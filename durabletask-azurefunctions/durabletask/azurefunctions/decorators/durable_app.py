@@ -1,20 +1,16 @@
 #  Copyright (c) Microsoft Corporation. All rights reserved.
 #  Licensed under the MIT License.
 
-import base64
 from functools import wraps
 
-from durabletask.internal.orchestrator_service_pb2 import EntityRequest, EntityBatchRequest, EntityBatchResult, OrchestratorRequest, OrchestratorResponse
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
 from typing import Callable, Optional
 from typing import Union
 from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
 
-# TODO: Use __init__.py to optimize imports
 from durabletask.azurefunctions.client import DurableFunctionsClient
 from durabletask.azurefunctions.worker import DurableFunctionsWorker
-from durabletask.azurefunctions.internal.azurefunctions_null_stub import AzureFunctionsNullStub
 
 
 class Blueprint(TriggerApi, BindingApi):
@@ -61,40 +57,8 @@ class Blueprint(TriggerApi, BindingApi):
         def decorator(orchestrator_func):
             # Construct an orchestrator based on the end-user code
 
-            # TODO: Move this logic somewhere better
             def handle(context) -> str:
-                context_body = getattr(context, "body", None)
-                if context_body is None:
-                    context_body = context
-                orchestration_context = context_body
-                request = OrchestratorRequest()
-                request.ParseFromString(base64.b64decode(orchestration_context))
-                stub = AzureFunctionsNullStub()
-                worker = DurableFunctionsWorker()
-                response: Optional[OrchestratorResponse] = None
-
-                def stub_complete(stub_response):
-                    nonlocal response
-                    response = stub_response
-                stub.CompleteOrchestratorTask = stub_complete
-                execution_started_events = []
-                for e in request.pastEvents:
-                    if e.HasField("executionStarted"):
-                        execution_started_events.append(e)
-                for e in request.newEvents:
-                    if e.HasField("executionStarted"):
-                        execution_started_events.append(e)
-                if len(execution_started_events) == 0:
-                    raise Exception("No ExecutionStarted event found in orchestration request.")
-
-                function_name = execution_started_events[-1].executionStarted.name
-                worker.add_named_orchestrator(function_name, orchestrator_func)
-                worker._execute_orchestrator(request, stub, None)
-
-                if response is None:
-                    raise Exception("Orchestrator execution did not produce a response.")
-                # The Python worker returns the input as type "json", so double-encoding is necessary
-                return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
+                return DurableFunctionsWorker()._execute_orchestrator(orchestrator_func, context)
 
             handle.orchestrator_function = orchestrator_func  # type: ignore
 
@@ -121,33 +85,11 @@ class Blueprint(TriggerApi, BindingApi):
         def decorator(entity_func):
             # Construct an orchestrator based on the end-user code
 
-            # TODO: Move this logic somewhere better
             # TODO: Because this handle method is the one actually exposed to the Functions SDK decorator,
             #       the parameter name will always be "context" here, even if the user specified a different name.
             #       We need to find a way to allow custom context names (like "ctx").
             def handle(context) -> str:
-                context_body = getattr(context, "body", None)
-                if context_body is None:
-                    context_body = context
-                orchestration_context = context_body
-                request = EntityBatchRequest()
-                request.ParseFromString(base64.b64decode(orchestration_context))
-                stub = AzureFunctionsNullStub()
-                worker = DurableFunctionsWorker()
-                response: Optional[EntityBatchResult] = None
-
-                def stub_complete(stub_response: EntityBatchResult):
-                    nonlocal response
-                    response = stub_response
-                stub.CompleteEntityTask = stub_complete
-
-                worker.add_entity(entity_func)
-                worker._execute_entity_batch(request, stub, None)
-
-                if response is None:
-                    raise Exception("Entity execution did not produce a response.")
-                # The Python worker returns the input as type "json", so double-encoding is necessary
-                return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
+                return DurableFunctionsWorker()._execute_entity_batch(entity_func, context)
 
             handle.entity_function = entity_func  # type: ignore
 
@@ -157,8 +99,7 @@ class Blueprint(TriggerApi, BindingApi):
 
         return decorator
 
-    def _add_rich_client(self, fb, parameter_name,
-                         client_constructor):
+    def _add_rich_client(self, fb, parameter_name, client_constructor):
         # Obtain user-code and force type annotation on the client-binding parameter to be `str`.
         # This ensures a passing type-check of that specific parameter,
         # circumventing a limitation of the worker in type-checking rich DF Client objects.

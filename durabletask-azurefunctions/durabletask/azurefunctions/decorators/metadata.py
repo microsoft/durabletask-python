@@ -28,6 +28,7 @@ class OrchestrationTrigger(Trigger):
     def __init__(self,
                  name: str,
                  orchestration: Optional[str] = None,
+                 durable_requires_grpc=True,
                  ) -> None:
         self.orchestration = orchestration
         super().__init__(name=name)
@@ -53,6 +54,7 @@ class ActivityTrigger(Trigger):
     def __init__(self,
                  name: str,
                  activity: Optional[str] = None,
+                 durable_requires_grpc=True,
                  ) -> None:
         self.activity = activity
         super().__init__(name=name)
@@ -78,6 +80,7 @@ class EntityTrigger(Trigger):
     def __init__(self,
                  name: str,
                  entity_name: Optional[str] = None,
+                 durable_requires_grpc=True,
                  ) -> None:
         self.entity_name = entity_name
         super().__init__(name=name)
@@ -103,7 +106,8 @@ class DurableClient(InputBinding):
     def __init__(self,
                  name: str,
                  task_hub: Optional[str] = None,
-                 connection_name: Optional[str] = None
+                 connection_name: Optional[str] = None,
+                 durable_requires_grpc=True,
                  ) -> None:
         self.task_hub = task_hub
         self.connection_name = connection_name

@@ -16,6 +16,12 @@ from durabletask.azurefunctions.http import HttpManagementPayload
 
 # Client class used for Durable Functions
 class DurableFunctionsClient(TaskHubGrpcClient):
+    """A gRPC client passed to Durable Functions durable client bindings.
+
+    Connects to the Durable Functions runtime using gRPC and provides methods
+    for creating and managing Durable orchestrations, interacting with Durable entities, 
+    and creating HTTP management payloads and check status responses for use with Durable Functions invocations.
+    """
     taskHubName: str
     connectionName: str
     creationUrls: dict[str, str]
@@ -28,6 +34,16 @@ class DurableFunctionsClient(TaskHubGrpcClient):
     grpcHttpClientTimeout: timedelta
 
     def __init__(self, client_as_string: str):
+        """Initializes a DurableFunctionsClient instance from a JSON string.
+
+        This string will be provided by the Durable Functions host extension upon invocation of the client trigger.
+
+        Args:
+            client_as_string (str): A JSON string containing the Durable Functions client configuration.
+
+        Raises:
+            json.JSONDecodeError: If the provided string is not valid JSON.
+        """
         client = json.loads(client_as_string)
 
         self.taskHubName = client.get("taskHubName", "")
