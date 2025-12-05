@@ -5,6 +5,7 @@ import json
 import os
 import threading
 from datetime import timedelta
+import uuid
 
 import pytest
 
@@ -565,6 +566,6 @@ def test_new_uuid():
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
     results = json.loads(state.serialized_output or "\"\"")
     assert isinstance(results, list) and len(results) == 3
-    assert results[0] != results[1]
-    assert results[0] != results[2]
-    assert results[1] != results[2]
+    assert uuid.UUID(results[0]) != uuid.UUID(results[1])
+    assert uuid.UUID(results[0]) != uuid.UUID(results[2])
+    assert uuid.UUID(results[1]) != uuid.UUID(results[2])
