@@ -7,7 +7,7 @@ on:
       - release/*
 
 jobs:
-  publish-dev:
+  publish-experimental:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
