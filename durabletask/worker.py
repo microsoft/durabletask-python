@@ -23,6 +23,7 @@ from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
 from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
+from durabletask.internal.proto_task_hub_sidecar_service_stub import ProtoTaskHubSidecarServiceStub
 import durabletask.internal.helpers as ph
 import durabletask.internal.exceptions as pe
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -629,7 +630,7 @@ class TaskHubGrpcWorker:
     def _execute_orchestrator(
             self,
             req: pb.OrchestratorRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         try:
@@ -677,7 +678,7 @@ class TaskHubGrpcWorker:
     def _cancel_orchestrator(
             self,
             req: pb.OrchestratorRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         stub.AbandonTaskOrchestratorWorkItem(
@@ -690,7 +691,7 @@ class TaskHubGrpcWorker:
     def _execute_activity(
             self,
             req: pb.ActivityRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         instance_id = req.orchestrationInstance.instanceId
@@ -723,7 +724,7 @@ class TaskHubGrpcWorker:
     def _cancel_activity(
             self,
             req: pb.ActivityRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         stub.AbandonTaskActivityWorkItem(
@@ -736,7 +737,7 @@ class TaskHubGrpcWorker:
     def _execute_entity_batch(
             self,
             req: Union[pb.EntityBatchRequest, pb.EntityRequest],
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         if isinstance(req, pb.EntityRequest):
@@ -804,7 +805,7 @@ class TaskHubGrpcWorker:
     def _cancel_entity_batch(
             self,
             req: Union[pb.EntityBatchRequest, pb.EntityRequest],
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         stub.AbandonTaskEntityWorkItem(
