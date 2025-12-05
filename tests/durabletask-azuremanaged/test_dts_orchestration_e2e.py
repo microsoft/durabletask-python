@@ -535,7 +535,7 @@ def test_custom_status():
 
 
 def test_new_uuid():
-    def noop(_: task.ActivityContext, _):
+    def noop(_: task.ActivityContext, _1):
         pass
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
