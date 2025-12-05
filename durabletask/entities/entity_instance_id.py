@@ -1,6 +1,3 @@
-from typing import Optional
-
-
 class EntityInstanceId:
     def __init__(self, entity: str, key: str):
         self.entity = entity
