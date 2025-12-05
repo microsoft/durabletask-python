@@ -20,7 +20,7 @@ import grpc
 from google.protobuf import empty_pb2
 
 from durabletask.internal import helpers
-from durabletask.internal.ProtoTaskHubSidecarServiceStub import ProtoTaskHubSidecarServiceStub
+from durabletask.internal.proto_task_hub_sidecar_service_stub import ProtoTaskHubSidecarServiceStub
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
