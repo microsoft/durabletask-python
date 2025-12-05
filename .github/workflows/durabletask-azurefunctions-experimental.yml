@@ -30,6 +30,7 @@ jobs:
         working-directory: durabletask-azurefunctions
         run: |
           sed -i 's/^version = ".*"/version = "0.0.0.dev${{ github.run_number }}"/' pyproject.toml
+          sed -i 's/"durabletask>=.*"/"durabletask>=0.0.0dev1"/' pyproject.toml
 
       - name: Build package from directory durabletask-azurefunctions
         working-directory: durabletask-azurefunctions
