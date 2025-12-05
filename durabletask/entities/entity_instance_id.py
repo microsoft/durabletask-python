@@ -27,8 +27,13 @@ class EntityInstanceId:
 
         Returns
         -------
-        Optional[EntityInstanceId]
-            The parsed EntityInstanceId object, or None if the input is None.
+        EntityInstanceId
+            The parsed EntityInstanceId object.
+
+        Raises
+        ------
+        ValueError
+            If the input string is not in the correct format.
         """
         try:
             _, entity, key = entity_id.split("@", 2)

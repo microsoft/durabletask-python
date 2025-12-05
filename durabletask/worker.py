@@ -753,7 +753,7 @@ class TaskHubGrpcWorker:
             try:
                 entity_instance_id = EntityInstanceId.parse(instance_id)
             except ValueError:
-                raise RuntimeError(f"Invalid entity instance ID '{operation.requestId}' in entity operation request.")
+                raise RuntimeError(f"Invalid entity instance ID '{instance_id}' in entity operation request.")
 
             operation_result = None
 
