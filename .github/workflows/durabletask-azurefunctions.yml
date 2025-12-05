@@ -86,7 +86,7 @@ jobs:
         run: |
           pytest -m "dts" --verbose
 
-  publish:
+  publish-release:
     if: startsWith(github.ref, 'refs/tags/azurefunctions-v')  # Only run if a matching tag is pushed
     needs: run-docker-tests
     runs-on: ubuntu-latest

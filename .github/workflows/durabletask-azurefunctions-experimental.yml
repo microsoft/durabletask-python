@@ -1,0 +1,50 @@
+name: Durable Task Scheduler SDK (durabletask-azurefunctions) Experimental Release
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - release/*
+
+jobs:
+  publish-experimental:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/azurefunctions-v}" >> $GITHUB_ENV  # Extract version from the tag
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"  # Adjust Python version as needed
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      
+      - name: Change the version in pyproject.toml to 0.0.0dev{github.run_number}
+        working-directory: durabletask-azurefunctions
+        run: |
+          sed -i 's/^version = ".*"/version = "0.0.0.dev${{ github.run_number }}"/' pyproject.toml
+
+      - name: Build package from directory durabletask-azurefunctions
+        working-directory: durabletask-azurefunctions
+        run: |
+          python -m build
+
+      - name: Check package
+        working-directory: durabletask-azurefunctions
+        run: |
+          twine check dist/* 
+
+      - name: Publish package to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN_AZUREFUNCTIONS  }}  # Store your PyPI API token in GitHub Secrets
+        working-directory: durabletask-azurefunctions
+        run: | 
+          twine upload dist/* 
