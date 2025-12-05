@@ -1038,14 +1038,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_entity(
             self,
-            entity_id: EntityInstanceId,
+            entity: EntityInstanceId,
             operation: str,
             input: Optional[TInput] = None,
     ) -> task.Task:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
-            id, entity_id, operation, input=input
+            id, entity, operation, input=input
         )
 
         return self._pending_tasks.get(id, task.CompletableTask())
@@ -1053,13 +1053,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def signal_entity(
             self,
             entity_id: EntityInstanceId,
-            operation: str,
+            operation_name: str,
             input: Optional[TInput] = None
     ) -> None:
         id = self.next_sequence_number()
 
         self.signal_entity_function_helper(
-            id, entity_id, operation, input
+            id, entity_id, operation_name, input
         )
 
     def lock_entities(self, entities: list[EntityInstanceId]) -> task.Task[EntityLock]:
