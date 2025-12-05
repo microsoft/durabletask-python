@@ -12,6 +12,7 @@ import grpc
 from google.protobuf import wrappers_pb2
 
 from durabletask.entities import EntityInstanceId
+from durabletask.entities.entity_metadata import EntityMetadata
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
@@ -241,3 +242,15 @@ class TaskHubGrpcClient:
         )
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
         self._stub.SignalEntity(req, None)  # TODO: Cancellation timeout?
+
+    def get_entity(self,
+                   entity_instance_id: EntityInstanceId,
+                   include_state: bool = True
+                   ) -> Optional[EntityMetadata]:
+        req = pb.GetEntityRequest(instanceId=str(entity_instance_id), includeState=include_state)
+        self._logger.info(f"Getting entity '{entity_instance_id}'.")
+        res: pb.GetEntityResponse = self._stub.GetEntity(req)
+        if not res.exists:
+            return None
+
+        return EntityMetadata.from_entity_response(res, include_state)
