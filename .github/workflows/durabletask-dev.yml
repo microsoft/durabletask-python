@@ -1,0 +1,49 @@
+name: Durable Task SDK (durabletask) Dev Release
+
+on:
+  workflow_run:
+    workflows: ["Durable Task SDK (durabletask)"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  publish-dev:
+    # needs: run-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV  # Extract version from the tag
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"  # Adjust Python version as needed
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Append dev to version in pyproject.toml
+        run: |
+          sed -i 's/^version = "\(.*\)"/version = "\1.dev${{ github.run_number }}"/' pyproject.toml
+
+      - name: Build package from root directory
+        run: |
+          python -m build
+
+      - name: Check package
+        run: |
+          twine check dist/* 
+
+      - name: Publish package to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN  }}  # Store your PyPI API token in GitHub Secrets
+        run: | 
+          twine upload dist/*
