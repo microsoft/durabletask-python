@@ -264,8 +264,8 @@ class OrchestrationContext(ABC):
 
         The default implementation of this method creates a name-based UUID
         using the algorithm from RFC 4122 §4.3. The name input used to generate
-        this value is a combination of the orchestration instance ID and an
-        internally managed sequence number.
+        this value is a combination of the orchestration instance ID, the current UTC datetime,
+        and an internally managed counter.
 
         Returns
         -------
