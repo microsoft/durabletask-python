@@ -1,38 +1,34 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from durabletask.internal.ProtoTaskHubSidecarServiceStub import ProtoTaskHubSidecarServiceStub
+from durabletask.internal.proto_task_hub_sidecar_service_stub import ProtoTaskHubSidecarServiceStub
 
 
 class AzureFunctionsNullStub(ProtoTaskHubSidecarServiceStub):
     """A task hub sidecar stub class that implements all methods as no-ops."""
-
-    def __init__(self):
-        """Constructor.
-        """
-        self.Hello = lambda *args, **kwargs: None
-        self.StartInstance = lambda *args, **kwargs: None
-        self.GetInstance = lambda *args, **kwargs: None
-        self.RewindInstance = lambda *args, **kwargs: None
-        self.WaitForInstanceStart = lambda *args, **kwargs: None
-        self.WaitForInstanceCompletion = lambda *args, **kwargs: None
-        self.RaiseEvent = lambda *args, **kwargs: None
-        self.TerminateInstance = lambda *args, **kwargs: None
-        self.SuspendInstance = lambda *args, **kwargs: None
-        self.ResumeInstance = lambda *args, **kwargs: None
-        self.QueryInstances = lambda *args, **kwargs: None
-        self.PurgeInstances = lambda *args, **kwargs: None
-        self.GetWorkItems = lambda *args, **kwargs: None
-        self.CompleteActivityTask = lambda *args, **kwargs: None
-        self.CompleteOrchestratorTask = lambda *args, **kwargs: None
-        self.CompleteEntityTask = lambda *args, **kwargs: None
-        self.StreamInstanceHistory = lambda *args, **kwargs: None
-        self.CreateTaskHub = lambda *args, **kwargs: None
-        self.DeleteTaskHub = lambda *args, **kwargs: None
-        self.SignalEntity = lambda *args, **kwargs: None
-        self.GetEntity = lambda *args, **kwargs: None
-        self.QueryEntities = lambda *args, **kwargs: None
-        self.CleanEntityStorage = lambda *args, **kwargs: None
-        self.AbandonTaskActivityWorkItem = lambda *args, **kwargs: None
-        self.AbandonTaskOrchestratorWorkItem = lambda *args, **kwargs: None
-        self.AbandonTaskEntityWorkItem = lambda *args, **kwargs: None
+    Hello = lambda *args, **kwargs: None
+    StartInstance = lambda *args, **kwargs: None
+    GetInstance = lambda *args, **kwargs: None
+    RewindInstance = lambda *args, **kwargs: None
+    WaitForInstanceStart = lambda *args, **kwargs: None
+    WaitForInstanceCompletion = lambda *args, **kwargs: None
+    RaiseEvent = lambda *args, **kwargs: None
+    TerminateInstance = lambda *args, **kwargs: None
+    SuspendInstance = lambda *args, **kwargs: None
+    ResumeInstance = lambda *args, **kwargs: None
+    QueryInstances = lambda *args, **kwargs: None
+    PurgeInstances = lambda *args, **kwargs: None
+    GetWorkItems = lambda *args, **kwargs: None
+    CompleteActivityTask = lambda *args, **kwargs: None
+    CompleteOrchestratorTask = lambda *args, **kwargs: None
+    CompleteEntityTask = lambda *args, **kwargs: None
+    StreamInstanceHistory = lambda *args, **kwargs: None
+    CreateTaskHub = lambda *args, **kwargs: None
+    DeleteTaskHub = lambda *args, **kwargs: None
+    SignalEntity = lambda *args, **kwargs: None
+    GetEntity = lambda *args, **kwargs: None
+    QueryEntities = lambda *args, **kwargs: None
+    CleanEntityStorage = lambda *args, **kwargs: None
+    AbandonTaskActivityWorkItem = lambda *args, **kwargs: None
+    AbandonTaskOrchestratorWorkItem = lambda *args, **kwargs: None
+    AbandonTaskEntityWorkItem = lambda *args, **kwargs: None
