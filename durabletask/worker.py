@@ -1255,14 +1255,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self.set_continued_as_new(new_input, save_events)
 
     def new_uuid(self) -> str:
-        URL_NAMESPACE: str = "9e952958-5e33-4daf-827f-2fa12937b875"
+        NAMESPACE_UUID: str = "9e952958-5e33-4daf-827f-2fa12937b875"
 
         uuid_name_value = \
             f"{self._instance_id}" \
             f"_{self.current_utc_datetime.strftime(DATETIME_STRING_FORMAT)}" \
             f"_{self._new_uuid_counter}"
         self._new_uuid_counter += 1
-        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_OID, URL_NAMESPACE)
+        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_OID, NAMESPACE_UUID)
         return str(uuid.uuid5(namespace_uuid, uuid_name_value))
 
 
