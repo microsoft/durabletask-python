@@ -13,7 +13,7 @@ from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 def counter(ctx: entities.EntityContext, input: int) -> Optional[int]:
     if ctx.operation == "set":
         ctx.set_state(input)
-    if ctx.operation == "add":
+    elif ctx.operation == "add":
         current_state = ctx.get_state(int, 0)
         new_state = current_state + (input or 1)
         ctx.set_state(new_state)

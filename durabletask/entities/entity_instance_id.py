@@ -20,7 +20,7 @@ class EntityInstanceId:
         return str(self) < str(other)
 
     @staticmethod
-    def parse(entity_id: str) -> Optional["EntityInstanceId"]:
+    def parse(entity_id: str) -> "EntityInstanceId":
         """Parse a string representation of an entity ID into an EntityInstanceId object.
 
         Parameters
