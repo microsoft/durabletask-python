@@ -5,6 +5,7 @@ import json
 import threading
 import time
 from datetime import timedelta
+import uuid
 
 import pytest
 
@@ -499,3 +500,37 @@ def test_custom_status():
     assert state.serialized_input is None
     assert state.serialized_output is None
     assert state.serialized_custom_status == "\"foobaz\""
+
+
+def test_new_uuid():
+    def noop(_: task.ActivityContext, _1):
+        pass
+
+    def empty_orchestrator(ctx: task.OrchestrationContext, _):
+        # Assert that two new_uuid calls return different values
+        results = [ctx.new_uuid(), ctx.new_uuid()]
+        yield ctx.call_activity("noop")
+        # Assert that new_uuid still returns a unique value after replay
+        results.append(ctx.new_uuid())
+        return results
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(empty_orchestrator)
+        w.add_activity(noop)
+        w.start()
+
+        c = client.TaskHubGrpcClient()
+        id = c.schedule_new_orchestration(empty_orchestrator)
+        state = c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.name == task.get_name(empty_orchestrator)
+    assert state.instance_id == id
+    assert state.failure_details is None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    results = json.loads(state.serialized_output or "\"\"")
+    assert isinstance(results, list) and len(results) == 3
+    assert uuid.UUID(results[0]) != uuid.UUID(results[1])
+    assert uuid.UUID(results[0]) != uuid.UUID(results[2])
+    assert uuid.UUID(results[1]) != uuid.UUID(results[2])
