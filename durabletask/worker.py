@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, Optional, Sequence, TypeVar, Union
+from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union
 from packaging.version import InvalidVersion, parse
 
 import grpc
@@ -1592,41 +1592,11 @@ class _OrchestrationExecutor:
                     raise TypeError("Unexpected sub-orchestration task type")
             elif event.HasField("eventRaised"):
                 if event.eventRaised.name in ctx._entity_task_id_map:
-                    # This eventRaised represents the result of an entity operation after being translated to the old
-                    # entity protocol by the Durable WebJobs extension
                     entity_id, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None))
-                    if entity_id is None:
-                        raise RuntimeError(f"Could not retrieve entity ID for entity-related eventRaised with ID '{event.eventId}'")
-                    if task_id is None:
-                        raise RuntimeError(f"Could not retrieve task ID for entity-related eventRaised with ID '{event.eventId}'")
-                    entity_task = ctx._pending_tasks.pop(task_id, None)
-                    if not entity_task:
-                        raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
-                    result = None
-                    if not ph.is_empty(event.eventRaised.input):
-                        # TODO: Investigate why the event result is wrapped in a dict with "result" key
-                        result = shared.from_json(event.eventRaised.input.value)["result"]
-                    ctx._entity_context.recover_lock_after_call(entity_id)
-                    entity_task.complete(result)
-                    ctx.resume()
+                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, False)
                 elif event.eventRaised.name in ctx._entity_lock_task_id_map:
-                    # This eventRaised represents the result of an entity operation after being translated to the old
-                    # entity protocol by the Durable WebJobs extension
                     entity_id, task_id = ctx._entity_lock_task_id_map.get(event.eventRaised.name, (None, None))
-                    if entity_id is None:
-                        raise RuntimeError(f"Could not retrieve entity ID for entity-related eventRaised with ID '{event.eventId}'")
-                    if task_id is None:
-                        raise RuntimeError(f"Could not retrieve task ID for entity-related eventRaised with ID '{event.eventId}'")
-                    entity_task = ctx._pending_tasks.pop(task_id, None)
-                    if not entity_task:
-                        raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
-                    result = None
-                    if not ph.is_empty(event.eventRaised.input):
-                        # TODO: Investigate why the event result is wrapped in a dict with "result" key
-                        result = shared.from_json(event.eventRaised.input.value)["result"]
-                    ctx._entity_context.complete_acquire(event.eventRaised.name)
-                    entity_task.complete(EntityLock(ctx))
-                    ctx.resume()
+                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, True)
                 else:
                     # event names are case-insensitive
                     event_name = event.eventRaised.name.casefold()
@@ -1791,15 +1761,11 @@ class _OrchestrationExecutor:
                 action = ctx._pending_actions.pop(event.eventId, None)
                 if action and action.HasField("sendEntityMessage"):
                     if action.sendEntityMessage.HasField("entityOperationCalled"):
-                        entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
-                        event_id = json.loads(event.eventSent.input.value)["id"]
+                        entity_id, event_id = self._parse_entity_event_sent_input(event)
                         ctx._entity_task_id_map[event_id] = (entity_id, event.eventId)
                     elif action.sendEntityMessage.HasField("entityLockRequested"):
-                        entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
-                        event_id = json.loads(event.eventSent.input.value)["id"]
+                        entity_id, event_id = self._parse_entity_event_sent_input(event)
                         ctx._entity_lock_task_id_map[event_id] = (entity_id, event.eventId)
-                    else:
-                        return
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(
@@ -1808,6 +1774,44 @@ class _OrchestrationExecutor:
         except StopIteration as generatorStopped:
             # The orchestrator generator function completed
             ctx.set_complete(generatorStopped.value, pb.ORCHESTRATION_STATUS_COMPLETED)
+
+    def _parse_entity_event_sent_input(self, event: pb.HistoryEvent) -> Tuple[EntityInstanceId, str]:
+        try:
+            entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
+        except ValueError:
+            raise RuntimeError(f"Could not parse entity ID from instanceId '{event.eventSent.instanceId}'")
+        try:
+            event_id = json.loads(event.eventSent.input.value)["id"]
+        except (json.JSONDecodeError, KeyError, TypeError) as ex:
+            raise RuntimeError(f"Could not parse event ID from eventSent input '{event.eventSent.input.value}'") from ex
+        return entity_id, event_id
+
+    def _handle_entity_event_raised(self,
+                                    ctx: _RuntimeOrchestrationContext,
+                                    event: pb.HistoryEvent,
+                                    entity_id: Optional[EntityInstanceId],
+                                    task_id: Optional[int],
+                                    is_lock_event: bool):
+        # This eventRaised represents the result of an entity operation after being translated to the old
+        # entity protocol by the Durable WebJobs extension
+        if entity_id is None:
+            raise RuntimeError(f"Could not retrieve entity ID for entity-related eventRaised with ID '{event.eventId}'")
+        if task_id is None:
+            raise RuntimeError(f"Could not retrieve task ID for entity-related eventRaised with ID '{event.eventId}'")
+        entity_task = ctx._pending_tasks.pop(task_id, None)
+        if not entity_task:
+            raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
+        result = None
+        if not ph.is_empty(event.eventRaised.input):
+            # TODO: Investigate why the event result is wrapped in a dict with "result" key
+            result = shared.from_json(event.eventRaised.input.value)["result"]
+        if is_lock_event:
+            ctx._entity_context.complete_acquire(event.eventRaised.name)
+            entity_task.complete(EntityLock(ctx))
+        else:
+            ctx._entity_context.recover_lock_after_call(entity_id)
+            entity_task.complete(result)
+        ctx.resume()
 
     def evaluate_orchestration_versioning(self, versioning: Optional[VersioningOptions], orchestration_version: Optional[str]) -> Optional[pb.TaskFailureDetails]:
         if versioning is None:
