@@ -750,8 +750,9 @@ class TaskHubGrpcWorker:
         for operation in req.operations:
             start_time = datetime.now(timezone.utc)
             executor = _EntityExecutor(self._registry, self._logger)
-            entity_instance_id = EntityInstanceId.parse(instance_id)
-            if not entity_instance_id:
+            try:
+                entity_instance_id = EntityInstanceId.parse(instance_id)
+            except ValueError:
                 raise RuntimeError(f"Invalid entity instance ID '{operation.requestId}' in entity operation request.")
 
             operation_result = None
@@ -1656,8 +1657,9 @@ class _OrchestrationExecutor:
                     raise _get_wrong_action_type_error(
                         entity_call_id, expected_method_name, action
                     )
-                entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
-                if not entity_id:
+                try:
+                    entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
+                except ValueError:
                     raise RuntimeError(f"Could not parse entity ID from targetInstanceId '{event.entityOperationCalled.targetInstanceId.value}'")
                 ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id)
             elif event.HasField("entityOperationSignaled"):
