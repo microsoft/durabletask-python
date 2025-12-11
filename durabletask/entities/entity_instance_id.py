@@ -1,6 +1,3 @@
-from typing import Optional
-
-
 class EntityInstanceId:
     def __init__(self, entity: str, key: str):
         self.entity = entity
@@ -20,7 +17,7 @@ class EntityInstanceId:
         return str(self) < str(other)
 
     @staticmethod
-    def parse(entity_id: str) -> Optional["EntityInstanceId"]:
+    def parse(entity_id: str) -> "EntityInstanceId":
         """Parse a string representation of an entity ID into an EntityInstanceId object.
 
         Parameters
@@ -30,8 +27,13 @@ class EntityInstanceId:
 
         Returns
         -------
-        Optional[EntityInstanceId]
-            The parsed EntityInstanceId object, or None if the input is None.
+        EntityInstanceId
+            The parsed EntityInstanceId object.
+
+        Raises
+        ------
+        ValueError
+            If the input string is not in the correct format.
         """
         try:
             _, entity, key = entity_id.split("@", 2)

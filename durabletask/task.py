@@ -139,7 +139,8 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_entity(self, entity: EntityInstanceId,
+    def call_entity(self,
+                    entity: EntityInstanceId,
                     operation: str,
                     input: Optional[TInput] = None) -> Task:
         """Schedule entity function for execution.
@@ -255,6 +256,22 @@ class OrchestrationContext(ABC):
             The new input to use for the new orchestration instance.
         save_events : bool
             A flag indicating whether to add any unprocessed external events in the new orchestration history.
+        """
+        pass
+
+    @abstractmethod
+    def new_uuid(self) -> str:
+        """Create a new UUID that is safe for replay within an orchestration or operation.
+
+        The default implementation of this method creates a name-based UUID
+        using the algorithm from RFC 4122 §4.3. The name input used to generate
+        this value is a combination of the orchestration instance ID, the current UTC datetime,
+        and an internally managed counter.
+
+        Returns
+        -------
+        str
+            New UUID that is safe for replay within an orchestration or operation.
         """
         pass
 
