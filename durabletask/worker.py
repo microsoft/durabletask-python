@@ -13,6 +13,7 @@ from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
 from typing import Any, Generator, Optional, Sequence, TypeVar, Union
+import uuid
 from packaging.version import InvalidVersion, parse
 
 import grpc
@@ -34,6 +35,7 @@ from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
+DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 
 
 class ConcurrencyOptions:
@@ -751,9 +753,10 @@ class TaskHubGrpcWorker:
         for operation in req.operations:
             start_time = datetime.now(timezone.utc)
             executor = _EntityExecutor(self._registry, self._logger)
-            entity_instance_id = EntityInstanceId.parse(instance_id)
-            if not entity_instance_id:
-                raise RuntimeError(f"Invalid entity instance ID '{operation.requestId}' in entity operation request.")
+            try:
+                entity_instance_id = EntityInstanceId.parse(instance_id)
+            except ValueError:
+                raise RuntimeError(f"Invalid entity instance ID '{instance_id}' in entity operation request.")
 
             operation_result = None
 
@@ -832,6 +835,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # Maps criticalSectionId to task ID
         self._entity_lock_id_map: dict[str, int] = {}
         self._sequence_number = 0
+        self._new_uuid_counter = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
         self._instance_id = instance_id
         self._registry = registry
@@ -1039,14 +1043,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_entity(
             self,
-            entity_id: EntityInstanceId,
+            entity: EntityInstanceId,
             operation: str,
             input: Optional[TInput] = None,
     ) -> task.Task:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
-            id, entity_id, operation, input=input
+            id, entity, operation, input=input
         )
 
         return self._pending_tasks.get(id, task.CompletableTask())
@@ -1054,13 +1058,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def signal_entity(
             self,
             entity_id: EntityInstanceId,
-            operation: str,
+            operation_name: str,
             input: Optional[TInput] = None
     ) -> None:
         id = self.next_sequence_number()
 
         self.signal_entity_function_helper(
-            id, entity_id, operation, input
+            id, entity_id, operation_name, input
         )
 
     def lock_entities(self, entities: list[EntityInstanceId]) -> task.Task[EntityLock]:
@@ -1166,7 +1170,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             raise RuntimeError(error_message)
 
         encoded_input = shared.to_json(input) if input is not None else None
-        action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input)
+        action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
         fn_task = task.CompletableTask()
@@ -1189,7 +1193,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         encoded_input = shared.to_json(input) if input is not None else None
 
-        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input)
+        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
     def lock_entities_function_helper(self, id: int, entities: list[EntityInstanceId]) -> None:
@@ -1200,7 +1204,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if not transition_valid:
             raise RuntimeError(error_message)
 
-        critical_section_id = f"{self.instance_id}:{id:04x}"
+        critical_section_id = self.new_uuid()
 
         request, target = self._entity_context.emit_acquire_message(critical_section_id, entities)
 
@@ -1251,6 +1255,17 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             return
 
         self.set_continued_as_new(new_input, save_events)
+
+    def new_uuid(self) -> str:
+        NAMESPACE_UUID: str = "9e952958-5e33-4daf-827f-2fa12937b875"
+
+        uuid_name_value = \
+            f"{self._instance_id}" \
+            f"_{self.current_utc_datetime.strftime(DATETIME_STRING_FORMAT)}" \
+            f"_{self._new_uuid_counter}"
+        self._new_uuid_counter += 1
+        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_OID, NAMESPACE_UUID)
+        return str(uuid.uuid5(namespace_uuid, uuid_name_value))
 
 
 class ExecutionResults:
@@ -1657,8 +1672,9 @@ class _OrchestrationExecutor:
                     raise _get_wrong_action_type_error(
                         entity_call_id, expected_method_name, action
                     )
-                entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
-                if not entity_id:
+                try:
+                    entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
+                except ValueError:
                     raise RuntimeError(f"Could not parse entity ID from targetInstanceId '{event.entityOperationCalled.targetInstanceId.value}'")
                 ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id)
             elif event.HasField("entityOperationSignaled"):
