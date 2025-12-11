@@ -3,6 +3,8 @@
 
 from functools import wraps
 
+from durabletask import task
+
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
 from typing import Callable, Optional
@@ -54,7 +56,7 @@ class Blueprint(TriggerApi, BindingApi):
             The function to construct an Orchestrator class from the user-defined Function,
             wrapped by the next decorator in the sequence.
         """
-        def decorator(orchestrator_func):
+        def decorator(orchestrator_func: task.Orchestrator):
             # Construct an orchestrator based on the end-user code
 
             def handle(context) -> str:
@@ -82,7 +84,7 @@ class Blueprint(TriggerApi, BindingApi):
             The function to construct an Entity class from the user-defined Function,
             wrapped by the next decorator in the sequence.
         """
-        def decorator(entity_func):
+        def decorator(entity_func: task.Entity):
             # Construct an orchestrator based on the end-user code
 
             # TODO: Because this handle method is the one actually exposed to the Functions SDK decorator,
@@ -177,7 +179,8 @@ class Blueprint(TriggerApi, BindingApi):
 
         return wrap
 
-    def entity_trigger(self, context_name: str,
+    def entity_trigger(self,
+                       context_name: str,
                        entity_name: Optional[str] = None):
         """Register an Entity Function.
 
@@ -228,7 +231,7 @@ class Blueprint(TriggerApi, BindingApi):
         @self._configure_function_builder
         def wrap(fb):
             def decorator():
-                self._add_rich_client(fb, client_name, DurableFunctionsClient)
+                # self._add_rich_client(fb, client_name, DurableFunctionsClient)
 
                 fb.add_binding(
                     binding=DurableClient(name=client_name,

@@ -4,6 +4,7 @@
 import base64
 from threading import Event
 from typing import Optional
+from durabletask import task
 from durabletask.internal.orchestrator_service_pb2 import EntityBatchRequest, EntityBatchResult, OrchestratorRequest, OrchestratorResponse
 from durabletask.worker import _Registry, ConcurrencyOptions
 from durabletask.internal import shared
@@ -33,10 +34,10 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
 
         self._interceptors = None
 
-    def add_named_orchestrator(self, name: str, func):
+    def add_named_orchestrator(self, name: str, func: task.Orchestrator):
         self._registry.add_named_orchestrator(name, func)
 
-    def _execute_orchestrator(self, func, context) -> str:
+    def _execute_orchestrator(self, func: task.Orchestrator, context) -> str:
         context_body = getattr(context, "body", None)
         if context_body is None:
             context_body = context
@@ -67,9 +68,9 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         if response is None:
             raise Exception("Orchestrator execution did not produce a response.")
         # The Python worker returns the input as type "json", so double-encoding is necessary
-        return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
+        return base64.b64encode(response.SerializeToString()).decode('utf-8')
 
-    def _execute_entity_batch(self, func, context) -> str:
+    def _execute_entity_batch(self, func: task.Entity, context) -> str:
         context_body = getattr(context, "body", None)
         if context_body is None:
             context_body = context
@@ -90,4 +91,4 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         if response is None:
             raise Exception("Entity execution did not produce a response.")
         # The Python worker returns the input as type "json", so double-encoding is necessary
-        return '"' + base64.b64encode(response.SerializeToString()).decode('utf-8') + '"'
+        return base64.b64encode(response.SerializeToString()).decode('utf-8')
