@@ -139,7 +139,8 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_entity(self, entity: EntityInstanceId,
+    def call_entity(self,
+                    entity: EntityInstanceId,
                     operation: str,
                     input: Optional[TInput] = None) -> Task:
         """Schedule entity function for execution.
