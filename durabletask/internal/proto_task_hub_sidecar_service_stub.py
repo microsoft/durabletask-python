@@ -2,9 +2,8 @@ from typing import Any, Callable, Protocol
 
 
 class ProtoTaskHubSidecarServiceStub(Protocol):
-    """A stub class roughly matching the TaskHubSidecarServiceStub generated from the .proto file.
-    Used by Azure Functions during orchestration and entity executions to inject custom behavior,
-    as no real sidecar stub is available.
+    """A stub class matching the TaskHubSidecarServiceStub generated from the .proto file.
+    Allows the use of TaskHubGrpcWorker methods when a real sidecar stub is not available.
     """
     Hello: Callable[..., Any]
     StartInstance: Callable[..., Any]

@@ -9,7 +9,7 @@ import pytest
 
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
-from durabletask import task, worker
+from durabletask import task, worker, entities
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
@@ -1181,6 +1181,77 @@ def test_when_all_with_retry():
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
+
+
+def test_orchestrator_completed_no_effect():
+    def dummy_activity(ctx, _):
+        pass
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        yield ctx.call_activity(dummy_activity, input=orchestrator_input)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    encoded_input = json.dumps(42)
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input),
+        helpers.new_orchestrator_completed_event()]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+    actions = result.actions
+
+    assert len(actions) == 1
+    assert type(actions[0]) is pb.OrchestratorAction
+    assert actions[0].id == 1
+    assert actions[0].HasField("scheduleTask")
+    assert actions[0].scheduleTask.name == task.get_name(dummy_activity)
+    assert actions[0].scheduleTask.input.value == encoded_input
+
+
+def test_entity_lock_created_as_event():
+    test_entity_id = entities.EntityInstanceId("Counter", "myCounter")
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        entity_id = test_entity_id
+        with (yield ctx.lock_entities([entity_id])):
+            return (yield ctx.call_entity(entity_id, "set", 1))
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, None),
+    ]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result1 = executor.execute(TEST_INSTANCE_ID, [], new_events)
+    actions = result1.actions
+    assert len(actions) == 1
+    assert type(actions[0]) is pb.OrchestratorAction
+    assert actions[0].id == 1
+    assert actions[0].HasField("sendEntityMessage")
+    assert actions[0].sendEntityMessage.HasField("entityLockRequested")
+
+    old_events = new_events
+    event_sent_input = {
+        "id": actions[0].sendEntityMessage.entityLockRequested.criticalSectionId,
+    }
+    new_events = [
+        helpers.new_event_sent_event(1, str(test_entity_id), json.dumps(event_sent_input)),
+        helpers.new_event_raised_event(event_sent_input["id"], None),
+    ]
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+
+    assert len(actions) == 1
+    assert type(actions[0]) is pb.OrchestratorAction
+    assert actions[0].id == 2
+    assert actions[0].HasField("sendEntityMessage")
+    assert actions[0].sendEntityMessage.HasField("entityOperationCalled")
+    assert actions[0].sendEntityMessage.entityOperationCalled.targetInstanceId.value == str(test_entity_id)
 
 
 def get_and_validate_complete_orchestration_action_list(expected_action_count: int, actions: list[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:

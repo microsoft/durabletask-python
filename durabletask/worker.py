@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, Optional, Sequence, TypeVar, Union
+from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -25,6 +25,7 @@ from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
 from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
+from durabletask.internal.proto_task_hub_sidecar_service_stub import ProtoTaskHubSidecarServiceStub
 import durabletask.internal.helpers as ph
 import durabletask.internal.exceptions as pe
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -680,7 +681,7 @@ class TaskHubGrpcWorker:
     def _cancel_orchestrator(
             self,
             req: pb.OrchestratorRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         stub.AbandonTaskOrchestratorWorkItem(
@@ -693,7 +694,7 @@ class TaskHubGrpcWorker:
     def _execute_activity(
             self,
             req: pb.ActivityRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         instance_id = req.orchestrationInstance.instanceId
@@ -726,7 +727,7 @@ class TaskHubGrpcWorker:
     def _cancel_activity(
             self,
             req: pb.ActivityRequest,
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         stub.AbandonTaskActivityWorkItem(
@@ -754,9 +755,10 @@ class TaskHubGrpcWorker:
         for operation in req.operations:
             start_time = datetime.now(timezone.utc)
             executor = _EntityExecutor(self._registry, self._logger)
-            entity_instance_id = EntityInstanceId.parse(instance_id)
-            if not entity_instance_id:
-                raise RuntimeError(f"Invalid entity instance ID '{operation.requestId}' in entity operation request.")
+            try:
+                entity_instance_id = EntityInstanceId.parse(instance_id)
+            except ValueError:
+                raise RuntimeError(f"Invalid entity instance ID '{instance_id}' in entity operation request.")
 
             operation_result = None
 
@@ -808,7 +810,7 @@ class TaskHubGrpcWorker:
     def _cancel_entity_batch(
             self,
             req: Union[pb.EntityBatchRequest, pb.EntityRequest],
-            stub: stubs.TaskHubSidecarServiceStub,
+            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
         stub.AbandonTaskEntityWorkItem(
@@ -831,9 +833,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_actions: dict[int, pb.OrchestratorAction] = {}
         self._pending_tasks: dict[int, task.CompletableTask] = {}
         # Maps entity ID to task ID
-        self._entity_task_id_map: dict[str, tuple[EntityInstanceId, int, Optional[str]]] = {}
-        # Maps criticalSectionId to task ID
-        self._entity_lock_id_map: dict[str, int] = {}
+        self._entity_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
+        self._entity_lock_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
         self._sequence_number = 0
         self._new_uuid_counter = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
@@ -1170,12 +1171,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             raise RuntimeError(error_message)
 
         encoded_input = shared.to_json(input) if input is not None else None
-        action = ph.new_call_entity_action(id,
-                                           self.instance_id,
-                                           entity_id,
-                                           operation,
-                                           encoded_input,
-                                           self.new_uuid())
+        action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
         fn_task = task.CompletableTask()
@@ -1262,14 +1258,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self.set_continued_as_new(new_input, save_events)
 
     def new_uuid(self) -> str:
-        URL_NAMESPACE: str = "9e952958-5e33-4daf-827f-2fa12937b875"
+        NAMESPACE_UUID: str = "9e952958-5e33-4daf-827f-2fa12937b875"
 
         uuid_name_value = \
             f"{self._instance_id}" \
             f"_{self.current_utc_datetime.strftime(DATETIME_STRING_FORMAT)}" \
             f"_{self._new_uuid_counter}"
         self._new_uuid_counter += 1
-        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_OID, URL_NAMESPACE)
+        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_OID, NAMESPACE_UUID)
         return str(uuid.uuid5(namespace_uuid, uuid_name_value))
 
 
@@ -1612,32 +1608,11 @@ class _OrchestrationExecutor:
                     raise TypeError("Unexpected sub-orchestration task type")
             elif event.HasField("eventRaised"):
                 if event.eventRaised.name in ctx._entity_task_id_map:
-                    # This eventRaised represents the result of an entity operation after being translated to the old
-                    # entity protocol by the Durable WebJobs extension
-                    entity_id, task_id, action_type = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None, None))
-                    if entity_id is None:
-                        raise RuntimeError(f"Could not retrieve entity ID for entity-related eventRaised with ID '{event.eventId}'")
-                    if task_id is None:
-                        raise RuntimeError(f"Could not retrieve task ID for entity-related eventRaised with ID '{event.eventId}'")
-                    entity_task = ctx._pending_tasks.pop(task_id, None)
-                    if not entity_task:
-                        raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
-                    result = None
-                    if not ph.is_empty(event.eventRaised.input):
-                        # TODO: Investigate why the event result is wrapped in a dict with "result" key
-                        result = shared.from_json(event.eventRaised.input.value)["result"]
-                    if action_type == "entityOperationCalled":
-                        ctx._entity_context.recover_lock_after_call(entity_id)
-                        entity_task.complete(result)
-                        ctx.resume()
-                    elif action_type == "entityLockRequested":
-                        ctx._entity_context.complete_acquire(event.eventRaised.name)
-                        entity_task.complete(EntityLock(ctx))
-                        ctx.resume()
-                    else:
-                        raise RuntimeError(f"Unknown action type '{action_type}' for entity-related eventRaised "
-                                           f"with ID '{event.eventId}'")
-
+                    entity_id, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None))
+                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, False)
+                elif event.eventRaised.name in ctx._entity_lock_task_id_map:
+                    entity_id, task_id = ctx._entity_lock_task_id_map.get(event.eventRaised.name, (None, None))
+                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, True)
                 else:
                     # event names are case-insensitive
                     event_name = event.eventRaised.name.casefold()
@@ -1705,8 +1680,9 @@ class _OrchestrationExecutor:
                     raise _get_wrong_action_type_error(
                         entity_call_id, expected_method_name, action
                     )
-                entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
-                if not entity_id:
+                try:
+                    entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
+                except ValueError:
                     raise RuntimeError(f"Could not parse entity ID from targetInstanceId '{event.entityOperationCalled.targetInstanceId.value}'")
                 ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id, None)
             elif event.HasField("entityOperationSignaled"):
@@ -1802,15 +1778,11 @@ class _OrchestrationExecutor:
                 action = ctx._pending_actions.pop(event.eventId, None)
                 if action and action.HasField("sendEntityMessage"):
                     if action.sendEntityMessage.HasField("entityOperationCalled"):
-                        action_type = "entityOperationCalled"
+                        entity_id, event_id = self._parse_entity_event_sent_input(event)
+                        ctx._entity_task_id_map[event_id] = (entity_id, event.eventId)
                     elif action.sendEntityMessage.HasField("entityLockRequested"):
-                        action_type = "entityLockRequested"
-                    else:
-                        return
-
-                    entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
-                    event_id = json.loads(event.eventSent.input.value)["id"]
-                    ctx._entity_task_id_map[event_id] = (entity_id, event.eventId, action_type)
+                        entity_id, event_id = self._parse_entity_event_sent_input(event)
+                        ctx._entity_lock_task_id_map[event_id] = (entity_id, event.eventId)
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(
@@ -1819,6 +1791,44 @@ class _OrchestrationExecutor:
         except StopIteration as generatorStopped:
             # The orchestrator generator function completed
             ctx.set_complete(generatorStopped.value, pb.ORCHESTRATION_STATUS_COMPLETED)
+
+    def _parse_entity_event_sent_input(self, event: pb.HistoryEvent) -> Tuple[EntityInstanceId, str]:
+        try:
+            entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
+        except ValueError:
+            raise RuntimeError(f"Could not parse entity ID from instanceId '{event.eventSent.instanceId}'")
+        try:
+            event_id = json.loads(event.eventSent.input.value)["id"]
+        except (json.JSONDecodeError, KeyError, TypeError) as ex:
+            raise RuntimeError(f"Could not parse event ID from eventSent input '{event.eventSent.input.value}'") from ex
+        return entity_id, event_id
+
+    def _handle_entity_event_raised(self,
+                                    ctx: _RuntimeOrchestrationContext,
+                                    event: pb.HistoryEvent,
+                                    entity_id: Optional[EntityInstanceId],
+                                    task_id: Optional[int],
+                                    is_lock_event: bool):
+        # This eventRaised represents the result of an entity operation after being translated to the old
+        # entity protocol by the Durable WebJobs extension
+        if entity_id is None:
+            raise RuntimeError(f"Could not retrieve entity ID for entity-related eventRaised with ID '{event.eventId}'")
+        if task_id is None:
+            raise RuntimeError(f"Could not retrieve task ID for entity-related eventRaised with ID '{event.eventId}'")
+        entity_task = ctx._pending_tasks.pop(task_id, None)
+        if not entity_task:
+            raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
+        result = None
+        if not ph.is_empty(event.eventRaised.input):
+            # TODO: Investigate why the event result is wrapped in a dict with "result" key
+            result = shared.from_json(event.eventRaised.input.value)["result"]
+        if is_lock_event:
+            ctx._entity_context.complete_acquire(event.eventRaised.name)
+            entity_task.complete(EntityLock(ctx))
+        else:
+            ctx._entity_context.recover_lock_after_call(entity_id)
+            entity_task.complete(result)
+        ctx.resume()
 
     def evaluate_orchestration_versioning(self, versioning: Optional[VersioningOptions], orchestration_version: Optional[str]) -> Optional[pb.TaskFailureDetails]:
         if versioning is None:

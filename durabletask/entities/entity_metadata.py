@@ -44,8 +44,9 @@ class EntityMetadata:
 
     @staticmethod
     def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool):
-        entity_id = EntityInstanceId.parse(entity_response.entity.instanceId)
-        if not entity_id:
+        try:
+            entity_id = EntityInstanceId.parse(entity_response.entity.instanceId)
+        except ValueError:
             raise ValueError("Invalid entity instance ID in entity response.")
         entity_state = None
         if includes_state:

@@ -20,6 +20,11 @@ def new_orchestrator_started_event(timestamp: Optional[datetime] = None) -> pb.H
     return pb.HistoryEvent(eventId=-1, timestamp=ts, orchestratorStarted=pb.OrchestratorStartedEvent())
 
 
+def new_orchestrator_completed_event() -> pb.HistoryEvent:
+    return pb.HistoryEvent(eventId=-1, timestamp=timestamp_pb2.Timestamp(),
+                           orchestratorCompleted=pb.OrchestratorCompletedEvent())
+
+
 def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None,
                                 tags: Optional[dict[str, str]] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
@@ -119,6 +124,18 @@ def new_failure_details(ex: Exception) -> pb.TaskFailureDetails:
     )
 
 
+def new_event_sent_event(event_id: int, instance_id: str, input: str):
+    return pb.HistoryEvent(
+        eventId=event_id,
+        timestamp=timestamp_pb2.Timestamp(),
+        eventSent=pb.EventSentEvent(
+            name="",
+            input=get_string_value(input),
+            instanceId=instance_id
+        )
+    )
+
+
 def new_event_raised_event(name: str, encoded_input: Optional[str] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
@@ -199,8 +216,9 @@ def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
 def new_call_entity_action(id: int,
                            parent_instance_id: str,
                            entity_id: EntityInstanceId,
-                           operation: str, encoded_input: Optional[str],
-                           request_id: str):
+                           operation: str,
+                           encoded_input: Optional[str],
+                           request_id: str) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
         requestId=request_id,
         operation=operation,
@@ -216,7 +234,7 @@ def new_signal_entity_action(id: int,
                              entity_id: EntityInstanceId,
                              operation: str,
                              encoded_input: Optional[str],
-                             request_id: str):
+                             request_id: str) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
         requestId=request_id,
         operation=operation,
