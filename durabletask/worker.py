@@ -835,6 +835,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # Maps entity ID to task ID
         self._entity_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
         self._entity_lock_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
+        # Maps criticalSectionId to task ID
+        self._entity_lock_id_map: dict[str, int] = {}
         self._sequence_number = 0
         self._new_uuid_counter = 0
         self._current_utc_datetime = datetime(1000, 1, 1)
@@ -1171,6 +1173,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             raise RuntimeError(error_message)
 
         encoded_input = shared.to_json(input) if input is not None else None
+
         action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
@@ -1684,7 +1687,7 @@ class _OrchestrationExecutor:
                     entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
                 except ValueError:
                     raise RuntimeError(f"Could not parse entity ID from targetInstanceId '{event.entityOperationCalled.targetInstanceId.value}'")
-                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id, None)
+                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id)
             elif event.HasField("entityOperationSignaled"):
                 # This history event confirms that the entity signal was successfully scheduled.
                 # Remove the entityOperationSignaled event from the pending action list so we don't schedule it
@@ -1745,7 +1748,7 @@ class _OrchestrationExecutor:
                 ctx.resume()
             elif event.HasField("entityOperationCompleted"):
                 request_id = event.entityOperationCompleted.requestId
-                entity_id, task_id, _ = ctx._entity_task_id_map.pop(request_id, (None, None, None))
+                entity_id, task_id = ctx._entity_task_id_map.pop(request_id, (None, None))
                 if not entity_id:
                     raise RuntimeError(f"Could not parse entity ID from request ID '{request_id}'")
                 if not task_id:
