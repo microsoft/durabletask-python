@@ -20,6 +20,7 @@ import grpc
 from google.protobuf import empty_pb2
 
 from durabletask.internal import helpers
+from durabletask.internal.proto_task_hub_sidecar_service_stub import ProtoTaskHubSidecarServiceStub
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
@@ -742,6 +743,7 @@ class TaskHubGrpcWorker:
             stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
+        operation_infos = None
         if isinstance(req, pb.EntityRequest):
             req, operation_infos = helpers.convert_to_entity_batch_request(req)
 
@@ -798,7 +800,7 @@ class TaskHubGrpcWorker:
             stub.CompleteEntityTask(batch_result)
         except Exception as ex:
             self._logger.exception(
-                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+                f"Failed to deliver entity response for orchestration ID '{instance_id}' to sidecar: {ex}"
             )
 
         # TODO: Reset context
@@ -1171,6 +1173,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             raise RuntimeError(error_message)
 
         encoded_input = shared.to_json(input) if input is not None else None
+
         action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
