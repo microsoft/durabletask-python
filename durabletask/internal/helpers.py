@@ -20,6 +20,11 @@ def new_orchestrator_started_event(timestamp: Optional[datetime] = None) -> pb.H
     return pb.HistoryEvent(eventId=-1, timestamp=ts, orchestratorStarted=pb.OrchestratorStartedEvent())
 
 
+def new_orchestrator_completed_event() -> pb.HistoryEvent:
+    return pb.HistoryEvent(eventId=-1, timestamp=timestamp_pb2.Timestamp(),
+                           orchestratorCompleted=pb.OrchestratorCompletedEvent())
+
+
 def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None,
                                 tags: Optional[dict[str, str]] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
@@ -116,6 +121,18 @@ def new_failure_details(ex: Exception) -> pb.TaskFailureDetails:
         errorType=type(ex).__name__,
         errorMessage=str(ex),
         stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__)))
+    )
+
+
+def new_event_sent_event(event_id: int, instance_id: str, input: str):
+    return pb.HistoryEvent(
+        eventId=event_id,
+        timestamp=timestamp_pb2.Timestamp(),
+        eventSent=pb.EventSentEvent(
+            name="",
+            input=get_string_value(input),
+            instanceId=instance_id
+        )
     )
 
 
