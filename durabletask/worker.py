@@ -166,7 +166,7 @@ class _Registry:
 
         self.orchestrators[name] = fn
 
-    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator]:
+    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator[Any, Any]]:
         return self.orchestrators.get(name)
 
     def add_activity(self, fn: task.Activity) -> str:
