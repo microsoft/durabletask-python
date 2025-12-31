@@ -150,7 +150,7 @@ class _Registry:
         self.entities = {}
         self.entity_instances = {}
 
-    def add_orchestrator(self, fn: task.Orchestrator) -> str:
+    def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         if fn is None:
             raise ValueError("An orchestrator function argument is required.")
 
