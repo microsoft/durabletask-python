@@ -150,7 +150,7 @@ class _Registry:
         self.entities = {}
         self.entity_instances = {}
 
-    def add_orchestrator(self, fn: task.Orchestrator) -> str:
+    def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         if fn is None:
             raise ValueError("An orchestrator function argument is required.")
 
@@ -166,7 +166,7 @@ class _Registry:
 
         self.orchestrators[name] = fn
 
-    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator]:
+    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator[Any, Any]]:
         return self.orchestrators.get(name)
 
     def add_activity(self, fn: task.Activity) -> str:
