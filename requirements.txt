@@ -4,5 +4,6 @@ protobuf
 pytest
 pytest-cov
 azure-identity
+azure-functions
 asyncio
 packaging
