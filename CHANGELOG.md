@@ -11,7 +11,7 @@ ADDED:
 
 - Added new_uuid method to orchestration clients allowing generation of replay-safe UUIDs.
 - Added ProtoTaskHubSidecarServiceStub class to allow passing self-generated stubs to worker
-- Added support for new Task types needed for specific durable backend setups:
+- Added support for new event types needed for specific durable backend setups:
   - orchestratorCompleted
   - eventSent
   - eventRaised modified to support entity events
