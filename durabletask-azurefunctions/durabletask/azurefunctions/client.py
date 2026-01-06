@@ -77,7 +77,7 @@ class DurableFunctionsClient(TaskHubGrpcClient):
         location_url = self._get_instance_status_url(request, instance_id)
         return func.HttpResponse(
             body=str(self._get_client_response_links(request, instance_id)),
-            status_code=501,
+            status_code=202,
             headers={
                 'content-type': 'application/json',
                 'Location': location_url,

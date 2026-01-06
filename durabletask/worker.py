@@ -20,7 +20,6 @@ import grpc
 from google.protobuf import empty_pb2
 
 from durabletask.internal import helpers
-from durabletask.internal.proto_task_hub_sidecar_service_stub import ProtoTaskHubSidecarServiceStub
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
@@ -800,8 +799,7 @@ class TaskHubGrpcWorker:
             stub.CompleteEntityTask(batch_result)
         except Exception as ex:
             self._logger.exception(
-                f"Failed to deliver entity response for orchestration ID '{instance_id}' to sidecar: {ex}"
-            )
+                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}")
 
         # TODO: Reset context
 
@@ -1825,6 +1823,16 @@ class _OrchestrationExecutor:
         if not ph.is_empty(event.eventRaised.input):
             # TODO: Investigate why the event result is wrapped in a dict with "result" key
             result = shared.from_json(event.eventRaised.input.value)["result"]
+            # The result here is double-encoded somewhere, so we need to decode it again. This does not happen
+            # with entityOperationCompleted, so it's either part of the event entity messaging protocol in Core,
+            # or something done by the WebJobs extension.
+            if result and isinstance(result, str):
+                try:
+                    result = shared.from_json(result)
+                except Exception as ex:
+                    self._logger.warning(f"{ctx.instance_id}: Could not deserialize entity operation result to object "
+                                         f"for entity '{entity_id}', defaulting to encoded string."
+                                         f"Decode error: {ex}")
         if is_lock_event:
             ctx._entity_context.complete_acquire(event.eventRaised.name)
             entity_task.complete(EntityLock(ctx))

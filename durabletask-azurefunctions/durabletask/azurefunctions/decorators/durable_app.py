@@ -231,8 +231,6 @@ class Blueprint(TriggerApi, BindingApi):
         @self._configure_function_builder
         def wrap(fb):
             def decorator():
-                # self._add_rich_client(fb, client_name, DurableFunctionsClient)
-
                 fb.add_binding(
                     binding=DurableClient(name=client_name,
                                           task_hub=task_hub,

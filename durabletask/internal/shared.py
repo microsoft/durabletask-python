@@ -84,11 +84,11 @@ def get_logger(
 
 
 def to_json(obj):
-    return json.dumps(obj, cls=InternalJSONEncoder)
+    return json.dumps(obj, cls=global_json_encoder)
 
 
 def from_json(json_str):
-    return json.loads(json_str, cls=InternalJSONDecoder)
+    return json.loads(json_str, cls=global_json_decoder)
 
 
 class InternalJSONEncoder(json.JSONEncoder):
@@ -127,3 +127,7 @@ class InternalJSONDecoder(json.JSONDecoder):
         if d.pop(AUTO_SERIALIZED, False):
             return SimpleNamespace(**d)
         return d
+
+
+global_json_encoder: type = InternalJSONEncoder
+global_json_decoder: type = InternalJSONDecoder
