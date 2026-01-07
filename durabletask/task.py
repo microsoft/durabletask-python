@@ -302,8 +302,10 @@ class FailureDetails:
 class TaskFailedError(Exception):
     """Exception type for all orchestration task failures."""
 
-    def __init__(self, message: str, details: pb.TaskFailureDetails):
+    def __init__(self, message: str, details: Union[pb.TaskFailureDetails, Exception]):
         super().__init__(message)
+        if isinstance(details, Exception):
+            details = pbh.new_failure_details(details)
         self._details = FailureDetails(
             details.errorMessage,
             details.errorType,
