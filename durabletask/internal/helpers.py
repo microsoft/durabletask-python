@@ -116,11 +116,12 @@ def new_sub_orchestration_failed_event(event_id: int, ex: Exception) -> pb.Histo
     )
 
 
-def new_failure_details(ex: Exception) -> pb.TaskFailureDetails:
+def new_failure_details(ex: BaseException) -> pb.TaskFailureDetails:
     return pb.TaskFailureDetails(
         errorType=type(ex).__name__,
         errorMessage=str(ex),
-        stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__)))
+        stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__))),
+        innerFailure=new_failure_details(ex.__cause__) if ex.__cause__ else None
     )
 
 
