@@ -302,8 +302,10 @@ class FailureDetails:
 class TaskFailedError(Exception):
     """Exception type for all orchestration task failures."""
 
-    def __init__(self, message: str, details: pb.TaskFailureDetails):
+    def __init__(self, message: str, details: Union[pb.TaskFailureDetails, Exception]):
         super().__init__(message)
+        if isinstance(details, Exception):
+            details = pbh.new_failure_details(details)
         self._details = FailureDetails(
             details.errorMessage,
             details.errorType,
@@ -424,7 +426,7 @@ class CompletableTask(Task[T]):
         if self._parent is not None:
             self._parent.on_child_completed(self)
 
-    def fail(self, message: str, details: pb.TaskFailureDetails):
+    def fail(self, message: str, details: Union[Exception, pb.TaskFailureDetails]):
         if self._is_complete:
             raise ValueError('The task has already completed.')
         self._exception = TaskFailedError(message, details)
