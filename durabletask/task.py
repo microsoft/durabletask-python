@@ -98,7 +98,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def create_timer(self, fire_at: Union[datetime, timedelta]) -> TimerTask:
+    def create_timer(self, fire_at: Union[datetime, timedelta]) -> Task:
         """Create a Timer Task to fire after at the specified deadline.
 
         Parameters
