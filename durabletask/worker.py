@@ -1014,7 +1014,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self,
             fire_at: Union[datetime, timedelta],
             retryable_task: Optional[task.RetryableTask] = None,
-    ) -> task.Task:
+    ) -> task.TimerTask:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
             fire_at = self.current_utc_datetime + fire_at
@@ -1034,7 +1034,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             input: Optional[TInput] = None,
             retry_policy: Optional[task.RetryPolicy] = None,
             tags: Optional[dict[str, str]] = None,
-    ) -> task.Task[TOutput]:
+    ) -> task.CompletableTask[TOutput]:
         id = self.next_sequence_number()
 
         self.call_activity_function_helper(
@@ -1047,7 +1047,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             entity: EntityInstanceId,
             operation: str,
             input: Optional[TInput] = None,
-    ) -> task.Task:
+    ) -> task.CompletableTask:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
@@ -1068,7 +1068,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             id, entity_id, operation_name, input
         )
 
-    def lock_entities(self, entities: list[EntityInstanceId]) -> task.Task[EntityLock]:
+    def lock_entities(self, entities: list[EntityInstanceId]) -> task.CompletableTask[EntityLock]:
         id = self.next_sequence_number()
 
         self.lock_entities_function_helper(
@@ -1084,7 +1084,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             instance_id: Optional[str] = None,
             retry_policy: Optional[task.RetryPolicy] = None,
             version: Optional[str] = None,
-    ) -> task.Task[TOutput]:
+    ) -> task.CompletableTask[TOutput]:
         id = self.next_sequence_number()
         if isinstance(orchestrator, str):
             orchestrator_name = orchestrator
@@ -1229,7 +1229,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)
             self._pending_actions[task_id] = action
 
-    def wait_for_external_event(self, name: str) -> task.Task:
+    def wait_for_external_event(self, name: str) -> task.CompletableTask:
         # Check to see if this event has already been received, in which case we
         # can return it immediately. Otherwise, record out intent to receive an
         # event with the given name so that we can resume the generator when it

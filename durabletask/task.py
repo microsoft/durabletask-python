@@ -117,7 +117,7 @@ class OrchestrationContext(ABC):
     def call_activity(self, activity: Union[Activity[TInput, TOutput], str], *,
                       input: Optional[TInput] = None,
                       retry_policy: Optional[RetryPolicy] = None,
-                      tags: Optional[dict[str, str]] = None) -> Task[TOutput]:
+                      tags: Optional[dict[str, str]] = None) -> CompletableTask[TOutput]:
         """Schedule an activity for execution.
 
         Parameters
@@ -142,7 +142,7 @@ class OrchestrationContext(ABC):
     def call_entity(self,
                     entity: EntityInstanceId,
                     operation: str,
-                    input: Optional[TInput] = None) -> Task:
+                    input: Optional[TInput] = None) -> CompletableTask:
         """Schedule entity function for execution.
 
         Parameters
@@ -182,7 +182,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def lock_entities(self, entities: list[EntityInstanceId]) -> Task[EntityLock]:
+    def lock_entities(self, entities: list[EntityInstanceId]) -> CompletableTask[EntityLock]:
         """Creates a Task object that locks the specified entity instances.
 
         The locks will be acquired the next time the orchestrator yields.
@@ -206,7 +206,7 @@ class OrchestrationContext(ABC):
                               input: Optional[TInput] = None,
                               instance_id: Optional[str] = None,
                               retry_policy: Optional[RetryPolicy] = None,
-                              version: Optional[str] = None) -> Task[TOutput]:
+                              version: Optional[str] = None) -> CompletableTask[TOutput]:
         """Schedule sub-orchestrator function for execution.
 
         Parameters
@@ -231,7 +231,7 @@ class OrchestrationContext(ABC):
     # TOOD: Add a timeout parameter, which allows the task to be canceled if the event is
     # not received within the specified timeout. This requires support for task cancellation.
     @abstractmethod
-    def wait_for_external_event(self, name: str) -> Task:
+    def wait_for_external_event(self, name: str) -> CompletableTask:
         """Wait asynchronously for an event to be raised with the name `name`.
 
         Parameters
