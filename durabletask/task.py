@@ -426,7 +426,7 @@ class CompletableTask(Task[T]):
         if self._parent is not None:
             self._parent.on_child_completed(self)
 
-    def fail(self, message: str, details: pb.TaskFailureDetails):
+    def fail(self, message: str, details: Union[Exception, pb.TaskFailureDetails]):
         if self._is_complete:
             raise ValueError('The task has already completed.')
         self._exception = TaskFailedError(message, details)
