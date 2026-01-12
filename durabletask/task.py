@@ -142,7 +142,7 @@ class OrchestrationContext(ABC):
     def call_entity(self,
                     entity: EntityInstanceId,
                     operation: str,
-                    input: Optional[TInput] = None) -> CompletableTask:
+                    input: Optional[TInput] = None) -> CompletableTask[Any]:
         """Schedule entity function for execution.
 
         Parameters
@@ -538,8 +538,8 @@ class ActivityContext:
         return self._task_id
 
 
-# Orchestrators are generators that yield tasks and receive/return any type
-Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, Any, Any], TOutput]]
+# Orchestrators are generators that yield tasks, receive any type, and return TOutput
+Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task[Any], Any, TOutput], TOutput]]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
