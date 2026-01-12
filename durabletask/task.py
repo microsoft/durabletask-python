@@ -140,14 +140,14 @@ class OrchestrationContext(ABC):
 
     @abstractmethod
     def call_entity(self,
-                    entity: EntityInstanceId,
+                    entity: EntityInstanceId[TInput, TOutput],
                     operation: str,
-                    input: Optional[TInput] = None) -> CompletableTask:
+                    input: Optional[TInput] = None) -> CompletableTask[TOutput]:
         """Schedule entity function for execution.
 
         Parameters
         ----------
-        entity: EntityInstanceId
+        entity: EntityInstanceId[TInput, TOutput]
             The ID of the entity instance to call.
         operation: str
             The name of the operation to invoke on the entity.
@@ -164,7 +164,7 @@ class OrchestrationContext(ABC):
     @abstractmethod
     def signal_entity(
             self,
-            entity_id: EntityInstanceId,
+            entity_id: EntityInstanceId[TInput, TOutput],
             operation_name: str,
             input: Optional[TInput] = None
     ) -> None:
@@ -172,7 +172,7 @@ class OrchestrationContext(ABC):
 
         Parameters
         ----------
-        entity_id: EntityInstanceId
+        entity_id: EntityInstanceId[TInput, TOutput]
             The ID of the entity instance to signal.
         operation_name: str
             The name of the operation to invoke on the entity.
@@ -182,7 +182,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def lock_entities(self, entities: list[EntityInstanceId]) -> CompletableTask[EntityLock]:
+    def lock_entities(self, entities: list[EntityInstanceId[Any, Any]]) -> CompletableTask[EntityLock]:
         """Creates a Task object that locks the specified entity instances.
 
         The locks will be acquired the next time the orchestrator yields.
@@ -191,7 +191,7 @@ class OrchestrationContext(ABC):
 
         Parameters
         ----------
-        entities: list[EntityInstanceId]
+        entities: list[EntityInstanceId[Any, Any]]
             The list of entity instance IDs to lock.
 
         Returns
@@ -538,8 +538,8 @@ class ActivityContext:
         return self._task_id
 
 
-# Orchestrators are generators that yield tasks and receive/return any type
-Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task, Any, Any], TOutput]]
+# Orchestrators are generators that yield tasks, recieve any type, and return TOutput
+Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task[Any], Any, TOutput], TOutput]]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity = Callable[[ActivityContext, TInput], TOutput]
@@ -613,6 +613,14 @@ class RetryPolicy:
     def retry_timeout(self) -> Optional[timedelta]:
         """The maximum amount of time to spend retrying the operation."""
         return self._retry_timeout
+
+
+def get_entity_name(fn: Entity) -> str:
+    if hasattr(fn, "__durable_entity_name__"):
+        return getattr(fn, "__durable_entity_name__")
+    if isinstance(fn, type) and issubclass(fn, DurableEntity):
+        return fn.__name__
+    return get_name(fn)
 
 
 def get_name(fn: Callable) -> str:

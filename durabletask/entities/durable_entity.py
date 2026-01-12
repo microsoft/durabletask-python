@@ -4,6 +4,7 @@ from durabletask.entities.entity_context import EntityContext
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 TState = TypeVar("TState")
+TInput = TypeVar("TInput")
 
 
 class DurableEntity:
@@ -49,7 +50,10 @@ class DurableEntity:
         """
         self.entity_context.set_state(state)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Optional[Any] = None) -> None:
+    def signal_entity(self,
+                      entity_instance_id: EntityInstanceId[TInput, Any],
+                      operation: str,
+                      input: Optional[TInput] = None) -> None:
         """Signal another entity to perform an operation.
 
         Parameters
