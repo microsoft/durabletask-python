@@ -24,7 +24,7 @@ class EntityMetadata:
     """
 
     def __init__(self,
-                 id: EntityInstanceId,
+                 id: EntityInstanceId[Any, Any],
                  last_modified: datetime,
                  backlog_queue_size: int,
                  locked_by: str,

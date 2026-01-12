@@ -11,8 +11,7 @@ from typing import Any, Optional, Sequence, TypeVar, Union
 import grpc
 from google.protobuf import wrappers_pb2
 
-from durabletask.entities import EntityInstanceId
-from durabletask.entities.entity_metadata import EntityMetadata
+from durabletask.entities import EntityInstanceId, EntityMetadata
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
@@ -230,7 +229,10 @@ class TaskHubGrpcClient:
         self._logger.info(f"Purging instance '{instance_id}'.")
         self._stub.PurgeInstances(req)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation_name: str, input: Optional[Any] = None):
+    def signal_entity(self,
+                      entity_instance_id: EntityInstanceId[TInput, TOutput],
+                      operation_name: str,
+                      input: Optional[TInput] = None):
         req = pb.SignalEntityRequest(
             instanceId=str(entity_instance_id),
             name=operation_name,
@@ -244,7 +246,7 @@ class TaskHubGrpcClient:
         self._stub.SignalEntity(req, None)  # TODO: Cancellation timeout?
 
     def get_entity(self,
-                   entity_instance_id: EntityInstanceId,
+                   entity_instance_id: EntityInstanceId[Any, Any],
                    include_state: bool = True
                    ) -> Optional[EntityMetadata]:
         req = pb.GetEntityRequest(instanceId=str(entity_instance_id), includeState=include_state)

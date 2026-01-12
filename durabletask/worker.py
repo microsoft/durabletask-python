@@ -150,7 +150,7 @@ class _Registry:
         self.entities = {}
         self.entity_instances = {}
 
-    def add_orchestrator(self, fn: task.Orchestrator) -> str:
+    def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         if fn is None:
             raise ValueError("An orchestrator function argument is required.")
 
@@ -158,7 +158,7 @@ class _Registry:
         self.add_named_orchestrator(name, fn)
         return name
 
-    def add_named_orchestrator(self, name: str, fn: task.Orchestrator) -> None:
+    def add_named_orchestrator(self, name: str, fn: task.Orchestrator[TInput, TOutput]) -> None:
         if not name:
             raise ValueError("A non-empty orchestrator name is required.")
         if name in self.orchestrators:
@@ -166,7 +166,7 @@ class _Registry:
 
         self.orchestrators[name] = fn
 
-    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator]:
+    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator[Any, Any]]:
         return self.orchestrators.get(name)
 
     def add_activity(self, fn: task.Activity) -> str:
@@ -188,16 +188,13 @@ class _Registry:
     def get_activity(self, name: str) -> Optional[task.Activity]:
         return self.activities.get(name)
 
-    def add_entity(self, fn: task.Entity) -> str:
+    def add_entity(self, fn: task.Entity, name: Optional[str] = None) -> str:
         if fn is None:
             raise ValueError("An entity function argument is required.")
 
-        if isinstance(fn, type) and issubclass(fn, DurableEntity):
-            name = fn.__name__
-            self.add_named_entity(name, fn)
-        else:
-            name = task.get_name(fn)
-            self.add_named_entity(name, fn)
+        if name is None:
+            name = task.get_entity_name(fn)
+        self.add_named_entity(name, fn)
         return name
 
     def add_named_entity(self, name: str, fn: task.Entity) -> None:
@@ -207,6 +204,7 @@ class _Registry:
             raise ValueError(f"A '{name}' entity already exists.")
 
         self.entities[name] = fn
+        setattr(fn, "__durable_entity_name__", name)
 
     def get_entity(self, name: str) -> Optional[task.Entity]:
         return self.entities.get(name)
@@ -362,7 +360,7 @@ class TaskHubGrpcWorker:
     def __exit__(self, type, value, traceback):
         self.stop()
 
-    def add_orchestrator(self, fn: task.Orchestrator) -> str:
+    def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         """Registers an orchestrator function with the worker."""
         if self._is_running:
             raise RuntimeError(
@@ -378,13 +376,13 @@ class TaskHubGrpcWorker:
             )
         return self._registry.add_activity(fn)
 
-    def add_entity(self, fn: task.Entity) -> str:
+    def add_entity(self, fn: task.Entity, name: Optional[str] = None) -> str:
         """Registers an entity function with the worker."""
         if self._is_running:
             raise RuntimeError(
                 "Entities cannot be added while the worker is running."
             )
-        return self._registry.add_entity(fn)
+        return self._registry.add_entity(fn, name)
 
     def use_versioning(self, version: VersioningOptions) -> None:
         """Initializes versioning options for sub-orchestrators and activities."""
@@ -1044,21 +1042,21 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_entity(
             self,
-            entity: EntityInstanceId,
+            entity: EntityInstanceId[TInput, TOutput],
             operation: str,
             input: Optional[TInput] = None,
-    ) -> task.CompletableTask:
+    ) -> task.CompletableTask[TOutput]:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
             id, entity, operation, input=input
         )
 
-        return self._pending_tasks.get(id, task.CompletableTask())
+        return self._pending_tasks.get(id, task.CompletableTask[TOutput]())
 
     def signal_entity(
             self,
-            entity_id: EntityInstanceId,
+            entity_id: EntityInstanceId[TInput, TOutput],
             operation_name: str,
             input: Optional[TInput] = None
     ) -> None:
@@ -1068,7 +1066,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             id, entity_id, operation_name, input
         )
 
-    def lock_entities(self, entities: list[EntityInstanceId]) -> task.CompletableTask[EntityLock]:
+    def lock_entities(self, entities: list[EntityInstanceId[Any, Any]]) -> task.CompletableTask[EntityLock]:
         id = self.next_sequence_number()
 
         self.lock_entities_function_helper(
@@ -1158,11 +1156,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def call_entity_function_helper(
             self,
             id: Optional[int],
-            entity_id: EntityInstanceId,
+            entity_id: EntityInstanceId[TInput, TOutput],
             operation: str,
             *,
             input: Optional[TInput] = None,
-    ):
+    ) -> None:
         if id is None:
             id = self.next_sequence_number()
 
@@ -1180,7 +1178,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def signal_entity_function_helper(
             self,
             id: Optional[int],
-            entity_id: EntityInstanceId,
+            entity_id: EntityInstanceId[TInput, TOutput],
             operation: str,
             input: Optional[TInput]
     ) -> None:
@@ -1197,7 +1195,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
-    def lock_entities_function_helper(self, id: int, entities: list[EntityInstanceId]) -> None:
+    def lock_entities_function_helper(self, id: int, entities: list[EntityInstanceId[Any, Any]]) -> None:
         if id is None:
             id = self.next_sequence_number()
 
@@ -1792,7 +1790,7 @@ class _OrchestrationExecutor:
             # The orchestrator generator function completed
             ctx.set_complete(generatorStopped.value, pb.ORCHESTRATION_STATUS_COMPLETED)
 
-    def _parse_entity_event_sent_input(self, event: pb.HistoryEvent) -> Tuple[EntityInstanceId, str]:
+    def _parse_entity_event_sent_input(self, event: pb.HistoryEvent) -> Tuple[EntityInstanceId[Any, Any], str]:
         try:
             entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
         except ValueError:
@@ -1806,7 +1804,7 @@ class _OrchestrationExecutor:
     def _handle_entity_event_raised(self,
                                     ctx: _RuntimeOrchestrationContext,
                                     event: pb.HistoryEvent,
-                                    entity_id: Optional[EntityInstanceId],
+                                    entity_id: Optional[EntityInstanceId[Any, Any]],
                                     task_id: Optional[int],
                                     is_lock_event: bool):
         # This eventRaised represents the result of an entity operation after being translated to the old
@@ -1919,7 +1917,7 @@ class _EntityExecutor:
     def execute(
             self,
             orchestration_id: str,
-            entity_id: EntityInstanceId,
+            entity_id: EntityInstanceId[TInput, TOutput],
             operation: str,
             state: StateShim,
             encoded_input: Optional[str],

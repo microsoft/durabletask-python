@@ -7,6 +7,7 @@ from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.orchestrator_service_pb2 as pb
 
 TState = TypeVar("TState")
+TInput = TypeVar("TInput")
 
 
 class EntityContext:
@@ -81,7 +82,7 @@ class EntityContext:
         """
         self._state.set_state(new_state)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Optional[Any] = None) -> None:
+    def signal_entity(self, entity_instance_id: EntityInstanceId[TInput, Any], operation: str, input: Optional[TInput] = None) -> None:
         """Signal another entity to perform an operation.
 
         Parameters
