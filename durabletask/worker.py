@@ -188,16 +188,14 @@ class _Registry:
     def get_activity(self, name: str) -> Optional[task.Activity[Any, Any]]:
         return self.activities.get(name)
 
-    def add_entity(self, fn: task.Entity) -> str:
+    def add_entity(self, fn: task.Entity, name: Optional[str] = None) -> str:
         if fn is None:
             raise ValueError("An entity function argument is required.")
 
-        if isinstance(fn, type) and issubclass(fn, DurableEntity):
-            name = fn.__name__
-            self.add_named_entity(name, fn)
-        else:
-            name = task.get_name(fn)
-            self.add_named_entity(name, fn)
+        if name is None:
+            name = task.get_entity_name(fn)
+
+        self.add_named_entity(name, fn)
         return name
 
     def add_named_entity(self, name: str, fn: task.Entity) -> None:
@@ -378,13 +376,13 @@ class TaskHubGrpcWorker:
             )
         return self._registry.add_activity(fn)
 
-    def add_entity(self, fn: task.Entity) -> str:
+    def add_entity(self, fn: task.Entity, name: Optional[str] = None) -> str:
         """Registers an entity function with the worker."""
         if self._is_running:
             raise RuntimeError(
                 "Entities cannot be added while the worker is running."
             )
-        return self._registry.add_entity(fn)
+        return self._registry.add_entity(fn, name)
 
     def use_versioning(self, version: VersioningOptions) -> None:
         """Initializes versioning options for sub-orchestrators and activities."""

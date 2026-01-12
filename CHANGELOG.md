@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 CHANGED
 
+- Allow entities with custom names
 - Add/update type-hinting for various worker methods
 
 ## v1.2.0
