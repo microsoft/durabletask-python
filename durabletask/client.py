@@ -230,7 +230,10 @@ class TaskHubGrpcClient:
         self._logger.info(f"Purging instance '{instance_id}'.")
         self._stub.PurgeInstances(req)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation_name: str, input: Optional[Any] = None):
+    def signal_entity(self,
+                      entity_instance_id: EntityInstanceId,
+                      operation_name: str,
+                      input: Optional[Any] = None) -> None:
         req = pb.SignalEntityRequest(
             instanceId=str(entity_instance_id),
             name=operation_name,

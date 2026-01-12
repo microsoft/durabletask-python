@@ -142,7 +142,7 @@ class OrchestrationContext(ABC):
     def call_entity(self,
                     entity: EntityInstanceId,
                     operation: str,
-                    input: Optional[TInput] = None) -> CompletableTask:
+                    input: Optional[TInput] = None) -> CompletableTask[Any]:
         """Schedule entity function for execution.
 
         Parameters

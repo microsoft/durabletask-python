@@ -1047,7 +1047,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             entity: EntityInstanceId,
             operation: str,
             input: Optional[TInput] = None,
-    ) -> task.CompletableTask:
+    ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
