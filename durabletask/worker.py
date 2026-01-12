@@ -150,7 +150,7 @@ class _Registry:
         self.entities = {}
         self.entity_instances = {}
 
-    def add_orchestrator(self, fn: task.Orchestrator) -> str:
+    def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         if fn is None:
             raise ValueError("An orchestrator function argument is required.")
 
@@ -158,7 +158,7 @@ class _Registry:
         self.add_named_orchestrator(name, fn)
         return name
 
-    def add_named_orchestrator(self, name: str, fn: task.Orchestrator) -> None:
+    def add_named_orchestrator(self, name: str, fn: task.Orchestrator[TInput, TOutput]) -> None:
         if not name:
             raise ValueError("A non-empty orchestrator name is required.")
         if name in self.orchestrators:
@@ -166,10 +166,10 @@ class _Registry:
 
         self.orchestrators[name] = fn
 
-    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator]:
+    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator[Any, Any]]:
         return self.orchestrators.get(name)
 
-    def add_activity(self, fn: task.Activity) -> str:
+    def add_activity(self, fn: task.Activity[TInput, TOutput]) -> str:
         if fn is None:
             raise ValueError("An activity function argument is required.")
 
@@ -177,7 +177,7 @@ class _Registry:
         self.add_named_activity(name, fn)
         return name
 
-    def add_named_activity(self, name: str, fn: task.Activity) -> None:
+    def add_named_activity(self, name: str, fn: task.Activity[TInput, TOutput]) -> None:
         if not name:
             raise ValueError("A non-empty activity name is required.")
         if name in self.activities:
@@ -185,7 +185,7 @@ class _Registry:
 
         self.activities[name] = fn
 
-    def get_activity(self, name: str) -> Optional[task.Activity]:
+    def get_activity(self, name: str) -> Optional[task.Activity[Any, Any]]:
         return self.activities.get(name)
 
     def add_entity(self, fn: task.Entity) -> str:
@@ -362,7 +362,7 @@ class TaskHubGrpcWorker:
     def __exit__(self, type, value, traceback):
         self.stop()
 
-    def add_orchestrator(self, fn: task.Orchestrator) -> str:
+    def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         """Registers an orchestrator function with the worker."""
         if self._is_running:
             raise RuntimeError(
