@@ -538,7 +538,7 @@ class ActivityContext:
         return self._task_id
 
 
-# Orchestrators are generators that yield tasks, recieve any type, and return TOutput
+# Orchestrators are generators that yield tasks, receive any type, and return TOutput
 Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task[Any], Any, TOutput], TOutput]]
 
 # Activities are simple functions that can be scheduled by orchestrators
