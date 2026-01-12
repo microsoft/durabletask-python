@@ -615,6 +615,14 @@ class RetryPolicy:
         return self._retry_timeout
 
 
+def get_entity_name(fn: Entity) -> str:
+    if hasattr(fn, "__durable_entity_name__"):
+        return getattr(fn, "__durable_entity_name__")
+    if isinstance(fn, type) and issubclass(fn, DurableEntity):
+        return fn.__name__
+    return get_name(fn)
+
+
 def get_name(fn: Callable) -> str:
     """Returns the name of the provided function"""
     name = fn.__name__
