@@ -8,8 +8,8 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "durabletask.azurefunctions"
-version = "0.0.1dev0"
+name = "azure-functions-durable"
+version = "2.0.0dev0"
 description = "Durable Task Python SDK provider implementation for Durable Azure Functions"
 keywords = [
     "durable",
@@ -23,7 +23,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 license = {file = "LICENSE"}
 readme = "README.md"
 dependencies = [
@@ -37,7 +37,7 @@ repository = "https://github.com/microsoft/durabletask-python"
 changelog = "https://github.com/microsoft/durabletask-python/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
-include = ["durabletask.azurefunctions", "durabletask.azurefunctions.*"]
+include = ["azure.durable_functions", "azure.durable_functions.*"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"

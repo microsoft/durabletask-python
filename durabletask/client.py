@@ -103,6 +103,21 @@ class TaskHubGrpcClient:
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
                  default_version: Optional[str] = None):
 
+        self.configure_grpc_channel(
+            host_address=host_address,
+            metadata=metadata,
+            secure_channel=secure_channel,
+            interceptors=interceptors
+        )
+        
+        self._logger = shared.get_logger("client", log_handler, log_formatter)
+        self.default_version = default_version
+
+    def configure_grpc_channel(self,
+                               host_address: Optional[str] = None,
+                               metadata: Optional[list[tuple[str, str]]] = None,
+                               secure_channel: bool = False,
+                               interceptors: Optional[Sequence[shared.ClientInterceptor]] = None) -> None:
         # If the caller provided metadata, we need to create a new interceptor for it and
         # add it to the list of interceptors.
         if interceptors is not None:
@@ -120,8 +135,6 @@ class TaskHubGrpcClient:
             interceptors=interceptors
         )
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
-        self._logger = shared.get_logger("client", log_handler, log_formatter)
-        self.default_version = default_version
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Optional[TInput] = None,

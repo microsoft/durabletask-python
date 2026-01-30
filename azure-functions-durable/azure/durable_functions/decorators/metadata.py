@@ -3,7 +3,7 @@
 
 from typing import Optional
 
-from durabletask.azurefunctions.constants import ORCHESTRATION_TRIGGER, \
+from ..constants import ORCHESTRATION_TRIGGER, \
     ACTIVITY_TRIGGER, ENTITY_TRIGGER, DURABLE_CLIENT
 from azure.functions.decorators.core import Trigger, InputBinding
 

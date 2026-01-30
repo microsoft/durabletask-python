@@ -5,14 +5,13 @@ from functools import wraps
 
 from durabletask import task
 
-from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
-    DurableClient
 from typing import Callable, Optional
 from typing import Union
 from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
 
-from durabletask.azurefunctions.client import DurableFunctionsClient
-from durabletask.azurefunctions.worker import DurableFunctionsWorker
+from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
+    DurableClient
+from ..worker import DurableFunctionsWorker
 
 
 class Blueprint(TriggerApi, BindingApi):

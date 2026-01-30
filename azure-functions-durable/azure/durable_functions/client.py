@@ -4,14 +4,13 @@
 import json
 
 from datetime import timedelta
-from typing import Any, Optional
 import azure.functions as func
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, urljoin, quote
 
-from durabletask.entities import EntityInstanceId
 from durabletask.client import TaskHubGrpcClient
-from durabletask.azurefunctions.internal.azurefunctions_grpc_interceptor import AzureFunctionsDefaultClientInterceptorImpl
-from durabletask.azurefunctions.http import HttpManagementPayload
+from .internal.azurefunctions_grpc_interceptor import AzureFunctionsDefaultClientInterceptorImpl
+from .http import HttpManagementPayload
+import requests
 
 
 # Client class used for Durable Functions
@@ -44,6 +43,31 @@ class DurableFunctionsClient(TaskHubGrpcClient):
         Raises:
             json.JSONDecodeError: If the provided string is not valid JSON.
         """
+        self._parse_client_configuration(client_as_string)
+        if self.httpBaseUrl is None:
+            # This happens when the extension has not been configured for gRPC yet. For some reason, instead of
+            # the client returning with null rpcBaseUrl and httpBaseUrl, it returns rpcBaseUrl with the http url.
+            self.configure_extension_for_grpc()
+
+        interceptors = [AzureFunctionsDefaultClientInterceptorImpl(self.taskHubName, self.requiredQueryStringParameters)]
+
+        # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
+        # Since the parent class doesn't use anything metadata for anything else, we can set it as None
+        super().__init__(
+            host_address=self.rpcBaseUrl,
+            secure_channel=False,
+            metadata=None,
+            interceptors=interceptors)
+
+    def _parse_client_configuration(self, client_as_string: str) -> None:
+        """Parses the client configuration JSON string and sets instance variables.
+
+        Args:
+            client_as_string (str): A JSON string containing the Durable Functions client configuration.
+
+        Raises:
+            json.JSONDecodeError: If the provided string is not valid JSON.
+        """
         client = json.loads(client_as_string)
 
         self.taskHubName = client.get("taskHubName", "")
@@ -57,15 +81,31 @@ class DurableFunctionsClient(TaskHubGrpcClient):
         self.maxGrpcMessageSizeInBytes = client.get("maxGrpcMessageSizeInBytes", 0)
         # TODO: convert the string value back to timedelta - annoying regex?
         self.grpcHttpClientTimeout = client.get("grpcHttpClientTimeout", timedelta(seconds=30))
-        interceptors = [AzureFunctionsDefaultClientInterceptorImpl(self.taskHubName, self.requiredQueryStringParameters)]
 
-        # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
-        # Since the parent class doesn't use anything metadata for anything else, we can set it as None
-        super().__init__(
-            host_address=self.rpcBaseUrl,
-            secure_channel=False,
-            metadata=None,
-            interceptors=interceptors)
+    def configure_extension_for_grpc(self) -> None:
+        """Configures the Durable Functions extension for gRPC communication.
+
+        Makes an HTTP request to the extension's management endpoint to enable gRPC.
+        """
+        
+        # Make an HTTP request to the extension to configure gRPC
+        configure_base_url = self.httpBaseUrl
+        if not configure_base_url:
+            # For some reason, in the "bad" case when rpc has not been configured, the httpBaseUrl is empty and sent in rpcBaseUrl
+            configure_base_url = self.rpcBaseUrl
+        # configure_base_url = urlparse(configure_base_url)
+        # url = f"{configure_base_url.scheme}://{configure_base_url.netloc}/management/configureGrpc"
+        url = urljoin(configure_base_url, "management/configureGrpc")
+        params = {
+            "taskHubName": self.taskHubName,
+            "connectionName": self.connectionName
+        }
+        response = requests.get(url, params=params)
+        if response.status_code != 200:
+            raise Exception(f"Failed to configure gRPC for Durable Functions extension. Status code: {response.status_code}, Response: {response.text}")
+        
+        # Parse the response to update client configuration - it's double-encoded so we need to load it twice
+        self._parse_client_configuration(json.loads(response.text))
 
     def create_check_status_response(self, request: func.HttpRequest, instance_id: str) -> func.HttpResponse:
         """Creates an HTTP response for checking the status of a Durable Function instance.

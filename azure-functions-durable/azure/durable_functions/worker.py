@@ -9,7 +9,7 @@ from durabletask.internal.orchestrator_service_pb2 import EntityBatchRequest, En
 from durabletask.worker import _Registry, ConcurrencyOptions
 from durabletask.internal import shared
 from durabletask.worker import TaskHubGrpcWorker
-from durabletask.azurefunctions.internal.azurefunctions_null_stub import AzureFunctionsNullStub
+from .internal.azurefunctions_null_stub import AzureFunctionsNullStub
 
 
 # Worker class used for Durable Task Scheduler (DTS)
