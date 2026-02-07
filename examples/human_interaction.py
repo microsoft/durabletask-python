@@ -114,10 +114,8 @@ if __name__ == "__main__":
         print(f"Using endpoint: {endpoint}")
 
         # Set credential to None for emulator, or DefaultAzureCredential for Azure
-        credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
-
-        # Configure and start the worker - use secure_channel=False for emulator
-        secure_channel = endpoint != "http://localhost:8080"
+        secure_channel = endpoint.startswith("https://")
+        credential = DefaultAzureCredential() if secure_channel else None
         with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
                                         taskhub=taskhub_name, token_credential=credential) as w:
             w.add_orchestrator(purchase_order_workflow)
