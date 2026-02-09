@@ -1937,6 +1937,7 @@ class _EntityExecutor:
     def __init__(self, registry: _Registry, logger: logging.Logger):
         self._registry = registry
         self._logger = logger
+        self._entity_method_cache: dict[tuple[type, str], bool] = {}
 
     def execute(
             self,
@@ -1968,7 +1969,21 @@ class _EntityExecutor:
                 raise TypeError(f"Entity operation '{operation}' is not callable")
             # Execute the entity method
             entity_instance._initialize_entity_context(ctx)
-            entity_output = method(entity_input)
+            cache_key = (type(entity_instance), operation)
+            has_required_param = self._entity_method_cache.get(cache_key)
+            if has_required_param is None:
+                sig = inspect.signature(method)
+                has_required_param = any(
+                    p.default == inspect.Parameter.empty
+                    for p in sig.parameters.values()
+                    if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                                      inspect.Parameter.VAR_KEYWORD)
+                )
+                self._entity_method_cache[cache_key] = has_required_param
+            if has_required_param or entity_input is not None:
+                entity_output = method(entity_input)
+            else:
+                entity_output = method()
         else:
             # Execute the entity function
             entity_output = fn(ctx, entity_input)
