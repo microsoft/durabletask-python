@@ -86,8 +86,6 @@ def test_class_entity_handled_failure_succeeds():
         try:
             yield ctx.call_entity(entity_id, "fail")
         except task.TaskFailedError as e:
-            # Need to return the exception wrapped in a list to avoid
-            # https://github.com/microsoft/durabletask-python/issues/108
             return e.details.message  # returning just the message to avoid issues with JSON serialization of FailureDetails
 
     # Start a worker, which will connect to the sidecar in a background thread
@@ -157,11 +155,11 @@ def test_class_entity_failure_unlocks_entity():
         with (yield ctx.lock_entities([entity_id])):
             try:
                 yield ctx.call_entity(entity_id, "fail")
-            except task.TaskFailedError as e:
+            except task.TaskFailedError:
                 exception_count += 1
         try:
             yield ctx.call_entity(entity_id, "fail")
-        except task.TaskFailedError as e:
+        except task.TaskFailedError:
             exception_count += 1
         return exception_count
 

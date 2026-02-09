@@ -905,7 +905,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if result is not None:
             try:
                 result_json = result if is_result_encoded else shared.to_json(result)
-            except TypeError:
+            except (ValueError, TypeError):
                 result_json = shared.to_json(str(JsonEncodeOutputException(result)))
         action = ph.new_complete_orchestration_action(
             self.next_sequence_number(), status, result_json
@@ -1779,7 +1779,7 @@ class _OrchestrationExecutor:
                 if not entity_task:
                     if not ctx.is_replaying:
                         self._logger.warning(
-                            f"{ctx.instance_id}: Ignoring unexpected entityOperationCompleted event with request ID = {request_id}."
+                            f"{ctx.instance_id}: Ignoring unexpected entityOperationFailed event with request ID = {request_id}."
                         )
                     return
                 failure = EntityOperationFailedException(
@@ -1801,7 +1801,7 @@ class _OrchestrationExecutor:
                 if action and action.HasField("sendEntityMessage"):
                     if action.sendEntityMessage.HasField("entityOperationCalled"):
                         entity_id, event_id = self._parse_entity_event_sent_input(event)
-                        ctx._entity_task_id_map[event_id] = (entity_id, event.entityOperationCalled.operation, event.eventId)
+                        ctx._entity_task_id_map[event_id] = (entity_id, action.sendEntityMessage.entityOperationCalled.operation, event.eventId)
                     elif action.sendEntityMessage.HasField("entityLockRequested"):
                         entity_id, event_id = self._parse_entity_event_sent_input(event)
                         ctx._entity_lock_task_id_map[event_id] = (entity_id, event.eventId)

@@ -1,5 +1,9 @@
 class EntityInstanceId:
     def __init__(self, entity: str, key: str):
+        if not entity or not key:
+            raise ValueError("Entity name and key cannot be empty.")
+        if "@" in key:
+            raise ValueError("Entity key cannot contain '@' symbol.")
         self.entity = entity.lower()
         self.key = key
 
@@ -35,14 +39,10 @@ class EntityInstanceId:
         ValueError
             If the input string is not in the correct format.
         """
+        if not entity_id.startswith("@"):
+            raise ValueError("Entity ID must start with '@'.")
         try:
-            if not entity_id.startswith("@"):
-                raise ValueError("Entity ID must start with '@'.")
             _, entity, key = entity_id.split("@", 2)
-            if not entity or not key:
-                raise ValueError("Entity name and key cannot be empty.")
-            if "@" in key:
-                raise ValueError("Entity instance ID string should not contain more than two '@' symbols.")
-            return EntityInstanceId(entity=entity, key=key)
         except ValueError as ex:
-            raise ValueError(f"Invalid entity ID format: {entity_id}", ex)
+            raise ValueError(f"Invalid entity ID format: {entity_id}") from ex
+        return EntityInstanceId(entity=entity, key=key)
