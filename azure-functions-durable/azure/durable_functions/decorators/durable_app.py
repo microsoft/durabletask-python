@@ -12,6 +12,7 @@ from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
 from ..worker import DurableFunctionsWorker
+from ..orchestrator import Orchestrator
 
 
 class Blueprint(TriggerApi, BindingApi):
@@ -58,10 +59,7 @@ class Blueprint(TriggerApi, BindingApi):
         def decorator(orchestrator_func: task.Orchestrator):
             # Construct an orchestrator based on the end-user code
 
-            def handle(context) -> str:
-                return DurableFunctionsWorker()._execute_orchestrator(orchestrator_func, context)
-
-            handle.orchestrator_function = orchestrator_func  # type: ignore
+            handle = Orchestrator.create(orchestrator_func)
 
             # invoke next decorator, with the Orchestrator as input
             handle.__name__ = orchestrator_func.__name__
