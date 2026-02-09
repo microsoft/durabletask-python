@@ -19,10 +19,12 @@ from packaging.version import InvalidVersion, parse
 import grpc
 from google.protobuf import empty_pb2
 
+from durabletask.entities.entity_operation_failed_exception import EntityOperationFailedException
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.internal.helpers import new_timestamp
 from durabletask.entities import DurableEntity, EntityLock, EntityInstanceId, EntityContext
+from durabletask.internal.json_encode_output_exception import JsonEncodeOutputException
 from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
 from durabletask.internal.proto_task_hub_sidecar_service_stub import ProtoTaskHubSidecarServiceStub
 import durabletask.internal.helpers as ph
@@ -141,14 +143,12 @@ class _Registry:
     orchestrators: dict[str, task.Orchestrator]
     activities: dict[str, task.Activity]
     entities: dict[str, task.Entity]
-    entity_instances: dict[str, DurableEntity]
     versioning: Optional[VersioningOptions] = None
 
     def __init__(self):
         self.orchestrators = {}
         self.activities = {}
         self.entities = {}
-        self.entity_instances = {}
 
     def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         if fn is None:
@@ -201,6 +201,7 @@ class _Registry:
     def add_named_entity(self, name: str, fn: task.Entity) -> None:
         if not name:
             raise ValueError("A non-empty entity name is required.")
+        name = name.lower()
         if name in self.entities:
             raise ValueError(f"A '{name}' entity already exists.")
 
@@ -829,7 +830,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_actions: dict[int, pb.OrchestratorAction] = {}
         self._pending_tasks: dict[int, task.CompletableTask] = {}
         # Maps entity ID to task ID
-        self._entity_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
+        self._entity_task_id_map: dict[str, tuple[EntityInstanceId, str, int]] = {}
         self._entity_lock_task_id_map: dict[str, tuple[EntityInstanceId, int]] = {}
         # Maps criticalSectionId to task ID
         self._entity_lock_id_map: dict[str, int] = {}
@@ -902,7 +903,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._result = result
         result_json: Optional[str] = None
         if result is not None:
-            result_json = result if is_result_encoded else shared.to_json(result)
+            try:
+                result_json = result if is_result_encoded else shared.to_json(result)
+            except TypeError:
+                result_json = shared.to_json(str(JsonEncodeOutputException(result)))
         action = ph.new_complete_orchestration_action(
             self.next_sequence_number(), status, result_json
         )
@@ -1606,7 +1610,7 @@ class _OrchestrationExecutor:
                     raise TypeError("Unexpected sub-orchestration task type")
             elif event.HasField("eventRaised"):
                 if event.eventRaised.name in ctx._entity_task_id_map:
-                    entity_id, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None))
+                    entity_id, operation, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None, None))
                     self._handle_entity_event_raised(ctx, event, entity_id, task_id, False)
                 elif event.eventRaised.name in ctx._entity_lock_task_id_map:
                     entity_id, task_id = ctx._entity_lock_task_id_map.get(event.eventRaised.name, (None, None))
@@ -1680,9 +1684,10 @@ class _OrchestrationExecutor:
                     )
                 try:
                     entity_id = EntityInstanceId.parse(event.entityOperationCalled.targetInstanceId.value)
+                    operation = event.entityOperationCalled.operation
                 except ValueError:
                     raise RuntimeError(f"Could not parse entity ID from targetInstanceId '{event.entityOperationCalled.targetInstanceId.value}'")
-                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, entity_call_id)
+                ctx._entity_task_id_map[event.entityOperationCalled.requestId] = (entity_id, operation, entity_call_id)
             elif event.HasField("entityOperationSignaled"):
                 # This history event confirms that the entity signal was successfully scheduled.
                 # Remove the entityOperationSignaled event from the pending action list so we don't schedule it
@@ -1743,7 +1748,7 @@ class _OrchestrationExecutor:
                 ctx.resume()
             elif event.HasField("entityOperationCompleted"):
                 request_id = event.entityOperationCompleted.requestId
-                entity_id, task_id = ctx._entity_task_id_map.pop(request_id, (None, None))
+                entity_id, operation, task_id = ctx._entity_task_id_map.pop(request_id, (None, None, None))
                 if not entity_id:
                     raise RuntimeError(f"Could not parse entity ID from request ID '{request_id}'")
                 if not task_id:
@@ -1762,10 +1767,29 @@ class _OrchestrationExecutor:
                 entity_task.complete(result)
                 ctx.resume()
             elif event.HasField("entityOperationFailed"):
-                if not ctx.is_replaying:
-                    self._logger.info(f"{ctx.instance_id}: Entity operation failed.")
-                    self._logger.info(f"Data: {json.dumps(event.entityOperationFailed)}")
-                pass
+                request_id = event.entityOperationFailed.requestId
+                entity_id, operation, task_id = ctx._entity_task_id_map.pop(request_id, (None, None, None))
+                if not entity_id:
+                    raise RuntimeError(f"Could not parse entity ID from request ID '{request_id}'")
+                if operation is None:
+                    raise RuntimeError(f"Could not parse operation name from request ID '{request_id}'")
+                if not task_id:
+                    raise RuntimeError(f"Could not find matching task ID for entity operation with request ID '{request_id}'")
+                entity_task = ctx._pending_tasks.pop(task_id, None)
+                if not entity_task:
+                    if not ctx.is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring unexpected entityOperationCompleted event with request ID = {request_id}."
+                        )
+                    return
+                failure = EntityOperationFailedException(
+                    entity_id,
+                    operation,
+                    event.entityOperationFailed.failureDetails
+                )
+                ctx._entity_context.recover_lock_after_call(entity_id)
+                entity_task.fail(str(failure), failure)
+                ctx.resume()
             elif event.HasField("orchestratorCompleted"):
                 # Added in Functions only (for some reason) and does not affect orchestrator flow
                 pass
@@ -1777,7 +1801,7 @@ class _OrchestrationExecutor:
                 if action and action.HasField("sendEntityMessage"):
                     if action.sendEntityMessage.HasField("entityOperationCalled"):
                         entity_id, event_id = self._parse_entity_event_sent_input(event)
-                        ctx._entity_task_id_map[event_id] = (entity_id, event.eventId)
+                        ctx._entity_task_id_map[event_id] = (entity_id, event.entityOperationCalled.operation, event.eventId)
                     elif action.sendEntityMessage.HasField("entityLockRequested"):
                         entity_id, event_id = self._parse_entity_event_sent_input(event)
                         ctx._entity_lock_task_id_map[event_id] = (entity_id, event.eventId)
@@ -1936,11 +1960,7 @@ class _EntityExecutor:
         ctx = EntityContext(orchestration_id, operation, state, entity_id)
 
         if isinstance(fn, type) and issubclass(fn, DurableEntity):
-            if self._registry.entity_instances.get(str(entity_id), None):
-                entity_instance = self._registry.entity_instances[str(entity_id)]
-            else:
-                entity_instance = fn()
-                self._registry.entity_instances[str(entity_id)] = entity_instance
+            entity_instance = fn()
             if not hasattr(entity_instance, operation):
                 raise AttributeError(f"Entity '{entity_id}' does not have operation '{operation}'")
             method = getattr(entity_instance, operation)
