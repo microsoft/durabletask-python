@@ -199,9 +199,8 @@ class _Registry:
         return name
 
     def add_named_entity(self, name: str, fn: task.Entity) -> None:
-        if not name:
-            raise ValueError("A non-empty entity name is required.")
         name = name.lower()
+        EntityInstanceId.validate_entity_name(name)
         if name in self.entities:
             raise ValueError(f"A '{name}' entity already exists.")
 
@@ -906,7 +905,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             try:
                 result_json = result if is_result_encoded else shared.to_json(result)
             except (ValueError, TypeError):
-                result_json = shared.to_json(str(JsonEncodeOutputException(result)))
+                self._is_complete = False
+                self._result = None
+                self.set_failed(JsonEncodeOutputException(result))
+                return
         action = ph.new_complete_orchestration_action(
             self.next_sequence_number(), status, result_json
         )

@@ -1,9 +1,7 @@
 class EntityInstanceId:
     def __init__(self, entity: str, key: str):
-        if not entity or not key:
-            raise ValueError("Entity name and key cannot be empty.")
-        if "@" in key:
-            raise ValueError("Entity key cannot contain '@' symbol.")
+        EntityInstanceId.validate_entity_name(entity)
+        EntityInstanceId.validate_key(key)
         self.entity = entity.lower()
         self.key = key
 
@@ -46,3 +44,41 @@ class EntityInstanceId:
         except ValueError as ex:
             raise ValueError(f"Invalid entity ID format: {entity_id}") from ex
         return EntityInstanceId(entity=entity, key=key)
+
+    @staticmethod
+    def validate_entity_name(name: str) -> None:
+        """Validate that the entity name does not contain invalid characters.
+
+        Parameters
+        ----------
+        name : str
+            The entity name to validate.
+
+        Raises
+        ------
+        ValueError
+            If the name is not a valid entity name.
+        """
+        if not name:
+            raise ValueError("Entity name cannot be empty.")
+        if "@" in name:
+            raise ValueError("Entity name cannot contain '@' symbol.")
+
+    @staticmethod
+    def validate_key(key: str) -> None:
+        """Validate that the entity key does not contain invalid characters.
+
+        Parameters
+        ----------
+        key : str
+            The entity key to validate.
+
+        Raises
+        ------
+        ValueError
+            If the key is not a valid entity key.
+        """
+        if not key:
+            raise ValueError("Entity key cannot be empty.")
+        if "@" in key:
+            raise ValueError("Entity key cannot contain '@' symbol.")
