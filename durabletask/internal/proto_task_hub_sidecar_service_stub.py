@@ -9,6 +9,7 @@ class ProtoTaskHubSidecarServiceStub(Protocol):
     StartInstance: Callable[..., Any]
     GetInstance: Callable[..., Any]
     RewindInstance: Callable[..., Any]
+    RestartInstance: Callable[..., Any]
     WaitForInstanceStart: Callable[..., Any]
     WaitForInstanceCompletion: Callable[..., Any]
     RaiseEvent: Callable[..., Any]

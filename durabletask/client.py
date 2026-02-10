@@ -225,6 +225,26 @@ class TaskHubGrpcClient:
         self._logger.info(f"Resuming instance '{instance_id}'.")
         self._stub.ResumeInstance(req)
 
+    def restart_orchestration(self, instance_id: str, *,
+                              restart_with_new_instance_id: bool = False) -> str:
+        """Restarts an existing orchestration instance.
+
+        Args:
+            instance_id: The ID of the orchestration instance to restart.
+            restart_with_new_instance_id: If True, the restarted orchestration will use a new instance ID.
+                If False (default), the restarted orchestration will reuse the same instance ID.
+
+        Returns:
+            The instance ID of the restarted orchestration.
+        """
+        req = pb.RestartInstanceRequest(
+            instanceId=instance_id,
+            restartWithNewInstanceId=restart_with_new_instance_id)
+
+        self._logger.info(f"Restarting instance '{instance_id}'.")
+        res: pb.RestartInstanceResponse = self._stub.RestartInstance(req)
+        return res.instanceId
+
     def purge_orchestration(self, instance_id: str, recursive: bool = True):
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
