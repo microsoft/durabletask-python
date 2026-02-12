@@ -4,7 +4,7 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional, Sequence, TypeVar, Union
 
@@ -185,6 +185,15 @@ class TaskHubGrpcClient:
         if max_instance_count is None:
             # DTS backend does not behave well with max_instance_count = None, so we set to max 32-bit signed value
             max_instance_count = (1 << 31) - 1
+
+        self._logger.info(f"Querying orchestration instances with filters - "
+                          f"created_time_from={created_time_from}, "
+                          f"created_time_to={created_time_to}, "
+                          f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
+                          f"max_instance_count={max_instance_count}, "
+                          f"fetch_inputs_and_outputs={fetch_inputs_and_outputs}, "
+                          f"continuation_token={_continuation_token.value if _continuation_token else None}")
+
         req = pb.QueryInstancesRequest(
             query=pb.InstanceQuery(
                 runtimeStatus=[status.value for status in runtime_status] if runtime_status else None,
@@ -295,6 +304,11 @@ class TaskHubGrpcClient:
                                 created_time_to: Optional[datetime] = None,
                                 runtime_status: Optional[List[OrchestrationStatus]] = None,
                                 recursive: bool = False) -> PurgeInstancesResult:
+        self._logger.info("Purging orchestrations by filter: "
+                          f"created_time_from={created_time_from}, "
+                          f"created_time_to={created_time_to}, "
+                          f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
+                          f"recursive={recursive}")
         resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(pb.PurgeInstancesRequest(
             instanceId=None,
             purgeInstanceFilter=pb.PurgeInstanceFilter(
@@ -356,7 +370,13 @@ class TaskHubGrpcClient:
                         page_size: Optional[int] = None,
                         _continuation_token: Optional[pb2.StringValue] = None
                         ) -> List[EntityMetadata]:
-        self._logger.info(f"Getting entities")
+        self._logger.info(f"Retrieving entities by filter: "
+                          f"instance_id_starts_with={instance_id_starts_with}, "
+                          f"last_modified_from={last_modified_from}, "
+                          f"last_modified_to={last_modified_to}, "
+                          f"include_state={include_state}, "
+                          f"include_transient={include_transient}, "
+                          f"page_size={page_size}")
         query_request = pb.QueryEntitiesRequest(
             query=pb.EntityQuery(
                 instanceIdStartsWith=helpers.get_string_value(instance_id_starts_with),
