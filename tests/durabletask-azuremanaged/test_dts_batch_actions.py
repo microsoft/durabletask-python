@@ -270,13 +270,13 @@ def test_purge_orchestrations_by_time_range():
 def test_get_all_entities():
     counter_value = 0
 
-    def counter_entity(ctx: entities.EntityContext, _):
+    def counter_entity(ctx: entities.EntityContext, input):
         nonlocal counter_value
         if ctx.operation == "add":
-            counter_value += ctx.get_input(int)
+            counter_value += input
             ctx.set_state(counter_value)
         elif ctx.operation == "get":
-            ctx.set_result(counter_value)
+            return ctx.get_state(int, 0)
 
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
@@ -295,7 +295,7 @@ def test_get_all_entities():
         all_entities = c.get_all_entities(include_state=False)
         assert len([e for e in all_entities if e.id == entity_id]) == 1
         entity_without_state = [e for e in all_entities if e.id == entity_id][0]
-        assert entity_without_state.serialized_state is None
+        assert entity_without_state.get_state(int) is None
 
         # Get all entities with state
         all_entities_with_state = c.get_all_entities(include_state=True)
@@ -305,9 +305,9 @@ def test_get_all_entities():
 
 
 def test_get_entities_by_instance_id_prefix():
-    def counter_entity(ctx: entities.EntityContext, _):
+    def counter_entity(ctx: entities.EntityContext, input):
         if ctx.operation == "set":
-            ctx.set_state(ctx.get_input(int))
+            ctx.set_state(input)
 
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
@@ -344,9 +344,9 @@ def test_get_entities_by_instance_id_prefix():
 
 
 def test_get_entities_by_time_range():
-    def simple_entity(ctx: entities.EntityContext, _):
+    def simple_entity(ctx: entities.EntityContext, input):
         if ctx.operation == "set":
-            ctx.set_state(ctx.get_input(str))
+            ctx.set_state(input)
 
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
