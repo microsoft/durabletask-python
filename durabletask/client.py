@@ -4,7 +4,7 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional, Sequence, TypeVar, Union
 
@@ -61,6 +61,12 @@ class PurgeInstancesResult:
     def __init__(self, deleted_instance_count: int, is_complete: bool):
         self.deleted_instance_count = deleted_instance_count
         self.is_complete = is_complete
+
+
+class CleanEntityStorageResult:
+    def __init__(self, empty_entities_removed: int, orphaned_locks_released: int):
+        self.empty_entities_removed = empty_entities_removed
+        self.orphaned_locks_released = orphaned_locks_released
 
 
 class OrchestrationFailedError(Exception):
@@ -356,7 +362,7 @@ class TaskHubGrpcClient:
                         page_size: Optional[int] = None,
                         _continuation_token: Optional[pb2.StringValue] = None
                         ) -> List[EntityMetadata]:
-        self._logger.info(f"Getting entities")
+        self._logger.info("Getting entities")
         query_request = pb.QueryEntitiesRequest(
             query=pb.EntityQuery(
                 instanceIdStartsWith=helpers.get_string_value(instance_id_starts_with),
@@ -382,3 +388,30 @@ class TaskHubGrpcClient:
                 _continuation_token=resp.continuationToken
             )
         return entities
+
+    def clean_entity_storage(self,
+                             remove_empty_entities: bool = True,
+                             release_orphaned_locks: bool = True,
+                             _continuation_token: Optional[pb2.StringValue] = None
+                             ) -> CleanEntityStorageResult:
+        self._logger.info("Cleaning entity storage")
+        req = pb.CleanEntityStorageRequest(
+            removeEmptyEntities=remove_empty_entities,
+            releaseOrphanedLocks=release_orphaned_locks,
+            continuationToken=_continuation_token
+        )
+        resp: pb.CleanEntityStorageResponse = self._stub.CleanEntityStorage(req)
+        empty_entities_removed = resp.emptyEntitiesRemoved
+        orphaned_locks_released = resp.orphanedLocksReleased
+
+        if resp.continuationToken and resp.continuationToken.value != "0":
+            self._logger.info(f"Received continuation token with value {resp.continuationToken.value}, cleaning next page...")
+            next_result = self.clean_entity_storage(
+                remove_empty_entities=remove_empty_entities,
+                release_orphaned_locks=release_orphaned_locks,
+                _continuation_token=resp.continuationToken
+            )
+            empty_entities_removed += next_result.empty_entities_removed
+            orphaned_locks_released += next_result.orphaned_locks_released
+
+        return CleanEntityStorageResult(empty_entities_removed, orphaned_locks_released)
