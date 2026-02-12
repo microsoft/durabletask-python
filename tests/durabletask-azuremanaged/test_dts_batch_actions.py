@@ -1,4 +1,5 @@
 
+import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -140,14 +141,24 @@ def test_get_orchestration_state_by_time_range():
     assert len([o for o in orchestrations_outside_range if o.instance_id == id]) == 0
 
 
-def test_get_orchestration_state_by_max_instance_count():
+def test_get_orchestration_state_pagination_succeeds():
+    # Create a custom handler to capture log messages
+    log_records = []
+
+    class ListHandler(logging.Handler):
+        def emit(self, record):
+            log_records.append(record)
+
+    handler = ListHandler()
+
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(empty_orchestrator)
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                       taskhub=taskhub_name, token_credential=None)
+                                       taskhub=taskhub_name, token_credential=None,
+                                       log_handler=handler)
 
         # Create at least 3 orchestrations to test the limit
         ids = []
@@ -162,8 +173,11 @@ def test_get_orchestration_state_by_max_instance_count():
         # Query with max_instance_count=2
         orchestrations = c.get_orchestration_state_by(max_instance_count=2)
 
-    # Should return exactly 2 instances since we created at least 3
-    assert len(orchestrations) == 2
+    # Should return more than 2 instances since we created at least 3
+    assert len(orchestrations) > 2
+    # Verify the pagination loop ran by checking for the continuation token log message
+    assert any("Received continuation token" in record.getMessage() for record in log_records), \
+        "Expected pagination loop to execute with continuation token"
 
 
 def test_purge_orchestration():
