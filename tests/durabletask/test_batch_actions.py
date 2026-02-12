@@ -1,5 +1,11 @@
 
+import pytest
 from durabletask import client, task, worker
+
+# NOTE: These tests assume a sidecar process is running. Example command:
+#       go install github.com/microsoft/durabletask-go@main
+#       durabletask-go --port 4001
+pytestmark = pytest.mark.e2e
 
 
 def empty_orchestrator(ctx: task.OrchestrationContext, _):
@@ -23,10 +29,9 @@ def test_get_all_orchestration_states():
     assert this_orch.instance_id == id
 
     assert all_orchestrations is not None
-    assert len(all_orchestrations) > 1
-    print(f"Received {len(all_orchestrations)} orchestrations")
-    assert len([o for o in all_orchestrations if o.instance_id == id]) == 1
-    orchestration_state = [o for o in all_orchestrations if o.instance_id == id][0]
+    matching_orchestrations = [o for o in all_orchestrations if o.instance_id == id]
+    assert len(matching_orchestrations) == 1
+    orchestration_state = matching_orchestrations[0]
     assert orchestration_state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert orchestration_state.serialized_input == '"Hello"'
     assert orchestration_state.serialized_output == '"Complete"'

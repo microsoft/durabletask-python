@@ -57,10 +57,10 @@ class OrchestrationState:
                 self.failure_details)
 
 
+@dataclass
 class PurgeInstancesResult:
-    def __init__(self, deleted_instance_count: int, is_complete: bool):
-        self.deleted_instance_count = deleted_instance_count
-        self.is_complete = is_complete
+    deleted_instance_count: int
+    is_complete: bool
 
 
 class OrchestrationFailedError(Exception):
@@ -183,7 +183,7 @@ class TaskHubGrpcClient:
                                    _continuation_token: Optional[pb2.StringValue] = None
                                    ) -> List[OrchestrationState]:
         if max_instance_count is None:
-            # DTS backend does not behave well with max_instance_count = None, so we set to max 32-bit signed value
+            # Some backends do not behave well with max_instance_count = None, so we set to max 32-bit signed value
             max_instance_count = (1 << 31) - 1
 
         self._logger.info(f"Querying orchestration instances with filters - "
@@ -194,29 +194,31 @@ class TaskHubGrpcClient:
                           f"fetch_inputs_and_outputs={fetch_inputs_and_outputs}, "
                           f"continuation_token={_continuation_token.value if _continuation_token else None}")
 
-        req = pb.QueryInstancesRequest(
-            query=pb.InstanceQuery(
-                runtimeStatus=[status.value for status in runtime_status] if runtime_status else None,
-                createdTimeFrom=helpers.new_timestamp(created_time_from) if created_time_from else None,
-                createdTimeTo=helpers.new_timestamp(created_time_to) if created_time_to else None,
-                maxInstanceCount=max_instance_count,
-                fetchInputsAndOutputs=fetch_inputs_and_outputs,
-                continuationToken=_continuation_token
+        states = []
+
+        while True:
+            req = pb.QueryInstancesRequest(
+                query=pb.InstanceQuery(
+                    runtimeStatus=[status.value for status in runtime_status] if runtime_status else None,
+                    createdTimeFrom=helpers.new_timestamp(created_time_from) if created_time_from else None,
+                    createdTimeTo=helpers.new_timestamp(created_time_to) if created_time_to else None,
+                    maxInstanceCount=max_instance_count,
+                    fetchInputsAndOutputs=fetch_inputs_and_outputs,
+                    continuationToken=_continuation_token
+                )
             )
-        )
-        resp: pb.QueryInstancesResponse = self._stub.QueryInstances(req)
-        states = [parse_orchestration_state(res) for res in resp.orchestrationState]
-        # Check the value for continuationToken - none or "0" indicates that there are no more results.
-        if resp.continuationToken and resp.continuationToken.value and resp.continuationToken.value != "0":
-            self._logger.info(f"Received continuation token with value {resp.continuationToken.value}, fetching next list of instances...")
-            states += self.get_orchestration_state_by(
-                created_time_from,
-                created_time_to,
-                runtime_status,
-                max_instance_count,
-                fetch_inputs_and_outputs,
-                _continuation_token=resp.continuationToken
-            )
+            resp: pb.QueryInstancesResponse = self._stub.QueryInstances(req)
+            states += [parse_orchestration_state(res) for res in resp.orchestrationState]
+            # Check the value for continuationToken - none or "0" indicates that there are no more results.
+            if resp.continuationToken and resp.continuationToken.value and resp.continuationToken.value != "0":
+                self._logger.info(f"Received continuation token with value {resp.continuationToken.value}, fetching next list of instances...")
+                if _continuation_token and _continuation_token.value and _continuation_token.value == resp.continuationToken.value:
+                    self._logger.warning(f"Received the same continuation token value {resp.continuationToken.value} again, stopping to avoid infinite loop.")
+                    break
+                _continuation_token = resp.continuationToken
+            else:
+                break
+
         states = [state for state in states if state is not None]  # Filter out any None values
         return states
 
@@ -377,28 +379,29 @@ class TaskHubGrpcClient:
                           f"include_state={include_state}, "
                           f"include_transient={include_transient}, "
                           f"page_size={page_size}")
-        query_request = pb.QueryEntitiesRequest(
-            query=pb.EntityQuery(
-                instanceIdStartsWith=helpers.get_string_value(instance_id_starts_with),
-                lastModifiedFrom=helpers.new_timestamp(last_modified_from) if last_modified_from else None,
-                lastModifiedTo=helpers.new_timestamp(last_modified_to) if last_modified_to else None,
-                includeState=include_state,
-                includeTransient=include_transient,
-                pageSize=helpers.get_int_value(page_size),
-                continuationToken=_continuation_token
+
+        entities = []
+
+        while True:
+            query_request = pb.QueryEntitiesRequest(
+                query=pb.EntityQuery(
+                    instanceIdStartsWith=helpers.get_string_value(instance_id_starts_with),
+                    lastModifiedFrom=helpers.new_timestamp(last_modified_from) if last_modified_from else None,
+                    lastModifiedTo=helpers.new_timestamp(last_modified_to) if last_modified_to else None,
+                    includeState=include_state,
+                    includeTransient=include_transient,
+                    pageSize=helpers.get_int_value(page_size),
+                    continuationToken=_continuation_token
+                )
             )
-        )
-        resp: pb.QueryEntitiesResponse = self._stub.QueryEntities(query_request)
-        entities = [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
-        if resp.continuationToken and resp.continuationToken.value != "0":
-            self._logger.info(f"Received continuation token with value {resp.continuationToken.value}, fetching next page of entities...")
-            entities += self.get_entities_by(
-                instance_id_starts_with=instance_id_starts_with,
-                last_modified_from=last_modified_from,
-                last_modified_to=last_modified_to,
-                include_state=include_state,
-                include_transient=include_transient,
-                page_size=page_size,
-                _continuation_token=resp.continuationToken
-            )
+            resp: pb.QueryEntitiesResponse = self._stub.QueryEntities(query_request)
+            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
+            if resp.continuationToken and resp.continuationToken.value and resp.continuationToken.value != "0":
+                self._logger.info(f"Received continuation token with value {resp.continuationToken.value}, fetching next page of entities...")
+                if _continuation_token and _continuation_token.value and _continuation_token.value == resp.continuationToken.value:
+                    self._logger.warning(f"Received the same continuation token value {resp.continuationToken.value} again, stopping to avoid infinite loop.")
+                    break
+                _continuation_token = resp.continuationToken
+            else:
+                break
         return entities

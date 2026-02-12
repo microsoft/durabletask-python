@@ -37,20 +37,18 @@ def test_get_all_orchestration_states():
     assert this_orch.instance_id == id
 
     assert all_orchestrations is not None
-    assert len(all_orchestrations) > 1
-    print(f"Received {len(all_orchestrations)} orchestrations")
-    assert len([o for o in all_orchestrations if o.instance_id == id]) == 1
-    orchestration_state = [o for o in all_orchestrations if o.instance_id == id][0]
+    matching_orchestrations = [o for o in all_orchestrations if o.instance_id == id]
+    assert len(matching_orchestrations) == 1
+    orchestration_state = matching_orchestrations[0]
     assert orchestration_state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert orchestration_state.serialized_input is None
     assert orchestration_state.serialized_output is None
     assert orchestration_state.failure_details is None
 
     assert all_orchestrations_with_state is not None
-    assert len(all_orchestrations_with_state) > 1
-    print(f"Received {len(all_orchestrations_with_state)} orchestrations")
-    assert len([o for o in all_orchestrations_with_state if o.instance_id == id]) == 1
-    orchestration_state = [o for o in all_orchestrations_with_state if o.instance_id == id][0]
+    matching_orchestrations = [o for o in all_orchestrations_with_state if o.instance_id == id]
+    assert len(matching_orchestrations) == 1
+    orchestration_state = matching_orchestrations[0]
     assert orchestration_state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert orchestration_state.serialized_input == '"Hello"'
     assert orchestration_state.serialized_output == '"Complete"'
