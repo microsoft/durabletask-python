@@ -63,6 +63,12 @@ class PurgeInstancesResult:
     is_complete: bool
 
 
+@dataclass
+class CleanEntityStorageResult:
+    empty_entities_removed: int
+    orphaned_locks_released: int
+
+
 class OrchestrationFailedError(Exception):
     def __init__(self, message: str, failure_details: task.FailureDetails):
         super().__init__(message)
@@ -406,3 +412,34 @@ class TaskHubGrpcClient:
             else:
                 break
         return entities
+
+    def clean_entity_storage(self,
+                             remove_empty_entities: bool = True,
+                             release_orphaned_locks: bool = True,
+                             _continuation_token: Optional[pb2.StringValue] = None
+                             ) -> CleanEntityStorageResult:
+        self._logger.info("Cleaning entity storage")
+
+        empty_entities_removed = 0
+        orphaned_locks_released = 0
+
+        while True:
+            req = pb.CleanEntityStorageRequest(
+                removeEmptyEntities=remove_empty_entities,
+                releaseOrphanedLocks=release_orphaned_locks,
+                continuationToken=_continuation_token
+            )
+            resp: pb.CleanEntityStorageResponse = self._stub.CleanEntityStorage(req)
+            empty_entities_removed += resp.emptyEntitiesRemoved
+            orphaned_locks_released += resp.orphanedLocksReleased
+
+            if resp.continuationToken and resp.continuationToken.value and resp.continuationToken.value != "0":
+                self._logger.info(f"Received continuation token with value {resp.continuationToken.value}, cleaning next page...")
+                if _continuation_token and _continuation_token.value and _continuation_token.value == resp.continuationToken.value:
+                    self._logger.warning(f"Received the same continuation token value {resp.continuationToken.value} again, stopping to avoid infinite loop.")
+                    break
+                _continuation_token = resp.continuationToken
+            else:
+                break
+
+        return CleanEntityStorageResult(empty_entities_removed, orphaned_locks_released)
