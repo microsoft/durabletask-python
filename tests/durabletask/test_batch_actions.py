@@ -24,5 +24,5 @@ def test_get_all_orchestration_states():
         c.wait_for_orchestration_completion(id, timeout=30)
 
         with pytest.raises(_InactiveRpcError) as exec_info:
-            all_orchestrations = c.get_all_orchestration_states()
+            c.get_all_orchestration_states()
         assert "unimplemented" in str(exec_info.value)
