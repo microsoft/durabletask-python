@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from typing import Any, Optional, Type, TypeVar, Union, overload
-from warnings import deprecated
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -43,7 +42,6 @@ class EntityMetadata:
         self.includes_state = includes_state
         self._state = state
 
-    @deprecated("This method is deprecated. Use 'from_entity_metadata' instead.")
     @staticmethod
     def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool):
         return EntityMetadata.from_entity_metadata(entity_response.entity, includes_state)
