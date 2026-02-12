@@ -147,7 +147,7 @@ class TaskHubGrpcClient:
         req = pb.CreateInstanceRequest(
             name=name,
             instanceId=instance_id if instance_id else uuid.uuid4().hex,
-            input=helpers.get_string_value(shared.to_json(input)),
+            input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
             version=helpers.get_string_value(version if version else self.default_version),
             orchestrationIdReusePolicy=reuse_id_policy,
@@ -269,7 +269,8 @@ class TaskHubGrpcClient:
         req = pb.RaiseEventRequest(
             instanceId=instance_id,
             name=event_name,
-            input=helpers.get_string_value(shared.to_json(data)))
+            input=helpers.get_string_value(shared.to_json(data) if data is not None else None)
+        )
 
         self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
         self._stub.RaiseEvent(req)
@@ -279,7 +280,7 @@ class TaskHubGrpcClient:
                                 recursive: bool = True):
         req = pb.TerminateRequest(
             instanceId=instance_id,
-            output=helpers.get_string_value(shared.to_json(output)),
+            output=helpers.get_string_value(shared.to_json(output) if output is not None else None),
             recursive=recursive)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
@@ -329,7 +330,7 @@ class TaskHubGrpcClient:
         req = pb.SignalEntityRequest(
             instanceId=str(entity_instance_id),
             name=operation_name,
-            input=helpers.get_string_value(shared.to_json(input)),
+            input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
             requestId=str(uuid.uuid4()),
             scheduledTime=None,
             parentTraceContext=None,
