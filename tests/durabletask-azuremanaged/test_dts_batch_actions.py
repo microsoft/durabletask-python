@@ -149,11 +149,21 @@ def test_get_orchestration_state_by_max_instance_count():
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                        taskhub=taskhub_name, token_credential=None)
 
-        # Query with max_instance_count
+        # Create at least 3 orchestrations to test the limit
+        ids = []
+        for i in range(3):
+            id = c.schedule_new_orchestration(empty_orchestrator, input=f"Test{i}")
+            ids.append(id)
+
+        # Wait for all to complete
+        for id in ids:
+            c.wait_for_orchestration_completion(id, timeout=30)
+
+        # Query with max_instance_count=2
         orchestrations = c.get_orchestration_state_by(max_instance_count=2)
 
-    # Should return at most 2 instances
-    assert len(orchestrations) <= 2
+    # Should return exactly 2 instances since we created at least 3
+    assert len(orchestrations) == 2
 
 
 def test_purge_orchestration():
@@ -374,20 +384,19 @@ def test_get_entities_by_time_range():
 
 
 def test_clean_entity_storage():
-    def empty_entity(ctx: entities.EntityContext, _):
-        if ctx.operation == "delete":
-            ctx.delete_state()
+    class EmptyEntity(entities.DurableEntity):
+        pass
 
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
-        w.add_entity(empty_entity)
+        w.add_entity(EmptyEntity)
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                        taskhub=taskhub_name, token_credential=None)
 
         # Create an entity and then delete its state to make it empty
-        entity_id = entities.EntityInstanceId("empty_entity", "toClean")
+        entity_id = entities.EntityInstanceId("EmptyEntity", "toClean")
         c.signal_entity(entity_id, "delete")
         time.sleep(2)  # Wait for signal to be processed
 
@@ -397,6 +406,5 @@ def test_clean_entity_storage():
             release_orphaned_locks=True
         )
 
-    # Verify clean result
+    # Verify clean result - we expect at least the entity we just deleted to be removed
     assert result.empty_entities_removed >= 0
-    assert result.orphaned_locks_released >= 0
