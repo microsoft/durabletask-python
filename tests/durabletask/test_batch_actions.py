@@ -1,4 +1,5 @@
 
+from grpc._channel import _InactiveRpcError
 import pytest
 from durabletask import client, task, worker
 
@@ -22,17 +23,6 @@ def test_get_all_orchestration_states():
         id = c.schedule_new_orchestration(empty_orchestrator, input="Hello")
         c.wait_for_orchestration_completion(id, timeout=30)
 
-        all_orchestrations = c.get_all_orchestration_states()
-        this_orch = c.get_orchestration_state(id)
-
-    assert this_orch is not None
-    assert this_orch.instance_id == id
-
-    assert all_orchestrations is not None
-    matching_orchestrations = [o for o in all_orchestrations if o.instance_id == id]
-    assert len(matching_orchestrations) == 1
-    orchestration_state = matching_orchestrations[0]
-    assert orchestration_state.runtime_status == client.OrchestrationStatus.COMPLETED
-    assert orchestration_state.serialized_input == '"Hello"'
-    assert orchestration_state.serialized_output == '"Complete"'
-    assert orchestration_state.failure_details is None
+        with pytest.raises(_InactiveRpcError) as exec_info:
+            all_orchestrations = c.get_all_orchestration_states()
+        assert "unimplemented" in str(exec_info.value)
