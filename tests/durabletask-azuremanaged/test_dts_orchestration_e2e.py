@@ -569,3 +569,28 @@ def test_new_uuid():
     assert uuid.UUID(results[0]) != uuid.UUID(results[1])
     assert uuid.UUID(results[0]) != uuid.UUID(results[2])
     assert uuid.UUID(results[1]) != uuid.UUID(results[2])
+
+
+def test_orchestration_with_unparsable_output_fails():
+    def test_orchestrator(ctx: task.OrchestrationContext, _):
+        return Exception("This is not JSON serializable")
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(test_orchestrator)
+        w.start()
+
+        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                       taskhub=taskhub_name, token_credential=None)
+        id = c.schedule_new_orchestration(test_orchestrator)
+        state = c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.name == task.get_name(test_orchestrator)
+    assert state.instance_id == id
+    assert state.failure_details is not None
+    assert state.failure_details.error_type == "JsonEncodeOutputException"
+    assert state.failure_details.message.startswith("The orchestration result could not be encoded. Object details:")
+    assert state.failure_details.message.find("This is not JSON serializable") != -1
+    assert state.runtime_status == client.OrchestrationStatus.FAILED
