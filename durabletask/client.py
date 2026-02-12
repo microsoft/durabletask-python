@@ -419,10 +419,10 @@ class TaskHubGrpcClient:
                              _continuation_token: Optional[pb2.StringValue] = None
                              ) -> CleanEntityStorageResult:
         self._logger.info("Cleaning entity storage")
-        
+
         empty_entities_removed = 0
         orphaned_locks_released = 0
-        
+
         while True:
             req = pb.CleanEntityStorageRequest(
                 removeEmptyEntities=remove_empty_entities,
