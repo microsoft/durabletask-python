@@ -225,7 +225,6 @@ class TaskHubGrpcClient:
             else:
                 break
 
-        states = [state for state in states if state is not None]  # Filter out any None values
         return states
 
     def wait_for_orchestration_start(self, instance_id: str, *,
