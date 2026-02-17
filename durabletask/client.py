@@ -9,7 +9,6 @@ from enum import Enum
 from typing import Any, List, Optional, Sequence, TypeVar, Union
 
 import grpc
-from google.protobuf import wrappers_pb2 as pb2
 
 from durabletask.entities import EntityInstanceId
 from durabletask.entities.entity_metadata import EntityMetadata
