@@ -1,4 +1,5 @@
 
+import asyncio
 import logging
 import os
 import time
@@ -37,7 +38,9 @@ def test_get_all_orchestration_states():
         c.wait_for_orchestration_completion(id, timeout=30)
 
         all_orchestrations = c.get_all_orchestration_states()
-        all_orchestrations_with_state = c.get_all_orchestration_states(fetch_inputs_and_outputs=True)
+        query = client.OrchestrationQuery()
+        query.fetch_inputs_and_outputs = True
+        all_orchestrations_with_state = c.get_all_orchestration_states(query)
         this_orch = c.get_orchestration_state(id)
 
     assert this_orch is not None
@@ -84,16 +87,16 @@ def test_get_orchestration_state_by_status():
             pass  # Expected failure
 
         # Query by completed status
-        completed_orchestrations = c.get_orchestration_state_by(
-            runtime_status=[client.OrchestrationStatus.COMPLETED],
-            fetch_inputs_and_outputs=True
-        )
+        query = client.OrchestrationQuery()
+        query.runtime_status = [client.OrchestrationStatus.COMPLETED]
+        query.fetch_inputs_and_outputs = True
+        completed_orchestrations = c.get_all_orchestration_states(query)
 
         # Query by failed status
-        failed_orchestrations = c.get_orchestration_state_by(
-            runtime_status=[client.OrchestrationStatus.FAILED],
-            fetch_inputs_and_outputs=True
-        )
+        query = client.OrchestrationQuery()
+        query.runtime_status = [client.OrchestrationStatus.FAILED]
+        query.fetch_inputs_and_outputs = True
+        failed_orchestrations = c.get_all_orchestration_states(query)
 
     assert len([o for o in completed_orchestrations if o.instance_id == completed_id]) == 1
     completed_orch = [o for o in completed_orchestrations if o.instance_id == completed_id][0]
@@ -125,17 +128,20 @@ def test_get_orchestration_state_by_time_range():
         after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
 
         # Query by time range
-        orchestrations_in_range = c.get_orchestration_state_by(
+        query = client.OrchestrationQuery(
             created_time_from=before_creation,
             created_time_to=after_creation,
             fetch_inputs_and_outputs=True
         )
+        orchestrations_in_range = c.get_all_orchestration_states(query)
 
         # Query outside time range
-        orchestrations_outside_range = c.get_orchestration_state_by(
+        query = client.OrchestrationQuery(
             created_time_from=after_creation,
-            created_time_to=after_creation + timedelta(hours=1)
+            created_time_to=after_creation + timedelta(hours=1),
+            fetch_inputs_and_outputs=True
         )
+        orchestrations_outside_range = c.get_all_orchestration_states(query)
 
     assert len([o for o in orchestrations_in_range if o.instance_id == id]) == 1
     assert len([o for o in orchestrations_outside_range if o.instance_id == id]) == 0
@@ -171,7 +177,8 @@ def test_get_orchestration_state_pagination_succeeds():
             c.wait_for_orchestration_completion(id, timeout=30)
 
         # Query with max_instance_count=2
-        orchestrations = c.get_orchestration_state_by(max_instance_count=2)
+        query = client.OrchestrationQuery(max_instance_count=2)
+        orchestrations = c.get_all_orchestration_states(query)
 
     # Should return more than 2 instances since we created at least 3
     assert len(orchestrations) > 2
@@ -303,16 +310,18 @@ def test_get_all_entities():
         # Create entity
         entity_id = entities.EntityInstanceId("counter_entity", "testCounter1")
         c.signal_entity(entity_id, "add", 5)
-        time.sleep(2)  # Wait for signal to be processed
+        asyncio.run(asyncio.sleep(2))  # Wait for signal to be processed
 
         # Get all entities without state
-        all_entities = c.get_all_entities(include_state=False)
+        query = client.EntityQuery(include_state=False)
+        all_entities = c.get_all_entities(query)
         assert len([e for e in all_entities if e.id == entity_id]) == 1
         entity_without_state = [e for e in all_entities if e.id == entity_id][0]
         assert entity_without_state.get_state(int) is None
 
         # Get all entities with state
-        all_entities_with_state = c.get_all_entities(include_state=True)
+        query = client.EntityQuery(include_state=True)
+        all_entities_with_state = c.get_all_entities(query)
         assert len([e for e in all_entities_with_state if e.id == entity_id]) == 1
         entity_with_state = [e for e in all_entities_with_state if e.id == entity_id][0]
         assert entity_with_state.get_state(int) == 5
@@ -337,18 +346,20 @@ def test_get_entities_by_instance_id_prefix():
 
         c.signal_entity(entity_id_1, "set", 10)
         c.signal_entity(entity_id_2, "set", 20)
-        time.sleep(2)  # Wait for signals to be processed
+        asyncio.run(asyncio.sleep(2))  # Wait for signals to be processed
 
         # Query by prefix
-        entities_prefix1 = c.get_entities_by(
+        query = client.EntityQuery(
             instance_id_starts_with="@counter_entity@prefix1",
             include_state=True
         )
+        entities_prefix1 = c.get_all_entities(query)
 
-        entities_prefix2 = c.get_entities_by(
+        query = client.EntityQuery(
             instance_id_starts_with="@counter_entity@prefix2",
             include_state=True
         )
+        entities_prefix2 = c.get_all_entities(query)
 
     assert len([e for e in entities_prefix1 if e.id == entity_id_1]) == 1
     assert len([e for e in entities_prefix1 if e.id == entity_id_2]) == 0
@@ -376,22 +387,24 @@ def test_get_entities_by_time_range():
         # Create entity
         entity_id = entities.EntityInstanceId("simple_entity", "timeTestEntity")
         c.signal_entity(entity_id, "set", "test_value")
-        time.sleep(2)  # Wait for signal to be processed
+        asyncio.run(asyncio.sleep(2))  # Wait for signal to be processed
 
         after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
 
         # Query by time range
-        entities_in_range = c.get_entities_by(
+        query = client.EntityQuery(
             last_modified_from=before_creation,
             last_modified_to=after_creation,
             include_state=True
         )
+        entities_in_range = c.get_all_entities(query)
 
         # Query outside time range
-        entities_outside_range = c.get_entities_by(
+        query = client.EntityQuery(
             last_modified_from=after_creation,
             last_modified_to=after_creation + timedelta(hours=1)
         )
+        entities_outside_range = c.get_all_entities(query)
 
     assert len([e for e in entities_in_range if e.id == entity_id]) == 1
     assert len([e for e in entities_outside_range if e.id == entity_id]) == 0
@@ -412,7 +425,7 @@ def test_clean_entity_storage():
         # Create an entity and then delete its state to make it empty
         entity_id = entities.EntityInstanceId("EmptyEntity", "toClean")
         c.signal_entity(entity_id, "delete")
-        time.sleep(2)  # Wait for signal to be processed
+        asyncio.run(asyncio.sleep(2))  # Wait for signal to be processed
 
         # Clean entity storage
         result = c.clean_entity_storage(
@@ -420,5 +433,6 @@ def test_clean_entity_storage():
             release_orphaned_locks=True
         )
 
-    # Verify clean result - we expect at least the entity we just deleted to be removed
-    assert result.empty_entities_removed >= 0
+    # Verify clean result - DTS backend always returns 0, as it has its own mechanism for entity state purge
+    assert result.empty_entities_removed == 0
+    assert result.orphaned_locks_released == 0

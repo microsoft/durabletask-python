@@ -58,6 +58,27 @@ class OrchestrationState:
 
 
 @dataclass
+class OrchestrationQuery:
+    created_time_from: Optional[datetime] = None
+    created_time_to: Optional[datetime] = None
+    runtime_status: Optional[List[OrchestrationStatus]] = None
+    # Some backends don't respond well with max_instance_count = None, so we use the integer limit for non-paginated
+    # results instead.
+    max_instance_count: Optional[int] = (1 << 31) - 1
+    fetch_inputs_and_outputs: bool = False
+
+
+@dataclass
+class EntityQuery:
+    instance_id_starts_with: Optional[str] = None
+    last_modified_from: Optional[datetime] = None
+    last_modified_to: Optional[datetime] = None
+    include_state: bool = True
+    include_transient: bool = False
+    page_size: Optional[int] = None
+
+
+@dataclass
 class PurgeInstancesResult:
     deleted_instance_count: int
     is_complete: bool
@@ -170,46 +191,24 @@ class TaskHubGrpcClient:
         return new_orchestration_state(req.instanceId, res)
 
     def get_all_orchestration_states(self,
-                                     max_instance_count: Optional[int] = None,
-                                     fetch_inputs_and_outputs: bool = False) -> List[OrchestrationState]:
-        return self.get_orchestration_state_by(
-            created_time_from=None,
-            created_time_to=None,
-            runtime_status=None,
-            max_instance_count=max_instance_count,
-            fetch_inputs_and_outputs=fetch_inputs_and_outputs
-        )
+                                     orchestration_query: Optional[OrchestrationQuery] = None
+                                     ) -> List[OrchestrationState]:
+        if orchestration_query is None:
+            orchestration_query = OrchestrationQuery()
+        _continuation_token = None
 
-    def get_orchestration_state_by(self,
-                                   created_time_from: Optional[datetime] = None,
-                                   created_time_to: Optional[datetime] = None,
-                                   runtime_status: Optional[List[OrchestrationStatus]] = None,
-                                   max_instance_count: Optional[int] = None,
-                                   fetch_inputs_and_outputs: bool = False,
-                                   _continuation_token: Optional[pb2.StringValue] = None
-                                   ) -> List[OrchestrationState]:
-        if max_instance_count is None:
-            # Some backends do not behave well with max_instance_count = None, so we set to max 32-bit signed value
-            max_instance_count = (1 << 31) - 1
-
-        self._logger.info(f"Querying orchestration instances with filters - "
-                          f"created_time_from={created_time_from}, "
-                          f"created_time_to={created_time_to}, "
-                          f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
-                          f"max_instance_count={max_instance_count}, "
-                          f"fetch_inputs_and_outputs={fetch_inputs_and_outputs}, "
-                          f"continuation_token={_continuation_token.value if _continuation_token else None}")
+        self._logger.info(f"Querying orchestration instances with query: {orchestration_query}")
 
         states = []
 
         while True:
             req = pb.QueryInstancesRequest(
                 query=pb.InstanceQuery(
-                    runtimeStatus=[status.value for status in runtime_status] if runtime_status else None,
-                    createdTimeFrom=helpers.new_timestamp(created_time_from) if created_time_from else None,
-                    createdTimeTo=helpers.new_timestamp(created_time_to) if created_time_to else None,
-                    maxInstanceCount=max_instance_count,
-                    fetchInputsAndOutputs=fetch_inputs_and_outputs,
+                    runtimeStatus=[status.value for status in orchestration_query.runtime_status] if orchestration_query.runtime_status else None,
+                    createdTimeFrom=helpers.new_timestamp(orchestration_query.created_time_from) if orchestration_query.created_time_from else None,
+                    createdTimeTo=helpers.new_timestamp(orchestration_query.created_time_to) if orchestration_query.created_time_to else None,
+                    maxInstanceCount=orchestration_query.max_instance_count,
+                    fetchInputsAndOutputs=orchestration_query.fetch_inputs_and_outputs,
                     continuationToken=_continuation_token
                 )
             )
@@ -318,7 +317,6 @@ class TaskHubGrpcClient:
                           f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
                           f"recursive={recursive}")
         resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(pb.PurgeInstancesRequest(
-            instanceId=None,
             purgeInstanceFilter=pb.PurgeInstanceFilter(
                 createdTimeFrom=helpers.new_timestamp(created_time_from) if created_time_from else None,
                 createdTimeTo=helpers.new_timestamp(created_time_to) if created_time_to else None,
@@ -357,46 +355,24 @@ class TaskHubGrpcClient:
         return EntityMetadata.from_entity_metadata(res.entity, include_state)
 
     def get_all_entities(self,
-                         include_state: bool = True,
-                         include_transient: bool = False,
-                         page_size: Optional[int] = None) -> List[EntityMetadata]:
-        return self.get_entities_by(
-            instance_id_starts_with=None,
-            last_modified_from=None,
-            last_modified_to=None,
-            include_state=include_state,
-            include_transient=include_transient,
-            page_size=page_size
-        )
+                         entity_query: Optional[EntityQuery] = None) -> List[EntityMetadata]:
+        if entity_query is None:
+            entity_query = EntityQuery()
+        _continuation_token = None
 
-    def get_entities_by(self,
-                        instance_id_starts_with: Optional[str] = None,
-                        last_modified_from: Optional[datetime] = None,
-                        last_modified_to: Optional[datetime] = None,
-                        include_state: bool = True,
-                        include_transient: bool = False,
-                        page_size: Optional[int] = None,
-                        _continuation_token: Optional[pb2.StringValue] = None
-                        ) -> List[EntityMetadata]:
-        self._logger.info(f"Retrieving entities by filter: "
-                          f"instance_id_starts_with={instance_id_starts_with}, "
-                          f"last_modified_from={last_modified_from}, "
-                          f"last_modified_to={last_modified_to}, "
-                          f"include_state={include_state}, "
-                          f"include_transient={include_transient}, "
-                          f"page_size={page_size}")
+        self._logger.info(f"Retrieving entities by filter: {entity_query}")
 
         entities = []
 
         while True:
             query_request = pb.QueryEntitiesRequest(
                 query=pb.EntityQuery(
-                    instanceIdStartsWith=helpers.get_string_value(instance_id_starts_with),
-                    lastModifiedFrom=helpers.new_timestamp(last_modified_from) if last_modified_from else None,
-                    lastModifiedTo=helpers.new_timestamp(last_modified_to) if last_modified_to else None,
-                    includeState=include_state,
-                    includeTransient=include_transient,
-                    pageSize=helpers.get_int_value(page_size),
+                    instanceIdStartsWith=helpers.get_string_value(entity_query.instance_id_starts_with),
+                    lastModifiedFrom=helpers.new_timestamp(entity_query.last_modified_from) if entity_query.last_modified_from else None,
+                    lastModifiedTo=helpers.new_timestamp(entity_query.last_modified_to) if entity_query.last_modified_to else None,
+                    includeState=entity_query.include_state,
+                    includeTransient=entity_query.include_transient,
+                    pageSize=helpers.get_int_value(entity_query.page_size),
                     continuationToken=_continuation_token
                 )
             )
@@ -414,13 +390,13 @@ class TaskHubGrpcClient:
 
     def clean_entity_storage(self,
                              remove_empty_entities: bool = True,
-                             release_orphaned_locks: bool = True,
-                             _continuation_token: Optional[pb2.StringValue] = None
+                             release_orphaned_locks: bool = True
                              ) -> CleanEntityStorageResult:
         self._logger.info("Cleaning entity storage")
 
         empty_entities_removed = 0
         orphaned_locks_released = 0
+        _continuation_token = None
 
         while True:
             req = pb.CleanEntityStorageRequest(
