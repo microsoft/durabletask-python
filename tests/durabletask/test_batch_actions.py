@@ -1,7 +1,6 @@
 
-from grpc._channel import _InactiveRpcError
 import pytest
-from durabletask import client, task, worker
+from durabletask import task
 
 # NOTE: These tests assume a sidecar process is running. Example command:
 #       go install github.com/microsoft/durabletask-go@main
