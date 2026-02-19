@@ -3,9 +3,6 @@
 
 """
 E2E tests for class-based durable entities using the in-memory backend.
-
-These tests mirror the cases in tests/durabletask-azuremanaged/entities/test_dts_class_based_entities_e2e.py
-but use the InMemoryOrchestrationBackend instead of the Azure Durable Task Scheduler.
 """
 
 import time

@@ -3,9 +3,6 @@
 
 """
 E2E tests for function-based durable entities using the in-memory backend.
-
-These tests mirror the cases in tests/durabletask-azuremanaged/entities/test_dts_function_based_entities_e2e.py
-but use the InMemoryOrchestrationBackend instead of the Azure Durable Task Scheduler.
 """
 
 import time
@@ -350,3 +347,11 @@ def test_entity_unlocks_when_user_mishandles_lock():
         c.wait_for_orchestration_completion(id, timeout=30)
 
     assert invoke_count == 2
+
+
+def test_get_entity_not_found():
+    """Test that get_entity returns None for a non-existent entity."""
+    c = client.TaskHubGrpcClient(host_address=HOST)
+    entity_id = entities.EntityInstanceId("counter", "nonexistent")
+    metadata = c.get_entity(entity_id, include_state=True)
+    assert metadata is None

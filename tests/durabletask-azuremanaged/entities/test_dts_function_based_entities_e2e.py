@@ -386,3 +386,12 @@ def test_entity_unlocks_when_user_mishandles_lock():
 #         c.wait_for_orchestration_completion(id, timeout=30)
 
 #     assert invoke_count == 6
+
+
+def test_get_entity_not_found():
+    """Test that get_entity returns None for a non-existent entity."""
+    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                   taskhub=taskhub_name, token_credential=None)
+    entity_id = entities.EntityInstanceId("counter", "nonexistent")
+    metadata = c.get_entity(entity_id, include_state=True)
+    assert metadata is None

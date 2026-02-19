@@ -3,9 +3,6 @@
 
 """
 E2E tests for entity failure handling using the in-memory backend.
-
-These tests mirror the cases in tests/durabletask-azuremanaged/entities/test_dts_entity_failure_handling.py
-but use the InMemoryOrchestrationBackend instead of the Azure Durable Task Scheduler.
 """
 
 import json
