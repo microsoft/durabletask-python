@@ -160,7 +160,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._shutdown_event.set()
         self._work_available.set()  # Unblock GetWorkItems loops
         if self._server:
-            self._server.stop(grace)
+            stop_future = self._server.stop(grace)
+            stop_future.wait()
+            self._server = None
             self._logger.info("In-memory backend stopped")
 
     def reset(self):
@@ -621,6 +623,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             # Update entity state
             if request.entityState and request.entityState.value:
                 entity.serialized_state = request.entityState.value
+            else:
+                entity.serialized_state = None
             entity.last_modified_at = datetime.now(timezone.utc)
 
             # Update completion token for next batch
@@ -1472,7 +1476,8 @@ def create_test_backend(port: int = 50051, max_history_size: int = 10000) -> InM
         ```python
         import pytest
         from durabletask.testing.in_memory_backend import create_test_backend
-        from durabletask import TaskHubGrpcClient, TaskHubGrpcWorker
+        from durabletask.client import TaskHubGrpcClient
+        from durabletask.worker import TaskHubGrpcWorker
 
         @pytest.fixture
         def backend():

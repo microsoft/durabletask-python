@@ -12,13 +12,13 @@ import pytest
 from durabletask import client, entities, task, worker
 from durabletask.testing import create_test_backend
 
-HOST = "localhost:50055"
+HOST = "localhost:50059"
 
 
 @pytest.fixture(autouse=True)
 def backend():
     """Create an in-memory backend for entity testing."""
-    b = create_test_backend(port=50055)
+    b = create_test_backend(port=50059)
     yield b
     b.stop()
     b.reset()

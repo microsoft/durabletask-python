@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 import json
-import warnings
 
 import pytest
 
@@ -22,9 +21,6 @@ def backend():
 
 
 def test_versioned_orchestration_succeeds():
-    warnings.warn("Skipping test_versioned_orchestration_succeeds. "
-                  "Currently not passing as the in-memory backend does not support versioning yet")
-
     def plus_one(_: task.ActivityContext, input: int) -> int:
         return input + 1
 
