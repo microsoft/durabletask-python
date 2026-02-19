@@ -44,18 +44,22 @@ class EntityMetadata:
 
     @staticmethod
     def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool):
+        return EntityMetadata.from_entity_metadata(entity_response.entity, includes_state)
+
+    @staticmethod
+    def from_entity_metadata(entity: pb.EntityMetadata, includes_state: bool):
         try:
-            entity_id = EntityInstanceId.parse(entity_response.entity.instanceId)
+            entity_id = EntityInstanceId.parse(entity.instanceId)
         except ValueError:
             raise ValueError("Invalid entity instance ID in entity response.")
         entity_state = None
         if includes_state:
-            entity_state = entity_response.entity.serializedState.value
+            entity_state = entity.serializedState.value
         return EntityMetadata(
             id=entity_id,
-            last_modified=entity_response.entity.lastModifiedTime.ToDatetime(timezone.utc),
-            backlog_queue_size=entity_response.entity.backlogQueueSize,
-            locked_by=entity_response.entity.lockedBy.value,
+            last_modified=entity.lastModifiedTime.ToDatetime(timezone.utc),
+            backlog_queue_size=entity.backlogQueueSize,
+            locked_by=entity.lockedBy.value,
             includes_state=includes_state,
             state=entity_state
         )
