@@ -19,7 +19,7 @@ sidecar process or external storage.
 - **Work item streaming**: Supports streaming work items to workers
 - **Event handling**: Supports raising events, timers, and sub-orchestrations
 - **Entity support**: Supports function-based and class-based entities
-- **Lifecycle management**: Supports suspend, resume, and terminate operations
+- **Lifecycle management**: Supports suspend, resume, terminate, and restart operations
 - **State waiting**: Built-in support for waiting on orchestration state changes
 
 ### Quick Start
@@ -256,6 +256,7 @@ The in-memory backend is designed for testing and has some limitations compared 
 2. **No distributed execution**: Runs in a single process
 3. **No history streaming**: StreamInstanceHistory is not implemented
 4. **No rewind**: RewindInstance is not implemented
+5. **No recursive termination**: Recursive termination is not supported
 
 ### Best Practices
 
