@@ -22,7 +22,7 @@ class _ClientCallDetails(
 class _AsyncClientCallDetails(
         namedtuple(
             '_AsyncClientCallDetails',
-            ['method', 'timeout', 'metadata', 'credentials', 'wait_for_ready', 'compression']),
+            ['method', 'timeout', 'metadata', 'credentials', 'wait_for_ready']),
         grpc.aio.ClientCallDetails):
     """This is an implementation of the aio ClientCallDetails interface needed for async interceptors.
     This class takes six named values and inherits the ClientCallDetails from grpc.aio package.

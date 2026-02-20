@@ -9,7 +9,9 @@ from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
 from durabletask.internal.grpc_interceptor import (
+    DefaultAsyncClientInterceptorImpl,
     DefaultClientInterceptorImpl,
+    _AsyncClientCallDetails,
     _ClientCallDetails,
 )
 
@@ -41,6 +43,47 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
 
     def _intercept_call(
             self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
+        """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
+            call details."""
+        # Refresh the auth token if it is present and needed
+        if self._metadata is not None:
+            for i, (key, _) in enumerate(self._metadata):
+                if key.lower() == "authorization":  # Ensure case-insensitive comparison
+                    new_token = self._token_manager.get_access_token()  # Get the new token
+                    if new_token is not None:
+                        self._metadata[i] = ("authorization", f"Bearer {new_token.token}")  # Update the token
+
+        return super()._intercept_call(client_call_details)
+
+
+class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
+    """Async version of DTSDefaultClientInterceptorImpl for use with grpc.aio channels.
+
+    This class implements async gRPC interceptors to add DTS-specific headers
+    (task hub name, user agent, and authentication token) to all async calls."""
+
+    def __init__(self, token_credential: Optional[TokenCredential], taskhub_name: str):
+        try:
+            # Get the version of the azuremanaged package
+            sdk_version = version('durabletask-azuremanaged')
+        except Exception:
+            # Fallback if version cannot be determined
+            sdk_version = "unknown"
+        user_agent = f"durabletask-python/{sdk_version}"
+        self._metadata = [
+            ("taskhub", taskhub_name),
+            ("x-user-agent", user_agent)]
+        super().__init__(self._metadata)
+
+        if token_credential is not None:
+            self._token_credential = token_credential
+            self._token_manager = AccessTokenManager(token_credential=self._token_credential)
+            access_token = self._token_manager.get_access_token()
+            if access_token is not None:
+                self._metadata.append(("authorization", f"Bearer {access_token.token}"))
+
+    def _intercept_call(
+            self, client_call_details: _AsyncClientCallDetails) -> grpc.aio.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
             call details."""
         # Refresh the auth token if it is present and needed

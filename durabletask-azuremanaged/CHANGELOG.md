@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Added `AsyncDurableTaskSchedulerClient` for async/await usage with `grpc.aio`
+- Added `DTSAsyncDefaultClientInterceptorImpl` async gRPC interceptor for DTS authentication
+
 ## v1.3.0
 
 - Updates base dependency to durabletask v1.3.0
