@@ -17,6 +17,7 @@ class ProtoTaskHubSidecarServiceStub(Protocol):
     SuspendInstance: Callable[..., Any]
     ResumeInstance: Callable[..., Any]
     QueryInstances: Callable[..., Any]
+    ListInstanceIds: Callable[..., Any]
     PurgeInstances: Callable[..., Any]
     GetWorkItems: Callable[..., Any]
     CompleteActivityTask: Callable[..., Any]
@@ -32,3 +33,4 @@ class ProtoTaskHubSidecarServiceStub(Protocol):
     AbandonTaskActivityWorkItem: Callable[..., Any]
     AbandonTaskOrchestratorWorkItem: Callable[..., Any]
     AbandonTaskEntityWorkItem: Callable[..., Any]
+    SkipGracefulOrchestrationTerminations: Callable[..., Any]
