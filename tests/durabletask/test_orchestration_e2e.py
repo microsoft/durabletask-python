@@ -346,6 +346,7 @@ def test_terminate_recursive():
         assert state is None
 
 
+@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
 def test_restart_with_same_instance_id():
     def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_activity(say_hello, input="World")
@@ -377,6 +378,7 @@ def test_restart_with_same_instance_id():
         assert state.serialized_output == json.dumps("Hello, World!")
 
 
+@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
 def test_restart_with_new_instance_id():
     def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_activity(say_hello, input="World")
