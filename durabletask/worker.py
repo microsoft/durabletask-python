@@ -740,21 +740,22 @@ class TaskHubGrpcWorker:
             stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
+        operation_infos: list[pb.OperationInfo] = []
         if isinstance(req, pb.EntityRequest):
             req, operation_infos = helpers.convert_to_entity_batch_request(req)
 
         entity_state = StateShim(shared.from_json(req.entityState.value) if req.entityState.value else None)
 
         instance_id = req.instanceId
+        try:
+            entity_instance_id = EntityInstanceId.parse(instance_id)
+        except ValueError:
+            raise RuntimeError(f"Invalid entity instance ID '{instance_id}' in entity operation request.")
 
         results: list[pb.OperationResult] = []
         for operation in req.operations:
             start_time = datetime.now(timezone.utc)
             executor = _EntityExecutor(self._registry, self._logger)
-            try:
-                entity_instance_id = EntityInstanceId.parse(instance_id)
-            except ValueError:
-                raise RuntimeError(f"Invalid entity instance ID '{instance_id}' in entity operation request.")
 
             operation_result = None
 
