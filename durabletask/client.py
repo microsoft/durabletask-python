@@ -159,9 +159,14 @@ class TaskHubGrpcClient:
             secure_channel=secure_channel,
             interceptors=interceptors
         )
+        self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
+
+    def close(self) -> None:
+        """Closes the underlying gRPC channel."""
+        self._channel.close()
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Optional[TInput] = None,
@@ -239,7 +244,7 @@ class TaskHubGrpcClient:
                 raise
 
     def raise_orchestration_event(self, instance_id: str, event_name: str, *,
-                                  data: Optional[Any] = None):
+                                  data: Optional[Any] = None) -> None:
         req = build_raise_event_req(instance_id, event_name, data)
 
         self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
@@ -247,18 +252,18 @@ class TaskHubGrpcClient:
 
     def terminate_orchestration(self, instance_id: str, *,
                                 output: Optional[Any] = None,
-                                recursive: bool = True):
+                                recursive: bool = True) -> None:
         req = build_terminate_req(instance_id, output, recursive)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
         self._stub.TerminateInstance(req)
 
-    def suspend_orchestration(self, instance_id: str):
+    def suspend_orchestration(self, instance_id: str) -> None:
         req = pb.SuspendRequest(instanceId=instance_id)
         self._logger.info(f"Suspending instance '{instance_id}'.")
         self._stub.SuspendInstance(req)
 
-    def resume_orchestration(self, instance_id: str):
+    def resume_orchestration(self, instance_id: str) -> None:
         req = pb.ResumeRequest(instanceId=instance_id)
         self._logger.info(f"Resuming instance '{instance_id}'.")
         self._stub.ResumeInstance(req)
@@ -370,9 +375,14 @@ class AsyncTaskHubGrpcClient:
             secure_channel=secure_channel,
             interceptors=interceptors
         )
+        self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
+
+    async def close(self) -> None:
+        """Closes the underlying gRPC channel."""
+        await self._channel.close()
 
     async def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                          input: Optional[TInput] = None,
@@ -450,7 +460,7 @@ class AsyncTaskHubGrpcClient:
                 raise
 
     async def raise_orchestration_event(self, instance_id: str, event_name: str, *,
-                                        data: Optional[Any] = None):
+                                        data: Optional[Any] = None) -> None:
         req = build_raise_event_req(instance_id, event_name, data)
 
         self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
@@ -458,18 +468,18 @@ class AsyncTaskHubGrpcClient:
 
     async def terminate_orchestration(self, instance_id: str, *,
                                       output: Optional[Any] = None,
-                                      recursive: bool = True):
+                                      recursive: bool = True) -> None:
         req = build_terminate_req(instance_id, output, recursive)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
         await self._stub.TerminateInstance(req)
 
-    async def suspend_orchestration(self, instance_id: str):
+    async def suspend_orchestration(self, instance_id: str) -> None:
         req = pb.SuspendRequest(instanceId=instance_id)
         self._logger.info(f"Suspending instance '{instance_id}'.")
         await self._stub.SuspendInstance(req)
 
-    async def resume_orchestration(self, instance_id: str):
+    async def resume_orchestration(self, instance_id: str) -> None:
         req = pb.ResumeRequest(instanceId=instance_id)
         self._logger.info(f"Resuming instance '{instance_id}'.")
         await self._stub.ResumeInstance(req)

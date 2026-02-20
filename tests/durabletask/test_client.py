@@ -61,43 +61,53 @@ def test_grpc_channel_with_host_name_protocol_stripping():
 
         prefix = "grpc://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_insecure_channel.assert_called_with(host_name)
+        mock_insecure_channel.assert_called_once_with(host_name)
+        mock_insecure_channel.reset_mock()
 
         prefix = "http://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_insecure_channel.assert_called_with(host_name)
+        mock_insecure_channel.assert_called_once_with(host_name)
+        mock_insecure_channel.reset_mock()
 
         prefix = "HTTP://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_insecure_channel.assert_called_with(host_name)
+        mock_insecure_channel.assert_called_once_with(host_name)
+        mock_insecure_channel.reset_mock()
 
         prefix = "GRPC://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_insecure_channel.assert_called_with(host_name)
+        mock_insecure_channel.assert_called_once_with(host_name)
+        mock_insecure_channel.reset_mock()
 
         prefix = ""
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_insecure_channel.assert_called_with(host_name)
+        mock_insecure_channel.assert_called_once_with(host_name)
+        mock_insecure_channel.reset_mock()
 
         prefix = "grpcs://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_secure_channel.assert_called_with(host_name, ANY)
+        mock_secure_channel.assert_called_once_with(host_name, ANY)
+        mock_secure_channel.reset_mock()
 
         prefix = "https://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_secure_channel.assert_called_with(host_name, ANY)
+        mock_secure_channel.assert_called_once_with(host_name, ANY)
+        mock_secure_channel.reset_mock()
 
         prefix = "HTTPS://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_secure_channel.assert_called_with(host_name, ANY)
+        mock_secure_channel.assert_called_once_with(host_name, ANY)
+        mock_secure_channel.reset_mock()
 
         prefix = "GRPCS://"
         get_grpc_channel(prefix + host_name, interceptors=INTERCEPTORS)
-        mock_secure_channel.assert_called_with(host_name, ANY)
+        mock_secure_channel.assert_called_once_with(host_name, ANY)
+        mock_secure_channel.reset_mock()
 
         prefix = ""
         get_grpc_channel(prefix + host_name, True, interceptors=INTERCEPTORS)
-        mock_secure_channel.assert_called_with(host_name, ANY)
+        mock_secure_channel.assert_called_once_with(host_name, ANY)
+        mock_secure_channel.reset_mock()
 
 
 # ==== Async channel tests ====
@@ -136,16 +146,20 @@ def test_async_grpc_channel_protocol_stripping():
         host_name = "myserver.com:1234"
 
         get_async_grpc_channel("http://" + host_name)
-        mock_insecure.assert_called_with(host_name, interceptors=None)
+        mock_insecure.assert_called_once_with(host_name, interceptors=None)
+        mock_insecure.reset_mock()
 
         get_async_grpc_channel("grpc://" + host_name)
-        mock_insecure.assert_called_with(host_name, interceptors=None)
+        mock_insecure.assert_called_once_with(host_name, interceptors=None)
+        mock_insecure.reset_mock()
 
         get_async_grpc_channel("https://" + host_name)
-        mock_secure.assert_called_with(host_name, ANY, interceptors=None)
+        mock_secure.assert_called_once_with(host_name, ANY, interceptors=None)
+        mock_secure.reset_mock()
 
         get_async_grpc_channel("grpcs://" + host_name)
-        mock_secure.assert_called_with(host_name, ANY, interceptors=None)
+        mock_secure.assert_called_once_with(host_name, ANY, interceptors=None)
+        mock_secure.reset_mock()
 
 
 # ==== Async client construction tests ====
