@@ -395,6 +395,40 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             isComplete=wrappers_pb2.BoolValue(value=True),
         )
 
+    def RestartInstance(self, request: pb.RestartInstanceRequest, context):
+        """Restarts a completed orchestration instance."""
+        with self._lock:
+            instance = self._instances.get(request.instanceId)
+            if not instance:
+                context.abort(
+                    grpc.StatusCode.NOT_FOUND,
+                    f"Orchestration instance '{request.instanceId}' not found")
+                return pb.RestartInstanceResponse()
+
+            if not self._is_terminal_status(instance.status):
+                context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"Orchestration instance '{request.instanceId}' is not in a terminal state")
+                return pb.RestartInstanceResponse()
+
+            name = instance.name
+            original_input = instance.input
+
+            if request.restartWithNewInstanceId:
+                new_instance_id = uuid.uuid4().hex
+            else:
+                new_instance_id = request.instanceId
+                # Remove the old instance so we can recreate it
+                del self._instances[request.instanceId]
+                self._orchestration_queue_set.discard(request.instanceId)
+                self._state_waiters.pop(request.instanceId, None)
+
+            self._create_instance_internal(new_instance_id, name, original_input)
+
+        self._logger.info(
+            f"Restarted instance '{request.instanceId}' as '{new_instance_id}'")
+        return pb.RestartInstanceResponse(instanceId=new_instance_id)
+
     def GetWorkItems(self, request: pb.GetWorkItemsRequest, context):
         """Streams work items to the worker (orchestration and activity work items)."""
         self._logger.info("Worker connected and requesting work items")

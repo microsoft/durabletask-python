@@ -343,7 +343,6 @@ def test_terminate_recursive():
         assert state is None
 
 
-@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
 def test_restart_with_same_instance_id():
     def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_activity(say_hello, input="World")
@@ -353,12 +352,12 @@ def test_restart_with_same_instance_id():
         return f"Hello, {input}!"
 
     # Start a worker, which will connect to the sidecar in a background thread
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.add_activity(say_hello)
         w.start()
 
-        task_hub_client = client.TaskHubGrpcClient()
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
         id = task_hub_client.schedule_new_orchestration(orchestrator)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
@@ -375,7 +374,6 @@ def test_restart_with_same_instance_id():
         assert state.serialized_output == json.dumps("Hello, World!")
 
 
-@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
 def test_restart_with_new_instance_id():
     def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_activity(say_hello, input="World")
@@ -385,12 +383,12 @@ def test_restart_with_new_instance_id():
         return f"Hello, {input}!"
 
     # Start a worker, which will connect to the sidecar in a background thread
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.add_activity(say_hello)
         w.start()
 
-        task_hub_client = client.TaskHubGrpcClient()
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
         id = task_hub_client.schedule_new_orchestration(orchestrator)
         state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
