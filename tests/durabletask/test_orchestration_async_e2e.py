@@ -178,3 +178,66 @@ async def test_async_purge_orchestration():
 
         state = await c.get_orchestration_state(id)
         assert state is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
+async def test_async_restart_with_same_instance_id():
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.call_activity(say_hello, input="World")
+        return result
+
+    def say_hello(ctx: task.ActivityContext, input: str):
+        return f"Hello, {input}!"
+
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(say_hello)
+        w.start()
+
+        c = client.AsyncTaskHubGrpcClient()
+        id = await c.schedule_new_orchestration(orchestrator)
+        state = await c.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+        assert state.serialized_output == json.dumps("Hello, World!")
+
+        # Restart the orchestration with the same instance ID
+        restarted_id = await c.restart_orchestration(id)
+        assert restarted_id == id
+
+        state = await c.wait_for_orchestration_completion(restarted_id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+        assert state.serialized_output == json.dumps("Hello, World!")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
+async def test_async_restart_with_new_instance_id():
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.call_activity(say_hello, input="World")
+        return result
+
+    def say_hello(ctx: task.ActivityContext, input: str):
+        return f"Hello, {input}!"
+
+    with worker.TaskHubGrpcWorker() as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(say_hello)
+        w.start()
+
+        c = client.AsyncTaskHubGrpcClient()
+        id = await c.schedule_new_orchestration(orchestrator)
+        state = await c.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+
+        # Restart the orchestration with a new instance ID
+        restarted_id = await c.restart_orchestration(id, restart_with_new_instance_id=True)
+        assert restarted_id != id
+
+        state = await c.wait_for_orchestration_completion(restarted_id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+        assert state.serialized_output == json.dumps("Hello, World!")
