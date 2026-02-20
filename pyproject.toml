@@ -44,3 +44,4 @@ testpaths = ["tests"]
 markers = [
     "e2e: mark a test as an end-to-end test that requires a running sidecar"
 ]
+asyncio_mode = "auto"
