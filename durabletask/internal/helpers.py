@@ -184,6 +184,13 @@ def get_string_value(val: Optional[str]) -> Optional[wrappers_pb2.StringValue]:
         return wrappers_pb2.StringValue(value=val)
 
 
+def get_int_value(val: Optional[int]) -> Optional[wrappers_pb2.Int32Value]:
+    if val is None:
+        return None
+    else:
+        return wrappers_pb2.Int32Value(value=val)
+
+
 def get_string_value_or_empty(val: Optional[str]) -> wrappers_pb2.StringValue:
     if val is None:
         return wrappers_pb2.StringValue(value="")
