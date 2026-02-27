@@ -34,6 +34,7 @@ class OrchestrationInstance:
     instance_id: str
     name: str
     status: pb.OrchestrationStatus
+    version: Optional[str] = None
     input: Optional[str] = None
     output: Optional[str] = None
     custom_status: Optional[str] = None
@@ -225,10 +226,12 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             start_time = request.scheduledStartTimestamp.ToDatetime(tzinfo=timezone.utc) \
                 if request.HasField("scheduledStartTimestamp") else now
 
+            version = request.version.value if request.HasField("version") else None
             instance = OrchestrationInstance(
                 instance_id=instance_id,
                 name=request.name,
                 status=pb.ORCHESTRATION_STATUS_PENDING,
+                version=version,
                 input=request.input.value if request.input else None,
                 created_at=now,
                 last_updated_at=now,
@@ -242,7 +245,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             execution_started = helpers.new_execution_started_event(
                 request.name, instance_id,
                 request.input.value if request.input else None,
-                dict(request.tags) if request.tags else None
+                dict(request.tags) if request.tags else None,
+                version=version,
             )
 
             instance.pending_events.append(orchestrator_started)
@@ -413,6 +417,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
             name = instance.name
             original_input = instance.input
+            version = instance.version
 
             if request.restartWithNewInstanceId:
                 new_instance_id = uuid.uuid4().hex
@@ -423,7 +428,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 self._orchestration_queue_set.discard(request.instanceId)
                 self._state_waiters.pop(request.instanceId, None)
 
-            self._create_instance_internal(new_instance_id, name, original_input)
+            self._create_instance_internal(
+                new_instance_id, name, original_input, version=version)
 
         self._logger.info(
             f"Restarted instance '{request.instanceId}' as '{new_instance_id}'")
@@ -712,10 +718,13 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 elif action.HasField("startNewOrchestration"):
                     start_orch = action.startNewOrchestration
                     orch_input = start_orch.input.value if start_orch.input else None
+                    orch_version = start_orch.version.value \
+                        if start_orch.HasField("version") else None
                     instance_id = start_orch.instanceId or uuid.uuid4().hex
                     try:
                         self._create_instance_internal(
-                            instance_id, start_orch.name, orch_input
+                            instance_id, start_orch.name, orch_input,
+                            version=orch_version,
                         )
                     except Exception:
                         self._logger.warning(
@@ -984,7 +993,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         return self._is_terminal_status(instance.status)
 
     def _create_instance_internal(self, instance_id: str, name: str,
-                                  encoded_input: Optional[str] = None):
+                                  encoded_input: Optional[str] = None,
+                                  version: Optional[str] = None):
         """Creates a new instance directly in internal state (no gRPC context needed)."""
         existing = self._instances.get(instance_id)
         if existing:
@@ -1000,6 +1010,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             instance_id=instance_id,
             name=name,
             status=pb.ORCHESTRATION_STATUS_PENDING,
+            version=version,
             input=encoded_input,
             created_at=now,
             last_updated_at=now,
@@ -1008,7 +1019,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._next_completion_token += 1
 
         orchestrator_started = helpers.new_orchestrator_started_event(now)
-        execution_started = helpers.new_execution_started_event(name, instance_id, encoded_input)
+        execution_started = helpers.new_execution_started_event(
+            name, instance_id, encoded_input, version=version)
         instance.pending_events.append(orchestrator_started)
         instance.pending_events.append(execution_started)
 
@@ -1149,9 +1161,14 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             new_input = complete_action.result.value if complete_action.result else None
             carryover_events = list(complete_action.carryoverEvents)
 
+            # Update version if a new version was specified
+            new_version = complete_action.newVersion.value \
+                if complete_action.HasField("newVersion") else instance.version
+
             # Reset instance state
             instance.history.clear()
             instance.input = new_input
+            instance.version = new_version
             instance.output = None
             instance.failure_details = None
             instance.status = pb.ORCHESTRATION_STATUS_PENDING
@@ -1166,7 +1183,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             now = datetime.now(timezone.utc)
             orchestrator_started = helpers.new_orchestrator_started_event(now)
             execution_started = helpers.new_execution_started_event(
-                instance.name, instance.instance_id, new_input
+                instance.name, instance.instance_id, new_input,
+                version=new_version,
             )
             instance.pending_events.append(orchestrator_started)
             instance.pending_events.append(execution_started)
@@ -1241,9 +1259,12 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         name = create_sub_orch.name
         sub_instance_id = create_sub_orch.instanceId
         input_value = create_sub_orch.input.value if create_sub_orch.input else None
+        version = create_sub_orch.version.value \
+            if create_sub_orch.HasField("version") else None
 
         # Add SubOrchestrationInstanceCreated event to history
-        event = helpers.new_sub_orchestration_created_event(task_id, name, sub_instance_id, input_value)
+        event = helpers.new_sub_orchestration_created_event(
+            task_id, name, sub_instance_id, input_value, version=version)
         instance.history.append(event)
 
         # Mark instance as running
@@ -1252,7 +1273,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         # Create the sub-orchestration directly via internal state
         try:
-            self._create_instance_internal(sub_instance_id, name, input_value)
+            self._create_instance_internal(
+                sub_instance_id, name, input_value, version=version)
 
             # Watch for sub-orchestration completion
             self._watch_sub_orchestration(instance.instance_id, sub_instance_id, task_id)
