@@ -1437,7 +1437,7 @@ class _OrchestrationExecutor:
                 timer_id = event.timerFired.timerId
                 timer_task = ctx._pending_tasks.pop(timer_id, None)
                 if not timer_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # This can happen during replay or if a duplicate event is delivered
                     if not ctx._is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
@@ -1491,7 +1491,7 @@ class _OrchestrationExecutor:
                 task_id = event.taskCompleted.taskScheduledId
                 activity_task = ctx._pending_tasks.pop(task_id, None)
                 if not activity_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # This can happen during replay or if a duplicate event is delivered
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected taskCompleted event with ID = {task_id}."
@@ -1506,7 +1506,7 @@ class _OrchestrationExecutor:
                 task_id = event.taskFailed.taskScheduledId
                 activity_task = ctx._pending_tasks.pop(task_id, None)
                 if not activity_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # This can happen during replay or if a duplicate event is delivered
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected taskFailed event with ID = {task_id}."
@@ -1560,7 +1560,7 @@ class _OrchestrationExecutor:
                 task_id = event.subOrchestrationInstanceCompleted.taskScheduledId
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
                 if not sub_orch_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # This can happen during replay or if a duplicate event is delivered
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceCompleted event with ID = {task_id}."
@@ -1578,7 +1578,7 @@ class _OrchestrationExecutor:
                 task_id = failedEvent.taskScheduledId
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
                 if not sub_orch_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # This can happen during replay or if a duplicate event is delivered
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceFailed event with ID = {task_id}."
