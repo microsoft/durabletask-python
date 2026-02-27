@@ -2,24 +2,25 @@
 # Licensed under the MIT License.
 
 import json
-import warnings
 
 import pytest
 
 from durabletask import client, task, worker
+from durabletask.testing import create_test_backend
 
-# NOTE: These tests assume a sidecar process is running. Example command:
-#       go install github.com/microsoft/durabletask-go@main
-#       durabletask-go --port 4001
-pytestmark = pytest.mark.e2e
+HOST = "localhost:50055"
+
+
+@pytest.fixture(autouse=True)
+def backend():
+    """Create an in-memory backend for testing."""
+    b = create_test_backend(port=50055)
+    yield b
+    b.stop()
+    b.reset()
 
 
 def test_versioned_orchestration_succeeds():
-    warnings.warn("Skipping test_versioned_orchestration_succeeds. "
-                  "Currently not passing as the sidecar does not support versioning yet")
-    return  # Currently not passing as the sidecar does not support versioning yet
-    # Remove these lines to run the test after the sidecar is updated
-
     def plus_one(_: task.ActivityContext, input: int) -> int:
         return input + 1
 
@@ -31,8 +32,7 @@ def test_versioned_orchestration_succeeds():
             numbers.append(current)
         return numbers
 
-    # Start a worker, which will connect to the sidecar in a background thread
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(sequence)
         w.add_activity(plus_one)
         w.use_versioning(worker.VersioningOptions(
@@ -43,7 +43,7 @@ def test_versioned_orchestration_succeeds():
         ))
         w.start()
 
-        task_hub_client = client.TaskHubGrpcClient(default_version="1.0.0")
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST, default_version="1.0.0")
         id = task_hub_client.schedule_new_orchestration(sequence, input=1, tags={'Orchestration': 'Sequence'}, version="1.0.0")
         state = task_hub_client.wait_for_orchestration_completion(
             id, timeout=30)
