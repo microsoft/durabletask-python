@@ -22,6 +22,14 @@ taskhub_name = os.getenv("TASKHUB", "default")
 endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
 
 
+def _get_credential():
+    """Returns DefaultAzureCredential if endpoint is https, otherwise None (for emulator)."""
+    if endpoint.startswith("https://"):
+        from azure.identity import DefaultAzureCredential
+        return DefaultAzureCredential()
+    return None
+
+
 def test_empty_orchestration():
 
     invoked = False
@@ -371,6 +379,75 @@ def test_terminate_recursive():
         assert state is None
 
 
+def test_restart_with_same_instance_id():
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.call_activity(say_hello, input="World")
+        return result
+
+    def say_hello(ctx: task.ActivityContext, input: str):
+        return f"Hello, {input}!"
+
+    credential = _get_credential()
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=credential) as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(say_hello)
+        w.start()
+
+        task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                     taskhub=taskhub_name, token_credential=credential)
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+        assert state.serialized_output == json.dumps("Hello, World!")
+
+        # Restart the orchestration with the same instance ID
+        restarted_id = task_hub_client.restart_orchestration(id)
+        assert restarted_id == id
+
+        state = task_hub_client.wait_for_orchestration_completion(restarted_id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+        assert state.serialized_output == json.dumps("Hello, World!")
+
+
+def test_restart_with_new_instance_id():
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.call_activity(say_hello, input="World")
+        return result
+
+    def say_hello(ctx: task.ActivityContext, input: str):
+        return f"Hello, {input}!"
+
+    credential = _get_credential()
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=credential) as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(say_hello)
+        w.start()
+
+        task_hub_client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                     taskhub=taskhub_name, token_credential=credential)
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+
+        # Restart the orchestration with a new instance ID
+        restarted_id = task_hub_client.restart_orchestration(id, restart_with_new_instance_id=True)
+        assert restarted_id != id
+
+        state = task_hub_client.wait_for_orchestration_completion(restarted_id, timeout=30)
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+        assert state.serialized_output == json.dumps("Hello, World!")
+
+
 # def test_continue_as_new():
 #     all_results = []
 
@@ -569,3 +646,28 @@ def test_new_uuid():
     assert uuid.UUID(results[0]) != uuid.UUID(results[1])
     assert uuid.UUID(results[0]) != uuid.UUID(results[2])
     assert uuid.UUID(results[1]) != uuid.UUID(results[2])
+
+
+def test_orchestration_with_unparsable_output_fails():
+    def test_orchestrator(ctx: task.OrchestrationContext, _):
+        return Exception("This is not JSON serializable")
+
+    # Start a worker, which will connect to the sidecar in a background thread
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(test_orchestrator)
+        w.start()
+
+        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                       taskhub=taskhub_name, token_credential=None)
+        id = c.schedule_new_orchestration(test_orchestrator)
+        state = c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.name == task.get_name(test_orchestrator)
+    assert state.instance_id == id
+    assert state.failure_details is not None
+    assert state.failure_details.error_type == "JsonEncodeOutputException"
+    assert state.failure_details.message.startswith("The orchestration result could not be encoded. Object details:")
+    assert state.failure_details.message.find("This is not JSON serializable") != -1
+    assert state.runtime_status == client.OrchestrationStatus.FAILED
