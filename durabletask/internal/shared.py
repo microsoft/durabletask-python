@@ -103,15 +103,18 @@ class InternalJSONEncoder(json.JSONEncoder):
         return super().encode(obj)
 
     def default(self, obj):
-        if dataclasses.is_dataclass(obj):
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
             # Dataclasses are not serializable by default, so we convert them to a dict and mark them for
-            # automatic deserialization by the receiver
-            d = dataclasses.asdict(obj)  # type: ignore
+            # automatic deserialization by the receiver. We use a shallow field extraction instead of
+            # dataclasses.asdict() so that nested dataclass values are re-processed by the encoder
+            # individually (each receiving their own AUTO_SERIALIZED marker).
+            d = {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
             d[AUTO_SERIALIZED] = True
             return d
         elif isinstance(obj, SimpleNamespace):
-            # Most commonly used for serializing custom objects that were previously serialized using our encoder
-            d = vars(obj)
+            # Most commonly used for serializing custom objects that were previously serialized using our encoder.
+            # Copy the dict to avoid mutating the original object.
+            d = dict(vars(obj))
             d[AUTO_SERIALIZED] = True
             return d
         # This will typically raise a TypeError
