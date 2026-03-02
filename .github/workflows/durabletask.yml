@@ -10,6 +10,9 @@ on:
     branches: 
       - "main"
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-unit-tests:
     runs-on: ubuntu-latest
