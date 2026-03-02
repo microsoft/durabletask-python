@@ -66,6 +66,7 @@ class EntityState:
     last_modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     locked_by: Optional[str] = None
     pending_operations: list[pb.HistoryEvent] = field(default_factory=list)
+    dispatched_operations: list[pb.HistoryEvent] = field(default_factory=list)
     completion_token: int = 0
 
 
@@ -515,6 +516,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                                 # Drain all pending operations into a batch
                                 operations = list(entity.pending_operations)
                                 entity.pending_operations.clear()
+                                entity.dispatched_operations = list(operations)
 
                                 # Use V2 EntityRequest format so the worker
                                 # can properly build operation_infos
@@ -586,9 +588,25 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 elif evt.HasField("executionResumed"):
                     instance.status = pb.ORCHESTRATION_STATUS_RUNNING
 
-            # Process actions
-            for action in request.actions:
-                self._process_action(instance, action)
+            # Process actions — wrapped in try/except to ensure the
+            # orchestration is never left permanently stuck in the
+            # in-flight set when an action handler raises.
+            try:
+                for action in request.actions:
+                    self._process_action(instance, action)
+            except Exception as e:
+                self._logger.error(
+                    f"Error processing actions for instance "
+                    f"'{request.instanceId}': {e}")
+                # Mark the orchestration as failed so it doesn't stay
+                # in a running/pending state with no way to make progress.
+                if not self._is_terminal_status(instance.status):
+                    instance.status = pb.ORCHESTRATION_STATUS_FAILED
+                    instance.failure_details = pb.TaskFailureDetails(
+                        errorType=type(e).__name__,
+                        errorMessage=str(e),
+                        isNonRetriable=True,
+                    )
 
             # Update completion token for next execution
             instance.completion_token = self._next_completion_token
@@ -666,6 +684,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             else:
                 entity.serialized_state = None
             entity.last_modified_at = datetime.now(timezone.utc)
+            entity.dispatched_operations.clear()
 
             # Update completion token for next batch
             entity.completion_token = self._next_completion_token
@@ -674,62 +693,68 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             # Clear the in-flight flag
             self._entity_in_flight.discard(entity.instance_id)
 
-            # Deliver operation results to calling orchestrations
+            # Deliver operation results to calling orchestrations.
+            # Each delivery is individually guarded so that one failure
+            # does not prevent subsequent results from being delivered.
             for i, op_info in enumerate(request.operationInfos):
-                dest = op_info.responseDestination
-                if dest and dest.instanceId:
-                    parent_instance_id = op_info.responseDestination.instanceId
-                    parent_instance = self._instances.get(parent_instance_id)
-                    if parent_instance:
-                        result = request.results[i] if i < len(request.results) else None
-                        if result and result.HasField("success"):
-                            event = pb.HistoryEvent(
-                                eventId=-1,
-                                timestamp=timestamp_pb2.Timestamp(),
-                                entityOperationCompleted=pb.EntityOperationCompletedEvent(
-                                    requestId=op_info.requestId,
-                                    output=result.success.result,
+                try:
+                    dest = op_info.responseDestination
+                    if dest and dest.instanceId:
+                        parent_instance_id = op_info.responseDestination.instanceId
+                        parent_instance = self._instances.get(parent_instance_id)
+                        if parent_instance:
+                            result = request.results[i] if i < len(request.results) else None
+                            if result and result.HasField("success"):
+                                event = pb.HistoryEvent(
+                                    eventId=-1,
+                                    timestamp=timestamp_pb2.Timestamp(),
+                                    entityOperationCompleted=pb.EntityOperationCompletedEvent(
+                                        requestId=op_info.requestId,
+                                        output=result.success.result,
+                                    )
                                 )
-                            )
-                        elif result and result.HasField("failure"):
-                            event = pb.HistoryEvent(
-                                eventId=-1,
-                                timestamp=timestamp_pb2.Timestamp(),
-                                entityOperationFailed=pb.EntityOperationFailedEvent(
-                                    requestId=op_info.requestId,
-                                    failureDetails=result.failure.failureDetails,
+                            elif result and result.HasField("failure"):
+                                event = pb.HistoryEvent(
+                                    eventId=-1,
+                                    timestamp=timestamp_pb2.Timestamp(),
+                                    entityOperationFailed=pb.EntityOperationFailedEvent(
+                                        requestId=op_info.requestId,
+                                        failureDetails=result.failure.failureDetails,
+                                    )
                                 )
-                            )
-                        else:
-                            continue
+                            else:
+                                continue
 
-                        parent_instance.pending_events.append(event)
-                        parent_instance.last_updated_at = datetime.now(timezone.utc)
-                        self._enqueue_orchestration(parent_instance_id)
+                            parent_instance.pending_events.append(event)
+                            parent_instance.last_updated_at = datetime.now(timezone.utc)
+                            self._enqueue_orchestration(parent_instance_id)
+                except Exception:
+                    self._logger.exception(
+                        f"Error delivering entity result for operation {i}")
 
-            # Process side-effect actions (signals to other entities, new orchestrations)
+            # Process side-effect actions (signals to other entities, new orchestrations).
+            # Each action is individually guarded for the same reason.
             for action in request.actions:
-                if action.HasField("sendSignal"):
-                    signal = action.sendSignal
-                    self._signal_entity_internal(
-                        signal.instanceId, signal.name,
-                        signal.input.value if signal.input else None
-                    )
-                elif action.HasField("startNewOrchestration"):
-                    start_orch = action.startNewOrchestration
-                    orch_input = start_orch.input.value if start_orch.input else None
-                    orch_version = start_orch.version.value \
-                        if start_orch.HasField("version") else None
-                    instance_id = start_orch.instanceId or uuid.uuid4().hex
-                    try:
+                try:
+                    if action.HasField("sendSignal"):
+                        signal = action.sendSignal
+                        self._signal_entity_internal(
+                            signal.instanceId, signal.name,
+                            signal.input.value if signal.input else None
+                        )
+                    elif action.HasField("startNewOrchestration"):
+                        start_orch = action.startNewOrchestration
+                        orch_input = start_orch.input.value if start_orch.input else None
+                        orch_version = start_orch.version.value \
+                            if start_orch.HasField("version") else None
+                        instance_id = start_orch.instanceId or uuid.uuid4().hex
                         self._create_instance_internal(
                             instance_id, start_orch.name, orch_input,
                             version=orch_version,
                         )
-                    except Exception:
-                        self._logger.warning(
-                            f"Failed to create orchestration '{instance_id}' from entity action"
-                        )
+                except Exception:
+                    self._logger.exception(
+                        "Error processing entity side-effect action")
 
             # If the entity has more pending operations, re-enqueue
             if entity.pending_operations:
@@ -964,11 +989,35 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         return pb.AbandonActivityTaskResponse()
 
     def AbandonTaskOrchestratorWorkItem(self, request: pb.AbandonOrchestrationTaskRequest, context):
-        """Abandons an orchestration work item."""
+        """Abandons an orchestration work item, restoring it for re-processing."""
+        with self._lock:
+            for instance_id in list(self._orchestration_in_flight):
+                instance = self._instances.get(instance_id)
+                if instance and str(instance.completion_token) == request.completionToken:
+                    # Move dispatched events back to pending so they will
+                    # be re-sent on the next dispatch cycle.
+                    instance.pending_events = list(instance.dispatched_events) + list(instance.pending_events)
+                    instance.dispatched_events.clear()
+                    self._orchestration_in_flight.discard(instance_id)
+                    self._enqueue_orchestration(instance_id)
+                    self._logger.info(
+                        f"Abandoned orchestration work item for '{instance_id}'")
+                    break
         return pb.AbandonOrchestrationTaskResponse()
 
     def AbandonTaskEntityWorkItem(self, request: pb.AbandonEntityTaskRequest, context):
-        """Abandons an entity work item."""
+        """Abandons an entity work item, restoring it for re-processing."""
+        with self._lock:
+            for entity in self._entities.values():
+                if str(entity.completion_token) == request.completionToken:
+                    # Restore dispatched operations back to pending.
+                    entity.pending_operations = list(entity.dispatched_operations) + list(entity.pending_operations)
+                    entity.dispatched_operations.clear()
+                    self._entity_in_flight.discard(entity.instance_id)
+                    self._enqueue_entity(entity.instance_id)
+                    self._logger.info(
+                        f"Abandoned entity work item for '{entity.instance_id}'")
+                    break
         return pb.AbandonEntityTaskResponse()
 
     # Internal helper methods
