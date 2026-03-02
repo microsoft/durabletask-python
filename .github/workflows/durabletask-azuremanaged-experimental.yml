@@ -6,6 +6,9 @@ on:
       - main
       - release/*
 
+permissions:
+  contents: read
+
 jobs:
   publish-experimental:
     runs-on: ubuntu-latest

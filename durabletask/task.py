@@ -468,7 +468,8 @@ class RetryableTask(CompletableTask[T]):
 
             if self._retry_policy.max_retry_interval is not None:
                 next_delay_f = min(next_delay_f, self._retry_policy.max_retry_interval.total_seconds())
-                return timedelta(seconds=next_delay_f)
+
+            return timedelta(seconds=next_delay_f)
 
         return None
 
