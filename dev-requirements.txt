@@ -1,4 +1,2 @@
 grpcio-tools
-opentelemetry-api
-opentelemetry-sdk
 pymarkdownlnt
