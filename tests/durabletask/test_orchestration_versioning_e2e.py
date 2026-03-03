@@ -2,39 +2,88 @@
 # Licensed under the MIT License.
 
 import json
-import warnings
 
 import pytest
 
 from durabletask import client, task, worker
+from durabletask.testing import create_test_backend
 
-# NOTE: These tests assume a sidecar process is running. Example command:
-#       go install github.com/microsoft/durabletask-go@main
-#       durabletask-go --port 4001
-pytestmark = pytest.mark.e2e
+HOST = "localhost:50055"
 
 
-def test_versioned_orchestration_succeeds():
-    warnings.warn("Skipping test_versioned_orchestration_succeeds. "
-                  "Currently not passing as the sidecar does not support versioning yet")
-    return  # Currently not passing as the sidecar does not support versioning yet
-    # Remove these lines to run the test after the sidecar is updated
+@pytest.fixture(autouse=True)
+def backend():
+    """Create an in-memory backend for testing."""
+    b = create_test_backend(port=50055)
+    yield b
+    b.stop()
+    b.reset()
 
-    def plus_one(_: task.ActivityContext, input: int) -> int:
-        return input + 1
 
-    def sequence(ctx: task.OrchestrationContext, start_val: int):
-        numbers = [start_val]
-        current = start_val
-        for _ in range(10):
-            current = yield ctx.call_activity(plus_one, input=current, tags={'Activity': 'PlusOne'})
-            numbers.append(current)
-        return numbers
+def test_version_flows_through_to_orchestration_context():
+    """Verifies the version set by the client is visible on ctx.version."""
 
-    # Start a worker, which will connect to the sidecar in a background thread
-    with worker.TaskHubGrpcWorker() as w:
-        w.add_orchestrator(sequence)
-        w.add_activity(plus_one)
+    def return_version(ctx: task.OrchestrationContext, _: None):
+        return ctx.version
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(return_version)
+        w.use_versioning(worker.VersioningOptions(
+            version="2.5.0",
+            default_version="2.5.0",
+            match_strategy=worker.VersionMatchStrategy.CURRENT_OR_OLDER,
+            failure_strategy=worker.VersionFailureStrategy.FAIL
+        ))
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
+        id = task_hub_client.schedule_new_orchestration(
+            return_version, version="2.5.0")
+        state = task_hub_client.wait_for_orchestration_completion(
+            id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    assert state.serialized_output == json.dumps("2.5.0")
+
+
+def test_strict_version_mismatch_fails():
+    """Worker with STRICT matching fails an orchestration whose version differs."""
+
+    def simple(ctx: task.OrchestrationContext, _: None):
+        return "done"
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(simple)
+        w.use_versioning(worker.VersioningOptions(
+            version="1.0.0",
+            default_version="1.0.0",
+            match_strategy=worker.VersionMatchStrategy.STRICT,
+            failure_strategy=worker.VersionFailureStrategy.FAIL
+        ))
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
+        id = task_hub_client.schedule_new_orchestration(
+            simple, version="2.0.0")
+        state = task_hub_client.wait_for_orchestration_completion(
+            id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.FAILED
+    assert state.failure_details is not None
+    assert "does not match the worker version" in state.failure_details.message
+
+
+def test_newer_orchestration_version_fails_current_or_older():
+    """Worker rejects orchestrations with a version newer than its own."""
+
+    def simple(ctx: task.OrchestrationContext, _: None):
+        return "done"
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(simple)
         w.use_versioning(worker.VersioningOptions(
             version="1.0.0",
             default_version="1.0.0",
@@ -43,16 +92,13 @@ def test_versioned_orchestration_succeeds():
         ))
         w.start()
 
-        task_hub_client = client.TaskHubGrpcClient(default_version="1.0.0")
-        id = task_hub_client.schedule_new_orchestration(sequence, input=1, tags={'Orchestration': 'Sequence'}, version="1.0.0")
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
+        id = task_hub_client.schedule_new_orchestration(
+            simple, version="1.1.0")
         state = task_hub_client.wait_for_orchestration_completion(
             id, timeout=30)
 
     assert state is not None
-    assert state.name == task.get_name(sequence)
-    assert state.instance_id == id
-    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
-    assert state.failure_details is None
-    assert state.serialized_input == json.dumps(1)
-    assert state.serialized_output == json.dumps([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
-    assert state.serialized_custom_status is None
+    assert state.runtime_status == client.OrchestrationStatus.FAILED
+    assert state.failure_details is not None
+    assert "is greater than the worker version" in state.failure_details.message
