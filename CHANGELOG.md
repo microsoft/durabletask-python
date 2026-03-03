@@ -20,6 +20,7 @@ FIXED:
 ADDED
 
 - Allow entities with custom names
+- Support linking orchestrations to activities/entities/sub-orchestrators for distributed tracing with `opentelemetry-api` as an optional requirement.
 
 CHANGED
 
