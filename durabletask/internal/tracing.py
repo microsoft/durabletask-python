@@ -269,8 +269,7 @@ def start_orchestration_span(
     # capture "now" so the value can be fed back to the sidecar.
     start_time_ns: Optional[int] = None
     if orchestration_trace_context is not None and orchestration_trace_context.HasField("spanStartTime"):
-        start_dt = orchestration_trace_context.spanStartTime.ToDatetime()
-        start_time_ns = int(start_dt.timestamp() * 1e9)
+        start_time_ns = orchestration_trace_context.spanStartTime.ToNanoseconds()
     else:
         start_time_ns = time.time_ns()
 
@@ -318,7 +317,8 @@ def detach_orchestration_tokens(tokens: Any) -> None:
     if tokens is None:
         return
     parent_token, span_token = tokens
-    otel_context.detach(span_token)
+    if span_token is not None:
+        otel_context.detach(span_token)
     if parent_token is not None:
         otel_context.detach(parent_token)
 
@@ -567,10 +567,7 @@ def build_orchestration_trace_context(
 
     if start_time_ns is not None:
         ts = timestamp_pb2.Timestamp()
-        seconds = int(start_time_ns // 1e9)
-        nanos = int(start_time_ns % 1e9)
-        ts.seconds = seconds
-        ts.nanos = nanos
+        ts.FromNanoseconds(start_time_ns)
         ctx.spanStartTime.CopyFrom(ts)
 
     return ctx

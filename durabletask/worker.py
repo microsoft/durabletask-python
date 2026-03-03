@@ -718,7 +718,8 @@ class TaskHubGrpcWorker:
             else:
                 # Intermediate dispatch — keep the span alive for later,
                 # but detach context tokens for this call.
-                self._orchestration_spans[instance_id] = (span, orch_trace_ctx)
+                if span is not None:
+                    self._orchestration_spans[instance_id] = (span, orch_trace_ctx)
                 tracing.detach_orchestration_tokens(tokens)
 
             res = pb.OrchestratorResponse(

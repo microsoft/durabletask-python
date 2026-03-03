@@ -1315,13 +1315,14 @@ class TestOrchestrationSpanLifecycle:
         assert ptc.traceParent != ""
 
         # Dispatch 2: activity completes
+        activity_name = task.get_name(dummy_activity)
         w._execute_orchestrator(pb.OrchestratorRequest(
             instanceId=TEST_INSTANCE_ID,
             pastEvents=[
                 helpers.new_orchestrator_started_event(schedule_time),
                 helpers.new_execution_started_event(
                     name, TEST_INSTANCE_ID, encoded_input=None),
-                helpers.new_task_scheduled_event(1, name),
+                helpers.new_task_scheduled_event(1, activity_name),
             ],
             newEvents=[
                 helpers.new_orchestrator_started_event(complete_time),
