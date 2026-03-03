@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ADDED
 
 - Added `durabletask.testing` module with `InMemoryOrchestrationBackend` for testing orchestrations without a sidecar process
+- Improved distributed tracing support with full span coverage for orchestrations, activities, sub-orchestrations, timers, and events
 
 FIXED:
 
@@ -20,7 +21,6 @@ FIXED:
 ADDED
 
 - Allow entities with custom names
-- Support linking orchestrations to activities/entities/sub-orchestrators for distributed tracing with `opentelemetry-api` as an optional requirement.
 
 CHANGED
 

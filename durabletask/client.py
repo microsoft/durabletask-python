@@ -170,21 +170,26 @@ class TaskHubGrpcClient:
                                    version: Optional[str] = None) -> str:
 
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
+        resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
+        resolved_version = version if version else self.default_version
 
-        req = pb.CreateInstanceRequest(
-            name=name,
-            instanceId=instance_id if instance_id else uuid.uuid4().hex,
-            input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
-            scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
-            version=helpers.get_string_value(version if version else self.default_version),
-            orchestrationIdReusePolicy=reuse_id_policy,
-            tags=tags,
-            parentTraceContext=tracing.get_current_trace_context(),
-        )
+        with tracing.start_create_orchestration_span(
+            name, resolved_instance_id, version=resolved_version,
+        ):
+            req = pb.CreateInstanceRequest(
+                name=name,
+                instanceId=resolved_instance_id,
+                input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
+                scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
+                version=helpers.get_string_value(resolved_version),
+                orchestrationIdReusePolicy=reuse_id_policy,
+                tags=tags,
+                parentTraceContext=tracing.get_current_trace_context(),
+            )
 
-        self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
-        res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
-        return res.instanceId
+            self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
+            res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
+            return res.instanceId
 
     def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
@@ -271,14 +276,15 @@ class TaskHubGrpcClient:
 
     def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                   data: Optional[Any] = None):
-        req = pb.RaiseEventRequest(
-            instanceId=instance_id,
-            name=event_name,
-            input=helpers.get_string_value(shared.to_json(data) if data is not None else None)
-        )
+        with tracing.start_raise_event_span(event_name, instance_id):
+            req = pb.RaiseEventRequest(
+                instanceId=instance_id,
+                name=event_name,
+                input=helpers.get_string_value(shared.to_json(data) if data is not None else None)
+            )
 
-        self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
-        self._stub.RaiseEvent(req)
+            self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+            self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self, instance_id: str, *,
                                 output: Optional[Any] = None,

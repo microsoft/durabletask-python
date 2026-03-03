@@ -401,3 +401,302 @@ class TestOtelNotAvailable:
         """set_span_error should be a no-op when OTel is not available."""
         with patch.object(tracing, '_OTEL_AVAILABLE', False):
             tracing.set_span_error(None, ValueError("test"))  # should not raise
+
+    def test_start_orchestration_span_without_otel(self):
+        """start_orchestration_span returns all-None tuple when OTel unavailable."""
+        with patch.object(tracing, '_OTEL_AVAILABLE', False):
+            span, tokens, span_id, start_time = tracing.start_orchestration_span(
+                "test_orch", "inst1",
+            )
+        assert span is None
+        assert tokens is None
+        assert span_id is None
+        assert start_time is None
+
+    def test_end_orchestration_span_without_otel(self):
+        """end_orchestration_span is a no-op when OTel is unavailable."""
+        with patch.object(tracing, '_OTEL_AVAILABLE', False):
+            tracing.end_orchestration_span(None, None, True, False)
+
+    def test_emit_activity_schedule_span_without_otel(self):
+        """emit_activity_schedule_span is a no-op when OTel is unavailable."""
+        with patch.object(tracing, '_OTEL_AVAILABLE', False):
+            tracing.emit_activity_schedule_span("act", "inst1", 1)
+
+    def test_emit_timer_span_without_otel(self):
+        """emit_timer_span is a no-op when OTel is unavailable."""
+        from datetime import datetime, timezone
+        with patch.object(tracing, '_OTEL_AVAILABLE', False):
+            tracing.emit_timer_span("orch", "inst1", 1, datetime.now(timezone.utc))
+
+    def test_start_create_orchestration_span_without_otel(self):
+        """start_create_orchestration_span yields None when OTel unavailable."""
+        with patch.object(tracing, '_OTEL_AVAILABLE', False):
+            with tracing.start_create_orchestration_span("orch", "inst1") as span:
+                assert span is None
+
+    def test_start_raise_event_span_without_otel(self):
+        """start_raise_event_span yields None when OTel unavailable."""
+        with patch.object(tracing, '_OTEL_AVAILABLE', False):
+            with tracing.start_raise_event_span("evt", "inst1") as span:
+                assert span is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for span naming helpers
+# ---------------------------------------------------------------------------
+
+
+class TestSpanNaming:
+    """Tests for create_span_name and create_timer_span_name."""
+
+    def test_create_span_name_without_version(self):
+        assert tracing.create_span_name("orchestration", "MyOrch") == "orchestration:MyOrch"
+
+    def test_create_span_name_with_version(self):
+        assert tracing.create_span_name("activity", "Say", "1.0") == "activity:Say@(1.0)"
+
+    def test_create_timer_span_name(self):
+        assert tracing.create_timer_span_name("MyOrch") == "orchestration:MyOrch:timer"
+
+
+# ---------------------------------------------------------------------------
+# Tests for schema attribute constants
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaConstants:
+    """Tests that schema constants match expected names."""
+
+    def test_attribute_keys_defined(self):
+        assert tracing.ATTR_TASK_TYPE == "durabletask.type"
+        assert tracing.ATTR_TASK_NAME == "durabletask.task.name"
+        assert tracing.ATTR_TASK_VERSION == "durabletask.task.version"
+        assert tracing.ATTR_TASK_INSTANCE_ID == "durabletask.task.instance_id"
+        assert tracing.ATTR_TASK_EXECUTION_ID == "durabletask.task.execution_id"
+        assert tracing.ATTR_TASK_STATUS == "durabletask.task.status"
+        assert tracing.ATTR_TASK_TASK_ID == "durabletask.task.task_id"
+        assert tracing.ATTR_EVENT_TARGET_INSTANCE_ID == "durabletask.event.target_instance_id"
+        assert tracing.ATTR_FIRE_AT == "durabletask.fire_at"
+
+
+# ---------------------------------------------------------------------------
+# Tests for Producer / Client / Server span creation
+# ---------------------------------------------------------------------------
+
+
+class TestCreateOrchestrationSpan:
+    """Tests for start_create_orchestration_span (Producer span)."""
+
+    def test_creates_producer_span(self, otel_setup: InMemorySpanExporter):
+        """Should create a Producer span for create_orchestration."""
+        with tracing.start_create_orchestration_span("MyOrch", "inst-123") as span:
+            assert span is not None
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "create_orchestration:MyOrch"
+        assert s.kind == trace.SpanKind.PRODUCER
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "orchestration"
+        assert s.attributes[tracing.ATTR_TASK_NAME] == "MyOrch"
+        assert s.attributes[tracing.ATTR_TASK_INSTANCE_ID] == "inst-123"
+
+    def test_creates_producer_span_with_version(self, otel_setup: InMemorySpanExporter):
+        with tracing.start_create_orchestration_span("MyOrch", "inst-123", version="2.0"):
+            pass
+
+        spans = otel_setup.get_finished_spans()
+        assert spans[0].name == "create_orchestration:MyOrch@(2.0)"
+        assert spans[0].attributes[tracing.ATTR_TASK_VERSION] == "2.0"
+
+    def test_trace_context_injected_inside_producer_span(self, otel_setup: InMemorySpanExporter):
+        """Inside the producer span, get_current_trace_context should capture producer span ctx."""
+        with tracing.start_create_orchestration_span("Orch", "inst"):
+            ctx = tracing.get_current_trace_context()
+        assert ctx is not None
+        assert ctx.traceParent != ""
+
+
+class TestRaiseEventSpan:
+    """Tests for start_raise_event_span (Producer span)."""
+
+    def test_creates_producer_span(self, otel_setup: InMemorySpanExporter):
+        with tracing.start_raise_event_span("MyEvent", "inst-456") as span:
+            assert span is not None
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "orchestration_event:MyEvent"
+        assert s.kind == trace.SpanKind.PRODUCER
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "event"
+        assert s.attributes[tracing.ATTR_TASK_NAME] == "MyEvent"
+        assert s.attributes[tracing.ATTR_EVENT_TARGET_INSTANCE_ID] == "inst-456"
+
+
+class TestOrchestrationServerSpan:
+    """Tests for start_orchestration_span and end_orchestration_span."""
+
+    def test_creates_server_span(self, otel_setup: InMemorySpanExporter):
+        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=traceparent,
+            spanID="b7ad6b7169203331",
+        )
+        span, tokens, span_id, start_time_ns = tracing.start_orchestration_span(
+            "MyOrch", "inst-100", parent_trace_context=parent_ctx,
+        )
+        assert span is not None
+        assert span_id is not None
+        assert len(span_id) == 16
+
+        tracing.end_orchestration_span(span, tokens, True, False)
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "orchestration:MyOrch"
+        assert s.kind == trace.SpanKind.SERVER
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "orchestration"
+        assert s.attributes[tracing.ATTR_TASK_NAME] == "MyOrch"
+        assert s.attributes[tracing.ATTR_TASK_INSTANCE_ID] == "inst-100"
+        assert s.attributes[tracing.ATTR_TASK_STATUS] == "Completed"
+
+    def test_server_span_failure(self, otel_setup: InMemorySpanExporter):
+        span, tokens, span_id, _ = tracing.start_orchestration_span(
+            "FailOrch", "inst-200",
+        )
+        tracing.end_orchestration_span(span, tokens, True, True, "boom")
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == StatusCode.ERROR
+        assert spans[0].attributes[tracing.ATTR_TASK_STATUS] == "Failed"
+
+    def test_server_span_not_complete(self, otel_setup: InMemorySpanExporter):
+        """Span without completion should not set status attribute."""
+        span, tokens, _, _ = tracing.start_orchestration_span("PendingOrch", "inst-300")
+        tracing.end_orchestration_span(span, tokens, False, False)
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        assert tracing.ATTR_TASK_STATUS not in spans[0].attributes
+
+
+# ---------------------------------------------------------------------------
+# Tests for emit-and-close spans (Client / Internal)
+# ---------------------------------------------------------------------------
+
+
+class TestEmitActivityScheduleSpan:
+    """Tests for emit_activity_schedule_span and emit_activity_schedule_span_failed."""
+
+    def test_emits_client_span(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_activity_schedule_span("SayHello", "inst-1", 42)
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "activity:SayHello"
+        assert s.kind == trace.SpanKind.CLIENT
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "activity"
+        assert s.attributes[tracing.ATTR_TASK_NAME] == "SayHello"
+        assert s.attributes[tracing.ATTR_TASK_TASK_ID] == "42"
+
+    def test_emits_failed_client_span(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_activity_schedule_span_failed("SayHello", "inst-1", 42, "oops")
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == StatusCode.ERROR
+
+    def test_emits_span_with_version(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_activity_schedule_span("Act", "inst-1", 1, version="3.0")
+        spans = otel_setup.get_finished_spans()
+        assert spans[0].name == "activity:Act@(3.0)"
+        assert spans[0].attributes[tracing.ATTR_TASK_VERSION] == "3.0"
+
+
+class TestEmitSubOrchestrationScheduleSpan:
+    """Tests for emit_sub_orchestration_schedule_span."""
+
+    def test_emits_client_span(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_sub_orchestration_schedule_span("SubOrch", "sub-inst-1")
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "orchestration:SubOrch"
+        assert s.kind == trace.SpanKind.CLIENT
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "orchestration"
+
+    def test_emits_failed_client_span(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_sub_orchestration_schedule_span_failed("SubOrch", "sub-inst-1", "failed")
+        spans = otel_setup.get_finished_spans()
+        assert spans[0].status.status_code == StatusCode.ERROR
+
+
+class TestEmitTimerSpan:
+    """Tests for emit_timer_span."""
+
+    def test_emits_internal_span(self, otel_setup: InMemorySpanExporter):
+        from datetime import datetime, timezone
+        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        tracing.emit_timer_span("MyOrch", "inst-1", 5, fire_at)
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "orchestration:MyOrch:timer"
+        assert s.kind == trace.SpanKind.INTERNAL
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "timer"
+        assert s.attributes[tracing.ATTR_FIRE_AT] == fire_at.isoformat()
+        assert s.attributes[tracing.ATTR_TASK_TASK_ID] == "5"
+
+
+class TestEmitEventRaisedSpan:
+    """Tests for emit_event_raised_span."""
+
+    def test_emits_producer_span(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_event_raised_span("approval", "inst-1", target_instance_id="inst-2")
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "orchestration_event:approval"
+        assert s.kind == trace.SpanKind.PRODUCER
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "event"
+        assert s.attributes[tracing.ATTR_EVENT_TARGET_INSTANCE_ID] == "inst-2"
+
+    def test_emits_span_without_target(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_event_raised_span("approval", "inst-1")
+
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        assert tracing.ATTR_EVENT_TARGET_INSTANCE_ID not in spans[0].attributes
+
+
+# ---------------------------------------------------------------------------
+# Tests for build_orchestration_trace_context
+# ---------------------------------------------------------------------------
+
+
+class TestBuildOrchestrationTraceContext:
+    """Tests for build_orchestration_trace_context."""
+
+    def test_returns_none_when_span_id_none(self):
+        result = tracing.build_orchestration_trace_context(None, None)
+        assert result is None
+
+    def test_builds_context_with_span_id(self):
+        result = tracing.build_orchestration_trace_context("abc123def456", None)
+        assert result is not None
+        assert result.spanID.value == "abc123def456"
+
+    def test_builds_context_with_start_time(self):
+        start_time_ns = 1704067200000000000  # 2024-01-01T00:00:00Z
+        result = tracing.build_orchestration_trace_context("abc123", start_time_ns)
+        assert result is not None
+        assert result.spanStartTime.seconds == 1704067200
+        assert result.spanStartTime.nanos == 0

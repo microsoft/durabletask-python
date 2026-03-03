@@ -634,17 +634,58 @@ class TaskHubGrpcWorker:
             stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
             completionToken,
     ):
+        # Extract parent trace context from executionStarted event in old or new events
+        parent_trace_ctx = None
+        orchestration_name = "<unknown>"
+        for e in list(req.pastEvents) + list(req.newEvents):
+            if e.HasField("executionStarted"):
+                orchestration_name = e.executionStarted.name
+                if e.executionStarted.HasField("parentTraceContext"):
+                    parent_trace_ctx = e.executionStarted.parentTraceContext
+                break
+
+        # Start the orchestration Server span
+        span, tokens, span_id, start_time_ns = tracing.start_orchestration_span(
+            orchestration_name,
+            req.instanceId,
+            parent_trace_context=parent_trace_ctx,
+            orchestration_trace_context=req.orchestrationTraceContext if req.HasField("orchestrationTraceContext") else None,
+        )
+
         try:
             executor = _OrchestrationExecutor(self._registry, self._logger)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
+
+            # Determine completion status for span
+            is_complete = False
+            is_failed = False
+            failure_details = None
+            for action in result.actions:
+                if action.HasField("completeOrchestration"):
+                    is_complete = True
+                    orch_status = action.completeOrchestration.orchestrationStatus
+                    if orch_status == pb.ORCHESTRATION_STATUS_FAILED:
+                        is_failed = True
+                        failure_details = action.completeOrchestration.failureDetails
+
+            tracing.end_orchestration_span(
+                span, tokens, is_complete, is_failed, failure_details,
+            )
+
+            # Build orchestration trace context for sidecar
+            orch_trace_ctx = tracing.build_orchestration_trace_context(
+                span_id, start_time_ns,
+            )
+
             res = pb.OrchestratorResponse(
                 instanceId=req.instanceId,
                 actions=result.actions,
                 customStatus=ph.get_string_value(result.encoded_custom_status),
                 completionToken=completionToken,
-                orchestrationTraceContext=req.orchestrationTraceContext,
+                orchestrationTraceContext=orch_trace_ctx if orch_trace_ctx else req.orchestrationTraceContext,
             )
         except pe.AbandonOrchestrationError:
+            tracing.end_orchestration_span(span, tokens, False, False)
             self._logger.info(
                 f"Abandoning orchestration. InstanceId = '{req.instanceId}'. Completion token = '{completionToken}'"
             )
@@ -655,6 +696,8 @@ class TaskHubGrpcWorker:
             )
             return
         except Exception as ex:
+            tracing.set_span_error(span, ex)
+            tracing.end_orchestration_span(span, tokens, True, True, ex)
             self._logger.exception(
                 f"An error occurred while trying to execute instance '{req.instanceId}': {ex}"
             )
@@ -700,11 +743,15 @@ class TaskHubGrpcWorker:
         try:
             executor = _ActivityExecutor(self._registry, self._logger)
             with tracing.start_span(
-                f"activity:{req.name}",
+                tracing.create_span_name("activity", req.name),
                 trace_context=req.parentTraceContext,
-                attributes={"durabletask.task.instance_id": instance_id,
-                            "durabletask.task.name": req.name,
-                            "durabletask.task.task_id": str(req.taskId)},
+                kind=tracing.SpanKind.SERVER,
+                attributes={
+                    tracing.ATTR_TASK_TYPE: "activity",
+                    tracing.ATTR_TASK_INSTANCE_ID: instance_id,
+                    tracing.ATTR_TASK_NAME: req.name,
+                    tracing.ATTR_TASK_TASK_ID: str(req.taskId),
+                },
             ) as span:
                 try:
                     result = executor.execute(
@@ -776,11 +823,15 @@ class TaskHubGrpcWorker:
             op_trace_ctx = operation.traceContext if operation.HasField("traceContext") else None
 
             with tracing.start_span(
-                f"entity:{entity_instance_id.entity}:{operation.operation}",
+                tracing.create_span_name("entity", f"{entity_instance_id.entity}:{operation.operation}"),
                 trace_context=op_trace_ctx,
-                attributes={"durabletask.entity.instance_id": instance_id,
-                            "durabletask.entity.name": entity_instance_id.entity,
-                            "durabletask.entity.operation": operation.operation},
+                kind=tracing.SpanKind.SERVER,
+                attributes={
+                    tracing.ATTR_TASK_TYPE: "entity",
+                    tracing.ATTR_TASK_INSTANCE_ID: instance_id,
+                    tracing.ATTR_TASK_NAME: entity_instance_id.entity,
+                    "durabletask.entity.operation": operation.operation,
+                },
             ) as span:
                 try:
                     entity_result = executor.execute(
@@ -1321,6 +1372,12 @@ class _OrchestrationExecutor:
         self._logger = logger
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
+        # Maps task_id -> (name, version) for activity tasks
+        self._scheduled_task_names: dict[int, tuple[str, Optional[str]]] = {}
+        # Maps task_id -> (name, instance_id, version) for sub orchestrations
+        self._scheduled_sub_orch_names: dict[int, tuple[str, str, Optional[str]]] = {}
+        # Maps timer_id -> fire_at datetime
+        self._timer_fire_at: dict[int, datetime] = {}
 
     def execute(
             self,
@@ -1332,6 +1389,7 @@ class _OrchestrationExecutor:
         orchestration_started_events = [e for e in old_events if e.HasField("executionStarted")]
         if len(orchestration_started_events) >= 1:
             orchestration_name = orchestration_started_events[0].executionStarted.name
+        self._orchestration_name = orchestration_name
 
         self._logger.debug(
             f"{instance_id}: Beginning replay for orchestrator {orchestration_name}..."
@@ -1472,6 +1530,9 @@ class _OrchestrationExecutor:
                     raise _get_wrong_action_type_error(
                         timer_id, expected_method_name, action
                     )
+                # Track timer fire_at for span emission
+                if action.createTimer.HasField("fireAt"):
+                    self._timer_fire_at[timer_id] = action.createTimer.fireAt.ToDatetime()
             elif event.HasField("timerFired"):
                 timer_id = event.timerFired.timerId
                 timer_task = ctx._pending_tasks.pop(timer_id, None)
@@ -1482,6 +1543,13 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
                         )
                     return
+                # Emit timer span
+                fire_at = self._timer_fire_at.get(timer_id)
+                if fire_at is not None:
+                    tracing.emit_timer_span(
+                        self._orchestration_name, ctx.instance_id,
+                        timer_id, fire_at,
+                    )
                 timer_task.complete(None)
                 if timer_task._retryable_parent is not None:
                     activity_action = timer_task._retryable_parent._action
@@ -1525,6 +1593,8 @@ class _OrchestrationExecutor:
                         expected_task_name=event.taskScheduled.name,
                         actual_task_name=action.scheduleTask.name,
                     )
+                # Track the scheduled task name for Client span emission
+                self._scheduled_task_names[task_id] = (event.taskScheduled.name, None)
             elif event.HasField("taskCompleted"):
                 # This history event contains the result of a completed activity task.
                 task_id = event.taskCompleted.taskScheduledId
@@ -1536,6 +1606,12 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected taskCompleted event with ID = {task_id}."
                         )
                     return
+                # Emit Client span for the completed activity
+                task_info = self._scheduled_task_names.get(task_id)
+                if task_info:
+                    tracing.emit_activity_schedule_span(
+                        task_info[0], ctx.instance_id, task_id, version=task_info[1],
+                    )
                 result = None
                 if not ph.is_empty(event.taskCompleted.result):
                     result = shared.from_json(event.taskCompleted.result.value)
@@ -1551,6 +1627,15 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected taskFailed event with ID = {task_id}."
                         )
                     return
+
+                # Emit Client span for the failed activity
+                task_info = self._scheduled_task_names.get(task_id)
+                if task_info:
+                    tracing.emit_activity_schedule_span_failed(
+                        task_info[0], ctx.instance_id, task_id,
+                        event.taskFailed.failureDetails.errorMessage,
+                        version=task_info[1],
+                    )
 
                 if isinstance(activity_task, task.RetryableTask):
                     if activity_task._retry_policy is not None:
@@ -1595,6 +1680,11 @@ class _OrchestrationExecutor:
                         expected_task_name=event.subOrchestrationInstanceCreated.name,
                         actual_task_name=action.createSubOrchestration.name,
                     )
+                # Track the sub-orchestration name for Client span emission
+                sub_orch_instance_id = action.createSubOrchestration.instanceId
+                self._scheduled_sub_orch_names[task_id] = (
+                    event.subOrchestrationInstanceCreated.name, sub_orch_instance_id, None,
+                )
             elif event.HasField("subOrchestrationInstanceCompleted"):
                 task_id = event.subOrchestrationInstanceCompleted.taskScheduledId
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
@@ -1605,6 +1695,12 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceCompleted event with ID = {task_id}."
                         )
                     return
+                # Emit Client span for the completed sub-orchestration
+                sub_orch_info = self._scheduled_sub_orch_names.get(task_id)
+                if sub_orch_info:
+                    tracing.emit_sub_orchestration_schedule_span(
+                        sub_orch_info[0], sub_orch_info[1], version=sub_orch_info[2],
+                    )
                 result = None
                 if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
                     result = shared.from_json(
@@ -1623,6 +1719,14 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceFailed event with ID = {task_id}."
                         )
                     return
+                # Emit Client span for the failed sub-orchestration
+                sub_orch_info = self._scheduled_sub_orch_names.get(task_id)
+                if sub_orch_info:
+                    tracing.emit_sub_orchestration_schedule_span_failed(
+                        sub_orch_info[0], sub_orch_info[1],
+                        failedEvent.failureDetails.errorMessage,
+                        version=sub_orch_info[2],
+                    )
                 if isinstance(sub_orch_task, task.RetryableTask):
                     if sub_orch_task._retry_policy is not None:
                         next_delay = sub_orch_task.compute_next_delay()
