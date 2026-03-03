@@ -32,6 +32,7 @@ import durabletask.internal.exceptions as pe
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
+import durabletask.internal.tracing as tracing
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
@@ -641,6 +642,7 @@ class TaskHubGrpcWorker:
                 actions=result.actions,
                 customStatus=ph.get_string_value(result.encoded_custom_status),
                 completionToken=completionToken,
+                orchestrationTraceContext=req.orchestrationTraceContext,
             )
         except pe.AbandonOrchestrationError:
             self._logger.info(
@@ -697,9 +699,20 @@ class TaskHubGrpcWorker:
         instance_id = req.orchestrationInstance.instanceId
         try:
             executor = _ActivityExecutor(self._registry, self._logger)
-            result = executor.execute(
-                instance_id, req.name, req.taskId, req.input.value
-            )
+            with tracing.start_span(
+                f"activity:{req.name}",
+                trace_context=req.parentTraceContext,
+                attributes={"durabletask.task.instance_id": instance_id,
+                            "durabletask.task.name": req.name,
+                            "durabletask.task.task_id": str(req.taskId)},
+            ) as span:
+                try:
+                    result = executor.execute(
+                        instance_id, req.name, req.taskId, req.input.value
+                    )
+                except Exception as ex:
+                    tracing.set_span_error(span, ex)
+                    raise
             res = pb.ActivityResponse(
                 instanceId=instance_id,
                 taskId=req.taskId,
@@ -759,30 +772,41 @@ class TaskHubGrpcWorker:
 
             operation_result = None
 
-            try:
-                entity_result = executor.execute(
-                    instance_id, entity_instance_id, operation.operation, entity_state, operation.input.value
-                )
+            # Get the trace context for this operation, if available
+            op_trace_ctx = operation.traceContext if operation.HasField("traceContext") else None
 
-                entity_result = ph.get_string_value_or_empty(entity_result)
-                operation_result = pb.OperationResult(success=pb.OperationResultSuccess(
-                    result=entity_result,
-                    startTimeUtc=new_timestamp(start_time),
-                    endTimeUtc=new_timestamp(datetime.now(timezone.utc))
-                ))
-                results.append(operation_result)
+            with tracing.start_span(
+                f"entity:{entity_instance_id.entity}:{operation.operation}",
+                trace_context=op_trace_ctx,
+                attributes={"durabletask.entity.instance_id": instance_id,
+                            "durabletask.entity.name": entity_instance_id.entity,
+                            "durabletask.entity.operation": operation.operation},
+            ) as span:
+                try:
+                    entity_result = executor.execute(
+                        instance_id, entity_instance_id, operation.operation, entity_state, operation.input.value
+                    )
 
-                entity_state.commit()
-            except Exception as ex:
-                self._logger.exception(ex)
-                operation_result = pb.OperationResult(failure=pb.OperationResultFailure(
-                    failureDetails=ph.new_failure_details(ex),
-                    startTimeUtc=new_timestamp(start_time),
-                    endTimeUtc=new_timestamp(datetime.now(timezone.utc))
-                ))
-                results.append(operation_result)
+                    entity_result = ph.get_string_value_or_empty(entity_result)
+                    operation_result = pb.OperationResult(success=pb.OperationResultSuccess(
+                        result=entity_result,
+                        startTimeUtc=new_timestamp(start_time),
+                        endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                    ))
+                    results.append(operation_result)
 
-                entity_state.rollback()
+                    entity_state.commit()
+                except Exception as ex:
+                    tracing.set_span_error(span, ex)
+                    self._logger.exception(ex)
+                    operation_result = pb.OperationResult(failure=pb.OperationResultFailure(
+                        failureDetails=ph.new_failure_details(ex),
+                        startTimeUtc=new_timestamp(start_time),
+                        endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                    ))
+                    results.append(operation_result)
+
+                    entity_state.rollback()
 
         batch_result = pb.EntityBatchResult(
             results=results,
@@ -847,6 +871,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._new_input: Optional[Any] = None
         self._save_events = False
         self._encoded_custom_status: Optional[str] = None
+        self._parent_trace_context: Optional[pb.TraceContext] = None
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -1136,7 +1161,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 if isinstance(activity_function, str)
                 else task.get_name(activity_function)
             )
-            action = ph.new_schedule_task_action(id, name, encoded_input, tags)
+            action = ph.new_schedule_task_action(
+                id, name, encoded_input, tags,
+                parent_trace_context=self._parent_trace_context)
         else:
             if instance_id is None:
                 # Create a deteministic instance ID based on the parent instance ID
@@ -1144,7 +1171,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             if not isinstance(activity_function, str):
                 raise ValueError("Orchestrator function name must be a string")
             action = ph.new_create_sub_orchestration_action(
-                id, activity_function, instance_id, encoded_input, version
+                id, activity_function, instance_id, encoded_input, version,
+                parent_trace_context=self._parent_trace_context
             )
         self._pending_actions[id] = action
 
@@ -1396,6 +1424,10 @@ class _OrchestrationExecutor:
 
                 if event.executionStarted.version:
                     ctx._version = event.executionStarted.version.value
+
+                # Store the parent trace context for propagation to child tasks
+                if event.executionStarted.HasField("parentTraceContext"):
+                    ctx._parent_trace_context = event.executionStarted.parentTraceContext
 
                 if self._registry.versioning:
                     version_failure = self.evaluate_orchestration_versioning(

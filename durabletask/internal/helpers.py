@@ -219,11 +219,13 @@ def new_create_timer_action(id: int, fire_at: datetime) -> pb.OrchestratorAction
 
 
 def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
-                             tags: Optional[dict[str, str]]) -> pb.OrchestratorAction:
+                             tags: Optional[dict[str, str]],
+                             parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, scheduleTask=pb.ScheduleTaskAction(
         name=name,
         input=get_string_value(encoded_input),
-        tags=tags
+        tags=tags,
+        parentTraceContext=parent_trace_context,
     ))
 
 
@@ -298,12 +300,14 @@ def new_create_sub_orchestration_action(
         name: str,
         instance_id: Optional[str],
         encoded_input: Optional[str],
-        version: Optional[str]) -> pb.OrchestratorAction:
+        version: Optional[str],
+        parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, createSubOrchestration=pb.CreateSubOrchestrationAction(
         name=name,
         instanceId=instance_id,
         input=get_string_value(encoded_input),
-        version=get_string_value(version)
+        version=get_string_value(version),
+        parentTraceContext=parent_trace_context,
     ))
 
 

@@ -16,6 +16,7 @@ import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
+import durabletask.internal.tracing as tracing
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 
@@ -177,7 +178,8 @@ class TaskHubGrpcClient:
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
             version=helpers.get_string_value(version if version else self.default_version),
             orchestrationIdReusePolicy=reuse_id_policy,
-            tags=tags
+            tags=tags,
+            parentTraceContext=tracing.get_current_trace_context(),
         )
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
@@ -355,7 +357,7 @@ class TaskHubGrpcClient:
             input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
             requestId=str(uuid.uuid4()),
             scheduledTime=None,
-            parentTraceContext=None,
+            parentTraceContext=tracing.get_current_trace_context(),
             requestTime=helpers.new_timestamp(datetime.now(timezone.utc))
         )
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
