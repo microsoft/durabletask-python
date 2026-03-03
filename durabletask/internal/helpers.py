@@ -26,12 +26,14 @@ def new_orchestrator_completed_event() -> pb.HistoryEvent:
 
 
 def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None,
-                                tags: Optional[dict[str, str]] = None) -> pb.HistoryEvent:
+                                tags: Optional[dict[str, str]] = None,
+                                version: Optional[str] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
         executionStarted=pb.ExecutionStartedEvent(
             name=name,
+            version=get_string_value(version),
             input=get_string_value(encoded_input),
             orchestrationInstance=pb.OrchestrationInstance(instanceId=instance_id),
             tags=tags))
@@ -85,12 +87,14 @@ def new_sub_orchestration_created_event(
         event_id: int,
         name: str,
         instance_id: str,
-        encoded_input: Optional[str] = None) -> pb.HistoryEvent:
+        encoded_input: Optional[str] = None,
+        version: Optional[str] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
         subOrchestrationInstanceCreated=pb.SubOrchestrationInstanceCreatedEvent(
             name=name,
+            version=get_string_value(version),
             input=get_string_value(encoded_input),
             instanceId=instance_id)
     )
