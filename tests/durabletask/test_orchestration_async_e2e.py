@@ -7,11 +7,18 @@ import json
 import pytest
 
 from durabletask import client, task, worker
+from durabletask.testing import create_test_backend
 
-# NOTE: These tests assume a sidecar process is running. Example command:
-#       go install github.com/microsoft/durabletask-go@main
-#       durabletask-go --port 4001
-pytestmark = pytest.mark.e2e
+HOST = "localhost:50060"
+
+
+@pytest.fixture(autouse=True)
+def backend():
+    """Create an in-memory backend for testing."""
+    b = create_test_backend(port=50060)
+    yield b
+    b.stop()
+    b.reset()
 
 
 @pytest.mark.asyncio
@@ -23,11 +30,11 @@ async def test_async_empty_orchestration():
         nonlocal invoked  # don't do this in a real app!
         invoked = True
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(empty_orchestrator)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(empty_orchestrator, tags={'Tagged': 'true'})
         state = await c.wait_for_orchestration_completion(id, timeout=30)
 
@@ -56,12 +63,12 @@ async def test_async_activity_sequence():
             numbers.append(current)
         return numbers
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(sequence)
         w.add_activity(plus_one)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(sequence, input=1)
         state = await c.wait_for_orchestration_completion(id, timeout=30)
 
@@ -82,11 +89,11 @@ async def test_async_wait_for_multiple_external_events():
         c = yield ctx.wait_for_external_event('C')
         return [a, b, c]
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(orchestrator)
         await c.raise_orchestration_event(id, 'A', data='a')
         await c.raise_orchestration_event(id, 'B', data='b')
@@ -104,11 +111,11 @@ async def test_async_suspend_and_resume():
         result = yield ctx.wait_for_external_event("my_event")
         return result
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(orchestrator)
         state = await c.wait_for_orchestration_start(id, timeout=30)
         assert state is not None
@@ -143,11 +150,11 @@ async def test_async_terminate():
         result = yield ctx.wait_for_external_event("my_event")
         return result
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(orchestrator)
         state = await c.wait_for_orchestration_start(id, timeout=30)
         assert state is not None
@@ -165,11 +172,11 @@ async def test_async_purge_orchestration():
     def orchestrator(ctx: task.OrchestrationContext, _):
         pass
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(orchestrator)
         await c.wait_for_orchestration_completion(id, timeout=30)
 
@@ -181,7 +188,6 @@ async def test_async_purge_orchestration():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
 async def test_async_restart_with_same_instance_id():
     def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_activity(say_hello, input="World")
@@ -190,12 +196,12 @@ async def test_async_restart_with_same_instance_id():
     def say_hello(ctx: task.ActivityContext, input: str):
         return f"Hello, {input}!"
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.add_activity(say_hello)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(orchestrator)
         state = await c.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
@@ -213,7 +219,6 @@ async def test_async_restart_with_same_instance_id():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="durabletask-go does not yet support RestartInstance")
 async def test_async_restart_with_new_instance_id():
     def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.call_activity(say_hello, input="World")
@@ -222,12 +227,12 @@ async def test_async_restart_with_new_instance_id():
     def say_hello(ctx: task.ActivityContext, input: str):
         return f"Hello, {input}!"
 
-    with worker.TaskHubGrpcWorker() as w:
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(orchestrator)
         w.add_activity(say_hello)
         w.start()
 
-        c = client.AsyncTaskHubGrpcClient()
+        c = client.AsyncTaskHubGrpcClient(host_address=HOST)
         id = await c.schedule_new_orchestration(orchestrator)
         state = await c.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None

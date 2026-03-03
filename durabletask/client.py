@@ -397,7 +397,7 @@ class AsyncTaskHubGrpcClient:
         )
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
-        self._logger = shared.get_logger("client", log_handler, log_formatter)
+        self._logger = shared.get_logger("async_client", log_handler, log_formatter)
         self.default_version = default_version
 
     async def close(self) -> None:
