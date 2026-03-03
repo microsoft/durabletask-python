@@ -15,6 +15,7 @@ that the rest of the SDK continues to work without any tracing overhead.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Optional
@@ -32,8 +33,8 @@ try:
     from opentelemetry import context as otel_context
     from opentelemetry import trace
     from opentelemetry.trace import (
-        SpanKind,
-        StatusCode,
+        SpanKind,  # type: ignore[no-redef]
+        StatusCode,  # type: ignore[no-redef]
     )
     from opentelemetry.trace.propagation.tracecontext import (
         TraceContextTextMapPropagator,
@@ -46,16 +47,16 @@ except ImportError:  # pragma: no cover
     # without guarding every reference with OTEL_AVAILABLE checks.
 
     class SpanKind:  # type: ignore[no-redef]
-        INTERNAL = None
-        CLIENT = None
-        SERVER = None
-        PRODUCER = None
-        CONSUMER = None
+        INTERNAL: Any = None
+        CLIENT: Any = None
+        SERVER: Any = None
+        PRODUCER: Any = None
+        CONSUMER: Any = None
 
     class StatusCode:  # type: ignore[no-redef]
-        OK = None
-        ERROR = None
-        UNSET = None
+        OK: Any = None
+        ERROR: Any = None
+        UNSET: Any = None
 
 # Re-export so callers can check without importing opentelemetry themselves.
 OTEL_AVAILABLE = _OTEL_AVAILABLE
@@ -107,6 +108,30 @@ def create_timer_span_name(orchestration_name: str) -> str:
 # Public helpers – extracting / injecting trace context
 # ---------------------------------------------------------------------------
 
+
+def _trace_context_from_carrier(carrier: dict[str, str]) -> Optional[pb.TraceContext]:
+    """Build a ``TraceContext`` protobuf from a W3C propagation carrier.
+
+    Returns ``None`` when the carrier does not contain a valid
+    ``traceparent`` header.
+    """
+    traceparent = carrier.get("traceparent")
+    if not traceparent:
+        return None
+
+    tracestate = carrier.get("tracestate")
+    # Format: 00-<trace-id>-<span-id>-<flags>
+    parts = traceparent.split("-")
+    span_id = parts[2] if len(parts) >= 4 else ""
+
+    return pb.TraceContext(
+        traceParent=traceparent,
+        spanID=span_id,
+        traceState=wrappers_pb2.StringValue(value=tracestate)
+        if tracestate else None,
+    )
+
+
 def get_current_trace_context() -> Optional[pb.TraceContext]:
     """Capture the current OpenTelemetry span context as a protobuf ``TraceContext``.
 
@@ -119,26 +144,10 @@ def get_current_trace_context() -> Optional[pb.TraceContext]:
     propagator = TraceContextTextMapPropagator()
     carrier: dict[str, str] = {}
     propagator.inject(carrier)
-
-    traceparent = carrier.get("traceparent")
-    if not traceparent:
-        return None
-
-    tracestate = carrier.get("tracestate")
-
-    # Extract the span ID from the traceparent header.
-    # Format: 00-<trace-id>-<span-id>-<flags>
-    parts = traceparent.split("-")
-    span_id = parts[2] if len(parts) >= 4 else ""
-
-    return pb.TraceContext(
-        traceParent=traceparent,
-        spanID=span_id,
-        traceState=wrappers_pb2.StringValue(value=tracestate) if tracestate else None,
-    )
+    return _trace_context_from_carrier(carrier)
 
 
-def extract_trace_context(proto_ctx: Optional[pb.TraceContext]) -> Optional[object]:
+def extract_trace_context(proto_ctx: Optional[pb.TraceContext]) -> Optional[Any]:
     """Convert a protobuf ``TraceContext`` into an OpenTelemetry ``Context``.
 
     Returns ``None`` when OpenTelemetry is not installed or the supplied
@@ -164,7 +173,7 @@ def extract_trace_context(proto_ctx: Optional[pb.TraceContext]) -> Optional[obje
 def start_span(
     name: str,
     trace_context: Optional[pb.TraceContext] = None,
-    kind: Optional[object] = None,
+    kind: Any = None,
     attributes: Optional[dict[str, str]] = None,
 ):
     """Context manager that starts an OpenTelemetry span linked to a parent trace context.
@@ -219,13 +228,6 @@ def set_span_error(span: Any, ex: Exception) -> None:
     span.record_exception(ex)
 
 
-def set_span_status_completed(span: Any) -> None:
-    """Mark the span with ``durabletask.task.status`` = ``Completed``."""
-    if not _OTEL_AVAILABLE or span is None:
-        return
-    span.set_attribute(ATTR_TASK_STATUS, "Completed")
-
-
 # ---------------------------------------------------------------------------
 # Orchestration-level span helpers
 # ---------------------------------------------------------------------------
@@ -262,12 +264,15 @@ def start_orchestration_span(
     tracer = trace.get_tracer(_TRACER_NAME)
     parent_ctx = extract_trace_context(parent_trace_context)
 
-    # Determine start time from orchestration trace context (replay)
+    # Determine start time: prefer the value persisted in the
+    # OrchestrationTraceContext (replay / cross-worker), otherwise
+    # capture "now" so the value can be fed back to the sidecar.
     start_time_ns: Optional[int] = None
-    has_start_time = (orchestration_trace_context is not None and orchestration_trace_context.HasField("spanStartTime"))
-    if has_start_time:
+    if orchestration_trace_context is not None and orchestration_trace_context.HasField("spanStartTime"):
         start_dt = orchestration_trace_context.spanStartTime.ToDatetime()
         start_time_ns = int(start_dt.timestamp() * 1e9)
+    else:
+        start_time_ns = time.time_ns()
 
     token = None
     if parent_ctx is not None:
@@ -289,6 +294,33 @@ def start_orchestration_span(
     span_id_hex = format(span_ctx.span_id, '016x')
 
     return span, (token, span_token), span_id_hex, start_time_ns
+
+
+def reattach_orchestration_span(span: Any) -> Any:
+    """Re-attach a saved orchestration span as the current span.
+
+    Returns the context token that must be detached later.
+    Returns ``None`` when OTel is not available or *span* is ``None``.
+    """
+    if not _OTEL_AVAILABLE or span is None:
+        return None
+
+    ctx_with_span = trace.set_span_in_context(span)
+    return otel_context.attach(ctx_with_span)
+
+
+def detach_orchestration_tokens(tokens: Any) -> None:
+    """Detach context tokens without ending the span.
+
+    Use this on intermediate dispatches where the orchestration is not
+    yet complete so the span is kept alive for subsequent dispatches.
+    """
+    if tokens is None:
+        return
+    parent_token, span_token = tokens
+    otel_context.detach(span_token)
+    if parent_token is not None:
+        otel_context.detach(parent_token)
 
 
 def end_orchestration_span(
@@ -318,39 +350,41 @@ def end_orchestration_span(
 
     span.end()
 
-    # Detach context tokens in reverse order
-    if tokens is not None:
-        parent_token, span_token = tokens
-        otel_context.detach(span_token)
-        if parent_token is not None:
-            otel_context.detach(parent_token)
+    detach_orchestration_tokens(tokens)
 
 
 # ---------------------------------------------------------------------------
-# Scheduling-side Client / Producer span helpers (emit-and-close)
+# CLIENT span helpers (create / end)
 # ---------------------------------------------------------------------------
 
-def emit_activity_schedule_span(
-    activity_name: str,
+
+def create_client_span_context(
+    task_type: str,
+    name: str,
     instance_id: str,
-    task_id: int,
+    task_id: Optional[int] = None,
     version: Optional[str] = None,
-) -> None:
-    """Emit a Client span for a scheduled activity (emit-and-close pattern).
+) -> Optional[tuple[pb.TraceContext, Any]]:
+    """Create a CLIENT span and return its trace context for propagation.
 
-    Called during orchestration replay when a ``taskCompleted`` or
-    ``taskFailed`` event is processed.
+    The span is **not** ended here — the caller must keep a reference
+    and call :func:`end_client_span` when the downstream task completes
+    so the CLIENT span captures the full scheduling-to-completion duration.
+
+    Returns a ``(TraceContext, span)`` tuple, or ``None`` when
+    OpenTelemetry is not installed.
     """
     if not _OTEL_AVAILABLE:
-        return
+        return None
 
-    span_name = create_span_name("activity", activity_name, version)
+    span_name = create_span_name(task_type, name, version)
     attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "activity",
-        ATTR_TASK_NAME: activity_name,
+        ATTR_TASK_TYPE: task_type,
+        ATTR_TASK_NAME: name,
         ATTR_TASK_INSTANCE_ID: instance_id,
-        ATTR_TASK_TASK_ID: str(task_id),
     }
+    if task_id is not None:
+        attrs[ATTR_TASK_TASK_ID] = str(task_id)
     if version:
         attrs[ATTR_TASK_VERSION] = version
 
@@ -360,93 +394,35 @@ def emit_activity_schedule_span(
         kind=SpanKind.CLIENT,
         attributes=attrs,
     )
-    span.end()
+
+    # Capture the trace context with this CLIENT span as the current span,
+    # so that the downstream SERVER span is parented by this CLIENT span.
+    ctx = trace.set_span_in_context(span)
+    propagator = TraceContextTextMapPropagator()
+    carrier: dict[str, str] = {}
+    propagator.inject(carrier, context=ctx)
+
+    trace_ctx = _trace_context_from_carrier(carrier)
+    if trace_ctx is None:
+        span.end()
+        return None
+
+    return trace_ctx, span
 
 
-def emit_activity_schedule_span_failed(
-    activity_name: str,
-    instance_id: str,
-    task_id: int,
-    error_message: str,
-    version: Optional[str] = None,
+def end_client_span(
+    span,
+    is_error: bool = False,
+    error_message: Optional[str] = None,
 ) -> None:
-    """Emit a Client span for a failed activity (emit-and-close pattern)."""
-    if not _OTEL_AVAILABLE:
+    """End a CLIENT span previously created by :func:`create_client_span_context`.
+
+    If *is_error* is ``True`` the span status is set to ERROR before closing.
+    """
+    if span is None or not _OTEL_AVAILABLE:
         return
-
-    span_name = create_span_name("activity", activity_name, version)
-    attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "activity",
-        ATTR_TASK_NAME: activity_name,
-        ATTR_TASK_INSTANCE_ID: instance_id,
-        ATTR_TASK_TASK_ID: str(task_id),
-    }
-    if version:
-        attrs[ATTR_TASK_VERSION] = version
-
-    tracer = trace.get_tracer(_TRACER_NAME)
-    span = tracer.start_span(
-        span_name,
-        kind=SpanKind.CLIENT,
-        attributes=attrs,
-    )
-    span.set_status(StatusCode.ERROR, error_message)
-    span.end()
-
-
-def emit_sub_orchestration_schedule_span(
-    sub_orchestration_name: str,
-    instance_id: str,
-    version: Optional[str] = None,
-) -> None:
-    """Emit a Client span for a scheduled sub-orchestration (emit-and-close)."""
-    if not _OTEL_AVAILABLE:
-        return
-
-    span_name = create_span_name("orchestration", sub_orchestration_name, version)
-    attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "orchestration",
-        ATTR_TASK_NAME: sub_orchestration_name,
-        ATTR_TASK_INSTANCE_ID: instance_id,
-    }
-    if version:
-        attrs[ATTR_TASK_VERSION] = version
-
-    tracer = trace.get_tracer(_TRACER_NAME)
-    span = tracer.start_span(
-        span_name,
-        kind=SpanKind.CLIENT,
-        attributes=attrs,
-    )
-    span.end()
-
-
-def emit_sub_orchestration_schedule_span_failed(
-    sub_orchestration_name: str,
-    instance_id: str,
-    error_message: str,
-    version: Optional[str] = None,
-) -> None:
-    """Emit a Client span for a failed sub-orchestration (emit-and-close)."""
-    if not _OTEL_AVAILABLE:
-        return
-
-    span_name = create_span_name("orchestration", sub_orchestration_name, version)
-    attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "orchestration",
-        ATTR_TASK_NAME: sub_orchestration_name,
-        ATTR_TASK_INSTANCE_ID: instance_id,
-    }
-    if version:
-        attrs[ATTR_TASK_VERSION] = version
-
-    tracer = trace.get_tracer(_TRACER_NAME)
-    span = tracer.start_span(
-        span_name,
-        kind=SpanKind.CLIENT,
-        attributes=attrs,
-    )
-    span.set_status(StatusCode.ERROR, error_message)
+    if is_error:
+        span.set_status(StatusCode.ERROR, error_message or "")
     span.end()
 
 
@@ -455,8 +431,14 @@ def emit_timer_span(
     instance_id: str,
     timer_id: int,
     fire_at: datetime,
+    scheduled_time_ns: Optional[int] = None,
 ) -> None:
-    """Emit an Internal span for a timer (emit-and-close pattern)."""
+    """Emit an Internal span for a timer (emit-and-close pattern).
+
+    When *scheduled_time_ns* is provided the span start time is backdated
+    to when the timer was originally created, so the span duration covers
+    the full wait period.
+    """
     if not _OTEL_AVAILABLE:
         return
 
@@ -474,6 +456,7 @@ def emit_timer_span(
         span_name,
         kind=SpanKind.INTERNAL,
         attributes=attrs,
+        start_time=scheduled_time_ns,
     )
     span.end()
 
