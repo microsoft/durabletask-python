@@ -6,11 +6,10 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
 from unittest.mock import patch
 
 import pytest
-from google.protobuf import wrappers_pb2
+from google.protobuf import timestamp_pb2, wrappers_pb2
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -44,6 +43,29 @@ def otel_setup():
     """Clear the in-memory exporter before each test."""
     _EXPORTER.clear()
     yield _EXPORTER
+
+
+# ---------------------------------------------------------------------------
+# Shared test constants and helpers
+# ---------------------------------------------------------------------------
+
+_SAMPLE_TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
+_SAMPLE_PARENT_SPAN_ID = "b7ad6b7169203331"
+_SAMPLE_CLIENT_SPAN_ID = "00f067aa0ba902b7"
+
+
+def _make_parent_trace_ctx():
+    return pb.TraceContext(
+        traceParent=f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_PARENT_SPAN_ID}-01",
+        spanID=_SAMPLE_PARENT_SPAN_ID,
+    )
+
+
+def _make_client_trace_ctx():
+    return pb.TraceContext(
+        traceParent=f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_CLIENT_SPAN_ID}-01",
+        spanID=_SAMPLE_CLIENT_SPAN_ID,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -177,95 +199,6 @@ class TestSetSpanError:
 
 
 # ---------------------------------------------------------------------------
-# Tests for client-side trace context injection
-# ---------------------------------------------------------------------------
-
-
-class TestClientTraceContextInjection:
-    """Tests that the client methods inject trace context."""
-
-    def test_schedule_new_orchestration_includes_trace_context(self, otel_setup):
-        """schedule_new_orchestration should set parentTraceContext from current span."""
-        tracer = trace.get_tracer("test")
-        with tracer.start_as_current_span("client-span"):
-            ctx = tracing.get_current_trace_context()
-
-        assert ctx is not None
-        assert ctx.traceParent != ""
-        assert ctx.spanID != ""
-
-
-# ---------------------------------------------------------------------------
-# Tests for activity execution with tracing
-# ---------------------------------------------------------------------------
-
-
-class TestActivityExecutionTracing:
-    """Tests that activity execution creates spans from parent trace context."""
-
-    def test_activity_executes_within_span(self, otel_setup: InMemorySpanExporter):
-        """Activity execution should create a span when parentTraceContext is provided."""
-        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-        parent_ctx = pb.TraceContext(
-            traceParent=traceparent,
-            spanID="b7ad6b7169203331",
-        )
-
-        def test_activity(ctx: task.ActivityContext, input: Any):
-            return "hello"
-
-        registry = worker._Registry()
-        name = registry.add_activity(test_activity)
-        executor = worker._ActivityExecutor(registry, TEST_LOGGER)
-
-        with tracing.start_span(
-            f"activity:{name}",
-            trace_context=parent_ctx,
-            attributes={"durabletask.task.instance_id": TEST_INSTANCE_ID,
-                        "durabletask.task.name": name,
-                        "durabletask.task.task_id": "42"},
-        ):
-            result = executor.execute(TEST_INSTANCE_ID, name, 42, None)
-
-        assert result == json.dumps("hello")
-        spans = otel_setup.get_finished_spans()
-        assert len(spans) == 1
-        assert spans[0].name == f"activity:{name}"
-        assert spans[0].attributes is not None
-        assert spans[0].attributes["durabletask.task.instance_id"] == TEST_INSTANCE_ID
-
-    def test_activity_error_sets_span_error(self, otel_setup: InMemorySpanExporter):
-        """Activity execution errors should be recorded on the span."""
-        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-        parent_ctx = pb.TraceContext(
-            traceParent=traceparent,
-            spanID="b7ad6b7169203331",
-        )
-
-        def failing_activity(ctx: task.ActivityContext, input: Any):
-            raise ValueError("Activity failed!")
-
-        registry = worker._Registry()
-        name = registry.add_activity(failing_activity)
-        executor = worker._ActivityExecutor(registry, TEST_LOGGER)
-
-        with pytest.raises(ValueError, match="Activity failed!"):
-            with tracing.start_span(
-                f"activity:{name}",
-                trace_context=parent_ctx,
-            ) as span:
-                try:
-                    executor.execute(TEST_INSTANCE_ID, name, 42, None)
-                except Exception as ex:
-                    tracing.set_span_error(span, ex)
-                    raise
-
-        spans = otel_setup.get_finished_spans()
-        assert len(spans) == 1
-        assert spans[0].status.status_code == StatusCode.ERROR
-
-
-# ---------------------------------------------------------------------------
 # Tests for orchestration trace context propagation
 # ---------------------------------------------------------------------------
 
@@ -370,6 +303,85 @@ class TestOrchestrationExecutorStoresTraceContext:
 
         executor.process_event(ctx, event)
         assert ctx._parent_trace_context is None
+        assert ctx._orchestration_trace_context is None
+
+    def test_execution_started_generates_orchestration_trace_context(self):
+        """process_event should generate _orchestration_trace_context
+        from the parent trace context for use as child span parent."""
+        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=traceparent,
+            spanID="b7ad6b7169203331",
+        )
+
+        def simple_orchestrator(ctx: task.OrchestrationContext, _):
+            return "done"
+
+        registry = worker._Registry()
+        registry.add_orchestrator(simple_orchestrator)
+
+        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry)
+        assert ctx._orchestration_trace_context is None
+
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        event = pb.HistoryEvent(
+            eventId=-1,
+            executionStarted=pb.ExecutionStartedEvent(
+                name="simple_orchestrator",
+                orchestrationInstance=pb.OrchestrationInstance(instanceId=TEST_INSTANCE_ID),
+                parentTraceContext=parent_ctx,
+            )
+        )
+
+        executor.process_event(ctx, event)
+        orch_ctx = ctx._orchestration_trace_context
+        assert orch_ctx is not None
+        # The orchestration context should have the same trace ID
+        # but a different span ID (pre-determined for the SERVER span)
+        parts = orch_ctx.traceParent.split("-")
+        assert parts[1] == "0af7651916cd43dd8448eb211c80319c"
+        assert parts[2] != "b7ad6b7169203331"
+        assert orch_ctx.spanID == parts[2]
+
+    def test_execution_started_reuses_persisted_span_id(self):
+        """When a persisted orchestration span ID exists from a prior dispatch,
+        process_event should reuse that span ID instead of generating a new one."""
+        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=traceparent,
+            spanID="b7ad6b7169203331",
+        )
+        persisted_span_id = "00f067aa0ba902b7"
+
+        def simple_orchestrator(ctx: task.OrchestrationContext, _):
+            return "done"
+
+        registry = worker._Registry()
+        registry.add_orchestrator(simple_orchestrator)
+
+        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry)
+        executor = worker._OrchestrationExecutor(
+            registry, TEST_LOGGER,
+            persisted_orch_span_id=persisted_span_id,
+        )
+
+        event = pb.HistoryEvent(
+            eventId=-1,
+            executionStarted=pb.ExecutionStartedEvent(
+                name="simple_orchestrator",
+                orchestrationInstance=pb.OrchestrationInstance(instanceId=TEST_INSTANCE_ID),
+                parentTraceContext=parent_ctx,
+            )
+        )
+
+        executor.process_event(ctx, event)
+        orch_ctx = ctx._orchestration_trace_context
+        assert orch_ctx is not None
+        # Should reuse the persisted span ID
+        parts = orch_ctx.traceParent.split("-")
+        assert parts[1] == "0af7651916cd43dd8448eb211c80319c"  # same trace ID
+        assert parts[2] == persisted_span_id  # reused span ID
+        assert orch_ctx.spanID == persisted_span_id
 
 
 class TestOtelNotAvailable:
@@ -399,21 +411,11 @@ class TestOtelNotAvailable:
         with patch.object(tracing, '_OTEL_AVAILABLE', False):
             tracing.set_span_error(None, ValueError("test"))  # should not raise
 
-    def test_start_orchestration_span_without_otel(self):
-        """start_orchestration_span returns all-None tuple when OTel unavailable."""
+    def test_emit_orchestration_span_without_otel(self):
+        """emit_orchestration_span is a no-op when OTel is unavailable."""
         with patch.object(tracing, '_OTEL_AVAILABLE', False):
-            span, tokens, span_id, start_time = tracing.start_orchestration_span(
-                "test_orch", "inst1",
-            )
-        assert span is None
-        assert tokens is None
-        assert span_id is None
-        assert start_time is None
-
-    def test_end_orchestration_span_without_otel(self):
-        """end_orchestration_span is a no-op when OTel is unavailable."""
-        with patch.object(tracing, '_OTEL_AVAILABLE', False):
-            tracing.end_orchestration_span(None, None, True, False)
+            tracing.emit_orchestration_span(
+                "test_orch", "inst1", 1000, False)
 
     def test_emit_timer_span_without_otel(self):
         """emit_timer_span is a no-op when OTel is unavailable."""
@@ -432,16 +434,10 @@ class TestOtelNotAvailable:
             with tracing.start_raise_event_span("evt", "inst1") as span:
                 assert span is None
 
-    def test_create_client_span_context_without_otel(self):
-        """create_client_span_context returns None when OTel is unavailable."""
+    def test_emit_event_raised_span_without_otel(self):
+        """emit_event_raised_span is a no-op when OTel is unavailable."""
         with patch.object(tracing, '_OTEL_AVAILABLE', False):
-            result = tracing.create_client_span_context("activity", "Act", "inst1")
-        assert result is None
-
-    def test_end_client_span_without_otel(self):
-        """end_client_span is a no-op when OTel is unavailable."""
-        with patch.object(tracing, '_OTEL_AVAILABLE', False):
-            tracing.end_client_span(None)  # should not raise
+            tracing.emit_event_raised_span("evt", "inst1")
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +471,6 @@ class TestSchemaConstants:
         assert tracing.ATTR_TASK_NAME == "durabletask.task.name"
         assert tracing.ATTR_TASK_VERSION == "durabletask.task.version"
         assert tracing.ATTR_TASK_INSTANCE_ID == "durabletask.task.instance_id"
-        assert tracing.ATTR_TASK_EXECUTION_ID == "durabletask.task.execution_id"
         assert tracing.ATTR_TASK_STATUS == "durabletask.task.status"
         assert tracing.ATTR_TASK_TASK_ID == "durabletask.task.task_id"
         assert tracing.ATTR_EVENT_TARGET_INSTANCE_ID == "durabletask.event.target_instance_id"
@@ -541,22 +536,20 @@ class TestRaiseEventSpan:
 
 
 class TestOrchestrationServerSpan:
-    """Tests for start_orchestration_span and end_orchestration_span."""
+    """Tests for emit_orchestration_span."""
 
-    def test_creates_server_span(self, otel_setup: InMemorySpanExporter):
+    def test_emits_server_span(self, otel_setup: InMemorySpanExporter):
         traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
         parent_ctx = pb.TraceContext(
             traceParent=traceparent,
             spanID="b7ad6b7169203331",
         )
-        span, tokens, span_id, start_time_ns = tracing.start_orchestration_span(
-            "MyOrch", "inst-100", parent_trace_context=parent_ctx,
+        import time
+        start_ns = time.time_ns()
+        tracing.emit_orchestration_span(
+            "MyOrch", "inst-100", start_ns, False,
+            parent_trace_context=parent_ctx,
         )
-        assert span is not None
-        assert span_id is not None
-        assert len(span_id) == 16
-
-        tracing.end_orchestration_span(span, tokens, True, False)
 
         spans = otel_setup.get_finished_spans()
         assert len(spans) == 1
@@ -569,21 +562,11 @@ class TestOrchestrationServerSpan:
         assert s.attributes[tracing.ATTR_TASK_INSTANCE_ID] == "inst-100"
         assert s.attributes[tracing.ATTR_TASK_STATUS] == "Completed"
 
-    def test_start_time_always_captured(self, otel_setup: InMemorySpanExporter):
-        """On first execution (no orchestration_trace_context), start_time_ns
-        should still be non-None so it can be persisted for cross-worker replay."""
-        span, tokens, span_id, start_time_ns = tracing.start_orchestration_span(
-            "MyOrch", "inst-first",
-        )
-        assert start_time_ns is not None
-        assert start_time_ns > 0
-        tracing.end_orchestration_span(span, tokens, True, False)
-
     def test_server_span_failure(self, otel_setup: InMemorySpanExporter):
-        span, tokens, span_id, _ = tracing.start_orchestration_span(
-            "FailOrch", "inst-200",
+        import time
+        tracing.emit_orchestration_span(
+            "FailOrch", "inst-200", time.time_ns(), True, "boom",
         )
-        tracing.end_orchestration_span(span, tokens, True, True, "boom")
 
         spans = otel_setup.get_finished_spans()
         assert len(spans) == 1
@@ -591,100 +574,81 @@ class TestOrchestrationServerSpan:
         assert spans[0].attributes is not None
         assert spans[0].attributes[tracing.ATTR_TASK_STATUS] == "Failed"
 
-    def test_server_span_not_complete(self, otel_setup: InMemorySpanExporter):
-        """Span without completion should not set status attribute."""
-        span, tokens, _, _ = tracing.start_orchestration_span("PendingOrch", "inst-300")
-        tracing.end_orchestration_span(span, tokens, False, False)
-
+    def test_server_span_backdated(self, otel_setup: InMemorySpanExporter):
+        """The span start time should honour the provided start_time_ns."""
+        start_ns = 1704067200000000000  # 2024-01-01T00:00:00Z
+        tracing.emit_orchestration_span(
+            "BackdatedOrch", "inst-300", start_ns, False,
+        )
         spans = otel_setup.get_finished_spans()
         assert len(spans) == 1
-        assert spans[0].attributes is not None
-        assert tracing.ATTR_TASK_STATUS not in spans[0].attributes
+        assert spans[0].start_time == start_ns
 
-
-class TestCreateClientSpanContext:
-    """Tests for create_client_span_context."""
-
-    def test_creates_client_span_with_trace_context(self, otel_setup: InMemorySpanExporter):
-        """Should return a (TraceContext, span) tuple with correct attributes."""
-        result = tracing.create_client_span_context(
-            "activity", "SayHello", "inst-1", task_id=42)
-        assert result is not None
-        trace_ctx, span = result
-
-        assert trace_ctx.traceParent != ""
-        assert trace_ctx.spanID != ""
-        # Span should NOT be finished yet
-        assert len(otel_setup.get_finished_spans()) == 0
-
-        # End it and verify attributes
-        span.end()
+    def test_deferred_span_uses_predetermined_span_id(self, otel_setup: InMemorySpanExporter):
+        """When orchestration_trace_context is provided, the SERVER span
+        should use the pre-determined span ID from that context."""
+        parent_tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=parent_tp, spanID="b7ad6b7169203331",
+        )
+        orch_span_id = "00f067aa0ba902b7"
+        orch_tp = f"00-0af7651916cd43dd8448eb211c80319c-{orch_span_id}-01"
+        orch_ctx = pb.TraceContext(
+            traceParent=orch_tp, spanID=orch_span_id,
+        )
+        import time
+        start_ns = time.time_ns()
+        tracing.emit_orchestration_span(
+            "DeferredOrch", "inst-400", start_ns, False,
+            parent_trace_context=parent_ctx,
+            orchestration_trace_context=orch_ctx,
+        )
         spans = otel_setup.get_finished_spans()
         assert len(spans) == 1
         s = spans[0]
-        assert s.kind == trace.SpanKind.CLIENT
-        assert s.name == "activity:SayHello"
-        assert s.attributes is not None
-        assert s.attributes[tracing.ATTR_TASK_TYPE] == "activity"
-        assert s.attributes[tracing.ATTR_TASK_NAME] == "SayHello"
-        assert s.attributes[tracing.ATTR_TASK_INSTANCE_ID] == "inst-1"
-        assert s.attributes[tracing.ATTR_TASK_TASK_ID] == "42"
+        assert s.name == "orchestration:DeferredOrch"
+        assert s.kind == trace.SpanKind.SERVER
+        # Span ID should match the pre-determined orchestration context
+        assert s.context is not None
+        assert s.context.span_id == int(orch_span_id, 16)
+        # Parent should be the PRODUCER span
+        assert s.parent is not None
+        assert s.parent.span_id == int("b7ad6b7169203331", 16)
 
-    def test_includes_version_attribute(self, otel_setup: InMemorySpanExporter):
-        result = tracing.create_client_span_context(
-            "activity", "Act", "inst-1", version="2.0")
-        assert result is not None
-        _, span = result
-        span.end()
-        spans = otel_setup.get_finished_spans()
-        assert spans[0].name == "activity:Act@(2.0)"
-        assert spans[0].attributes is not None
-        assert spans[0].attributes[tracing.ATTR_TASK_VERSION] == "2.0"
-
-    def test_trace_context_span_id_matches_span(self, otel_setup: InMemorySpanExporter):
-        """The TraceContext spanID should match the CLIENT span's span ID."""
-        result = tracing.create_client_span_context(
-            "orchestration", "SubOrch", "inst-1")
-        assert result is not None
-        trace_ctx, span = result
-        span.end()
-        spans = otel_setup.get_finished_spans()
-        span_ctx = spans[0].get_span_context()
-        assert span_ctx is not None
-        client_span_id = format(span_ctx.span_id, '016x')
-        assert trace_ctx.spanID == client_span_id
-
-
-class TestEndClientSpan:
-    """Tests for end_client_span."""
-
-    def test_ends_span(self, otel_setup: InMemorySpanExporter):
-        """end_client_span should close the span and export it."""
-        result = tracing.create_client_span_context(
-            "activity", "Act", "inst-1")
-        assert result is not None
-        _, span = result
-        tracing.end_client_span(span)
-        assert len(otel_setup.get_finished_spans()) == 1
-
-    def test_ends_span_with_error(self, otel_setup: InMemorySpanExporter):
-        result = tracing.create_client_span_context(
-            "activity", "Act", "inst-1")
-        assert result is not None
-        _, span = result
-        tracing.end_client_span(span, is_error=True, error_message="boom")
+    def test_deferred_span_with_failure(self, otel_setup: InMemorySpanExporter):
+        """When orchestration_trace_context is provided and is_failed=True,
+        the deferred span should have ERROR status."""
+        parent_tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=parent_tp, spanID="b7ad6b7169203331",
+        )
+        orch_span_id = "00f067aa0ba902b7"
+        orch_tp = f"00-0af7651916cd43dd8448eb211c80319c-{orch_span_id}-01"
+        orch_ctx = pb.TraceContext(
+            traceParent=orch_tp, spanID=orch_span_id,
+        )
+        import time
+        tracing.emit_orchestration_span(
+            "FailOrch", "inst-500", time.time_ns(), True, "kaboom",
+            parent_trace_context=parent_ctx,
+            orchestration_trace_context=orch_ctx,
+        )
         spans = otel_setup.get_finished_spans()
         assert len(spans) == 1
-        assert spans[0].status.status_code == StatusCode.ERROR
-        assert spans[0].status.description is not None
-        assert "boom" in spans[0].status.description
+        s = spans[0]
+        assert s.status.status_code == StatusCode.ERROR
+        assert s.attributes is not None
+        assert s.attributes[tracing.ATTR_TASK_STATUS] == "Failed"
+        assert s.context is not None
+        assert s.context.span_id == int(orch_span_id, 16)
 
-    def test_noop_with_none_span(self):
-        """Should not raise when span is None."""
-        tracing.end_client_span(None)  # no-op
+
+# ---------------------------------------------------------------------------
+# Tests for emit_timer_span
+# ---------------------------------------------------------------------------
 
 
-class TestEmitTimerSpan:
+class TestTimerSpan:
     """Tests for emit_timer_span."""
 
     def test_emits_internal_span(self, otel_setup: InMemorySpanExporter):
@@ -715,6 +679,30 @@ class TestEmitTimerSpan:
         assert spans[0].start_time is not None
         assert spans[0].end_time > spans[0].start_time
 
+    def test_parent_trace_context(self, otel_setup: InMemorySpanExporter):
+        """Timer span should be parented under the given trace context."""
+        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=traceparent,
+            spanID="b7ad6b7169203331",
+        )
+        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        tracing.emit_timer_span(
+            "MyOrch", "inst-1", 5, fire_at,
+            parent_trace_context=parent_ctx,
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        # The span should share the same trace ID as the parent
+        expected_trace_id = int("0af7651916cd43dd8448eb211c80319c", 16)
+        assert s.context is not None
+        assert s.context.trace_id == expected_trace_id
+        # The parent span ID should match the parent context
+        expected_parent_span_id = int("b7ad6b7169203331", 16)
+        assert s.parent is not None
+        assert s.parent.span_id == expected_parent_span_id
+
 
 class TestEmitEventRaisedSpan:
     """Tests for emit_event_raised_span."""
@@ -739,40 +727,108 @@ class TestEmitEventRaisedSpan:
         assert spans[0].attributes is not None
         assert tracing.ATTR_EVENT_TARGET_INSTANCE_ID not in spans[0].attributes
 
+    def test_parent_trace_context(self, otel_setup: InMemorySpanExporter):
+        """Event span should be parented under the given trace context."""
+        traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=traceparent,
+            spanID="b7ad6b7169203331",
+        )
+        tracing.emit_event_raised_span(
+            "approval", "inst-1",
+            parent_trace_context=parent_ctx,
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        expected_trace_id = int("0af7651916cd43dd8448eb211c80319c", 16)
+        assert s.context is not None
+        assert s.context.trace_id == expected_trace_id
+        expected_parent_span_id = int("b7ad6b7169203331", 16)
+        assert s.parent is not None
+        assert s.parent.span_id == expected_parent_span_id
+
 
 # ---------------------------------------------------------------------------
 # Tests for build_orchestration_trace_context
 # ---------------------------------------------------------------------------
 
 
+class TestReconstructTraceContext:
+    """Tests for tracing.reconstruct_trace_context."""
+
+    def test_returns_context_with_given_span_id(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            spanID="b7ad6b7169203331",
+        )
+        result = tracing.reconstruct_trace_context(parent, "00f067aa0ba902b7")
+        assert result is not None
+        parts = result.traceParent.split("-")
+        assert parts[1] == "0af7651916cd43dd8448eb211c80319c"  # same trace ID
+        assert parts[2] == "00f067aa0ba902b7"  # new span ID
+        assert result.spanID == "00f067aa0ba902b7"
+
+    def test_preserves_trace_flags(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00",
+            spanID="b7ad6b7169203331",
+        )
+        result = tracing.reconstruct_trace_context(parent, "1234567890abcdef")
+        assert result is not None
+        parts = result.traceParent.split("-")
+        assert parts[3] == "00"  # flags preserved
+
+    def test_returns_none_for_invalid_parent(self):
+        parent = pb.TraceContext(traceParent="invalid", spanID="bad")
+        result = tracing.reconstruct_trace_context(parent, "1234567890abcdef")
+        assert result is None
+
+    @patch.object(tracing, '_OTEL_AVAILABLE', False)
+    def test_returns_none_without_otel(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            spanID="b7ad6b7169203331",
+        )
+        result = tracing.reconstruct_trace_context(parent, "00f067aa0ba902b7")
+        assert result is None
+
+
 class TestBuildOrchestrationTraceContext:
     """Tests for build_orchestration_trace_context."""
 
-    def test_returns_none_when_span_id_none(self):
-        result = tracing.build_orchestration_trace_context(None, None)
+    def test_returns_none_when_start_time_none(self):
+        result = tracing.build_orchestration_trace_context(None)
         assert result is None
-
-    def test_builds_context_with_span_id(self):
-        result = tracing.build_orchestration_trace_context("abc123def456", None)
-        assert result is not None
-        assert result.spanID.value == "abc123def456"
 
     def test_builds_context_with_start_time(self):
         start_time_ns = 1704067200000000000  # 2024-01-01T00:00:00Z
-        result = tracing.build_orchestration_trace_context("abc123", start_time_ns)
+        result = tracing.build_orchestration_trace_context(start_time_ns)
         assert result is not None
         assert result.spanStartTime.seconds == 1704067200
         assert result.spanStartTime.nanos == 0
 
+    def test_builds_context_with_span_id(self):
+        start_time_ns = 1704067200000000000
+        result = tracing.build_orchestration_trace_context(
+            start_time_ns, span_id="00f067aa0ba902b7")
+        assert result is not None
+        assert result.spanStartTime.seconds == 1704067200
+        assert result.HasField("spanID")
+        assert result.spanID.value == "00f067aa0ba902b7"
+
+    def test_builds_context_without_span_id(self):
+        start_time_ns = 1704067200000000000
+        result = tracing.build_orchestration_trace_context(start_time_ns)
+        assert result is not None
+        assert not result.HasField("spanID")
+
 
 class TestReplayDoesNotEmitSpans:
     """Tests that replayed (old) events do NOT re-emit client spans for
-    activities, sub-orchestrations, or timers.  Client spans for activities
-    and sub-orchestrations are now emitted at action-creation time (inside
-    call_activity / call_sub_orchestrator).  During a replay dispatch all
-    generator calls happen inside old_events processing (is_replaying=True),
-    so no CLIENT spans are produced — they were already emitted in prior
-    dispatches."""
+    activities, sub-orchestrations, or timers.  CLIENT spans are deferred
+    until the completion event arrives as a new event; during replay
+    (is_replaying=True) no CLIENT spans are produced."""
 
     def _get_client_spans(self, exporter):
         """Return non-Server spans (Client/Internal schedule/timer spans)."""
@@ -966,8 +1022,8 @@ class TestReplayDoesNotEmitSpans:
 
 
 class TestOrchestrationSpanLifecycle:
-    """Tests that the orchestration SERVER span is persisted across
-    intermediate dispatches and only exported on orchestration completion."""
+    """Tests that orchestration SERVER spans are only emitted on completion
+    (emit-and-close pattern) — no inter-dispatch storage."""
 
     def _get_orch_server_spans(self, exporter):
         """Return orchestration SERVER spans from the exporter."""
@@ -1008,9 +1064,8 @@ class TestOrchestrationSpanLifecycle:
         )
         w._execute_orchestrator(req, stub, "token1")
 
-        # Nothing exported yet — span is kept alive
+        # No span exported — orchestration is not yet complete
         assert len(self._get_orch_server_spans(otel_setup)) == 0
-        assert TEST_INSTANCE_ID in w._orchestration_spans
 
     def test_final_dispatch_exports_single_span(self, otel_setup):
         """Across multiple dispatches, only one orchestration span should
@@ -1088,57 +1143,10 @@ class TestOrchestrationSpanLifecycle:
         orch_spans = self._get_orch_server_spans(otel_setup)
         assert len(orch_spans) == 1
         assert "orchestration" in orch_spans[0].name
-        assert TEST_INSTANCE_ID not in w._orchestration_spans
 
-    def test_span_id_consistent_across_dispatches(self, otel_setup):
-        """The same span object (same span_id) is reused across dispatches."""
-        from datetime import timedelta
-
-        def orchestrator(ctx: task.OrchestrationContext, _):
-            due = ctx.current_utc_datetime + timedelta(seconds=1)
-            yield ctx.create_timer(due)
-            return "done"
-
-        registry = worker._Registry()
-        name = registry.add_orchestrator(orchestrator)
-        w, stub = self._make_worker_with_registry(registry)
-
-        start_time = datetime(2020, 1, 1, 12, 0, 0)
-        fire_at = start_time + timedelta(seconds=1)
-
-        # Dispatch 1
-        w._execute_orchestrator(pb.OrchestratorRequest(
-            instanceId=TEST_INSTANCE_ID,
-            newEvents=[
-                helpers.new_orchestrator_started_event(start_time),
-                helpers.new_execution_started_event(
-                    name, TEST_INSTANCE_ID, encoded_input=None),
-            ],
-        ), stub, "t1")
-        span_id_1 = w._orchestration_spans[TEST_INSTANCE_ID][0] \
-            .get_span_context().span_id
-
-        # Dispatch 2 (final)
-        w._execute_orchestrator(pb.OrchestratorRequest(
-            instanceId=TEST_INSTANCE_ID,
-            pastEvents=[
-                helpers.new_orchestrator_started_event(start_time),
-                helpers.new_execution_started_event(
-                    name, TEST_INSTANCE_ID, encoded_input=None),
-                helpers.new_timer_created_event(1, fire_at),
-            ],
-            newEvents=[
-                helpers.new_timer_fired_event(1, fire_at),
-            ],
-        ), stub, "t2")
-
-        orch_spans = self._get_orch_server_spans(otel_setup)
-        assert len(orch_spans) == 1
-        assert orch_spans[0].get_span_context().span_id == span_id_1
-
-    def test_error_cleans_up_saved_span(self, otel_setup):
-        """When an orchestration raises an unhandled error, the span is
-        exported with ERROR status and cleaned up from the saved dict."""
+    def test_error_exports_failed_span(self, otel_setup):
+        """When an orchestration raises an unhandled error, a span is
+        exported with ERROR status."""
 
         def orchestrator(ctx: task.OrchestrationContext, _):
             raise ValueError("orchestration error")
@@ -1161,16 +1169,12 @@ class TestOrchestrationSpanLifecycle:
         orch_spans = self._get_orch_server_spans(otel_setup)
         assert len(orch_spans) == 1
         assert orch_spans[0].status.status_code == StatusCode.ERROR
-        assert TEST_INSTANCE_ID not in w._orchestration_spans
 
     def test_separate_instances_get_separate_spans(self, otel_setup):
-        """Two different orchestration instances should get independent
-        spans that can be persisted and exported independently."""
-        from datetime import timedelta
+        """Two different orchestration instances should produce independent
+        spans when each completes."""
 
         def orchestrator(ctx: task.OrchestrationContext, _):
-            due = ctx.current_utc_datetime + timedelta(seconds=1)
-            yield ctx.create_timer(due)
             return "done"
 
         registry = worker._Registry()
@@ -1178,11 +1182,9 @@ class TestOrchestrationSpanLifecycle:
         w, stub = self._make_worker_with_registry(registry)
 
         start_time = datetime(2020, 1, 1, 12, 0, 0)
-        fire_at = start_time + timedelta(seconds=1)
         instance_a = "inst-a"
         instance_b = "inst-b"
 
-        # Start both instances
         for iid in (instance_a, instance_b):
             w._execute_orchestrator(pb.OrchestratorRequest(
                 instanceId=iid,
@@ -1193,50 +1195,13 @@ class TestOrchestrationSpanLifecycle:
                 ],
             ), stub, f"t-{iid}")
 
-        assert len(self._get_orch_server_spans(otel_setup)) == 0
-        assert instance_a in w._orchestration_spans
-        assert instance_b in w._orchestration_spans
+        orch_spans = self._get_orch_server_spans(otel_setup)
+        assert len(orch_spans) == 2
 
-        # Complete only instance A
-        w._execute_orchestrator(pb.OrchestratorRequest(
-            instanceId=instance_a,
-            pastEvents=[
-                helpers.new_orchestrator_started_event(start_time),
-                helpers.new_execution_started_event(
-                    name, instance_a, encoded_input=None),
-                helpers.new_timer_created_event(1, fire_at),
-            ],
-            newEvents=[
-                helpers.new_timer_fired_event(1, fire_at),
-            ],
-        ), stub, "t-a-2")
-
-        # Only instance A's span is exported
-        assert len(self._get_orch_server_spans(otel_setup)) == 1
-        assert instance_a not in w._orchestration_spans
-        assert instance_b in w._orchestration_spans
-
-        # Complete instance B
-        w._execute_orchestrator(pb.OrchestratorRequest(
-            instanceId=instance_b,
-            pastEvents=[
-                helpers.new_orchestrator_started_event(start_time),
-                helpers.new_execution_started_event(
-                    name, instance_b, encoded_input=None),
-                helpers.new_timer_created_event(1, fire_at),
-            ],
-            newEvents=[
-                helpers.new_timer_fired_event(1, fire_at),
-            ],
-        ), stub, "t-b-2")
-
-        assert len(self._get_orch_server_spans(otel_setup)) == 2
-        assert instance_b not in w._orchestration_spans
-
-    def test_initial_dispatch_creates_activity_client_spans(self, otel_setup):
-        """On the first dispatch, a CLIENT span is created for the scheduled
-        activity but it is NOT yet finished — it stays open until the
-        activity completes in a subsequent dispatch."""
+    def test_initial_dispatch_defers_activity_client_spans(self, otel_setup):
+        """On the first dispatch, no CLIENT span is emitted because the
+        span is deferred until the activity completes (taskCompleted /
+        taskFailed arrives in a later dispatch)."""
 
         def dummy_activity(ctx, _):
             pass
@@ -1262,138 +1227,681 @@ class TestOrchestrationSpanLifecycle:
             ],
         ), stub, "t1")
 
-        # The CLIENT span should NOT be finished yet (it's still open)
+        # No CLIENT span yet — deferred until completion
         client_spans = [
             s for s in otel_setup.get_finished_spans()
             if s.kind == trace.SpanKind.CLIENT
         ]
         assert len(client_spans) == 0
 
-        # But it should be stored in the worker's pending dict
-        instance_spans = w._pending_client_spans.get(TEST_INSTANCE_ID, {})
-        assert len(instance_spans) == 1
-
-    def test_activity_client_span_has_duration(self, otel_setup):
-        """The CLIENT span should cover the full scheduling-to-completion
-        duration.  After a completion dispatch, the span is finished and
-        its parentTraceContext.spanID matches the exported CLIENT span."""
+    def test_span_id_consistent_across_dispatches(self, otel_setup):
+        """The orchestration span ID must be persisted across dispatches
+        so that child spans (activities, timers) are all parented under
+        the same orchestration SERVER span."""
+        from datetime import timedelta  # noqa: F401
 
         def dummy_activity(ctx, _):
             pass
 
         def orchestrator(ctx: task.OrchestrationContext, _):
-            yield ctx.call_activity(dummy_activity, input="hello")
-            return "done"
+            r1 = yield ctx.call_activity(dummy_activity, input=1)
+            r2 = yield ctx.call_activity(dummy_activity, input=2)
+            return [r1, r2]
 
         registry = worker._Registry()
         name = registry.add_orchestrator(orchestrator)
         registry.add_activity(dummy_activity)
         w, stub = self._make_worker_with_registry(registry)
 
-        schedule_time = datetime(2020, 1, 1, 12, 0, 0)
-        complete_time = datetime(2020, 1, 1, 12, 0, 5)
+        start_time = datetime(2020, 1, 1, 12, 0, 0)
+        activity_name = task.get_name(dummy_activity)
 
-        # Dispatch 1: schedule the activity
+        # Dispatch 1: orchestration starts, first activity scheduled
         w._execute_orchestrator(pb.OrchestratorRequest(
             instanceId=TEST_INSTANCE_ID,
             newEvents=[
-                helpers.new_orchestrator_started_event(schedule_time),
+                helpers.new_orchestrator_started_event(start_time),
                 helpers.new_execution_started_event(
-                    name, TEST_INSTANCE_ID, encoded_input=None),
+                    name, TEST_INSTANCE_ID, encoded_input=None,
+                    parent_trace_context=pb.TraceContext(
+                        traceParent=f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_PARENT_SPAN_ID}-01",
+                        spanID=_SAMPLE_PARENT_SPAN_ID,
+                    ),
+                ),
             ],
         ), stub, "t1")
 
-        # Capture the parentTraceContext from the action
+        # Capture the orchestration trace context from the response
         call_args = stub.CompleteOrchestratorTask.call_args
-        res = call_args[0][0]
-        schedule_actions = [
-            a for a in res.actions
-            if a.HasField("scheduleTask")
-        ]
-        assert len(schedule_actions) == 1
-        ptc = schedule_actions[0].scheduleTask.parentTraceContext
-        assert ptc.traceParent != ""
+        resp1 = call_args[0][0]
+        orch_trace_ctx_1 = resp1.orchestrationTraceContext
+        assert orch_trace_ctx_1.HasField("spanID")
+        span_id_1 = orch_trace_ctx_1.spanID.value
+        assert span_id_1 != ""
 
-        # Dispatch 2: activity completes
-        activity_name = task.get_name(dummy_activity)
+        otel_setup.clear()
+
+        # Dispatch 2: first activity completes, second activity scheduled
         w._execute_orchestrator(pb.OrchestratorRequest(
             instanceId=TEST_INSTANCE_ID,
+            orchestrationTraceContext=orch_trace_ctx_1,
             pastEvents=[
-                helpers.new_orchestrator_started_event(schedule_time),
+                helpers.new_orchestrator_started_event(start_time),
                 helpers.new_execution_started_event(
-                    name, TEST_INSTANCE_ID, encoded_input=None),
+                    name, TEST_INSTANCE_ID, encoded_input=None,
+                    parent_trace_context=pb.TraceContext(
+                        traceParent=f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_PARENT_SPAN_ID}-01",
+                        spanID=_SAMPLE_PARENT_SPAN_ID,
+                    ),
+                ),
                 helpers.new_task_scheduled_event(1, activity_name),
             ],
             newEvents=[
-                helpers.new_orchestrator_started_event(complete_time),
-                helpers.new_task_completed_event(1, '"world"'),
+                helpers.new_task_completed_event(1, json.dumps(10)),
             ],
         ), stub, "t2")
 
-        # Now the CLIENT span should be finished and exported
-        client_spans = [
-            s for s in otel_setup.get_finished_spans()
-            if s.kind == trace.SpanKind.CLIENT
-        ]
-        assert len(client_spans) == 1
-        assert "activity" in client_spans[0].name
+        # Capture the orchestration trace context from the second response
+        call_args = stub.CompleteOrchestratorTask.call_args
+        resp2 = call_args[0][0]
+        orch_trace_ctx_2 = resp2.orchestrationTraceContext
+        assert orch_trace_ctx_2.HasField("spanID")
+        span_id_2 = orch_trace_ctx_2.spanID.value
 
-        # The parentTraceContext spanID should match the CLIENT span
-        client_span_id = format(
-            client_spans[0].get_span_context().span_id, '016x')
-        assert ptc.spanID == client_span_id
+        # The span ID must be the same across dispatches
+        assert span_id_1 == span_id_2
 
-        # The span should have real duration (start != end)
-        assert client_spans[0].start_time < client_spans[0].end_time
-
-        # Pending dict should be cleaned up
-        instance_spans = w._pending_client_spans.get(
-            TEST_INSTANCE_ID, {})
-        assert len(instance_spans) == 0
-
-    def test_distributed_worker_fallback_client_span(self, otel_setup):
-        """When a different worker handles the completion dispatch (no
-        in-memory CLIENT span), a fallback instant CLIENT span is emitted
-        so the trace still contains the CLIENT->SERVER link."""
+    def test_child_spans_parented_under_orchestrator_span(self, otel_setup):
+        """Activities and timers should be parented under the orchestration
+        SERVER span, and the orchestrator span ID must be consistent across
+        dispatches."""
+        from datetime import timedelta
 
         def dummy_activity(ctx, _):
             pass
 
         def orchestrator(ctx: task.OrchestrationContext, _):
-            yield ctx.call_activity(dummy_activity, input="hello")
-            return "done"
+            due = ctx.current_utc_datetime + timedelta(seconds=1)
+            yield ctx.create_timer(due)
+            r1 = yield ctx.call_activity(dummy_activity, input=1)
+            return r1
 
         registry = worker._Registry()
         name = registry.add_orchestrator(orchestrator)
         registry.add_activity(dummy_activity)
-
-        # Simulate a DIFFERENT worker handling the completion dispatch:
-        # The pending_client_spans dict is empty (no span from dispatch 1).
         w, stub = self._make_worker_with_registry(registry)
+
+        start_time = datetime(2020, 1, 1, 12, 0, 0)
+        fire_at = start_time + timedelta(seconds=1)
         activity_name = task.get_name(dummy_activity)
 
-        schedule_time = datetime(2020, 1, 1, 12, 0, 0)
-        complete_time = datetime(2020, 1, 1, 12, 0, 5)
+        parent_tp = f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_PARENT_SPAN_ID}-01"
+        parent_ctx = pb.TraceContext(
+            traceParent=parent_tp,
+            spanID=_SAMPLE_PARENT_SPAN_ID,
+        )
 
-        # Completion dispatch with no prior in-memory state
+        # Dispatch 1: start, timer scheduled
         w._execute_orchestrator(pb.OrchestratorRequest(
             instanceId=TEST_INSTANCE_ID,
-            pastEvents=[
-                helpers.new_orchestrator_started_event(schedule_time),
-                helpers.new_execution_started_event(
-                    name, TEST_INSTANCE_ID, encoded_input=None),
-                helpers.new_task_scheduled_event(1, activity_name),
-            ],
             newEvents=[
-                helpers.new_orchestrator_started_event(complete_time),
-                helpers.new_task_completed_event(1, json.dumps("world")),
+                helpers.new_orchestrator_started_event(start_time),
+                helpers.new_execution_started_event(
+                    name, TEST_INSTANCE_ID, encoded_input=None,
+                    parent_trace_context=parent_ctx,
+                ),
             ],
         ), stub, "t1")
 
-        # A fallback CLIENT span should have been emitted
+        call_args = stub.CompleteOrchestratorTask.call_args
+        resp1 = call_args[0][0]
+        orch_trace_ctx = resp1.orchestrationTraceContext
+        orch_span_id = orch_trace_ctx.spanID.value
+        otel_setup.clear()
+
+        # Dispatch 2: timer fires, activity scheduled
+        w._execute_orchestrator(pb.OrchestratorRequest(
+            instanceId=TEST_INSTANCE_ID,
+            orchestrationTraceContext=orch_trace_ctx,
+            pastEvents=[
+                helpers.new_orchestrator_started_event(start_time),
+                helpers.new_execution_started_event(
+                    name, TEST_INSTANCE_ID, encoded_input=None,
+                    parent_trace_context=parent_ctx,
+                ),
+                helpers.new_timer_created_event(1, fire_at),
+            ],
+            newEvents=[
+                helpers.new_timer_fired_event(1, fire_at),
+            ],
+        ), stub, "t2")
+
+        # Timer span should be parented under the orchestration span
+        timer_spans = [
+            s for s in otel_setup.get_finished_spans()
+            if s.kind == trace.SpanKind.INTERNAL and "timer" in s.name
+        ]
+        assert len(timer_spans) == 1
+        assert timer_spans[0].parent is not None
+        assert timer_spans[0].parent.span_id == int(orch_span_id, 16)
+
+        call_args = stub.CompleteOrchestratorTask.call_args
+        resp2 = call_args[0][0]
+        orch_trace_ctx_2 = resp2.orchestrationTraceContext
+        # Span ID must be consistent
+        assert orch_trace_ctx_2.spanID.value == orch_span_id
+        otel_setup.clear()
+
+        # Dispatch 3: activity completes, orchestration finishes
+        w._execute_orchestrator(pb.OrchestratorRequest(
+            instanceId=TEST_INSTANCE_ID,
+            orchestrationTraceContext=orch_trace_ctx_2,
+            pastEvents=[
+                helpers.new_orchestrator_started_event(start_time),
+                helpers.new_execution_started_event(
+                    name, TEST_INSTANCE_ID, encoded_input=None,
+                    parent_trace_context=parent_ctx,
+                ),
+                helpers.new_timer_created_event(1, fire_at),
+                helpers.new_timer_fired_event(1, fire_at),
+                helpers.new_task_scheduled_event(2, activity_name),
+            ],
+            newEvents=[
+                helpers.new_task_completed_event(2, json.dumps("result")),
+            ],
+        ), stub, "t3")
+
+        # Orchestration SERVER span should use the same span ID
+        orch_spans = self._get_orch_server_spans(otel_setup)
+        assert len(orch_spans) == 1
+        assert orch_spans[0].context.span_id == int(orch_span_id, 16)
+
+        # Orchestration should be parented under the PRODUCER span
+        assert orch_spans[0].parent is not None
+        assert orch_spans[0].parent.span_id == int(_SAMPLE_PARENT_SPAN_ID, 16)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _parse_traceparent
+# ---------------------------------------------------------------------------
+
+
+class TestParseTraceparent:
+    """Tests for tracing._parse_traceparent."""
+
+    def test_valid_traceparent(self):
+        tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        result = tracing._parse_traceparent(tp)
+        assert result is not None
+        trace_id, span_id, flags = result
+        assert trace_id == int("0af7651916cd43dd8448eb211c80319c", 16)
+        assert span_id == int("b7ad6b7169203331", 16)
+        assert flags == 1
+
+    def test_invalid_format(self):
+        assert tracing._parse_traceparent("not-a-traceparent") is None
+
+    def test_too_few_parts(self):
+        assert tracing._parse_traceparent("00-abc") is None
+
+    def test_zero_trace_id(self):
+        tp = "00-00000000000000000000000000000000-b7ad6b7169203331-01"
+        assert tracing._parse_traceparent(tp) is None
+
+    def test_zero_span_id(self):
+        tp = "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01"
+        assert tracing._parse_traceparent(tp) is None
+
+    def test_non_hex_values(self):
+        tp = "00-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-b7ad6b7169203331-01"
+        assert tracing._parse_traceparent(tp) is None
+
+    def test_flags_zero(self):
+        tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+        result = tracing._parse_traceparent(tp)
+        assert result is not None
+        assert result[2] == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests for generate_client_trace_context
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateClientTraceContext:
+    """Tests for tracing.generate_client_trace_context."""
+
+    def test_returns_none_without_parent(self):
+        assert tracing.generate_client_trace_context(None) is None
+
+    def test_returns_none_with_invalid_parent(self):
+        ctx = pb.TraceContext(traceParent="invalid", spanID="bad")
+        assert tracing.generate_client_trace_context(ctx) is None
+
+    def test_generates_valid_traceparent(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            spanID="b7ad6b7169203331",
+        )
+        result = tracing.generate_client_trace_context(parent)
+        assert result is not None
+        assert result.traceParent != ""
+        assert result.spanID != ""
+
+    def test_preserves_trace_id(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            spanID="b7ad6b7169203331",
+        )
+        result = tracing.generate_client_trace_context(parent)
+        assert result is not None
+        parts = result.traceParent.split("-")
+        assert parts[1] == "0af7651916cd43dd8448eb211c80319c"
+
+    def test_generates_different_span_id(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            spanID="b7ad6b7169203331",
+        )
+        result = tracing.generate_client_trace_context(parent)
+        assert result is not None
+        assert result.spanID != parent.spanID
+
+    def test_span_id_matches_traceparent(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            spanID="b7ad6b7169203331",
+        )
+        result = tracing.generate_client_trace_context(parent)
+        assert result is not None
+        parts = result.traceParent.split("-")
+        assert parts[2] == result.spanID
+
+    @patch.object(tracing, '_OTEL_AVAILABLE', False)
+    def test_returns_none_without_otel(self):
+        parent = pb.TraceContext(
+            traceParent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            spanID="b7ad6b7169203331",
+        )
+        assert tracing.generate_client_trace_context(parent) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for emit_client_span
+# ---------------------------------------------------------------------------
+
+
+class TestEmitClientSpan:
+    """Tests for tracing.emit_client_span."""
+
+    def test_emits_span_with_correct_attributes(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "activity", "SayHello", "inst-1", task_id=5,
+            client_trace_context=_make_client_trace_ctx(),
+            parent_trace_context=_make_parent_trace_ctx(),
+            start_time_ns=1_000_000_000,
+            end_time_ns=2_000_000_000,
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.name == "activity:SayHello"
+        assert s.kind == trace.SpanKind.CLIENT
+        assert s.attributes is not None
+        assert s.attributes[tracing.ATTR_TASK_TYPE] == "activity"
+        assert s.attributes[tracing.ATTR_TASK_NAME] == "SayHello"
+        assert s.attributes[tracing.ATTR_TASK_INSTANCE_ID] == "inst-1"
+        assert s.attributes[tracing.ATTR_TASK_TASK_ID] == "5"
+
+    def test_span_has_correct_trace_and_span_ids(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "activity", "Act", "inst-1", task_id=1,
+            client_trace_context=_make_client_trace_ctx(),
+            parent_trace_context=_make_parent_trace_ctx(),
+            start_time_ns=1_000_000_000,
+            end_time_ns=2_000_000_000,
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.context is not None
+        assert s.context.trace_id == int(_SAMPLE_TRACE_ID, 16)
+        assert s.context.span_id == int(_SAMPLE_CLIENT_SPAN_ID, 16)
+
+    def test_span_parent_matches_parent_trace_context(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "activity", "Act", "inst-1", task_id=1,
+            client_trace_context=_make_client_trace_ctx(),
+            parent_trace_context=_make_parent_trace_ctx(),
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        s = spans[0]
+        assert s.parent is not None
+        assert s.parent.span_id == int(_SAMPLE_PARENT_SPAN_ID, 16)
+
+    def test_error_span(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "activity", "Act", "inst-1", task_id=1,
+            client_trace_context=_make_client_trace_ctx(),
+            parent_trace_context=_make_parent_trace_ctx(),
+            is_error=True,
+            error_message="task failed",
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == StatusCode.ERROR
+        assert spans[0].status.description is not None
+        assert "task failed" in spans[0].status.description
+
+    def test_custom_timestamps(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "activity", "Act", "inst-1", task_id=1,
+            client_trace_context=_make_client_trace_ctx(),
+            start_time_ns=5_000_000_000,
+            end_time_ns=10_000_000_000,
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].start_time == 5_000_000_000
+        assert spans[0].end_time == 10_000_000_000
+
+    def test_version_included(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "orchestration", "SubOrch", "inst-1", task_id=1,
+            client_trace_context=_make_client_trace_ctx(),
+            version="2.0",
+        )
+        spans = otel_setup.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].name == "orchestration:SubOrch@(2.0)"
+        assert spans[0].attributes is not None
+        assert spans[0].attributes[tracing.ATTR_TASK_VERSION] == "2.0"
+
+    def test_noop_with_invalid_client_trace_context(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "activity", "Act", "inst-1", task_id=1,
+            client_trace_context=pb.TraceContext(traceParent="bad"),
+        )
+        assert len(otel_setup.get_finished_spans()) == 0
+
+    @patch.object(tracing, '_OTEL_AVAILABLE', False)
+    def test_noop_without_otel(self, otel_setup: InMemorySpanExporter):
+        tracing.emit_client_span(
+            "activity", "Act", "inst-1", task_id=1,
+            client_trace_context=_make_client_trace_ctx(),
+        )
+        assert len(otel_setup.get_finished_spans()) == 0
+
+
+# ---------------------------------------------------------------------------
+# Integration tests for deferred CLIENT span lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredClientSpanIntegration:
+    """End-to-end tests verifying that CLIENT spans are emitted with proper
+    timestamps when taskCompleted / taskFailed / sub-orchestration events
+    arrive as new events."""
+
+    def _make_traced_task_scheduled_event(
+        self, event_id, name, client_traceparent, timestamp_seconds=100,
+    ):
+        """Build a taskScheduled event with parentTraceContext and timestamp."""
+        ts = timestamp_pb2.Timestamp()
+        ts.FromSeconds(timestamp_seconds)
+        return pb.HistoryEvent(
+            eventId=event_id,
+            timestamp=ts,
+            taskScheduled=pb.TaskScheduledEvent(
+                name=name,
+                parentTraceContext=pb.TraceContext(
+                    traceParent=client_traceparent,
+                    spanID=client_traceparent.split("-")[2],
+                ),
+            ),
+        )
+
+    def _make_traced_task_completed_event(self, task_id, result, timestamp_seconds=200):
+        ts = timestamp_pb2.Timestamp()
+        ts.FromSeconds(timestamp_seconds)
+        return pb.HistoryEvent(
+            eventId=-1,
+            timestamp=ts,
+            taskCompleted=pb.TaskCompletedEvent(
+                taskScheduledId=task_id,
+                result=wrappers_pb2.StringValue(value=result) if result else None,
+            ),
+        )
+
+    def _make_traced_task_failed_event(self, task_id, error_msg, timestamp_seconds=200):
+        ts = timestamp_pb2.Timestamp()
+        ts.FromSeconds(timestamp_seconds)
+        return pb.HistoryEvent(
+            eventId=-1,
+            timestamp=ts,
+            taskFailed=pb.TaskFailedEvent(
+                taskScheduledId=task_id,
+                failureDetails=pb.TaskFailureDetails(
+                    errorMessage=error_msg, errorType="TaskFailedError",
+                ),
+            ),
+        )
+
+    def _make_execution_started_with_trace(self, name, instance_id):
+        parent_tp = f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_PARENT_SPAN_ID}-01"
+        return pb.HistoryEvent(
+            eventId=-1,
+            timestamp=timestamp_pb2.Timestamp(),
+            executionStarted=pb.ExecutionStartedEvent(
+                name=name,
+                orchestrationInstance=pb.OrchestrationInstance(instanceId=instance_id),
+                parentTraceContext=pb.TraceContext(
+                    traceParent=parent_tp,
+                    spanID=_SAMPLE_PARENT_SPAN_ID,
+                ),
+            ),
+        )
+
+    def test_activity_completed_emits_client_span(self, otel_setup: InMemorySpanExporter):
+        """When taskCompleted arrives as a new event, a CLIENT span is
+        emitted with start_time=taskScheduled.timestamp and
+        end_time=taskCompleted.timestamp."""
+
+        def dummy_activity(ctx, _):
+            pass
+
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            result = yield ctx.call_activity(dummy_activity, input="hi")
+            return result
+
+        registry = worker._Registry()
+        orch_name = registry.add_orchestrator(orchestrator)
+        registry.add_activity(dummy_activity)
+        act_name = task.get_name(dummy_activity)
+
+        client_tp = f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_CLIENT_SPAN_ID}-01"
+
+        # Dispatch 2: old events replay the scheduling, new event completes
+        old_events = [
+            helpers.new_orchestrator_started_event(),
+            self._make_execution_started_with_trace(orch_name, TEST_INSTANCE_ID),
+            self._make_traced_task_scheduled_event(1, act_name, client_tp, timestamp_seconds=100),
+        ]
+        new_events = [
+            self._make_traced_task_completed_event(1, json.dumps("result"), timestamp_seconds=200),
+        ]
+
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
         client_spans = [
             s for s in otel_setup.get_finished_spans()
             if s.kind == trace.SpanKind.CLIENT
         ]
         assert len(client_spans) == 1
-        assert "activity" in client_spans[0].name
+        s = client_spans[0]
+        assert "activity" in s.name
+        assert s.context is not None
+        assert s.context.span_id == int(_SAMPLE_CLIENT_SPAN_ID, 16)
+        assert s.context.trace_id == int(_SAMPLE_TRACE_ID, 16)
+        assert s.start_time == 100_000_000_000  # 100 seconds in ns
+        assert s.end_time == 200_000_000_000  # 200 seconds in ns
+        # Parent should be the orchestration span, not the PRODUCER span
+        assert s.parent is not None
+        orch_ctx = result._orchestration_trace_context
+        assert orch_ctx is not None
+        assert s.parent.span_id == int(orch_ctx.spanID, 16)
+        assert s.parent.span_id != int(_SAMPLE_PARENT_SPAN_ID, 16)
+
+    def test_activity_failed_emits_error_client_span(self, otel_setup: InMemorySpanExporter):
+        """When taskFailed arrives as a new event, a CLIENT span is
+        emitted with ERROR status."""
+
+        def dummy_activity(ctx, _):
+            pass
+
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            try:
+                yield ctx.call_activity(dummy_activity, input="hi")
+            except task.TaskFailedError:
+                return "caught"
+
+        registry = worker._Registry()
+        orch_name = registry.add_orchestrator(orchestrator)
+        registry.add_activity(dummy_activity)
+        act_name = task.get_name(dummy_activity)
+
+        client_tp = f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_CLIENT_SPAN_ID}-01"
+
+        old_events = [
+            helpers.new_orchestrator_started_event(),
+            self._make_execution_started_with_trace(orch_name, TEST_INSTANCE_ID),
+            self._make_traced_task_scheduled_event(1, act_name, client_tp, timestamp_seconds=100),
+        ]
+        new_events = [
+            self._make_traced_task_failed_event(1, "boom", timestamp_seconds=250),
+        ]
+
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+        client_spans = [
+            s for s in otel_setup.get_finished_spans()
+            if s.kind == trace.SpanKind.CLIENT
+        ]
+        assert len(client_spans) == 1
+        s = client_spans[0]
+        assert s.status.status_code == StatusCode.ERROR
+        assert s.status.description is not None
+        assert "boom" in s.status.description
+        assert s.start_time == 100_000_000_000
+        assert s.end_time == 250_000_000_000
+
+    def test_sub_orchestration_completed_emits_client_span(self, otel_setup: InMemorySpanExporter):
+        """When subOrchestrationInstanceCompleted arrives as a new event,
+        a CLIENT span is emitted."""
+
+        def sub_orch(ctx: task.OrchestrationContext, _):
+            return "sub_result"
+
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            result = yield ctx.call_sub_orchestrator(sub_orch)
+            return result
+
+        registry = worker._Registry()
+        sub_name = registry.add_orchestrator(sub_orch)
+        orch_name = registry.add_orchestrator(orchestrator)
+
+        client_tp = f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_CLIENT_SPAN_ID}-01"
+        sub_instance_id = f"{TEST_INSTANCE_ID}:0001"
+
+        ts_created = timestamp_pb2.Timestamp()
+        ts_created.FromSeconds(150)
+        ts_completed = timestamp_pb2.Timestamp()
+        ts_completed.FromSeconds(300)
+
+        old_events = [
+            helpers.new_orchestrator_started_event(),
+            self._make_execution_started_with_trace(orch_name, TEST_INSTANCE_ID),
+            pb.HistoryEvent(
+                eventId=1,
+                timestamp=ts_created,
+                subOrchestrationInstanceCreated=pb.SubOrchestrationInstanceCreatedEvent(
+                    name=sub_name,
+                    instanceId=sub_instance_id,
+                    parentTraceContext=pb.TraceContext(
+                        traceParent=client_tp,
+                        spanID=_SAMPLE_CLIENT_SPAN_ID,
+                    ),
+                ),
+            ),
+        ]
+        new_events = [
+            pb.HistoryEvent(
+                eventId=-1,
+                timestamp=ts_completed,
+                subOrchestrationInstanceCompleted=pb.SubOrchestrationInstanceCompletedEvent(
+                    taskScheduledId=1,
+                    result=wrappers_pb2.StringValue(value=json.dumps("sub_result")),
+                ),
+            ),
+        ]
+
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+        client_spans = [
+            s for s in otel_setup.get_finished_spans()
+            if s.kind == trace.SpanKind.CLIENT
+        ]
+        assert len(client_spans) == 1
+        s = client_spans[0]
+        assert "orchestration" in s.name
+        assert s.context is not None
+        assert s.context.span_id == int(_SAMPLE_CLIENT_SPAN_ID, 16)
+        assert s.start_time == 150_000_000_000
+        assert s.end_time == 300_000_000_000
+
+    def test_replayed_completion_does_not_emit_client_span(self, otel_setup: InMemorySpanExporter):
+        """When both taskScheduled and taskCompleted are in old_events
+        (full replay), no CLIENT span is emitted."""
+
+        def dummy_activity(ctx, _):
+            pass
+
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            r1 = yield ctx.call_activity(dummy_activity, input=1)
+            r2 = yield ctx.call_activity(dummy_activity, input=2)
+            return [r1, r2]
+
+        registry = worker._Registry()
+        orch_name = registry.add_orchestrator(orchestrator)
+        registry.add_activity(dummy_activity)
+        act_name = task.get_name(dummy_activity)
+
+        client_tp = f"00-{_SAMPLE_TRACE_ID}-{_SAMPLE_CLIENT_SPAN_ID}-01"
+
+        old_events = [
+            helpers.new_orchestrator_started_event(),
+            self._make_execution_started_with_trace(orch_name, TEST_INSTANCE_ID),
+            self._make_traced_task_scheduled_event(1, act_name, client_tp, timestamp_seconds=100),
+            self._make_traced_task_completed_event(1, json.dumps(10), timestamp_seconds=200),
+        ]
+        # Second activity completes as new event — but NO parentTraceContext
+        # on its taskScheduled, so no CLIENT span for it either
+        new_events = [
+            helpers.new_task_scheduled_event(2, act_name),
+            helpers.new_task_completed_event(2, json.dumps(20)),
+        ]
+
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+        client_spans = [
+            s for s in otel_setup.get_finished_spans()
+            if s.kind == trace.SpanKind.CLIENT
+        ]
+        # taskCompleted(1) in old_events -> replaying -> no span
+        # taskCompleted(2) in new_events -> no parentTraceContext on taskScheduled -> no span
+        assert len(client_spans) == 0

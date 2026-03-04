@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
@@ -330,14 +331,6 @@ class TaskHubGrpcWorker:
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
-        # Persist orchestration spans across replay dispatches so only one
-        # span is exported per orchestration (on completion).
-        # Key: instance_id, Value: (span, orchestrationTraceContext)
-        self._orchestration_spans: dict[str, tuple] = {}
-        # Persist activity / sub-orchestration CLIENT spans across dispatches
-        # so the span covers scheduling-to-completion duration.
-        # Key: instance_id -> (task_id -> span)
-        self._pending_client_spans: dict[str, dict[int, Any]] = {}
 
         # Use provided concurrency options or create default ones
         self._concurrency_options = (
@@ -636,17 +629,6 @@ class TaskHubGrpcWorker:
         self._logger.info("Worker shutdown completed")
         self._is_running = False
 
-    def _end_remaining_client_spans(self, instance_id: str) -> None:
-        """End and discard any CLIENT spans still pending for *instance_id*.
-
-        Called when the orchestration completes, fails, or is abandoned so
-        that in-flight CLIENT spans are properly closed and exported.
-        """
-        spans = self._pending_client_spans.pop(instance_id, None)
-        if spans:
-            for span in spans.values():
-                tracing.end_client_span(span)
-
     def _execute_orchestrator(
             self,
             req: pb.OrchestratorRequest,
@@ -665,35 +647,22 @@ class TaskHubGrpcWorker:
                     parent_trace_ctx = e.executionStarted.parentTraceContext
                 break
 
-        # Reuse the orchestration span from a previous dispatch if available,
-        # so a single span covers the entire orchestration lifetime.
-        saved = self._orchestration_spans.get(instance_id)
-        if saved is not None:
-            span, orch_trace_ctx = saved
-            reattach_token = tracing.reattach_orchestration_span(span)
-            tokens = (None, reattach_token)
-            span_id = None  # already captured on first dispatch
+        # Determine the orchestration start time: reuse persisted value
+        # from a prior dispatch, or capture a new one.
+        if (req.HasField("orchestrationTraceContext") and req.orchestrationTraceContext.HasField("spanStartTime")):
+            start_time_ns = req.orchestrationTraceContext.spanStartTime.ToNanoseconds()
         else:
-            # First dispatch for this instance — create a new span
-            span, tokens, span_id, start_time_ns = tracing.start_orchestration_span(
-                orchestration_name,
-                instance_id,
-                parent_trace_context=parent_trace_ctx,
-                orchestration_trace_context=(
-                    req.orchestrationTraceContext
-                    if req.HasField("orchestrationTraceContext") else None
-                ),
-            )
-            orch_trace_ctx = tracing.build_orchestration_trace_context(
-                span_id, start_time_ns,
-            )
+            start_time_ns = time.time_ns()
+
+        # Extract persisted orchestration span ID from a prior dispatch
+        persisted_orch_span_id = None
+        if (req.HasField("orchestrationTraceContext") and req.orchestrationTraceContext.HasField("spanID") and req.orchestrationTraceContext.spanID.value):
+            persisted_orch_span_id = req.orchestrationTraceContext.spanID.value
 
         try:
-            instance_client_spans = self._pending_client_spans.setdefault(
-                instance_id, {})
             executor = _OrchestrationExecutor(
                 self._registry, self._logger,
-                pending_client_spans=instance_client_spans)
+                persisted_orch_span_id=persisted_orch_span_id)
             result = executor.execute(instance_id, req.pastEvents, req.newEvents)
 
             # Determine completion status for span
@@ -709,18 +678,24 @@ class TaskHubGrpcWorker:
                         failure_details = action.completeOrchestration.failureDetails
 
             if is_complete:
-                # Orchestration finished — end and export the span
-                tracing.end_orchestration_span(
-                    span, tokens, True, is_failed, failure_details,
+                # Orchestration finished — emit a single span covering its lifetime
+                tracing.emit_orchestration_span(
+                    orchestration_name,
+                    instance_id,
+                    start_time_ns,
+                    is_failed,
+                    failure_details=failure_details,
+                    parent_trace_context=parent_trace_ctx,
+                    orchestration_trace_context=result._orchestration_trace_context,
                 )
-                self._orchestration_spans.pop(instance_id, None)
-                self._end_remaining_client_spans(instance_id)
-            else:
-                # Intermediate dispatch — keep the span alive for later,
-                # but detach context tokens for this call.
-                if span is not None:
-                    self._orchestration_spans[instance_id] = (span, orch_trace_ctx)
-                tracing.detach_orchestration_tokens(tokens)
+
+            # Include the span ID in the orchestration trace context
+            # so it persists across dispatches.
+            orch_span_id = None
+            if result._orchestration_trace_context:
+                orch_span_id = result._orchestration_trace_context.spanID
+            orch_trace_ctx = tracing.build_orchestration_trace_context(
+                start_time_ns, span_id=orch_span_id)
 
             res = pb.OrchestratorResponse(
                 instanceId=instance_id,
@@ -733,9 +708,7 @@ class TaskHubGrpcWorker:
                 ),
             )
         except pe.AbandonOrchestrationError:
-            tracing.end_orchestration_span(span, tokens, False, False)
-            self._orchestration_spans.pop(instance_id, None)
-            self._end_remaining_client_spans(instance_id)
+            # Abandoned — no span needed
             self._logger.info(
                 f"Abandoning orchestration. InstanceId = '{instance_id}'. Completion token = '{completionToken}'"
             )
@@ -746,10 +719,15 @@ class TaskHubGrpcWorker:
             )
             return
         except Exception as ex:
-            tracing.set_span_error(span, ex)
-            tracing.end_orchestration_span(span, tokens, True, True, ex)
-            self._orchestration_spans.pop(instance_id, None)
-            self._end_remaining_client_spans(instance_id)
+            # Unhandled error — emit a failed span
+            tracing.emit_orchestration_span(
+                orchestration_name,
+                instance_id,
+                start_time_ns,
+                is_failed=True,
+                failure_details=ex,
+                parent_trace_context=parent_trace_ctx,
+            )
             self._logger.exception(
                 f"An error occurred while trying to execute instance '{instance_id}': {ex}"
             )
@@ -975,8 +953,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._save_events = False
         self._encoded_custom_status: Optional[str] = None
         self._parent_trace_context: Optional[pb.TraceContext] = None
-        # Shared dict for activity/sub-orch CLIENT span lifecycle
-        self._pending_client_spans: dict[int, Any] = {}
+        self._orchestration_trace_context: Optional[pb.TraceContext] = None
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -1266,15 +1243,16 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 if isinstance(activity_function, str)
                 else task.get_name(activity_function)
             )
-            # Create a CLIENT span for the activity and propagate its trace
-            # context so the activity SERVER span is parented by it.
-            parent_ctx = self._parent_trace_context
+            # Generate a trace context for the deferred CLIENT span.
+            # The actual span is emitted later with proper timestamps
+            # when the taskCompleted/taskFailed event arrives.
+            orch_ctx = self._orchestration_trace_context or self._parent_trace_context
+            parent_ctx = orch_ctx
             if not self._is_replaying:
-                client_result = tracing.create_client_span_context(
-                    "activity", name, self.instance_id, id)
-                if client_result:
-                    parent_ctx, client_span = client_result
-                    self._pending_client_spans[id] = client_span
+                client_ctx = tracing.generate_client_trace_context(
+                    parent_trace_context=orch_ctx)
+                if client_ctx is not None:
+                    parent_ctx = client_ctx
             action = ph.new_schedule_task_action(
                 id, name, encoded_input, tags,
                 parent_trace_context=parent_ctx)
@@ -1284,16 +1262,16 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 instance_id = f"{self.instance_id}:{id:04x}"
             if not isinstance(activity_function, str):
                 raise ValueError("Orchestrator function name must be a string")
-            # Create a CLIENT span for the sub-orchestration and propagate
-            # its trace context so the sub-orch SERVER span is parented by it.
-            parent_ctx = self._parent_trace_context
+            # Generate a trace context for the deferred CLIENT span.
+            # The actual span is emitted later with proper timestamps
+            # when the sub-orchestration completes or fails.
+            orch_ctx = self._orchestration_trace_context or self._parent_trace_context
+            parent_ctx = orch_ctx
             if not self._is_replaying:
-                client_result = tracing.create_client_span_context(
-                    "orchestration", activity_function, instance_id, id,
-                    version=version)
-                if client_result:
-                    parent_ctx, client_span = client_result
-                    self._pending_client_spans[id] = client_span
+                client_ctx = tracing.generate_client_trace_context(
+                    parent_trace_context=orch_ctx)
+                if client_ctx is not None:
+                    parent_ctx = client_ctx
             action = ph.new_create_sub_orchestration_action(
                 id, activity_function, instance_id, encoded_input, version,
                 parent_trace_context=parent_ctx
@@ -1429,12 +1407,15 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 class ExecutionResults:
     actions: list[pb.OrchestratorAction]
     encoded_custom_status: Optional[str]
+    _orchestration_trace_context: Optional[pb.TraceContext]
 
     def __init__(
-            self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str]
+            self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str],
+            orchestration_trace_context: Optional[pb.TraceContext] = None,
     ):
         self.actions = actions
         self.encoded_custom_status = encoded_custom_status
+        self._orchestration_trace_context = orchestration_trace_context
 
 
 class _OrchestrationExecutor:
@@ -1444,50 +1425,21 @@ class _OrchestrationExecutor:
         self,
         registry: _Registry,
         logger: logging.Logger,
-        pending_client_spans: Optional[dict[int, Any]] = None,
+        persisted_orch_span_id: Optional[str] = None,
     ):
         self._registry = registry
         self._logger = logger
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
+        self._persisted_orch_span_id = persisted_orch_span_id
         # Maps timer_id -> (fire_at, created_time_ns)
         self._timer_fire_at: dict[int, tuple[datetime, Optional[int]]] = {}
-        # Shared dict for CLIENT span lifecycle (from the worker)
-        self._pending_client_spans: dict[int, Any] = (
-            pending_client_spans if pending_client_spans is not None else {})
-        # True when the worker provides a persistent span dict.
-        # Fallback CLIENT spans are only emitted in this mode
-        # (bare executors in tests don't have prior-dispatch state).
-        self._has_worker_span_context = pending_client_spans is not None
-        # Track task_id -> (task_type, name, instance_id) for fallback
-        # CLIENT span emission when the scheduling worker differs from
-        # the completion worker (distributed environment).
-        self._scheduled_task_info: dict[int, tuple[str, str, str]] = {}
-
-    def _emit_fallback_client_span(
-        self,
-        task_id: int,
-        is_error: bool = False,
-        error_message: Optional[str] = None,
-    ) -> None:
-        """Emit an instant CLIENT span for a task whose scheduling dispatch
-        was handled by a different worker (distributed environment).
-
-        This is a no-op when the executor was created without worker span
-        context or when no scheduling info is available for *task_id*.
-        """
-        if not self._has_worker_span_context:
-            return
-        info = self._scheduled_task_info.get(task_id)
-        if not info:
-            return
-        task_type, task_name, inst_id = info
-        result = tracing.create_client_span_context(
-            task_type, task_name, inst_id, task_id)
-        if result:
-            _, span = result
-            tracing.end_client_span(span, is_error=is_error,
-                                    error_message=error_message)
+        # Maps task_id -> (task_type, name, instance_id, scheduled_ns,
+        #                  client_trace_ctx, version)
+        # Used to reconstruct CLIENT spans with proper timestamps.
+        self._task_scheduled_info: dict[
+            int, tuple[str, str, str, Optional[int], pb.TraceContext, Optional[str]]
+        ] = {}
 
     def execute(
             self,
@@ -1511,7 +1463,6 @@ class _OrchestrationExecutor:
             )
 
         ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
-        ctx._pending_client_spans = self._pending_client_spans
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
@@ -1568,7 +1519,8 @@ class _OrchestrationExecutor:
                 f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}"
             )
         return ExecutionResults(
-            actions=actions, encoded_custom_status=ctx._encoded_custom_status
+            actions=actions, encoded_custom_status=ctx._encoded_custom_status,
+            orchestration_trace_context=ctx._orchestration_trace_context,
         )
 
     def process_event(
@@ -1579,12 +1531,10 @@ class _OrchestrationExecutor:
             self._suspended_events.append(event)
             return
 
-        # CONSIDER: change to a switch statement with event.WhichOneof("eventType")
         try:
             if event.HasField("orchestratorStarted"):
                 ctx.current_utc_datetime = event.timestamp.ToDatetime()
             elif event.HasField("executionStarted"):
-                # TODO: Check if we already started the orchestration
                 fn = self._registry.get_orchestrator(event.executionStarted.name)
                 if fn is None:
                     raise OrchestratorNotRegisteredError(
@@ -1597,6 +1547,17 @@ class _OrchestrationExecutor:
                 # Store the parent trace context for propagation to child tasks
                 if event.executionStarted.HasField("parentTraceContext"):
                     ctx._parent_trace_context = event.executionStarted.parentTraceContext
+                    # Reuse a persisted span ID from a prior dispatch so
+                    # activities/timers/sub-orchestrations across all
+                    # dispatches share the same parent.  On the first
+                    # dispatch, generate a new random span ID.
+                    if self._persisted_orch_span_id:
+                        ctx._orchestration_trace_context = tracing.reconstruct_trace_context(
+                            ctx._parent_trace_context,
+                            self._persisted_orch_span_id)
+                    else:
+                        ctx._orchestration_trace_context = tracing.generate_client_trace_context(
+                            parent_trace_context=ctx._parent_trace_context)
 
                 if self._registry.versioning:
                     version_failure = self.evaluate_orchestration_versioning(
@@ -1652,8 +1613,8 @@ class _OrchestrationExecutor:
                 timer_id = event.timerFired.timerId
                 timer_task = ctx._pending_tasks.pop(timer_id, None)
                 if not timer_task:
-                    # TODO: Should this be an error? When would it ever happen?
-                    if not ctx._is_replaying:
+                    # Unexpected event for unknown timer; log and skip.
+                    if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
                         )
@@ -1667,6 +1628,7 @@ class _OrchestrationExecutor:
                             self._orchestration_name, ctx.instance_id,
                             timer_id, fire_at,
                             scheduled_time_ns=created_ns,
+                            parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
                         )
                 timer_task.complete(None)
                 if timer_task._retryable_parent is not None:
@@ -1711,27 +1673,39 @@ class _OrchestrationExecutor:
                         expected_task_name=event.taskScheduled.name,
                         actual_task_name=action.scheduleTask.name,
                     )
-                # Track task name for fallback CLIENT span in distributed case
-                self._scheduled_task_info[task_id] = (
-                    "activity", event.taskScheduled.name, ctx.instance_id)
+                # Store info for deferred CLIENT span reconstruction
+                ts_evt = event.taskScheduled
+                if ts_evt.HasField("parentTraceContext") and ts_evt.parentTraceContext.traceParent:
+                    sched_ns = event.timestamp.ToNanoseconds() if event.HasField("timestamp") else None
+                    ver_str = ts_evt.version.value if ts_evt.HasField("version") else None
+                    self._task_scheduled_info[task_id] = (
+                        "activity", ts_evt.name, ctx.instance_id,
+                        sched_ns, ts_evt.parentTraceContext, ver_str,
+                    )
             elif event.HasField("taskCompleted"):
                 # This history event contains the result of a completed activity task.
                 task_id = event.taskCompleted.taskScheduledId
-                # End the CLIENT span for this activity (spans the full duration)
-                if not ctx.is_replaying:
-                    client_span = self._pending_client_spans.pop(task_id, None)
-                    if client_span is not None:
-                        tracing.end_client_span(client_span)
-                    else:
-                        self._emit_fallback_client_span(task_id)
                 activity_task = ctx._pending_tasks.pop(task_id, None)
                 if not activity_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # Unexpected completion for unknown task; log and skip.
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected taskCompleted event with ID = {task_id}."
                         )
                     return
+                # Emit deferred CLIENT span with proper timestamps
+                if not ctx.is_replaying:
+                    info = self._task_scheduled_info.pop(task_id, None)
+                    if info is not None:
+                        t_type, t_name, t_iid, s_ns, c_ctx, t_ver = info
+                        e_ns = event.timestamp.ToNanoseconds() if event.HasField("timestamp") else None
+                        tracing.emit_client_span(
+                            t_type, t_name, t_iid, task_id,
+                            client_trace_context=c_ctx,
+                            parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
+                            start_time_ns=s_ns, end_time_ns=e_ns,
+                            version=t_ver,
+                        )
                 result = None
                 if not ph.is_empty(event.taskCompleted.result):
                     result = shared.from_json(event.taskCompleted.result.value)
@@ -1739,28 +1713,30 @@ class _OrchestrationExecutor:
                 ctx.resume()
             elif event.HasField("taskFailed"):
                 task_id = event.taskFailed.taskScheduledId
-                # End the CLIENT span with error status
-                if not ctx.is_replaying:
-                    client_span = self._pending_client_spans.pop(task_id, None)
-                    err_msg = (
-                        event.taskFailed.failureDetails.errorMessage
-                        if event.taskFailed.HasField("failureDetails")
-                        else None
-                    )
-                    if client_span is not None:
-                        tracing.end_client_span(
-                            client_span, is_error=True, error_message=err_msg)
-                    else:
-                        self._emit_fallback_client_span(
-                            task_id, is_error=True, error_message=err_msg)
                 activity_task = ctx._pending_tasks.pop(task_id, None)
                 if not activity_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # Unexpected failure for unknown task; log and skip.
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected taskFailed event with ID = {task_id}."
                         )
                     return
+
+                # Emit deferred CLIENT span with error status
+                if not ctx.is_replaying:
+                    info = self._task_scheduled_info.pop(task_id, None)
+                    if info is not None:
+                        t_type, t_name, t_iid, s_ns, c_ctx, t_ver = info
+                        e_ns = event.timestamp.ToNanoseconds() if event.HasField("timestamp") else None
+                        tracing.emit_client_span(
+                            t_type, t_name, t_iid, task_id,
+                            client_trace_context=c_ctx,
+                            parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
+                            start_time_ns=s_ns, end_time_ns=e_ns,
+                            is_error=True,
+                            error_message=str(event.taskFailed.failureDetails.errorMessage),
+                            version=t_ver,
+                        )
 
                 if isinstance(activity_task, task.RetryableTask):
                     if activity_task._retry_policy is not None:
@@ -1805,29 +1781,38 @@ class _OrchestrationExecutor:
                         expected_task_name=event.subOrchestrationInstanceCreated.name,
                         actual_task_name=action.createSubOrchestration.name,
                     )
-                # Track task name for fallback CLIENT span in distributed case
-                self._scheduled_task_info[task_id] = (
-                    "orchestration",
-                    event.subOrchestrationInstanceCreated.name,
-                    event.subOrchestrationInstanceCreated.instanceId,
-                )
+                # Store info for deferred CLIENT span reconstruction
+                sub_evt = event.subOrchestrationInstanceCreated
+                if sub_evt.HasField("parentTraceContext") and sub_evt.parentTraceContext.traceParent:
+                    sched_ns = event.timestamp.ToNanoseconds() if event.HasField("timestamp") else None
+                    ver_str = sub_evt.version.value if sub_evt.HasField("version") else None
+                    self._task_scheduled_info[task_id] = (
+                        "orchestration", sub_evt.name, sub_evt.instanceId,
+                        sched_ns, sub_evt.parentTraceContext, ver_str,
+                    )
             elif event.HasField("subOrchestrationInstanceCompleted"):
                 task_id = event.subOrchestrationInstanceCompleted.taskScheduledId
-                # End the CLIENT span for this sub-orchestration
-                if not ctx.is_replaying:
-                    client_span = self._pending_client_spans.pop(task_id, None)
-                    if client_span is not None:
-                        tracing.end_client_span(client_span)
-                    else:
-                        self._emit_fallback_client_span(task_id)
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
                 if not sub_orch_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # Unexpected completion for unknown sub-orchestration; log and skip.
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceCompleted event with ID = {task_id}."
                         )
                     return
+                # Emit deferred CLIENT span with proper timestamps
+                if not ctx.is_replaying:
+                    info = self._task_scheduled_info.pop(task_id, None)
+                    if info is not None:
+                        t_type, t_name, t_iid, s_ns, c_ctx, t_ver = info
+                        e_ns = event.timestamp.ToNanoseconds() if event.HasField("timestamp") else None
+                        tracing.emit_client_span(
+                            t_type, t_name, t_iid, task_id,
+                            client_trace_context=c_ctx,
+                            parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
+                            start_time_ns=s_ns, end_time_ns=e_ns,
+                            version=t_ver,
+                        )
                 result = None
                 if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
                     result = shared.from_json(
@@ -1838,28 +1823,29 @@ class _OrchestrationExecutor:
             elif event.HasField("subOrchestrationInstanceFailed"):
                 failedEvent = event.subOrchestrationInstanceFailed
                 task_id = failedEvent.taskScheduledId
-                # End the CLIENT span with error status
-                if not ctx.is_replaying:
-                    client_span = self._pending_client_spans.pop(task_id, None)
-                    err_msg = (
-                        failedEvent.failureDetails.errorMessage
-                        if failedEvent.HasField("failureDetails")
-                        else None
-                    )
-                    if client_span is not None:
-                        tracing.end_client_span(
-                            client_span, is_error=True, error_message=err_msg)
-                    else:
-                        self._emit_fallback_client_span(
-                            task_id, is_error=True, error_message=err_msg)
                 sub_orch_task = ctx._pending_tasks.pop(task_id, None)
                 if not sub_orch_task:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # Unexpected failure for unknown sub-orchestration; log and skip.
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected subOrchestrationInstanceFailed event with ID = {task_id}."
                         )
                     return
+                # Emit deferred CLIENT span with error status
+                if not ctx.is_replaying:
+                    info = self._task_scheduled_info.pop(task_id, None)
+                    if info is not None:
+                        t_type, t_name, t_iid, s_ns, c_ctx, t_ver = info
+                        e_ns = event.timestamp.ToNanoseconds() if event.HasField("timestamp") else None
+                        tracing.emit_client_span(
+                            t_type, t_name, t_iid, task_id,
+                            client_trace_context=c_ctx,
+                            parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
+                            start_time_ns=s_ns, end_time_ns=e_ns,
+                            is_error=True,
+                            error_message=str(failedEvent.failureDetails.errorMessage),
+                            version=t_ver,
+                        )
                 if isinstance(sub_orch_task, task.RetryableTask):
                     if sub_orch_task._retry_policy is not None:
                         next_delay = sub_orch_task.compute_next_delay()
@@ -2002,7 +1988,7 @@ class _OrchestrationExecutor:
                 section_id = event.entityLockGranted.criticalSectionId
                 task_id = ctx._entity_lock_id_map.pop(section_id, None)
                 if not task_id:
-                    # TODO: Should this be an error? When would it ever happen?
+                    # Unexpected lock grant for unknown section; log and skip.
                     if not ctx.is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring unexpected entityLockGranted event for criticalSectionId '{section_id}'."
