@@ -1314,6 +1314,40 @@ class _OrchestrationExecutor:
                 "The new history event list must have at least one event in it."
             )
 
+        # Check for rewind BEFORE replay.  A rewind is indicated by an
+        # executionRewound event in new_events.  We need to distinguish
+        # two cases:
+        # 1. A *new* rewind request that the worker must short-circuit:
+        #    either there is no executionRewound in old_events yet
+        #    (first rewind), or the last orchestratorCompleted comes
+        #    AFTER the last executionRewound in old_events — meaning
+        #    the orchestration ran and completed (with failure) after
+        #    a prior rewind.
+        # 2. A *post-rewind replay* where the backend has already
+        #    processed the RewindOrchestrationAction, cleaned the
+        #    history, and re-dispatched the orchestration.  In this
+        #    case the last executionRewound in old_events comes AFTER
+        #    the last orchestratorCompleted.
+        has_rewind_in_new = any(
+            e.HasField("executionRewound") for e in new_events
+        )
+        if has_rewind_in_new:
+            last_rewind_pos = -1
+            last_completed_pos = -1
+            for i, e in enumerate(old_events):
+                if e.HasField("executionRewound"):
+                    last_rewind_pos = i
+                elif e.HasField("orchestratorCompleted"):
+                    last_completed_pos = i
+
+            if last_rewind_pos < 0 or last_completed_pos > last_rewind_pos:
+                # Either first rewind (no executionRewound in history)
+                # or the orchestration completed after a prior rewind
+                # (orchestratorCompleted comes after executionRewound),
+                # so this is a new rewind that needs short-circuiting.
+                return self._build_rewind_result(
+                    instance_id, orchestration_name, old_events, new_events)
+
         ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
         try:
             # Rebuild local state by replaying old history into the orchestrator function
@@ -1373,6 +1407,66 @@ class _OrchestrationExecutor:
         return ExecutionResults(
             actions=actions, encoded_custom_status=ctx._encoded_custom_status
         )
+
+    def _build_rewind_result(
+            self,
+            instance_id: str,
+            orchestration_name: str,
+            old_events: Sequence[pb.HistoryEvent],
+            new_events: Sequence[pb.HistoryEvent],
+    ) -> ExecutionResults:
+        """Build an ``ExecutionResults`` containing a ``RewindOrchestrationAction``.
+
+        When the worker detects an ``executionRewound`` event in the new
+        events (that does not yet appear in the committed history) it
+        rewrites the history by removing failed task results
+        (``taskFailed``) and failed sub-orchestration results
+        (``subOrchestrationInstanceFailed``).  The ``executionRewound``
+        event is kept so the backend knows why the rewind happened and
+        so it remains in the history for audit purposes.
+
+        For failed activities, the corresponding ``taskScheduled`` event
+        is also removed so that the SDK will re-generate a
+        ``scheduleTask`` action during the next replay, causing the
+        backend to re-dispatch the activity.
+
+        For failed sub-orchestrations, the ``subOrchestrationInstanceCreated``
+        event is kept so the backend can identify which sub-orchestration
+        instances to recursively rewind.
+        """
+        self._logger.info(
+            f"{instance_id}: Orchestration {orchestration_name} is being rewound"
+        )
+
+        # Combine old + new events into a single timeline, then remove
+        # failed results so the orchestration can replay successfully.
+        all_events = list(old_events) + list(new_events)
+
+        # First pass: collect the task-scheduled IDs that correspond to
+        # failed activities so we can remove the matching taskScheduled
+        # events in the second pass.
+        failed_task_ids: set[int] = set()
+        for event in all_events:
+            if event.HasField("taskFailed"):
+                failed_task_ids.add(event.taskFailed.taskScheduledId)
+
+        # Second pass: build the clean history.
+        clean_history: list[pb.HistoryEvent] = []
+        for event in all_events:
+            if event.HasField("taskFailed"):
+                continue
+            if event.HasField("taskScheduled") and event.eventId in failed_task_ids:
+                continue
+            if event.HasField("subOrchestrationInstanceFailed"):
+                continue
+            clean_history.append(event)
+
+        rewind_action = pb.RewindOrchestrationAction(newHistory=clean_history)
+        action = pb.OrchestratorAction(
+            id=-1,
+            rewindOrchestration=rewind_action,
+        )
+        return ExecutionResults(actions=[action], encoded_custom_status=None)
 
     def process_event(
             self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent
@@ -1795,6 +1889,9 @@ class _OrchestrationExecutor:
                 ctx.resume()
             elif event.HasField("orchestratorCompleted"):
                 # Added in Functions only (for some reason) and does not affect orchestrator flow
+                pass
+            elif event.HasField("executionRewound"):
+                # Informational event added when an orchestration is rewound. No action needed.
                 pass
             elif event.HasField("eventSent"):
                 # Check if this eventSent corresponds to an entity operation call after being translated to the old
