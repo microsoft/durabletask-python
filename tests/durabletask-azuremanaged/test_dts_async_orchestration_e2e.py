@@ -44,10 +44,10 @@ async def test_empty_orchestration():
         w.add_orchestrator(empty_orchestrator)
         w.start()
 
-        c = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                            taskhub=taskhub_name, token_credential=None)
-        id = await c.schedule_new_orchestration(empty_orchestrator)
-        state = await c.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as c:
+            id = await c.schedule_new_orchestration(empty_orchestrator)
+            state = await c.wait_for_orchestration_completion(id, timeout=30)
 
     assert invoked
     assert state is not None
@@ -80,11 +80,11 @@ async def test_activity_sequence():
         w.add_activity(plus_one)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(sequence, input=1)
-        state = await task_hub_client.wait_for_orchestration_completion(
-            id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(sequence, input=1)
+            state = await task_hub_client.wait_for_orchestration_completion(
+                id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(sequence)
@@ -128,10 +128,10 @@ async def test_activity_error_handling():
         w.add_activity(increment_counter)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(orchestrator, input=1)
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(orchestrator, input=1)
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(orchestrator)
@@ -173,10 +173,10 @@ async def test_sub_orchestration_fan_out():
         w.add_orchestrator(parent_orchestrator)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(parent_orchestrator, input=10)
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(parent_orchestrator, input=10)
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -201,10 +201,10 @@ async def test_sub_orchestrator_by_name():
         w.add_orchestrator(parent_orchestrator)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(parent_orchestrator, input=None)
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(parent_orchestrator, input=None)
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -226,13 +226,13 @@ async def test_wait_for_multiple_external_events():
         w.start()
 
         # Start the orchestration and immediately raise events to it.
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(orchestrator)
-        await task_hub_client.raise_orchestration_event(id, 'A', data='a')
-        await task_hub_client.raise_orchestration_event(id, 'B', data='b')
-        await task_hub_client.raise_orchestration_event(id, 'C', data='c')
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(orchestrator)
+            await task_hub_client.raise_orchestration_event(id, 'A', data='a')
+            await task_hub_client.raise_orchestration_event(id, 'B', data='b')
+            await task_hub_client.raise_orchestration_event(id, 'C', data='c')
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -250,18 +250,18 @@ async def test_terminate():
         w.add_orchestrator(orchestrator)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(orchestrator)
-        state = await task_hub_client.wait_for_orchestration_start(id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.RUNNING
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(orchestrator)
+            state = await task_hub_client.wait_for_orchestration_start(id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.RUNNING
 
-        await task_hub_client.terminate_orchestration(id, output="some reason for termination")
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.TERMINATED
-        assert state.serialized_output == json.dumps("some reason for termination")
+            await task_hub_client.terminate_orchestration(id, output="some reason for termination")
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.TERMINATED
+            assert state.serialized_output == json.dumps("some reason for termination")
 
 
 async def test_terminate_recursive():
@@ -280,27 +280,27 @@ async def test_terminate_recursive():
         w.add_orchestrator(child)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(root)
-        state = await task_hub_client.wait_for_orchestration_start(id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.RUNNING
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(root)
+            state = await task_hub_client.wait_for_orchestration_start(id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.RUNNING
 
-        # Terminate root orchestration(recursive set to True by default)
-        await task_hub_client.terminate_orchestration(id, output="some reason for termination")
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.TERMINATED
+            # Terminate root orchestration(recursive set to True by default)
+            await task_hub_client.terminate_orchestration(id, output="some reason for termination")
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.TERMINATED
 
-        # Verify that child orchestration is also terminated
-        await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.TERMINATED
+            # Verify that child orchestration is also terminated
+            await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.TERMINATED
 
-        await task_hub_client.purge_orchestration(id)
-        state = await task_hub_client.get_orchestration_state(id)
-        assert state is None
+            await task_hub_client.purge_orchestration(id)
+            state = await task_hub_client.get_orchestration_state(id)
+            assert state is None
 
 
 async def test_restart_with_same_instance_id():
@@ -320,22 +320,22 @@ async def test_restart_with_same_instance_id():
         w.add_activity(say_hello)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=credential)
-        id = await task_hub_client.schedule_new_orchestration(orchestrator)
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
-        assert state.serialized_output == json.dumps("Hello, World!")
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=credential) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(orchestrator)
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+            assert state.serialized_output == json.dumps("Hello, World!")
 
-        # Restart the orchestration with the same instance ID
-        restarted_id = await task_hub_client.restart_orchestration(id)
-        assert restarted_id == id
+            # Restart the orchestration with the same instance ID
+            restarted_id = await task_hub_client.restart_orchestration(id)
+            assert restarted_id == id
 
-        state = await task_hub_client.wait_for_orchestration_completion(restarted_id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
-        assert state.serialized_output == json.dumps("Hello, World!")
+            state = await task_hub_client.wait_for_orchestration_completion(restarted_id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+            assert state.serialized_output == json.dumps("Hello, World!")
 
 
 async def test_restart_with_new_instance_id():
@@ -355,21 +355,21 @@ async def test_restart_with_new_instance_id():
         w.add_activity(say_hello)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=credential)
-        id = await task_hub_client.schedule_new_orchestration(orchestrator)
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=credential) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(orchestrator)
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.COMPLETED
 
-        # Restart the orchestration with a new instance ID
-        restarted_id = await task_hub_client.restart_orchestration(id, restart_with_new_instance_id=True)
-        assert restarted_id != id
+            # Restart the orchestration with a new instance ID
+            restarted_id = await task_hub_client.restart_orchestration(id, restart_with_new_instance_id=True)
+            assert restarted_id != id
 
-        state = await task_hub_client.wait_for_orchestration_completion(restarted_id, timeout=30)
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.COMPLETED
-        assert state.serialized_output == json.dumps("Hello, World!")
+            state = await task_hub_client.wait_for_orchestration_completion(restarted_id, timeout=30)
+            assert state is not None
+            assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+            assert state.serialized_output == json.dumps("Hello, World!")
 
 
 async def test_retry_policies():
@@ -404,10 +404,10 @@ async def test_retry_policies():
         w.add_activity(throw_activity_with_retry)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(parent_orchestrator_with_retry)
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(parent_orchestrator_with_retry)
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.FAILED
         assert state.failure_details is not None
@@ -442,10 +442,10 @@ async def test_retry_timeout():
         w.add_activity(throw_activity)
         w.start()
 
-        task_hub_client = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                                          taskhub=taskhub_name, token_credential=None)
-        id = await task_hub_client.schedule_new_orchestration(mock_orchestrator)
-        state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as task_hub_client:
+            id = await task_hub_client.schedule_new_orchestration(mock_orchestrator)
+            state = await task_hub_client.wait_for_orchestration_completion(id, timeout=30)
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.FAILED
         assert state.failure_details is not None
@@ -466,10 +466,10 @@ async def test_custom_status():
         w.add_orchestrator(empty_orchestrator)
         w.start()
 
-        c = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                            taskhub=taskhub_name, token_credential=None)
-        id = await c.schedule_new_orchestration(empty_orchestrator)
-        state = await c.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as c:
+            id = await c.schedule_new_orchestration(empty_orchestrator)
+            state = await c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(empty_orchestrator)
@@ -500,10 +500,10 @@ async def test_new_uuid():
         w.add_activity(noop)
         w.start()
 
-        c = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                            taskhub=taskhub_name, token_credential=None)
-        id = await c.schedule_new_orchestration(empty_orchestrator)
-        state = await c.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as c:
+            id = await c.schedule_new_orchestration(empty_orchestrator)
+            state = await c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(empty_orchestrator)
@@ -527,10 +527,10 @@ async def test_orchestration_with_unparsable_output_fails():
         w.add_orchestrator(test_orchestrator)
         w.start()
 
-        c = AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                            taskhub=taskhub_name, token_credential=None)
-        id = await c.schedule_new_orchestration(test_orchestrator)
-        state = await c.wait_for_orchestration_completion(id, timeout=30)
+        async with AsyncDurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                                   taskhub=taskhub_name, token_credential=None) as c:
+            id = await c.schedule_new_orchestration(test_orchestrator)
+            state = await c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)

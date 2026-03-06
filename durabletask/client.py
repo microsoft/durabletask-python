@@ -404,6 +404,12 @@ class AsyncTaskHubGrpcClient:
         """Closes the underlying gRPC channel."""
         await self._channel.close()
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
     async def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                          input: Optional[TInput] = None,
                                          instance_id: Optional[str] = None,

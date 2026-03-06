@@ -6,6 +6,7 @@ import logging
 from typing import Optional
 
 from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSAsyncDefaultClientInterceptorImpl,
@@ -81,7 +82,7 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
-                 token_credential: Optional[TokenCredential],
+                 token_credential: Optional[AsyncTokenCredential],
                  secure_channel: bool = True,
                  default_version: Optional[str] = None,
                  log_handler: Optional[logging.Handler] = None,

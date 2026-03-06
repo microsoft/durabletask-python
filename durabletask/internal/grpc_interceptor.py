@@ -93,10 +93,11 @@ class DefaultAsyncClientInterceptorImpl(
     def __init__(self, metadata: list[tuple[str, str]]):
         self._metadata = metadata
 
-    def _intercept_call(
+    async def _intercept_call(
             self, client_call_details: grpc.aio.ClientCallDetails) -> grpc.aio.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
-            call details."""
+            call details. This method is async to allow subclasses to perform async operations
+            (e.g., refreshing auth tokens) during interception."""
         new_metadata = _apply_metadata(client_call_details, self._metadata)
         if new_metadata is client_call_details.metadata:
             return client_call_details
@@ -110,17 +111,17 @@ class DefaultAsyncClientInterceptorImpl(
         )
 
     async def intercept_unary_unary(self, continuation, client_call_details, request):
-        new_client_call_details = self._intercept_call(client_call_details)
+        new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request)
 
     async def intercept_unary_stream(self, continuation, client_call_details, request):
-        new_client_call_details = self._intercept_call(client_call_details)
+        new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request)
 
     async def intercept_stream_unary(self, continuation, client_call_details, request_iterator):
-        new_client_call_details = self._intercept_call(client_call_details)
+        new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request_iterator)
 
     async def intercept_stream_stream(self, continuation, client_call_details, request_iterator):
-        new_client_call_details = self._intercept_call(client_call_details)
+        new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request_iterator)
