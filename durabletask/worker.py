@@ -1443,13 +1443,27 @@ class _OrchestrationExecutor:
         # failed results so the orchestration can replay successfully.
         all_events = list(old_events) + list(new_events)
 
+        # Extract the executionRewound event from new_events so we can
+        # read its parentExecutionId (set when this is a sub-orchestration
+        # being rewound by its parent).
+        rewind_event: pb.ExecutionRewoundEvent | None = None
+        for e in new_events:
+            if e.HasField("executionRewound"):
+                rewind_event = e.executionRewound
+                break
+
+        # Generate a new execution ID for the rewound execution.
+        new_execution_id = uuid.uuid4().hex
+
         # First pass: collect the task-scheduled IDs that correspond to
-        # failed activities so we can remove the matching taskScheduled
-        # events in the second pass.
+        # failed activities / sub-orchestrations so we can remove the
+        # matching taskScheduled events in the second pass.
         failed_task_ids: set[int] = set()
         for event in all_events:
             if event.HasField("taskFailed"):
                 failed_task_ids.add(event.taskFailed.taskScheduledId)
+            elif event.HasField("subOrchestrationInstanceFailed"):
+                failed_task_ids.add(event.subOrchestrationInstanceFailed.taskScheduledId)
 
         # Second pass: build the clean history.
         clean_history: list[pb.HistoryEvent] = []
@@ -1462,6 +1476,23 @@ class _OrchestrationExecutor:
                 continue
             if event.HasField("executionCompleted"):
                 continue
+
+            # Modify the executionStarted event: assign a fresh
+            # execution ID and, for sub-orchestrations, update the
+            # parent's execution ID so it matches the parent's new run.
+            if event.HasField("executionStarted"):
+                event_copy = pb.HistoryEvent()
+                event_copy.CopyFrom(event)
+                event_copy.executionStarted.orchestrationInstance.executionId.CopyFrom(
+                    ph.get_string_value(new_execution_id))
+                if (rewind_event is not None
+                        and rewind_event.HasField("parentExecutionId")
+                        and rewind_event.parentExecutionId.value):
+                    event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
+                        rewind_event.parentExecutionId)
+                clean_history.append(event_copy)
+                continue
+
             clean_history.append(event)
 
         rewind_action = pb.RewindOrchestrationAction(newHistory=clean_history)
