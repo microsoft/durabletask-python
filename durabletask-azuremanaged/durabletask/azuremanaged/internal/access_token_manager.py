@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from azure.core.credentials import AccessToken, TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 
 import durabletask.internal.shared as shared
 
@@ -43,6 +44,43 @@ class AccessTokenManager:
     def refresh_token(self):
         if self._credential is not None:
             self._token = self._credential.get_token(self._scope)
+
+            # Convert UNIX timestamp to timezone-aware datetime
+            self.expiry_time = datetime.fromtimestamp(self._token.expires_on, tz=timezone.utc)
+            self._logger.debug(f"Token refreshed. Expires at: {self.expiry_time}")
+
+
+class AsyncAccessTokenManager:
+    """Async version of AccessTokenManager that uses AsyncTokenCredential.
+
+    This avoids blocking the event loop when acquiring or refreshing tokens."""
+
+    _token: Optional[AccessToken]
+
+    def __init__(self, token_credential: Optional[AsyncTokenCredential],
+                 refresh_interval_seconds: int = 600):
+        self._scope = "https://durabletask.io/.default"
+        self._refresh_interval_seconds = refresh_interval_seconds
+        self._logger = shared.get_logger("async_token_manager")
+
+        self._credential = token_credential
+        self._token = None
+        self.expiry_time = None
+
+    async def get_access_token(self) -> Optional[AccessToken]:
+        if self._token is None or self.is_token_expired():
+            await self.refresh_token()
+        return self._token
+
+    def is_token_expired(self) -> bool:
+        if self.expiry_time is None:
+            return True
+        return datetime.now(timezone.utc) >= (
+            self.expiry_time - timedelta(seconds=self._refresh_interval_seconds))
+
+    async def refresh_token(self):
+        if self._credential is not None:
+            self._token = await self._credential.get_token(self._scope)
 
             # Convert UNIX timestamp to timezone-aware datetime
             self.expiry_time = datetime.fromtimestamp(self._token.expires_on, tz=timezone.utc)
