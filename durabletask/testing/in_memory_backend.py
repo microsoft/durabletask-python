@@ -241,14 +241,16 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             )
             self._next_completion_token += 1
 
-            # Add initial events to start the orchestration
-            orchestrator_started = helpers.new_orchestrator_started_event(start_time)
+            # Add initial events to start the orchestration.
+            # orchestratorStarted bookends each replay batch and is
+            # always the very first event, followed by executionStarted.
             execution_started = helpers.new_execution_started_event(
                 request.name, instance_id,
                 request.input.value if request.input else None,
                 dict(request.tags) if request.tags else None,
                 version=version,
             )
+            orchestrator_started = helpers.new_orchestrator_started_event(start_time)
 
             instance.pending_events.append(orchestrator_started)
             instance.pending_events.append(execution_started)
@@ -611,6 +613,22 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             # Update completion token for next execution
             instance.completion_token = self._next_completion_token
             self._next_completion_token += 1
+
+            # Bookend the replay with orchestratorCompleted.
+            # Skip for continue-as-new (status is PENDING after reset).
+            if instance.status != pb.ORCHESTRATION_STATUS_PENDING:
+                instance.history.append(helpers.new_orchestrator_completed_event())
+
+                # executionCompleted is the very last event when the
+                # orchestration reaches a terminal state.
+                if self._is_terminal_status(instance.status):
+                    instance.history.append(
+                        helpers.new_execution_completed_event(
+                            instance.status,
+                            instance.output,
+                            instance.failure_details,
+                        )
+                    )
 
             # Remove from in-flight before notifying or re-enqueuing
             self._orchestration_in_flight.discard(request.instanceId)
@@ -1092,9 +1110,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         )
         self._next_completion_token += 1
 
-        orchestrator_started = helpers.new_orchestrator_started_event(now)
         execution_started = helpers.new_execution_started_event(
             name, instance_id, encoded_input, version=version)
+        orchestrator_started = helpers.new_orchestrator_started_event(now)
         instance.pending_events.append(orchestrator_started)
         instance.pending_events.append(execution_started)
 
@@ -1232,14 +1250,6 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance.output = complete_action.result.value if complete_action.result else None
         instance.failure_details = complete_action.failureDetails if complete_action.failureDetails else None
 
-        # Append orchestratorCompleted to history when the orchestration
-        # reaches a terminal state.  This positional marker allows the
-        # SDK to distinguish a post-rewind replay from a new rewind
-        # request by comparing the position of the last
-        # orchestratorCompleted against the last executionRewound.
-        if status != pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
-            instance.history.append(helpers.new_orchestrator_completed_event())
-
         if status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             # Handle continue-as-new
             new_input = complete_action.result.value if complete_action.result else None
@@ -1265,11 +1275,11 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             # Build the new pending events in the correct order:
             # OrchestratorStarted, ExecutionStarted, carryover, new arrivals
             now = datetime.now(timezone.utc)
-            orchestrator_started = helpers.new_orchestrator_started_event(now)
             execution_started = helpers.new_execution_started_event(
                 instance.name, instance.instance_id, new_input,
                 version=new_version,
             )
+            orchestrator_started = helpers.new_orchestrator_started_event(now)
             instance.pending_events.append(orchestrator_started)
             instance.pending_events.append(execution_started)
             instance.pending_events.extend(carryover_events)

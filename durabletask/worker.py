@@ -1315,38 +1315,39 @@ class _OrchestrationExecutor:
             )
 
         # Check for rewind BEFORE replay.  A rewind is indicated by an
-        # executionRewound event in new_events.  We need to distinguish
-        # two cases:
-        # 1. A *new* rewind request that the worker must short-circuit:
-        #    either there is no executionRewound in old_events yet
-        #    (first rewind), or the last orchestratorCompleted comes
-        #    AFTER the last executionRewound in old_events — meaning
-        #    the orchestration ran and completed (with failure) after
-        #    a prior rewind.
-        # 2. A *post-rewind replay* where the backend has already
-        #    processed the RewindOrchestrationAction, cleaned the
-        #    history, and re-dispatched the orchestration.  In this
-        #    case the last executionRewound in old_events comes AFTER
-        #    the last orchestratorCompleted.
+        # executionRewound event in new_events.  We look for an
+        # executionCompleted event anywhere in the history (old or new
+        # events) to decide whether to rewind or replay:
+        # 1. executionCompleted IS present → the orchestration reached a
+        #    terminal state (e.g. failed).  This is a *new* rewind that
+        #    the worker must short-circuit by building clean history.
+        # 2. executionCompleted is NOT present → the backend already
+        #    processed the RewindOrchestrationAction which removed
+        #    executionCompleted from history.  This is a normal
+        #    post-rewind replay.
         has_rewind_in_new = any(
             e.HasField("executionRewound") for e in new_events
         )
         if has_rewind_in_new:
-            last_rewind_pos = -1
-            last_completed_pos = -1
-            for i, e in enumerate(old_events):
-                if e.HasField("executionRewound"):
-                    last_rewind_pos = i
-                elif e.HasField("orchestratorCompleted"):
-                    last_completed_pos = i
-
-            if last_rewind_pos < 0 or last_completed_pos > last_rewind_pos:
-                # Either first rewind (no executionRewound in history)
-                # or the orchestration completed after a prior rewind
-                # (orchestratorCompleted comes after executionRewound),
-                # so this is a new rewind that needs short-circuiting.
+            from itertools import chain
+            has_execution_completed = any(
+                e.HasField("executionCompleted")
+                for e in chain(old_events, new_events)
+            )
+            if has_execution_completed:
+                # The orchestration completed (with failure) and needs
+                # rewinding — short-circuit to build clean history.
                 return self._build_rewind_result(
                     instance_id, orchestration_name, old_events, new_events)
+
+        # During replay, remove executionCompleted events from the
+        # committed history so the orchestrator function replays
+        # cleanly.  orchestratorCompleted events are kept as they
+        # bookend each replay batch.
+        old_events = [
+            e for e in old_events
+            if not e.HasField("executionCompleted")
+        ]
 
         ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
         try:
@@ -1458,6 +1459,8 @@ class _OrchestrationExecutor:
             if event.HasField("taskScheduled") and event.eventId in failed_task_ids:
                 continue
             if event.HasField("subOrchestrationInstanceFailed"):
+                continue
+            if event.HasField("executionCompleted"):
                 continue
             clean_history.append(event)
 
@@ -1888,7 +1891,10 @@ class _OrchestrationExecutor:
                 entity_task.fail(str(failure), failure)
                 ctx.resume()
             elif event.HasField("orchestratorCompleted"):
-                # Added in Functions only (for some reason) and does not affect orchestrator flow
+                # Bookend event for each replay batch — no action needed.
+                pass
+            elif event.HasField("executionCompleted"):
+                # Terminal marker event — no action needed during replay.
                 pass
             elif event.HasField("executionRewound"):
                 # Informational event added when an orchestration is rewound. No action needed.
