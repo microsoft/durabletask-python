@@ -1688,8 +1688,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         for task_id, sub_instance_id in created_sub_orchs.items():
             if task_id not in completed_sub_orch_task_ids:
                 sub_instance = self._instances.get(sub_instance_id)
-                if (sub_instance
-                        and sub_instance.status == pb.ORCHESTRATION_STATUS_FAILED):
+                if (sub_instance and sub_instance.status == pb.ORCHESTRATION_STATUS_FAILED):
                     self._prepare_rewind(sub_instance, reason)
                 self._watch_sub_orchestration(
                     instance.instance_id, sub_instance_id, task_id)
