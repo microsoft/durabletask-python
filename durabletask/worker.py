@@ -1484,12 +1484,12 @@ class _OrchestrationExecutor:
                 event_copy = pb.HistoryEvent()
                 event_copy.CopyFrom(event)
                 event_copy.executionStarted.orchestrationInstance.executionId.CopyFrom(
-                    ph.get_string_value(new_execution_id))
-                if (rewind_event is not None
-                        and rewind_event.HasField("parentExecutionId")
-                        and rewind_event.parentExecutionId.value):
-                    event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
-                        rewind_event.parentExecutionId)
+                    ph.get_string_value_or_empty(new_execution_id))
+                if rewind_event is not None:
+                    if rewind_event.HasField("parentExecutionId"):
+                        if rewind_event.parentExecutionId.value:
+                            event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
+                                rewind_event.parentExecutionId)
                 clean_history.append(event_copy)
                 continue
 

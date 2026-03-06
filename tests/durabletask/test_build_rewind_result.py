@@ -420,26 +420,22 @@ def test_rewind_preserves_successful_sub_orchestration():
     clean = _get_clean_history(result)
 
     # Sub-orch 1's created + completed should be present.
-    assert any(
-        e.HasField("subOrchestrationInstanceCreated")
-        and e.subOrchestrationInstanceCreated.instanceId == "child-ok-id"
-        for e in clean
-    )
-    assert any(
-        e.HasField("subOrchestrationInstanceCompleted")
-        and e.subOrchestrationInstanceCompleted.taskScheduledId == 1
-        for e in clean
-    )
+    created_ids = [
+        e.subOrchestrationInstanceCreated.instanceId
+        for e in clean if e.HasField("subOrchestrationInstanceCreated")
+    ]
+    assert "child-ok-id" in created_ids
+    completed_sub_ids = [
+        e.subOrchestrationInstanceCompleted.taskScheduledId
+        for e in clean if e.HasField("subOrchestrationInstanceCompleted")
+    ]
+    assert 1 in completed_sub_ids
     # Sub-orch 2's failed event should be removed.
     assert not any(
         e.HasField("subOrchestrationInstanceFailed") for e in clean
     )
     # Sub-orch 2's created event should be kept (for backend recursive rewind).
-    assert any(
-        e.HasField("subOrchestrationInstanceCreated")
-        and e.subOrchestrationInstanceCreated.instanceId == "child-fail-id"
-        for e in clean
-    )
+    assert "child-fail-id" in created_ids
 
 
 # ---------------------------------------------------------------------------
@@ -618,26 +614,22 @@ def test_rewind_mixed_activities_and_sub_orchestrations():
     assert not any(e.HasField("taskFailed") for e in clean)
 
     # --- Successful sub-orch A preserved ---
-    assert any(
-        e.HasField("subOrchestrationInstanceCreated")
-        and e.subOrchestrationInstanceCreated.instanceId == "child-ok-id"
-        for e in clean
-    )
-    assert any(
-        e.HasField("subOrchestrationInstanceCompleted")
-        and e.subOrchestrationInstanceCompleted.taskScheduledId == 2
-        for e in clean
-    )
+    created_ids = [
+        e.subOrchestrationInstanceCreated.instanceId
+        for e in clean if e.HasField("subOrchestrationInstanceCreated")
+    ]
+    assert "child-ok-id" in created_ids
+    completed_sub_ids = [
+        e.subOrchestrationInstanceCompleted.taskScheduledId
+        for e in clean if e.HasField("subOrchestrationInstanceCompleted")
+    ]
+    assert 2 in completed_sub_ids
 
     # --- Failed sub-orch B: failed event removed, created kept ---
     assert not any(
         e.HasField("subOrchestrationInstanceFailed") for e in clean
     )
-    assert any(
-        e.HasField("subOrchestrationInstanceCreated")
-        and e.subOrchestrationInstanceCreated.instanceId == "child-fail-id"
-        for e in clean
-    )
+    assert "child-fail-id" in created_ids
 
     # --- executionCompleted removed ---
     assert not any(e.HasField("executionCompleted") for e in clean)
@@ -674,10 +666,8 @@ def test_rewind_does_not_mutate_original_events():
         TEST_INSTANCE_ID, "orch", old_events, new_events)
 
     # The original executionStarted event should NOT be mutated.
-    assert (
-        es_event.executionStarted.orchestrationInstance.executionId.value
-        == original_exec_id
-    )
+    actual = es_event.executionStarted.orchestrationInstance.executionId.value
+    assert actual == original_exec_id
 
 
 def test_rewind_result_action_structure():
