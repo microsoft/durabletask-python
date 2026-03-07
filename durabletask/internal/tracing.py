@@ -79,6 +79,23 @@ ATTR_TASK_TASK_ID = "durabletask.task.task_id"
 ATTR_EVENT_TARGET_INSTANCE_ID = "durabletask.event.target_instance_id"
 ATTR_FIRE_AT = "durabletask.fire_at"
 
+# Task type values (used in span names and as attribute values)
+TASK_TYPE_ORCHESTRATION = "orchestration"
+TASK_TYPE_TIMER = "timer"
+TASK_TYPE_EVENT = "event"
+
+# Span name type prefixes (composite types)
+SPAN_TYPE_CREATE_ORCHESTRATION = "create_orchestration"
+SPAN_TYPE_ORCHESTRATION_EVENT = "orchestration_event"
+
+# Task status values
+TASK_STATUS_COMPLETED = "Completed"
+TASK_STATUS_FAILED = "Failed"
+
+# W3C Trace Context carrier keys
+CARRIER_KEY_TRACEPARENT = "traceparent"
+CARRIER_KEY_TRACESTATE = "tracestate"
+
 
 # ---------------------------------------------------------------------------
 # Span name helpers (mirrors TraceActivityConstants / TraceHelper naming)
@@ -101,7 +118,7 @@ def create_span_name(
 
 def create_timer_span_name(orchestration_name: str) -> str:
     """Build a timer span name: ``orchestration:<name>:timer``."""
-    return f"orchestration:{orchestration_name}:timer"
+    return f"{TASK_TYPE_ORCHESTRATION}:{orchestration_name}:{TASK_TYPE_TIMER}"
 
 
 # ---------------------------------------------------------------------------
@@ -115,11 +132,11 @@ def _trace_context_from_carrier(carrier: dict[str, str]) -> Optional[pb.TraceCon
     Returns ``None`` when the carrier does not contain a valid
     ``traceparent`` header.
     """
-    traceparent = carrier.get("traceparent")
+    traceparent = carrier.get(CARRIER_KEY_TRACEPARENT)
     if not traceparent:
         return None
 
-    tracestate = carrier.get("tracestate")
+    tracestate = carrier.get(CARRIER_KEY_TRACESTATE)
     # Format: 00-<trace-id>-<span-id>-<flags>
     parts = traceparent.split("-")
     span_id = parts[2] if len(parts) >= 4 else ""
@@ -179,9 +196,9 @@ def extract_trace_context(proto_ctx: Optional[pb.TraceContext]) -> Optional[Any]
     if not traceparent:
         return None
 
-    carrier: dict[str, str] = {"traceparent": traceparent}
+    carrier: dict[str, str] = {CARRIER_KEY_TRACEPARENT: traceparent}
     if proto_ctx.HasField("traceState") and proto_ctx.traceState.value:
-        carrier["tracestate"] = proto_ctx.traceState.value
+        carrier[CARRIER_KEY_TRACESTATE] = proto_ctx.traceState.value
 
     propagator = TraceContextTextMapPropagator()
     ctx = propagator.extract(carrier)
@@ -278,10 +295,10 @@ def emit_orchestration_span(
     if not _OTEL_AVAILABLE:
         return
 
-    span_name = create_span_name("orchestration", name, version)
+    span_name = create_span_name(TASK_TYPE_ORCHESTRATION, name, version)
 
     attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "orchestration",
+        ATTR_TASK_TYPE: TASK_TYPE_ORCHESTRATION,
         ATTR_TASK_NAME: name,
         ATTR_TASK_INSTANCE_ID: instance_id,
     }
@@ -323,9 +340,9 @@ def emit_orchestration_span(
                     else str(failure_details)
                 )
             span.set_status(StatusCode.ERROR, msg)
-            span.set_attribute(ATTR_TASK_STATUS, "Failed")
+            span.set_attribute(ATTR_TASK_STATUS, TASK_STATUS_FAILED)
         else:
-            span.set_attribute(ATTR_TASK_STATUS, "Completed")
+            span.set_attribute(ATTR_TASK_STATUS, TASK_STATUS_COMPLETED)
 
         span.end()
     finally:
@@ -406,10 +423,10 @@ def _emit_orchestration_span_deferred(
                     else str(failure_details)
                 )
             status = Status(StatusCode.ERROR, msg)
-            attrs[ATTR_TASK_STATUS] = "Failed"
+            attrs[ATTR_TASK_STATUS] = TASK_STATUS_FAILED
         else:
             status = Status(StatusCode.UNSET)
-            attrs[ATTR_TASK_STATUS] = "Completed"
+            attrs[ATTR_TASK_STATUS] = TASK_STATUS_COMPLETED
 
         readable_span = SdkReadableSpan(
             name=span_name,
@@ -665,7 +682,7 @@ def emit_timer_span(
 
     span_name = create_timer_span_name(orchestration_name)
     attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "timer",
+        ATTR_TASK_TYPE: TASK_TYPE_TIMER,
         ATTR_TASK_NAME: orchestration_name,
         ATTR_TASK_INSTANCE_ID: instance_id,
         ATTR_TASK_TASK_ID: str(timer_id),
@@ -706,9 +723,9 @@ def emit_event_raised_span(
     if not _OTEL_AVAILABLE:
         return
 
-    span_name = create_span_name("orchestration_event", event_name)
+    span_name = create_span_name(SPAN_TYPE_ORCHESTRATION_EVENT, event_name)
     attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "event",
+        ATTR_TASK_TYPE: TASK_TYPE_EVENT,
         ATTR_TASK_NAME: event_name,
         ATTR_TASK_INSTANCE_ID: instance_id,
     }
@@ -753,9 +770,9 @@ def start_create_orchestration_span(
         yield None
         return
 
-    span_name = create_span_name("create_orchestration", name, version)
+    span_name = create_span_name(SPAN_TYPE_CREATE_ORCHESTRATION, name, version)
     attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "orchestration",
+        ATTR_TASK_TYPE: TASK_TYPE_ORCHESTRATION,
         ATTR_TASK_NAME: name,
         ATTR_TASK_INSTANCE_ID: instance_id,
     }
@@ -781,9 +798,9 @@ def start_raise_event_span(
         yield None
         return
 
-    span_name = create_span_name("orchestration_event", event_name)
+    span_name = create_span_name(SPAN_TYPE_ORCHESTRATION_EVENT, event_name)
     attrs: dict[str, str] = {
-        ATTR_TASK_TYPE: "event",
+        ATTR_TASK_TYPE: TASK_TYPE_EVENT,
         ATTR_TASK_NAME: event_name,
         ATTR_EVENT_TARGET_INSTANCE_ID: target_instance_id,
     }
