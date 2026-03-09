@@ -1328,26 +1328,11 @@ class _OrchestrationExecutor:
         has_rewind_in_new = any(
             e.HasField("executionRewound") for e in new_events
         )
-        if has_rewind_in_new:
-            from itertools import chain
-            has_execution_completed = any(
-                e.HasField("executionCompleted")
-                for e in chain(old_events, new_events)
-            )
-            if has_execution_completed:
-                # The orchestration completed (with failure) and needs
-                # rewinding — short-circuit to build clean history.
-                return self._build_rewind_result(
-                    instance_id, orchestration_name, old_events, new_events)
-
-        # During replay, remove executionCompleted events from the
-        # committed history so the orchestrator function replays
-        # cleanly.  orchestratorCompleted events are kept as they
-        # bookend each replay batch.
-        old_events = [
-            e for e in old_events
-            if not e.HasField("executionCompleted")
-        ]
+        if has_rewind_in_new and any(e.HasField("executionCompleted") for e in old_events):
+            # The orchestration completed (with failure) and needs
+            # rewinding — short-circuit to build clean history.
+            return self._build_rewind_result(
+                instance_id, orchestration_name, old_events, new_events)
 
         ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
         try:
@@ -1439,19 +1424,14 @@ class _OrchestrationExecutor:
             f"{instance_id}: Orchestration {orchestration_name} is being rewound"
         )
 
-        # Combine old + new events into a single timeline, then remove
-        # failed results so the orchestration can replay successfully.
+        if len(new_events) != 2 or not new_events[1].HasField("executionRewound"):
+            raise ValueError(
+                "When rewinding an orchestration, the new events list must contain exactly two events: orchestratorStarted and the executionRewound event."
+            )
+
+        rewind_event: pb.ExecutionRewoundEvent = new_events[1].executionRewound
+
         all_events = list(old_events) + list(new_events)
-
-        # Extract the executionRewound event from new_events so we can
-        # read its parentExecutionId (set when this is a sub-orchestration
-        # being rewound by its parent).
-        rewind_event: pb.ExecutionRewoundEvent | None = None
-        for e in new_events:
-            if e.HasField("executionRewound"):
-                rewind_event = e.executionRewound
-                break
-
         # Generate a new execution ID for the rewound execution.
         new_execution_id = uuid.uuid4().hex
 
@@ -1485,11 +1465,10 @@ class _OrchestrationExecutor:
                 event_copy.CopyFrom(event)
                 event_copy.executionStarted.orchestrationInstance.executionId.CopyFrom(
                     ph.get_string_value_or_empty(new_execution_id))
-                if rewind_event is not None:
-                    if rewind_event.HasField("parentExecutionId"):
-                        if rewind_event.parentExecutionId.value:
-                            event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
-                                rewind_event.parentExecutionId)
+                if rewind_event.HasField("parentExecutionId"):
+                    if rewind_event.parentExecutionId.value:
+                        event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
+                            rewind_event.parentExecutionId)
                 clean_history.append(event_copy)
                 continue
 
@@ -1925,7 +1904,7 @@ class _OrchestrationExecutor:
                 # Bookend event for each replay batch — no action needed.
                 pass
             elif event.HasField("executionCompleted"):
-                # Terminal marker event — no action needed during replay.
+                # Terminal marker event — in practice, this never appears during replay.
                 pass
             elif event.HasField("executionRewound"):
                 # Informational event added when an orchestration is rewound. No action needed.

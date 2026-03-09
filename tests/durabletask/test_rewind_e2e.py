@@ -2,8 +2,6 @@
 # Licensed under the MIT License.
 
 import json
-import threading
-import time
 
 import pytest
 
@@ -51,7 +49,7 @@ def test_rewind_failed_activity():
     _reset_counters()
 
     def failing_activity(_: task.ActivityContext, input: str) -> str:
-        global _activity_call_count, _should_fail
+        global _activity_call_count
         _activity_call_count += 1
         if _should_fail:
             raise RuntimeError("Simulated failure")
