@@ -527,6 +527,7 @@ class TimerTask(CancellableTask[None]):
     def complete(self, _: datetime) -> None:
         super().complete(None)
 
+
 class LongTimerTask(TimerTask):
     def __init__(self, final_fire_at: datetime, maximum_timer_interval: timedelta):
         super().__init__()
