@@ -307,7 +307,7 @@ class TaskHubGrpcWorker:
             activity function.
     """
 
-    _response_stream: Optional[grpc.Future] = None
+    _response_stream: Optional[Any] = None
     _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
     def __init__(
@@ -512,7 +512,11 @@ class TaskHubGrpcWorker:
 
                 def stream_reader():
                     try:
-                        for work_item in self._response_stream:
+                        response_stream = self._response_stream
+                        if response_stream is None:
+                            return
+
+                        for work_item in response_stream:
                             work_item_queue.put(work_item)
                     except Exception as e:
                         work_item_queue.put(e)
@@ -843,7 +847,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._version: Optional[str] = None
         self._completion_status: Optional[pb.OrchestrationStatus] = None
         self._received_events: dict[str, list[Any]] = {}
-        self._pending_events: dict[str, list[task.CompletableTask]] = {}
+        self._pending_events: dict[str, list[task.CancellableTask]] = {}
         self._new_input: Optional[Any] = None
         self._save_events = False
         self._encoded_custom_status: Optional[str] = None
@@ -1026,7 +1030,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         action = ph.new_create_timer_action(id, fire_at)
         self._pending_actions[id] = action
 
-        timer_task: task.TimerTask = task.TimerTask()
+        timer_task = task.TimerTask()
+
+        def _cancel_timer() -> None:
+            self._pending_actions.pop(id, None)
+            self._pending_tasks.pop(id, None)
+
+        timer_task.set_cancel_handler(_cancel_timer)
         if retryable_task is not None:
             timer_task.set_retryable_parent(retryable_task)
         self._pending_tasks[id] = timer_task
@@ -1234,13 +1244,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)
             self._pending_actions[task_id] = action
 
-    def wait_for_external_event(self, name: str) -> task.CompletableTask:
+    def wait_for_external_event(self, name: str) -> task.CancellableTask:
         # Check to see if this event has already been received, in which case we
         # can return it immediately. Otherwise, record out intent to receive an
         # event with the given name so that we can resume the generator when it
         # arrives. If there are multiple events with the same name, we return
         # them in the order they were received.
-        external_event_task: task.CompletableTask = task.CompletableTask()
+        external_event_task: task.CancellableTask = task.CancellableTask()
         event_name = name.casefold()
         event_list = self._received_events.get(event_name, None)
         if event_list:
@@ -1254,6 +1264,19 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 task_list = []
                 self._pending_events[event_name] = task_list
             task_list.append(external_event_task)
+
+            def _cancel_wait() -> None:
+                waiting_tasks = self._pending_events.get(event_name)
+                if waiting_tasks is None:
+                    return
+                try:
+                    waiting_tasks.remove(external_event_task)
+                except ValueError:
+                    return
+                if not waiting_tasks:
+                    del self._pending_events[event_name]
+
+            external_event_task.set_cancel_handler(_cancel_wait)
         return external_event_task
 
     def continue_as_new(self, new_input, *, save_events: bool = False) -> None:
@@ -1450,6 +1473,13 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
                         )
                     return
+                if not isinstance(timer_task, task.TimerTask):
+                    if not ctx._is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring timerFired event with non-timer task ID = {timer_id}."
+                        )
+                    return
+
                 timer_task.complete(None)
                 if timer_task._retryable_parent is not None:
                     activity_action = timer_task._retryable_parent._action

@@ -143,6 +143,87 @@ def test_timer_fired_completion():
     assert complete_action.result.value == '"done"'  # results are JSON-encoded
 
 
+def test_timer_can_be_cancelled_after_when_any_winner():
+    """Tests cancellation of an outstanding timer task after another task wins when_any."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        approval = ctx.wait_for_external_event("approval")
+        timeout = ctx.create_timer(timedelta(hours=1))
+        winner = yield task.when_any([approval, timeout])
+        if winner == approval:
+            timeout.cancel()
+            return "approved"
+        return "timed out"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+
+    start_time = datetime(2020, 1, 1, 12, 0, 0)
+    timeout_fire_at = start_time + timedelta(hours=1)
+
+    result = executor.execute(
+        TEST_INSTANCE_ID,
+        [],
+        [
+            helpers.new_orchestrator_started_event(start_time),
+            helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        ],
+    )
+    assert len(result.actions) == 1
+    assert result.actions[0].HasField("createTimer")
+    assert result.actions[0].createTimer.fireAt.ToDatetime() == timeout_fire_at
+
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_timer_created_event(1, timeout_fire_at),
+    ]
+    result = executor.execute(
+        TEST_INSTANCE_ID,
+        old_events,
+        [helpers.new_event_raised_event("approval", json.dumps(True))],
+    )
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == '"approved"'
+
+
+def test_only_cancellable_tasks_expose_cancel():
+    """Tests that only timer and external-event tasks expose cancellation state and operations."""
+
+    def dummy_activity(ctx, _):
+        pass
+
+    ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, worker._Registry())
+
+    timer_task = ctx.create_timer(timedelta(minutes=5))
+    external_event_task = ctx.wait_for_external_event("approval")
+    activity_task = ctx.call_activity(dummy_activity)
+
+    assert isinstance(timer_task, task.CancellableTask)
+    assert isinstance(external_event_task, task.CancellableTask)
+    assert not isinstance(activity_task, task.CancellableTask)
+    assert hasattr(timer_task, "cancel")
+    assert hasattr(external_event_task, "cancel")
+    assert not hasattr(activity_task, "cancel")
+    assert hasattr(timer_task, "is_cancelled")
+    assert hasattr(external_event_task, "is_cancelled")
+    assert not hasattr(activity_task, "is_cancelled")
+
+
+def test_cancelled_task_get_result_raises_task_canceled_error():
+    """Tests that canceled cancellable tasks raise TaskCanceledError from get_result."""
+
+    cancellable_task = task.CancellableTask()
+
+    assert cancellable_task.cancel() is True
+    assert cancellable_task.is_cancelled is True
+
+    with pytest.raises(task.TaskCanceledError):
+        cancellable_task.get_result()
+
+
 def test_schedule_activity_actions():
     """Test the actions output for the call_activity orchestrator method"""
     def dummy_activity(ctx, _):
@@ -1313,7 +1394,7 @@ def test_when_all_with_retry():
     encoded_output = json.dumps(dummy_activity(None, "Seattle"))
     old_events = old_events + new_events
     new_events = [helpers.new_task_completed_event(2, encoded_output),
-                  helpers.new_timer_fired_event(4, current_timestamp)]
+                  helpers.new_timer_fired_event(4, expected_fire_at)]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
