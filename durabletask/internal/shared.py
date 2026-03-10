@@ -8,12 +8,20 @@ from types import SimpleNamespace
 from typing import Any, Optional, Sequence, Union
 
 import grpc
+import grpc.aio
 
 ClientInterceptor = Union[
     grpc.UnaryUnaryClientInterceptor,
     grpc.UnaryStreamClientInterceptor,
     grpc.StreamUnaryClientInterceptor,
     grpc.StreamStreamClientInterceptor
+]
+
+AsyncClientInterceptor = Union[
+    grpc.aio.UnaryUnaryClientInterceptor,
+    grpc.aio.UnaryStreamClientInterceptor,
+    grpc.aio.StreamUnaryClientInterceptor,
+    grpc.aio.StreamStreamClientInterceptor
 ]
 
 # Field name used to indicate that an object was automatically serialized
@@ -59,6 +67,38 @@ def get_grpc_channel(
     # Apply interceptors ONLY if they exist
     if interceptors:
         channel = grpc.intercept_channel(channel, *interceptors)
+    return channel
+
+
+def get_async_grpc_channel(
+        host_address: Optional[str],
+        secure_channel: bool = False,
+        interceptors: Optional[Sequence[AsyncClientInterceptor]] = None) -> grpc.aio.Channel:
+
+    if host_address is None:
+        host_address = get_default_host_address()
+
+    for protocol in SECURE_PROTOCOLS:
+        if host_address.lower().startswith(protocol):
+            secure_channel = True
+            host_address = host_address[len(protocol):]
+            break
+
+    for protocol in INSECURE_PROTOCOLS:
+        if host_address.lower().startswith(protocol):
+            secure_channel = False
+            host_address = host_address[len(protocol):]
+            break
+
+    if secure_channel:
+        channel = grpc.aio.secure_channel(
+            host_address, grpc.ssl_channel_credentials(),
+            interceptors=interceptors)
+    else:
+        channel = grpc.aio.insecure_channel(
+            host_address,
+            interceptors=interceptors)
+
     return channel
 
 

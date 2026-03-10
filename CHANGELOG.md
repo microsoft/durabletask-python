@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ADDED
 
 - Added `durabletask.testing` module with `InMemoryOrchestrationBackend` for testing orchestrations without a sidecar process
+- Added `AsyncTaskHubGrpcClient` for asyncio-based applications using `grpc.aio`
+- Added `DefaultAsyncClientInterceptorImpl` for async gRPC metadata interceptors
+- Added `get_async_grpc_channel` helper for creating async gRPC channels
+
+CHANGED
+
+- Refactored `TaskHubGrpcClient` to share request-building and validation logic
+  with `AsyncTaskHubGrpcClient` via module-level helper functions
 
 FIXED:
 
