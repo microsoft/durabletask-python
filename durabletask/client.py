@@ -190,6 +190,13 @@ class TaskHubGrpcClient:
                 reuse_id_policy=reuse_id_policy, tags=tags,
                 version=version if version else self.default_version)
 
+            # Inject the active PRODUCER span context into the request so the sidecar
+            # stores it in the executionStarted event and the worker can parent all
+            # orchestration/activity/timer spans under this trace.
+            parent_trace_ctx = tracing.get_current_trace_context()
+            if parent_trace_ctx is not None:
+                req.parentTraceContext.CopyFrom(parent_trace_ctx)
+
             self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
             res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
             return res.instanceId
@@ -427,14 +434,25 @@ class AsyncTaskHubGrpcClient:
                                          tags: Optional[dict[str, str]] = None,
                                          version: Optional[str] = None) -> str:
 
-        req = build_schedule_new_orchestration_req(
-            orchestrator, input=input, instance_id=instance_id, start_at=start_at,
-            reuse_id_policy=reuse_id_policy, tags=tags,
-            version=version if version else self.default_version)
+        name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
+        resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
+        resolved_version = version if version else self.default_version
 
-        self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
-        res: pb.CreateInstanceResponse = await self._stub.StartInstance(req)
-        return res.instanceId
+        with tracing.start_create_orchestration_span(
+            name, resolved_instance_id, version=resolved_version,
+        ):
+            req = build_schedule_new_orchestration_req(
+                orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                reuse_id_policy=reuse_id_policy, tags=tags,
+                version=version if version else self.default_version)
+
+            parent_trace_ctx = tracing.get_current_trace_context()
+            if parent_trace_ctx is not None:
+                req.parentTraceContext.CopyFrom(parent_trace_ctx)
+
+            self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
+            res: pb.CreateInstanceResponse = await self._stub.StartInstance(req)
+            return res.instanceId
 
     async def get_orchestration_state(self, instance_id: str, *,
                                       fetch_payloads: bool = True) -> Optional[OrchestrationState]:
@@ -496,10 +514,10 @@ class AsyncTaskHubGrpcClient:
 
     async def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                         data: Optional[Any] = None) -> None:
-        req = build_raise_event_req(instance_id, event_name, data)
-
-        self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
-        await self._stub.RaiseEvent(req)
+        with tracing.start_raise_event_span(event_name, instance_id):
+            req = build_raise_event_req(instance_id, event_name, data)
+            self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+            await self._stub.RaiseEvent(req)
 
     async def terminate_orchestration(self, instance_id: str, *,
                                       output: Optional[Any] = None,

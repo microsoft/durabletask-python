@@ -97,7 +97,7 @@ def weather_report_orchestrator(ctx: task.OrchestrationContext, cities: list):
       3. Call an activity to summarize the results.
     """
     # Step 1 — Timer: wait briefly before starting work
-    yield ctx.create_timer(timedelta(seconds=2))
+    yield ctx.create_timer(timedelta(milliseconds=100))
     if not ctx.is_replaying:
         print("  [Orchestrator] Timer fired — starting weather collection")
 
