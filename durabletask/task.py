@@ -520,13 +520,32 @@ class RetryableTask(CompletableTask[T]):
         return None
 
 
-class TimerTask(CancellableTask[T]):
-
-    def __init__(self) -> None:
-        super().__init__()
-
+class TimerTask(CancellableTask[None]):
     def set_retryable_parent(self, retryable_task: RetryableTask):
         self._retryable_parent = retryable_task
+
+    def complete(self, *args, **kwargs):
+        super().complete(None)
+
+
+class LongTimerTask(TimerTask):
+    def __init__(self, final_fire_at: datetime, maximum_timer_duration: timedelta):
+        super().__init__()
+        self._final_fire_at = final_fire_at
+        self._maximum_timer_duration = maximum_timer_duration
+
+    def start(self, current_utc_datetime: datetime) -> datetime:
+        return self._get_next_fire_at(current_utc_datetime)
+
+    def complete(self, current_utc_datetime: datetime):
+        if current_utc_datetime < self._final_fire_at:
+            return self._get_next_fire_at(current_utc_datetime)
+        super().complete(None)
+
+    def _get_next_fire_at(self, current_utc_datetime: datetime) -> datetime:
+        if current_utc_datetime + self._maximum_timer_duration < self._final_fire_at:
+            return current_utc_datetime + self._maximum_timer_duration
+        return self._final_fire_at
 
 
 class WhenAnyTask(CompositeTask[Task]):

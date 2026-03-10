@@ -38,6 +38,7 @@ from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
 DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
+DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
 
 
 class ConcurrencyOptions:
@@ -320,6 +321,7 @@ class TaskHubGrpcWorker:
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
             concurrency_options: Optional[ConcurrencyOptions] = None,
+            maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL
     ):
         self._registry = _Registry()
         self._host_address = (
@@ -348,11 +350,17 @@ class TaskHubGrpcWorker:
             self._interceptors = None
 
         self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options, self._logger)
+        self._maximum_timer_interval = maximum_timer_interval
 
     @property
     def concurrency_options(self) -> ConcurrencyOptions:
         """Get the current concurrency options for this worker."""
         return self._concurrency_options
+
+    @property
+    def maximum_timer_interval(self) -> Optional[timedelta]:
+        """Get the configured maximum timer interval for long timer chunking."""
+        return self._maximum_timer_interval
 
     def __enter__(self):
         return self
@@ -826,7 +834,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
 
-    def __init__(self, instance_id: str, registry: _Registry):
+    def __init__(self,
+                 instance_id: str,
+                 registry: _Registry,
+                 maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+                 ):
         self._generator = None
         self._is_replaying = True
         self._is_complete = False
@@ -851,6 +863,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._new_input: Optional[Any] = None
         self._save_events = False
         self._encoded_custom_status: Optional[str] = None
+        self._maximum_timer_interval = maximum_timer_interval
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -1026,11 +1039,20 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     ) -> task.TimerTask:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
-            fire_at = self.current_utc_datetime + fire_at
-        action = ph.new_create_timer_action(id, fire_at)
-        self._pending_actions[id] = action
+            final_fire_at = self.current_utc_datetime + fire_at
+        else:
+            final_fire_at = fire_at
 
-        timer_task = task.TimerTask()
+        next_fire_at: datetime = final_fire_at
+
+        if self._maximum_timer_interval is not None and self.current_utc_datetime + self._maximum_timer_interval < final_fire_at:
+            timer_task = task.LongTimerTask(final_fire_at, self._maximum_timer_interval)
+            next_fire_at = timer_task.start(self.current_utc_datetime)
+        else:
+            timer_task = task.TimerTask()
+
+        action = ph.new_create_timer_action(id, next_fire_at)
+        self._pending_actions[id] = action
 
         def _cancel_timer() -> None:
             self._pending_actions.pop(id, None)
@@ -1311,9 +1333,13 @@ class ExecutionResults:
 class _OrchestrationExecutor:
     _generator: Optional[task.Orchestrator] = None
 
-    def __init__(self, registry: _Registry, logger: logging.Logger):
+    def __init__(self,
+                 registry: _Registry,
+                 logger: logging.Logger,
+                 maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL):
         self._registry = registry
         self._logger = logger
+        self._maximum_timer_interval = maximum_timer_interval
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
 
@@ -1337,7 +1363,11 @@ class _OrchestrationExecutor:
                 "The new history event list must have at least one event in it."
             )
 
-        ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
+        ctx = _RuntimeOrchestrationContext(
+            instance_id,
+            self._registry,
+            maximum_timer_interval=self._maximum_timer_interval,
+        )
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
@@ -1473,34 +1503,46 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
                         )
                     return
-                if not isinstance(timer_task, task.TimerTask):
+                if not (isinstance(timer_task, task.TimerTask) or isinstance(timer_task, task.LongTimerTask)):
                     if not ctx._is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring timerFired event with non-timer task ID = {timer_id}."
                         )
                     return
 
-                timer_task.complete(None)
-                if timer_task._retryable_parent is not None:
-                    activity_action = timer_task._retryable_parent._action
+                next_fire_at = timer_task.complete(event.timerFired.fireAt.ToDatetime())
+                if next_fire_at is not None:
+                    id = ctx.next_sequence_number()
+                    new_action = ph.new_create_timer_action(id, next_fire_at)
+                    ctx._pending_tasks[id] = timer_task
+                    ctx._pending_actions[id] = new_action
 
-                    if not timer_task._retryable_parent._is_sub_orch:
-                        cur_task = activity_action.scheduleTask
-                        instance_id = None
-                    else:
-                        cur_task = activity_action.createSubOrchestration
-                        instance_id = cur_task.instanceId
-                    ctx.call_activity_function_helper(
-                        id=activity_action.id,
-                        activity_function=cur_task.name,
-                        input=cur_task.input.value,
-                        retry_policy=timer_task._retryable_parent._retry_policy,
-                        is_sub_orch=timer_task._retryable_parent._is_sub_orch,
-                        instance_id=instance_id,
-                        fn_task=timer_task._retryable_parent,
-                    )
+                    def _cancel_timer() -> None:
+                        ctx._pending_actions.pop(id, None)
+                        ctx._pending_tasks.pop(id, None)
+
+                    timer_task.set_cancel_handler(_cancel_timer)
                 else:
-                    ctx.resume()
+                    if timer_task._retryable_parent is not None:
+                        activity_action = timer_task._retryable_parent._action
+
+                        if not timer_task._retryable_parent._is_sub_orch:
+                            cur_task = activity_action.scheduleTask
+                            instance_id = None
+                        else:
+                            cur_task = activity_action.createSubOrchestration
+                            instance_id = cur_task.instanceId
+                        ctx.call_activity_function_helper(
+                            id=activity_action.id,
+                            activity_function=cur_task.name,
+                            input=cur_task.input.value,
+                            retry_policy=timer_task._retryable_parent._retry_policy,
+                            is_sub_orch=timer_task._retryable_parent._is_sub_orch,
+                            instance_id=instance_id,
+                            fn_task=timer_task._retryable_parent,
+                        )
+                    else:
+                        ctx.resume()
             elif event.HasField("taskScheduled"):
                 # This history event confirms that the activity execution was successfully scheduled.
                 # Remove the taskScheduled event from the pending action list so we don't schedule it again.
