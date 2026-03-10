@@ -586,3 +586,71 @@ def test_new_uuid():
     assert uuid.UUID(results[0]) != uuid.UUID(results[1])
     assert uuid.UUID(results[0]) != uuid.UUID(results[2])
     assert uuid.UUID(results[1]) != uuid.UUID(results[2])
+
+
+@pytest.mark.parametrize("raise_event", [True, False])
+def test_when_any_cancels_timer_when_event_wins(raise_event: bool):
+    """Verify that the losing timer in a when_any race can be explicitly
+    cancelled without causing errors or affecting the orchestration result."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        approval: task.Task[bool] = ctx.wait_for_external_event('Approval')
+        timeout = ctx.create_timer(timedelta(seconds=3))
+        winner = yield task.when_any([approval, timeout])
+        if winner == approval:
+            # Explicitly cancel the timer so it does not linger
+            timeout.cancel()
+            return "approved"
+        else:
+            return "timed out"
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(orchestrator)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        if raise_event:
+            task_hub_client.raise_orchestration_event(id, 'Approval')
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    if raise_event:
+        assert state.serialized_output == json.dumps("approved")
+    else:
+        assert state.serialized_output == json.dumps("timed out")
+
+
+@pytest.mark.parametrize("winning_event", ["Approve", "Reject"])
+def test_when_any_cancels_competing_external_event(winning_event: str):
+    """Verify that the losing external-event task in a when_any race is
+    explicitly cancelled, preventing it from consuming a late-arriving event
+    and leaving the orchestration in a clean state."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        approve: task.Task = ctx.wait_for_external_event('Approve')
+        reject: task.Task = ctx.wait_for_external_event('Reject')
+        winner = yield task.when_any([approve, reject])
+        if winner == approve:
+            reject.cancel()
+            return "approved"
+        else:
+            approve.cancel()
+            return "rejected"
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(orchestrator)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        task_hub_client.raise_orchestration_event(id, winning_event)
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    expected = "approved" if winning_event == "Approve" else "rejected"
+    assert state.serialized_output == json.dumps(expected)
