@@ -654,3 +654,45 @@ def test_when_any_cancels_competing_external_event(winning_event: str):
     assert state.failure_details is None
     expected = "approved" if winning_event == "Approve" else "rejected"
     assert state.serialized_output == json.dumps(expected)
+
+
+def test_long_timer_chunking():
+    """Verify that a timer longer than maximum_timer_interval is broken into
+    intermediate chunks and that the orchestration completes correctly.
+
+    The worker is configured with a 2-second maximum_timer_interval.  The
+    orchestrator requests a 5-second timer, which requires 3 chunks
+    (0→2s, 2→4s, 4→5s).  Each chunk causes a full orchestrator replay, so
+    the orchestrator function is invoked once for the initial scheduling and
+    once more for each timerFired event — 4 invocations in total.  Asserting
+    invocation_count >= 4 confirms that intermediate chunks actually fired
+    rather than the timer being scheduled as a single unit.
+    """
+
+    invocation_count = 0
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        nonlocal invocation_count
+        invocation_count += 1
+        yield ctx.create_timer(timedelta(seconds=5))
+        return "done"
+
+    with worker.TaskHubGrpcWorker(
+        host_address=HOST,
+        maximum_timer_interval=timedelta(seconds=2),
+    ) as w:
+        w.add_orchestrator(orchestrator)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
+        id = task_hub_client.schedule_new_orchestration(orchestrator)
+        state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    assert state.serialized_output == json.dumps("done")
+    # 3 chunks (0→2s, 2→4s, 4→5s) produce 4 total orchestrator invocations
+    # (initial scheduling + one replay per timerFired).  >= 4 proves that at
+    # least two intermediate chunk timers fired rather than one direct timer.
+    assert invocation_count >= 4

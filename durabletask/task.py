@@ -228,7 +228,7 @@ class OrchestrationContext(ABC):
         """
         pass
 
-    # TOOD: Add a timeout parameter, which allows the task to be canceled if the event is
+    # TOOD: Add a timeout parameter, which allows the task to be cancelled if the event is
     # not received within the specified timeout. This requires support for task cancellation.
     @abstractmethod
     def wait_for_external_event(self, name: str) -> CancellableTask:
@@ -324,8 +324,8 @@ class OrchestrationStateError(Exception):
     pass
 
 
-class TaskCanceledError(Exception):
-    """Exception type for canceled orchestration tasks."""
+class TaskCancelledError(Exception):
+    """Exception type for cancelled orchestration tasks."""
 
 
 class Task(ABC, Generic[T]):
@@ -440,7 +440,7 @@ class CompletableTask(Task[T]):
 
 
 class CancellableTask(CompletableTask[T]):
-    """A completable task that can be canceled before it finishes."""
+    """A completable task that can be cancelled before it finishes."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -449,12 +449,12 @@ class CancellableTask(CompletableTask[T]):
 
     @property
     def is_cancelled(self) -> bool:
-        """Returns True if the task was canceled, False otherwise."""
+        """Returns True if the task was cancelled, False otherwise."""
         return self._is_cancelled
 
     def get_result(self) -> T:
         if self._is_cancelled:
-            raise TaskCanceledError('The task was canceled.')
+            raise TaskCancelledError('The task was cancelled.')
         return super().get_result()
 
     def set_cancel_handler(self, cancel_handler: Callable[[], None]) -> None:
@@ -524,27 +524,26 @@ class TimerTask(CancellableTask[None]):
     def set_retryable_parent(self, retryable_task: RetryableTask):
         self._retryable_parent = retryable_task
 
-    def complete(self, *args, **kwargs):
+    def complete(self, _: datetime) -> None:
         super().complete(None)
 
-
 class LongTimerTask(TimerTask):
-    def __init__(self, final_fire_at: datetime, maximum_timer_duration: timedelta):
+    def __init__(self, final_fire_at: datetime, maximum_timer_interval: timedelta):
         super().__init__()
         self._final_fire_at = final_fire_at
-        self._maximum_timer_duration = maximum_timer_duration
+        self._maximum_timer_interval = maximum_timer_interval
 
     def start(self, current_utc_datetime: datetime) -> datetime:
         return self._get_next_fire_at(current_utc_datetime)
 
-    def complete(self, current_utc_datetime: datetime):
+    def complete(self, current_utc_datetime: datetime) -> Optional[datetime]:
         if current_utc_datetime < self._final_fire_at:
             return self._get_next_fire_at(current_utc_datetime)
-        super().complete(None)
+        return super().complete(current_utc_datetime)
 
     def _get_next_fire_at(self, current_utc_datetime: datetime) -> datetime:
-        if current_utc_datetime + self._maximum_timer_duration < self._final_fire_at:
-            return current_utc_datetime + self._maximum_timer_duration
+        if current_utc_datetime + self._maximum_timer_interval < self._final_fire_at:
+            return current_utc_datetime + self._maximum_timer_interval
         return self._final_fire_at
 
 

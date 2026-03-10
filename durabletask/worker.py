@@ -646,7 +646,9 @@ class TaskHubGrpcWorker:
             completionToken,
     ):
         try:
-            executor = _OrchestrationExecutor(self._registry, self._logger)
+            executor = _OrchestrationExecutor(self._registry,
+                                              self._logger,
+                                              self.maximum_timer_interval)
             result = executor.execute(req.instanceId, req.pastEvents, req.newEvents)
             res = pb.OrchestratorResponse(
                 instanceId=req.instanceId,
@@ -1029,7 +1031,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             shared.to_json(custom_status) if custom_status is not None else None
         )
 
-    def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
+    def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.CancellableTask:
         return self.create_timer_internal(fire_at)
 
     def create_timer_internal(
@@ -1045,7 +1047,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         next_fire_at: datetime = final_fire_at
 
-        if self._maximum_timer_interval is not None and self.current_utc_datetime + self._maximum_timer_interval < final_fire_at:
+        if (
+            self._maximum_timer_interval is not None
+            and self._maximum_timer_interval > timedelta(0)
+            and self.current_utc_datetime + self._maximum_timer_interval < final_fire_at
+        ):
             timer_task = task.LongTimerTask(final_fire_at, self._maximum_timer_interval)
             next_fire_at = timer_task.start(self.current_utc_datetime)
         else:

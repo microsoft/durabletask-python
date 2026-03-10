@@ -380,15 +380,15 @@ def test_only_cancellable_tasks_expose_cancel():
     assert not hasattr(activity_task, "is_cancelled")
 
 
-def test_cancelled_task_get_result_raises_task_canceled_error():
-    """Tests that canceled cancellable tasks raise TaskCanceledError from get_result."""
+def test_cancelled_task_get_result_raises_task_cancelled_error():
+    """Tests that cancelled cancellable tasks raise TaskCancelledError from get_result."""
 
     cancellable_task = task.CancellableTask()
 
     assert cancellable_task.cancel() is True
     assert cancellable_task.is_cancelled is True
 
-    with pytest.raises(task.TaskCanceledError):
+    with pytest.raises(task.TaskCancelledError):
         cancellable_task.get_result()
 
 
