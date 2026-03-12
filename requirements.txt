@@ -7,3 +7,5 @@ pytest-cov
 azure-identity
 asyncio
 packaging
+opentelemetry-api
+opentelemetry-sdk
