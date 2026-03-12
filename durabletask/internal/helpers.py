@@ -183,6 +183,21 @@ def new_terminated_event(*, encoded_output: Optional[str] = None) -> pb.HistoryE
     )
 
 
+def new_execution_completed_event(
+        status: 'pb.OrchestrationStatus',
+        encoded_result: Optional[str] = None,
+        failure_details: Optional['pb.TaskFailureDetails'] = None) -> pb.HistoryEvent:
+    return pb.HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        executionCompleted=pb.ExecutionCompletedEvent(
+            orchestrationStatus=status,
+            result=get_string_value(encoded_result),
+            failureDetails=failure_details,
+        )
+    )
+
+
 def get_string_value(val: Optional[str]) -> Optional[wrappers_pb2.StringValue]:
     if val is None:
         return None
