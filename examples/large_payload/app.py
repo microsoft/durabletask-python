@@ -14,7 +14,6 @@ Prerequisites:
 
 Usage (emulator + Azurite — no Azure resources needed):
     # Start the DTS emulator (port 8080) and Azurite (port 10000)
-    export STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
     python app.py
 
 Usage (Azure):
@@ -31,7 +30,7 @@ from azure.identity import DefaultAzureCredential
 from durabletask import client, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore
 
 
 # --------------- Activities ---------------
@@ -71,22 +70,18 @@ def main():
     # Azure Storage connection string (defaults to Azurite)
     storage_conn_str = os.getenv(
         "STORAGE_CONNECTION_STRING",
-        "DefaultEndpointsProtocol=http;"
-        "AccountName=devstoreaccount1;"
-        "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsu"
-        "Fq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
-        "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;",
+        "UseDevelopmentStorage=true",
     )
 
     print(f"Using taskhub: {taskhub_name}")
     print(f"Using endpoint: {endpoint}")
 
     # Configure the blob payload store
-    store = BlobPayloadStore(BlobPayloadStoreOptions(
+    store = BlobPayloadStore(
         connection_string=storage_conn_str,
         # Use a low threshold so that we can see externalization in action
         threshold_bytes=1_024,
-    ))
+    )
 
     secure_channel = endpoint.startswith("https://")
     credential = DefaultAzureCredential() if secure_channel else None

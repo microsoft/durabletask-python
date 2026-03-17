@@ -102,7 +102,7 @@ $env:STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;..."
 
 ## Configuration Options
 
-The `BlobPayloadStoreOptions` class supports the following settings:
+The `BlobPayloadStore` constructor supports the following settings:
 
 | Option | Default | Description |
 |---|---|---|

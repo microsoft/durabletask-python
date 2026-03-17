@@ -133,14 +133,14 @@ install the optional dependency and configure a payload store on the
 worker and client:
 
 ```python
-from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 # Configure the blob payload store
-store = BlobPayloadStore(BlobPayloadStoreOptions(
+store = BlobPayloadStore(
     connection_string="DefaultEndpointsProtocol=https;...",
-))
+)
 
 # Pass the store to both worker and client
 with DurableTaskSchedulerWorker(

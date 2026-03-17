@@ -409,38 +409,32 @@ class TestBlobPayloadStoreTokenParsing:
 
 
 # ------------------------------------------------------------------
-# Tests: BlobPayloadStoreOptions
+# Tests: BlobPayloadStore construction and defaults
 # ------------------------------------------------------------------
 
 
-class TestBlobPayloadStoreOptions:
+class TestBlobPayloadStoreDefaults:
     def test_default_options(self):
-        """Default options should match .NET SDK defaults."""
+        """Constructing with connection_string should use .NET SDK defaults."""
         pytest.importorskip("azure.storage.blob")
-        from durabletask.extensions.azure_blob_payloads.options import BlobPayloadStoreOptions
+        from durabletask.extensions.azure_blob_payloads.blob_payload_store import BlobPayloadStore
 
-        opts = BlobPayloadStoreOptions()
+        store = BlobPayloadStore(connection_string="UseDevelopmentStorage=true")
+        opts = store.options
         assert opts.threshold_bytes == 900_000
         assert opts.max_stored_payload_bytes == 10 * 1024 * 1024
         assert opts.enable_compression is True
-        assert opts.container_name == "durabletask-payloads"
-        assert opts.connection_string is None
-        assert opts.account_url is None
-        assert opts.credential is None
 
     def test_custom_options(self):
-        """Custom options should be respected."""
+        """Custom constructor params should be reflected in options."""
         pytest.importorskip("azure.storage.blob")
-        from durabletask.extensions.azure_blob_payloads.options import BlobPayloadStoreOptions
+        from durabletask.extensions.azure_blob_payloads.blob_payload_store import BlobPayloadStore
 
-        opts = BlobPayloadStoreOptions(
-            threshold_bytes=500_000,
-            container_name="my-container",
+        store = BlobPayloadStore(
             connection_string="UseDevelopmentStorage=true",
+            threshold_bytes=500_000,
         )
-        assert opts.threshold_bytes == 500_000
-        assert opts.container_name == "my-container"
-        assert opts.connection_string == "UseDevelopmentStorage=true"
+        assert store.options.threshold_bytes == 500_000
 
 
 # ------------------------------------------------------------------

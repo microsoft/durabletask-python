@@ -8,12 +8,11 @@ from __future__ import annotations
 import gzip
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from azure.storage.blob import BlobServiceClient
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
 
-from durabletask.extensions.azure_blob_payloads.options import BlobPayloadStoreOptions
 from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
 
 logger = logging.getLogger("durabletask-blobpayloads")
@@ -36,8 +35,12 @@ class BlobPayloadStore(PayloadStore):
         account_url: Azure Storage account URL.  Must be combined with
             *credential*.
         credential: A ``TokenCredential`` for token-based auth.
-        options: Additional configuration.  If not provided, defaults
-            are used.
+        container_name: Blob container for externalized payloads.
+        threshold_bytes: Payloads larger than this are externalized.
+        max_stored_payload_bytes: Maximum externalized payload size.
+        enable_compression: GZip-compress payloads before uploading.
+        api_version: Azure Storage API version override (useful for
+            Azurite compatibility).
     """
 
     def __init__(
@@ -45,50 +48,53 @@ class BlobPayloadStore(PayloadStore):
         *,
         connection_string: Optional[str] = None,
         account_url: Optional[str] = None,
-        credential: Optional[object] = None,
-        options: Optional[BlobPayloadStoreOptions] = None,
+        credential: Any = None,
+        container_name: str = "durabletask-payloads",
+        threshold_bytes: int = 900_000,
+        max_stored_payload_bytes: int = 10 * 1024 * 1024,
+        enable_compression: bool = True,
+        api_version: Optional[str] = None,
     ):
-        if options is None:
-            options = BlobPayloadStoreOptions(
-                connection_string=connection_string,
-                account_url=account_url,
-                credential=credential,
-            )
-
-        if not options.connection_string and not options.account_url:
+        if not connection_string and not account_url:
             raise ValueError(
                 "Either 'connection_string' or 'account_url' (with 'credential') must be provided."
             )
 
-        self._options = options
-        self._container_name = options.container_name
+        self._options = LargePayloadStorageOptions(
+            threshold_bytes=threshold_bytes,
+            max_stored_payload_bytes=max_stored_payload_bytes,
+            enable_compression=enable_compression,
+        )
+        self._container_name = container_name
 
         # Optional kwargs shared by both sync and async clients.
         extra_kwargs: dict = {}
-        if options.api_version:
-            extra_kwargs["api_version"] = options.api_version
+        if api_version:
+            extra_kwargs["api_version"] = api_version
 
         # Build sync client
-        if options.connection_string:
+        if connection_string:
             self._blob_service_client = BlobServiceClient.from_connection_string(
-                options.connection_string, **extra_kwargs,
+                connection_string, **extra_kwargs,
             )
         else:
+            assert account_url is not None  # guaranteed by validation above
             self._blob_service_client = BlobServiceClient(
-                account_url=options.account_url,
-                credential=options.credential,
+                account_url=account_url,
+                credential=credential,
                 **extra_kwargs,
             )
 
         # Build async client
-        if options.connection_string:
+        if connection_string:
             self._async_blob_service_client = AsyncBlobServiceClient.from_connection_string(
-                options.connection_string, **extra_kwargs,
+                connection_string, **extra_kwargs,
             )
         else:
+            assert account_url is not None  # guaranteed by validation above
             self._async_blob_service_client = AsyncBlobServiceClient(
-                account_url=options.account_url,
-                credential=options.credential,
+                account_url=account_url,
+                credential=credential,
                 **extra_kwargs,
             )
 

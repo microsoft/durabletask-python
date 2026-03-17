@@ -186,16 +186,15 @@ The built-in `BlobPayloadStore` uses Azure Blob Storage. Create a
 store instance and pass it to both the worker and client:
 
 ```python
-from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore
 
-options = BlobPayloadStoreOptions(
+store = BlobPayloadStore(
     connection_string="DefaultEndpointsProtocol=https;...",
     container_name="durabletask-payloads",  # default
     threshold_bytes=900_000,                # default (900 KB)
     max_stored_payload_bytes=10_485_760,    # default (10 MB)
     enable_compression=True,                # default
 )
-store = BlobPayloadStore(options)
 ```
 
 Then pass the store to the worker and client:
@@ -226,11 +225,10 @@ You can also authenticate using `account_url` and a
 ```python
 from azure.identity import DefaultAzureCredential
 
-options = BlobPayloadStoreOptions(
+store = BlobPayloadStore(
     account_url="https://<account>.blob.core.windows.net",
     credential=DefaultAzureCredential(),
 )
-store = BlobPayloadStore(options)
 ```
 
 #### Configuration options

@@ -15,7 +15,7 @@ ADDED
   Pass a `BlobPayloadStore` to the worker and client via the
   `payload_store` parameter.
 - Added `durabletask.extensions.azure_blob_payloads` extension
-  package with `BlobPayloadStore` and `BlobPayloadStoreOptions`
+  package with `BlobPayloadStore`
 - Added `PayloadStore` abstract base class in
   `durabletask.payload` for custom storage backends
 - Added `durabletask.testing` module with `InMemoryOrchestrationBackend` for testing orchestrations without a sidecar process

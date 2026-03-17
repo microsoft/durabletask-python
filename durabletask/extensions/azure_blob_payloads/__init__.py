@@ -13,10 +13,7 @@ Install the required dependency with::
 
 Usage::
 
-    from durabletask.extensions.azure_blob_payloads import (
-        BlobPayloadStore,
-        BlobPayloadStoreOptions,
-    )
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStore
 
     store = BlobPayloadStore(
         connection_string="DefaultEndpointsProtocol=https;...",
@@ -33,6 +30,5 @@ except ImportError as exc:
     ) from exc
 
 from durabletask.extensions.azure_blob_payloads.blob_payload_store import BlobPayloadStore
-from durabletask.extensions.azure_blob_payloads.options import BlobPayloadStoreOptions
 
-__all__ = ["BlobPayloadStore", "BlobPayloadStoreOptions"]
+__all__ = ["BlobPayloadStore"]
