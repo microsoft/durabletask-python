@@ -36,6 +36,9 @@ opentelemetry = [
     "opentelemetry-api>=1.0.0",
     "opentelemetry-sdk>=1.0.0"
 ]
+azure-blob-payloads = [
+    "azure-storage-blob>=12.0.0"
+]
 
 [project.urls]
 repository = "https://github.com/microsoft/durabletask-python"
@@ -48,3 +51,6 @@ include = ["durabletask", "durabletask.*"]
 minversion = "6.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "azurite: tests that require Azurite (local Azure Storage emulator)",
+]

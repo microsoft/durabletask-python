@@ -15,6 +15,20 @@ This repo contains a Python SDK for use with the [Azure Durable Task Scheduler](
 - [Development Guide](./docs/development.md) 
 - [Contributing Guide](./CONTRIBUTING.md)
 
+## Optional Features
+
+### Large Payload Externalization
+
+Install the `azure-blob-payloads` extra to automatically offload
+oversized orchestration payloads to Azure Blob Storage:
+
+```bash
+pip install durabletask[azure-blob-payloads]
+```
+
+See the [feature documentation](./docs/features.md#large-payload-externalization)
+and the [example](./examples/large_payload/) for usage details.
+
 ## Trademarks
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft 
 trademarks or logos is subject to and must follow 
