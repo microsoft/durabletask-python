@@ -417,24 +417,30 @@ class TestBlobPayloadStoreDefaults:
     def test_default_options(self):
         """Constructing with connection_string should use .NET SDK defaults."""
         pytest.importorskip("azure.storage.blob")
-        from durabletask.extensions.azure_blob_payloads.blob_payload_store import BlobPayloadStore
+        from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
 
-        store = BlobPayloadStore(connection_string="UseDevelopmentStorage=true")
+        store = BlobPayloadStore(BlobPayloadStoreOptions(
+            connection_string="UseDevelopmentStorage=true",
+        ))
         opts = store.options
         assert opts.threshold_bytes == 900_000
         assert opts.max_stored_payload_bytes == 10 * 1024 * 1024
         assert opts.enable_compression is True
+        assert opts.container_name == "durabletask-payloads"
+        assert opts.connection_string == "UseDevelopmentStorage=true"
 
     def test_custom_options(self):
         """Custom constructor params should be reflected in options."""
         pytest.importorskip("azure.storage.blob")
-        from durabletask.extensions.azure_blob_payloads.blob_payload_store import BlobPayloadStore
+        from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
 
-        store = BlobPayloadStore(
+        store = BlobPayloadStore(BlobPayloadStoreOptions(
             connection_string="UseDevelopmentStorage=true",
             threshold_bytes=500_000,
-        )
+            container_name="my-container",
+        ))
         assert store.options.threshold_bytes == 500_000
+        assert store.options.container_name == "my-container"
 
 
 # ------------------------------------------------------------------
@@ -549,5 +555,5 @@ class TestBlobPayloadStoreConstruction:
         pytest.importorskip("azure.storage.blob")
         from durabletask.extensions.azure_blob_payloads.blob_payload_store import BlobPayloadStore
 
-        with pytest.raises(ValueError, match="Either 'connection_string' or 'account_url'"):
-            BlobPayloadStore()
+        with pytest.raises(TypeError):
+            BlobPayloadStore()  # type: ignore[call-arg]

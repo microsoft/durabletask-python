@@ -25,7 +25,7 @@ from durabletask.testing import create_test_backend
 # Skip the entire module if azure-storage-blob is not installed.
 azure_blob = pytest.importorskip("azure.storage.blob")
 
-from durabletask.extensions.azure_blob_payloads import BlobPayloadStore  # noqa: E402
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions  # noqa: E402
 
 # Azurite well-known connection string
 AZURITE_CONN_STR = "UseDevelopmentStorage=true"
@@ -76,13 +76,13 @@ pytestmark = [
 @pytest.fixture(scope="module")
 def payload_store():
     """Create a BlobPayloadStore pointing at Azurite with a low threshold."""
-    store = BlobPayloadStore(
+    store = BlobPayloadStore(BlobPayloadStoreOptions(
         connection_string=AZURITE_CONN_STR,
         container_name=TEST_CONTAINER,
         threshold_bytes=THRESHOLD_BYTES,
         enable_compression=True,
         api_version=AZURITE_API_VERSION,
-    )
+    ))
     yield store
 
     # Clean up: delete the test container.
@@ -318,13 +318,13 @@ class TestSmallPayloadNotExternalized:
 
         # Use a fresh container to isolate blob count
         fresh_container = f"small-test-{uuid.uuid4().hex[:8]}"
-        store = BlobPayloadStore(
+        store = BlobPayloadStore(BlobPayloadStoreOptions(
             connection_string=AZURITE_CONN_STR,
             container_name=fresh_container,
             threshold_bytes=THRESHOLD_BYTES,
             enable_compression=True,
             api_version=AZURITE_API_VERSION,
-        )
+        ))
 
         def echo(ctx: task.OrchestrationContext, inp: str):
             return inp

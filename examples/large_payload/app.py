@@ -30,7 +30,7 @@ from azure.identity import DefaultAzureCredential
 from durabletask import client, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-from durabletask.extensions.azure_blob_payloads import BlobPayloadStore
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
 
 
 # --------------- Activities ---------------
@@ -77,11 +77,11 @@ def main():
     print(f"Using endpoint: {endpoint}")
 
     # Configure the blob payload store
-    store = BlobPayloadStore(
+    store = BlobPayloadStore(BlobPayloadStoreOptions(
         connection_string=storage_conn_str,
         # Use a low threshold so that we can see externalization in action
         threshold_bytes=1_024,
-    )
+    ))
 
     secure_channel = endpoint.startswith("https://")
     credential = DefaultAzureCredential() if secure_channel else None
