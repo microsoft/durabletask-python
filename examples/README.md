@@ -164,6 +164,11 @@ You can now execute any of the examples in this directory using Python:
 python activity_sequence.py
 ```
 
+> [!NOTE]
+> The `large_payload/` example requires Azurite or an Azure Storage
+> account and an additional install step. See the
+> [large payload README](./large_payload/README.md) for details.
+
 ### Review Orchestration History and Status
 
 To access the Durable Task Scheduler Dashboard, follow these steps:

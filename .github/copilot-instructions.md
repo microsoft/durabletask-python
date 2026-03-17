@@ -89,6 +89,13 @@ pytest
 ## Project Structure
 
 - `durabletask/` — core SDK source
+  - `payload/` — public payload externalization API (`PayloadStore` ABC,
+    `LargePayloadStorageOptions`, helper functions)
+  - `extensions/azure_blob_payloads/` — Azure Blob Storage payload store
+    (installed via `pip install durabletask[azure-blob-payloads]`)
+  - `entities/` — durable entity support
+  - `testing/` — in-memory backend for testing without a sidecar
+  - `internal/` — protobuf definitions, gRPC helpers, tracing (not public API)
 - `durabletask-azuremanaged/` — Azure managed provider source
 - `examples/` — example orchestrations (see `examples/README.md`)
 - `tests/` — test suite
