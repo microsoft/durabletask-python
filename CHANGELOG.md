@@ -13,6 +13,7 @@ ADDED
 - Added `AsyncTaskHubGrpcClient` for asyncio-based applications using `grpc.aio`
 - Added `DefaultAsyncClientInterceptorImpl` for async gRPC metadata interceptors
 - Added `get_async_grpc_channel` helper for creating async gRPC channels
+- Improved distributed tracing support with full span coverage for orchestrations, activities, sub-orchestrations, timers, and events
 
 CHANGED
 

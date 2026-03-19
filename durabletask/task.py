@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
@@ -509,7 +509,7 @@ class RetryableTask(CompletableTask[T]):
         else:
             backoff_coefficient = self._retry_policy.backoff_coefficient
 
-        if datetime.utcnow() < retry_expiration:
+        if datetime.now(tz=timezone.utc).replace(tzinfo=None) < retry_expiration:
             next_delay_f = math.pow(backoff_coefficient, self._attempt_count - 1) * self._retry_policy.first_retry_interval.total_seconds()
 
             if self._retry_policy.max_retry_interval is not None:
