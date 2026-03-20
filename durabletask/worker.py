@@ -675,7 +675,7 @@ class TaskHubGrpcWorker:
             executor = _OrchestrationExecutor(
                 self._registry, self._logger,
                 persisted_orch_span_id=persisted_orch_span_id,
-                self.maximum_timer_interval)
+                maximum_timer_interval=self.maximum_timer_interval)
             result = executor.execute(instance_id, req.pastEvents, req.newEvents)
 
             # Determine completion status for span
@@ -1692,10 +1692,6 @@ class _OrchestrationExecutor:
                             scheduled_time_ns=created_ns,
                             parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
                         )
-                timer_task.complete(None)
-                if timer_task._retryable_parent is not None:
-                    activity_action = timer_task._retryable_parent._action
-
                 next_fire_at = timer_task.complete(event.timerFired.fireAt.ToDatetime())
                 if next_fire_at is not None:
                     id = ctx.next_sequence_number()
