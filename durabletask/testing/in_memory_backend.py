@@ -277,6 +277,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance = self._wait_for_state(request.instanceId, predicate, timeout=context.time_remaining())
 
         if not instance:
+            with self._lock:
+                if request.instanceId in self._instances:
+                    context.abort(grpc.StatusCode.DEADLINE_EXCEEDED,
+                                  f"Timed out waiting for instance '{request.instanceId}' to start")
             return pb.GetInstanceResponse(exists=False)
 
         return self._build_instance_response(instance, request.getInputsAndOutputs)
@@ -290,6 +294,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         )
 
         if not instance:
+            with self._lock:
+                if request.instanceId in self._instances:
+                    context.abort(grpc.StatusCode.DEADLINE_EXCEEDED,
+                                  f"Timed out waiting for instance '{request.instanceId}' to complete")
             return pb.GetInstanceResponse(exists=False)
 
         return self._build_instance_response(instance, request.getInputsAndOutputs)
