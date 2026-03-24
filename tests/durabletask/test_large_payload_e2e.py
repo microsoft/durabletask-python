@@ -357,3 +357,59 @@ class TestSmallPayloadNotExternalized:
                 svc.delete_container(fresh_container)
             except Exception:
                 pass
+
+
+class TestAsyncBlobClient:
+    """Test upload_async / download_async against Azurite."""
+
+    @pytest.fixture()
+    def async_store(self):
+        """Per-test BlobPayloadStore with a unique container."""
+        container = f"async-test-{uuid.uuid4().hex[:8]}"
+        store = BlobPayloadStore(BlobPayloadStoreOptions(
+            connection_string=AZURITE_CONN_STR,
+            container_name=container,
+            threshold_bytes=THRESHOLD_BYTES,
+            enable_compression=True,
+            api_version=AZURITE_API_VERSION,
+        ))
+        yield store
+        try:
+            svc = azure_blob.BlobServiceClient.from_connection_string(
+                AZURITE_CONN_STR, api_version=AZURITE_API_VERSION,
+            )
+            svc.delete_container(container)
+        except Exception:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_async_upload_and_download_round_trip(self, async_store):
+        """upload_async stores data that download_async can retrieve."""
+        payload = b"async round-trip payload " * 200
+        token = await async_store.upload_async(payload, instance_id="async-1")
+
+        assert async_store.is_known_token(token)
+        result = await async_store.download_async(token)
+        assert result == payload
+
+    @pytest.mark.asyncio
+    async def test_async_upload_with_compression(self, async_store):
+        """Compressed upload should still decompress on download."""
+        payload = b"Z" * 5000
+        token = await async_store.upload_async(payload)
+
+        downloaded = await async_store.download_async(token)
+        assert downloaded == payload
+
+    @pytest.mark.asyncio
+    async def test_async_upload_instance_id_scopes_blob(self, async_store):
+        """Blobs uploaded with instance_id are scoped under that prefix."""
+        payload = b"scoped payload"
+        token = await async_store.upload_async(payload, instance_id="inst-42")
+
+        # Token format: blob:v1:<container>:<instance_id>/<uuid>
+        _, blob_name = BlobPayloadStore._parse_token(token)
+        assert blob_name.startswith("inst-42/")
+
+        downloaded = await async_store.download_async(token)
+        assert downloaded == payload

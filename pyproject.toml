@@ -37,7 +37,7 @@ opentelemetry = [
     "opentelemetry-sdk>=1.0.0"
 ]
 azure-blob-payloads = [
-    "azure-storage-blob>=12.0.0"
+    "azure-storage-blob[aio]>=12.0.0"
 ]
 
 [project.urls]

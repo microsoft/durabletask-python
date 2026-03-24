@@ -3,7 +3,6 @@
 
 """Tests for large-payload externalization and de-externalization."""
 
-import asyncio
 from typing import Optional
 from unittest.mock import MagicMock
 
@@ -317,7 +316,8 @@ class TestRoundTrip:
 
 
 class TestAsyncPayloadHelpers:
-    def test_async_externalize_and_deexternalize(self):
+    @pytest.mark.asyncio
+    async def test_async_externalize_and_deexternalize(self):
         """Async versions should work identically to sync."""
         store = FakePayloadStore(threshold_bytes=10)
         original = "async round trip " * 20
@@ -328,14 +328,10 @@ class TestAsyncPayloadHelpers:
             input=sv(original),
         )
 
-        asyncio.get_event_loop().run_until_complete(
-            externalize_payloads_async(req, store, instance_id="async-1")
-        )
+        await externalize_payloads_async(req, store, instance_id="async-1")
         assert req.input.value.startswith(FakePayloadStore.TOKEN_PREFIX)
 
-        asyncio.get_event_loop().run_until_complete(
-            deexternalize_payloads_async(req, store)
-        )
+        await deexternalize_payloads_async(req, store)
         assert req.input.value == original
 
 
@@ -402,10 +398,13 @@ class TestBlobPayloadStoreTokenParsing:
 
         store = MagicMock(spec=BlobPayloadStore)
         store.is_known_token = BlobPayloadStore.is_known_token.__get__(store)
+        store._parse_token = BlobPayloadStore._parse_token
 
         assert store.is_known_token("blob:v1:c:b") is True
         assert store.is_known_token("not-a-token") is False
         assert store.is_known_token("") is False
+        assert store.is_known_token("blob:v1:") is False
+        assert store.is_known_token("blob:v1:container:") is False
 
 
 # ------------------------------------------------------------------

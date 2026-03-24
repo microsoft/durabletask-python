@@ -508,7 +508,7 @@ class TaskHubGrpcWorker:
                 get_work_items_request = pb.GetWorkItemsRequest(
                     maxConcurrentOrchestrationWorkItems=self._concurrency_options.maximum_concurrent_orchestration_work_items,
                     maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items,
-                    capabilities=capabilities if capabilities else None,
+                    capabilities=capabilities,
                 )
                 self._response_stream = stub.GetWorkItems(get_work_items_request)
                 self._logger.info(
