@@ -8,10 +8,12 @@ from __future__ import annotations
 import gzip
 import logging
 import uuid
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from azure.storage.blob import BlobServiceClient
-from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
+
+if TYPE_CHECKING:
+    from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
 
 from durabletask.extensions.azure_blob_payloads.options import BlobPayloadStoreOptions
 from durabletask.payload.store import PayloadStore
@@ -67,24 +69,34 @@ class BlobPayloadStore(PayloadStore):
                 **extra_kwargs,
             )
 
-        # Build async client
-        if options.connection_string:
-            self._async_blob_service_client = AsyncBlobServiceClient.from_connection_string(
-                options.connection_string, **extra_kwargs,
-            )
-        else:
-            assert options.account_url is not None  # guaranteed by validation above
-            self._async_blob_service_client = AsyncBlobServiceClient(
-                account_url=options.account_url,
-                credential=options.credential,
-                **extra_kwargs,
-            )
+        # Async client is built lazily to avoid importing
+        # azure.storage.blob.aio when only sync methods are used.
+        self._async_blob_service_client: AsyncBlobServiceClient | None = None
+        self._extra_kwargs = extra_kwargs
 
         self._ensure_container_created = False
 
     @property
     def options(self) -> BlobPayloadStoreOptions:
         return self._options
+
+    def _get_async_blob_service_client(self) -> AsyncBlobServiceClient:
+        """Lazily create the async blob service client."""
+        if self._async_blob_service_client is None:
+            from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
+
+            if self._options.connection_string:
+                self._async_blob_service_client = AsyncBlobServiceClient.from_connection_string(
+                    self._options.connection_string, **self._extra_kwargs,
+                )
+            else:
+                assert self._options.account_url is not None
+                self._async_blob_service_client = AsyncBlobServiceClient(
+                    account_url=self._options.account_url,
+                    credential=self._options.credential,
+                    **self._extra_kwargs,
+                )
+        return self._async_blob_service_client
 
     # ------------------------------------------------------------------
     # Sync operations
@@ -126,7 +138,8 @@ class BlobPayloadStore(PayloadStore):
             data = gzip.compress(data)
 
         blob_name = self._make_blob_name(instance_id)
-        container_client = self._async_blob_service_client.get_container_client(self._container_name)
+        client = self._get_async_blob_service_client()
+        container_client = client.get_container_client(self._container_name)
         await container_client.upload_blob(name=blob_name, data=data, overwrite=True)
 
         token = f"{_TOKEN_PREFIX}{self._container_name}:{blob_name}"
@@ -135,7 +148,8 @@ class BlobPayloadStore(PayloadStore):
 
     async def download_async(self, token: str) -> bytes:
         container, blob_name = self._parse_token(token)
-        container_client = self._async_blob_service_client.get_container_client(container)
+        client = self._get_async_blob_service_client()
+        container_client = client.get_container_client(container)
         stream = await container_client.download_blob(blob_name)
         blob_data = await stream.readall()
 
@@ -189,7 +203,8 @@ class BlobPayloadStore(PayloadStore):
     async def _ensure_container_async(self) -> None:
         if self._ensure_container_created:
             return
-        container_client = self._async_blob_service_client.get_container_client(self._container_name)
+        client = self._get_async_blob_service_client()
+        container_client = client.get_container_client(self._container_name)
         try:
             await container_client.create_container()
         except Exception:

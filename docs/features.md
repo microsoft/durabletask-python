@@ -248,7 +248,7 @@ store = BlobPayloadStore(BlobPayloadStoreOptions(
 The blob token format (`blob:v1:<container>:<blobName>`) is
 compatible with the .NET Durable Task SDK, enabling
 interoperability between Python and .NET workers sharing the same
-task hub and storage account. Note that message serilization strategies
+task hub and storage account. Note that message serialization strategies
 may differ for complex objects and custom types.
 
 #### Custom payload stores
@@ -259,6 +259,8 @@ the `upload`, `upload_async`, `download`, `download_async`, and
 `is_known_token` methods:
 
 ```python
+from typing import Optional
+
 from durabletask.payload import PayloadStore, LargePayloadStorageOptions
 
 
@@ -271,11 +273,11 @@ class MyPayloadStore(PayloadStore):
     def options(self) -> LargePayloadStorageOptions:
         return self._options
 
-    def upload(self, data: bytes) -> str:
+    def upload(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
         # Store data and return a unique token string
         ...
 
-    async def upload_async(self, data: bytes) -> str:
+    async def upload_async(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
         ...
 
     def download(self, token: str) -> bytes:
