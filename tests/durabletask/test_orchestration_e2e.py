@@ -269,10 +269,13 @@ def test_suspend_and_resume():
             assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.SUSPENDED
 
+        # Small delay to ensure the suspension is fully enforced
+        time.sleep(1)
+
         # Raise an event to the orchestration and confirm that it does NOT complete
         task_hub_client.raise_orchestration_event(id, "my_event", data=42)
         try:
-            state = task_hub_client.wait_for_orchestration_completion(id, timeout=3)
+            state = task_hub_client.wait_for_orchestration_completion(id, timeout=5)
             assert False, "Orchestration should not have completed"
         except TimeoutError:
             pass
