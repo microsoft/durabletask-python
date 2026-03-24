@@ -443,12 +443,7 @@ class TestBlobPayloadStoreDefaults:
 
 
 # ------------------------------------------------------------------
-# Tests: BlobPayloadStore construction validation
-# ------------------------------------------------------------------
-
-
-# ------------------------------------------------------------------
-# Tests: client method coverage (gaps closed)
+# Tests: client method coverage
 # ------------------------------------------------------------------
 
 

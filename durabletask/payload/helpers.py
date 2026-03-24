@@ -12,7 +12,7 @@ matches a known payload-store token (de-externalize).  The actual upload
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from google.protobuf import message as proto_message
 from google.protobuf import wrappers_pb2
@@ -32,7 +32,7 @@ def externalize_payloads(
     msg: proto_message.Message,
     store: PayloadStore,
     *,
-    instance_id: str | None = None,
+    instance_id: Optional[str] = None,
 ) -> None:
     """Walk *msg* in-place, uploading large ``StringValue`` fields to *store*.
 
@@ -64,7 +64,7 @@ async def externalize_payloads_async(
     msg: proto_message.Message,
     store: PayloadStore,
     *,
-    instance_id: str | None = None,
+    instance_id: Optional[str] = None,
 ) -> None:
     """Async version of :func:`externalize_payloads`."""
     threshold = store.options.threshold_bytes
@@ -89,7 +89,7 @@ def _walk_and_externalize(
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: str | None,
+    instance_id: Optional[str],
 ) -> None:
     for fd in msg.DESCRIPTOR.fields:
         if fd.message_type is None:
@@ -101,9 +101,8 @@ def _walk_and_externalize(
                 if isinstance(item, proto_message.Message):
                     if isinstance(item, wrappers_pb2.StringValue):
                         _try_externalize_field(
-                            msg, fd.name, item, store,
+                            fd.name, item, store,
                             threshold, max_bytes, instance_id,
-                            repeated=True,
                         )
                     else:
                         _walk_and_externalize(
@@ -116,7 +115,7 @@ def _walk_and_externalize(
             value = getattr(msg, fd.name)
             if isinstance(value, wrappers_pb2.StringValue):
                 _try_externalize_field(
-                    msg, fd.name, value, store,
+                    fd.name, value, store,
                     threshold, max_bytes, instance_id,
                 )
             else:
@@ -126,15 +125,12 @@ def _walk_and_externalize(
 
 
 def _try_externalize_field(
-    parent: proto_message.Message,
     field_name: str,
     sv: wrappers_pb2.StringValue,
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: str | None,
-    *,
-    repeated: bool = False,
+    instance_id: Optional[str],
 ) -> None:
     val = sv.value
     if not val:
@@ -205,7 +201,7 @@ async def _walk_and_externalize_async(
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: str | None,
+    instance_id: Optional[str],
 ) -> None:
     for fd in msg.DESCRIPTOR.fields:
         if fd.message_type is None:
@@ -217,7 +213,7 @@ async def _walk_and_externalize_async(
                 if isinstance(item, proto_message.Message):
                     if isinstance(item, wrappers_pb2.StringValue):
                         await _try_externalize_field_async(
-                            msg, fd.name, item, store,
+                            fd.name, item, store,
                             threshold, max_bytes, instance_id,
                         )
                     else:
@@ -230,7 +226,7 @@ async def _walk_and_externalize_async(
             value = getattr(msg, fd.name)
             if isinstance(value, wrappers_pb2.StringValue):
                 await _try_externalize_field_async(
-                    msg, fd.name, value, store,
+                    fd.name, value, store,
                     threshold, max_bytes, instance_id,
                 )
             else:
@@ -240,17 +236,17 @@ async def _walk_and_externalize_async(
 
 
 async def _try_externalize_field_async(
-    parent: proto_message.Message,
     field_name: str,
     sv: wrappers_pb2.StringValue,
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: str | None,
+    instance_id: Optional[str],
 ) -> None:
     val = sv.value
     if not val:
         return
+    # Already a token – skip
     if store.is_known_token(val):
         return
     payload_bytes = val.encode("utf-8")

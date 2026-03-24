@@ -53,7 +53,7 @@ class PayloadStore(abc.ABC):
         must be recognisable by :meth:`is_known_token`.
 
         Args:
-            data: The raw (possibly compressed) payload bytes.
+            data: The raw payload bytes to store.
             instance_id: Optional orchestration instance ID for
                 organizing stored blobs.
 
@@ -76,7 +76,7 @@ class PayloadStore(abc.ABC):
                 :meth:`upload` call.
 
         Returns:
-            The raw (possibly compressed) payload bytes.
+            The original payload bytes.
         """
         ...
 

@@ -309,5 +309,5 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_cha
                                 taskhub=taskhub_name, token_credential=credential, log_handler=log_handler) as w:
 ```
 
-**NOTE**
-The worker and client output many logs at the `DEBUG` level that will be useful when understanding orchestration flow and diagnosing issues with Durable applications. Before submitting issues, please attempt a repro of the issue with debug logging enabled.
+> [!NOTE]
+> The worker and client output many logs at the `DEBUG` level that will be useful when understanding orchestration flow and diagnosing issues with Durable applications. Before submitting issues, please attempt a repro of the issue with debug logging enabled.
