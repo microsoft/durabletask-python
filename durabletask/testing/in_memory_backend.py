@@ -309,7 +309,14 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             )
             instance.pending_events.append(event)
             instance.last_updated_at = datetime.now(timezone.utc)
-            self._enqueue_orchestration(instance.instance_id)
+
+            # Don't dispatch work for suspended or terminal orchestrations;
+            # suspended events will be delivered when the orchestration is
+            # resumed, and terminal orchestrations can't process new events.
+            not_terminal = not self._is_terminal_status(instance.status)
+            not_suspended = instance.status != pb.ORCHESTRATION_STATUS_SUSPENDED
+            if not_terminal and not_suspended:
+                self._enqueue_orchestration(instance.instance_id)
 
         self._logger.info(f"Raised event '{request.name}' for instance '{request.instanceId}'")
         return pb.RaiseEventResponse()
