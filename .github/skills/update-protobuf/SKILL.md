@@ -17,6 +17,7 @@ from the latest proto source at
 - Python 3.11 must be available on the system. Verify with `py -3.11 --version`
   (Windows) or `python3.11 --version` (Linux/macOS). If it is not installed,
   stop and ask the user to install it — do **not** use a different version.
+- On Linux/macOS, [`jq`](https://jqlang.github.io/jq/) must be installed.
 - Internet access is required to download the proto file and query the GitHub
   API.
 
@@ -100,7 +101,7 @@ $response[0].sha | Out-File -FilePath "durabletask/internal/PROTO_SOURCE_COMMIT_
 # Bash
 curl -s -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/microsoft/durabletask-protobuf/commits?path=protos/orchestrator_service.proto&sha=main&per_page=1" \
-  | jq -r '.[0].sha' > durabletask/internal/PROTO_SOURCE_COMMIT_HASH
+  | jq -jr '.[0].sha' > durabletask/internal/PROTO_SOURCE_COMMIT_HASH
 ```
 
 The file should contain exactly one commit hash with no trailing newline.
