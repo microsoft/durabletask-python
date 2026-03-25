@@ -1,4 +1,5 @@
 ---
+name: update-protobuf
 description: >-
   Update the protobuf generated Python files from the latest
   microsoft/durabletask-protobuf definitions. Use when the proto definitions
