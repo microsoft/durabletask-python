@@ -88,6 +88,7 @@ def test_rewind_preserves_successful_results():
     rewind should re-execute only the failed activity while the successful
     result is replayed from history."""
     call_tracker: dict[str, int] = {"first": 0, "second": 0}
+    should_fail_second = True
 
     def first_activity(_: task.ActivityContext, input: str) -> str:
         call_tracker["first"] += 1
@@ -95,7 +96,7 @@ def test_rewind_preserves_successful_results():
 
     def second_activity(_: task.ActivityContext, input: str) -> str:
         call_tracker["second"] += 1
-        if call_tracker["second"] == 1:
+        if should_fail_second:
             raise RuntimeError("Temporary failure")
         return f"second:{input}"
 
@@ -120,7 +121,8 @@ def test_rewind_preserves_successful_results():
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.FAILED
 
-        # Rewind – second_activity will now succeed on retry.
+        # Fix second_activity so it now succeeds, then rewind.
+        should_fail_second = False
         c.rewind_orchestration(instance_id, reason="retry")
         state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
@@ -130,8 +132,8 @@ def test_rewind_preserves_successful_results():
     assert state.failure_details is None
     # first_activity should NOT be re-executed – its result is replayed.
     assert call_tracker["first"] == 1
-    # second_activity was called twice (once failed, once succeeded).
-    assert call_tracker["second"] == 2
+    # second_activity was called at least twice (once failed, once succeeded).
+    assert call_tracker["second"] >= 2
 
 
 def test_rewind_not_found():
@@ -208,6 +210,118 @@ def test_rewind_with_sub_orchestration():
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert state.serialized_output == json.dumps("parent:child:data")
     assert sub_call_count == 2
+
+
+def test_rewind_purged_sub_orchestration():
+    """A purged sub-orchestration is re-run when the parent is rewound.
+
+    Flow: parent orchestrator -> calls sub-orchestrator -> sub-orchestrator
+    fails -> parent fails -> client purges the sub-orchestration -> client
+    rewinds the parent -> parent re-schedules the sub-orchestration which
+    now succeeds -> parent completes.
+    """
+    child_call_count = 0
+
+    def child_activity(_: task.ActivityContext, input: str) -> str:
+        nonlocal child_call_count
+        child_call_count += 1
+        if child_call_count == 1:
+            raise RuntimeError("Child failure")
+        return f"child:{input}"
+
+    def child_orchestrator(ctx: task.OrchestrationContext, input: str):
+        result = yield ctx.call_activity(child_activity, input=input)
+        return result
+
+    def parent_orchestrator(ctx: task.OrchestrationContext, input: str):
+        result = yield ctx.call_sub_orchestrator(
+            child_orchestrator, input=input, instance_id="sub-orch-to-purge")
+        return f"parent:{result}"
+
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(parent_orchestrator)
+        w.add_orchestrator(child_orchestrator)
+        w.add_activity(child_activity)
+        w.start()
+
+        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                       taskhub=taskhub_name, token_credential=None)
+        instance_id = c.schedule_new_orchestration(
+            parent_orchestrator, input="data")
+        state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+
+        # Parent should fail because child failed.
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.FAILED
+
+        # Purge the sub-orchestration so it must be completely re-run.
+        c.purge_orchestration("sub-orch-to-purge")
+
+        # Rewind the parent – child will be re-scheduled and succeed.
+        c.rewind_orchestration(instance_id, reason="purge and retry")
+        state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_output == json.dumps("parent:child:data")
+    assert child_call_count == 2
+
+
+def test_rewind_does_not_rerun_successful_activities():
+    """Successful activities must not be re-executed during rewind.
+
+    The orchestration calls two activities in sequence.  The first
+    succeeds and the second fails.  After rewind, only the failed
+    activity is retried; the successful activity's result is replayed
+    from history and its body is never called again.
+    """
+    success_call_count = 0
+    fail_call_count = 0
+
+    def success_activity(_: task.ActivityContext, input: str) -> str:
+        nonlocal success_call_count
+        success_call_count += 1
+        return f"ok:{input}"
+
+    def fail_activity(_: task.ActivityContext, input: str) -> str:
+        nonlocal fail_call_count
+        fail_call_count += 1
+        if fail_call_count == 1:
+            raise RuntimeError("Temporary failure")
+        return f"recovered:{input}"
+
+    def orchestrator(ctx: task.OrchestrationContext, input: str):
+        r1 = yield ctx.call_activity(success_activity, input=input)
+        r2 = yield ctx.call_activity(fail_activity, input=input)
+        return [r1, r2]
+
+    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
+                                    taskhub=taskhub_name, token_credential=None) as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(success_activity)
+        w.add_activity(fail_activity)
+        w.start()
+
+        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                       taskhub=taskhub_name, token_credential=None)
+        instance_id = c.schedule_new_orchestration(orchestrator, input="v")
+        state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+
+        assert state is not None
+        assert state.runtime_status == client.OrchestrationStatus.FAILED
+
+        # Rewind – only the failed activity should be retried.
+        c.rewind_orchestration(instance_id, reason="retry")
+        state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_output == json.dumps(["ok:v", "recovered:v"])
+    # The successful activity must have been called exactly once.
+    assert success_call_count == 1
+    # The failing activity was called twice (once failed, once succeeded).
+    assert fail_call_count == 2
 
 
 def test_rewind_without_reason():

@@ -1667,11 +1667,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         # Identify sub-orchestrations that were created but did not
         # complete successfully — they need to be recursively rewound.
         completed_sub_orch_task_ids: set[int] = set()
-        created_sub_orchs: dict[int, str] = {}
+        created_sub_orch_events: dict[int, pb.HistoryEvent] = {}
         for event in new_history:
             if event.HasField("subOrchestrationInstanceCreated"):
-                created_sub_orchs[event.eventId] = (
-                    event.subOrchestrationInstanceCreated.instanceId)
+                created_sub_orch_events[event.eventId] = event
             elif event.HasField("subOrchestrationInstanceCompleted"):
                 completed_sub_orch_task_ids.add(
                     event.subOrchestrationInstanceCompleted.taskScheduledId)
@@ -1684,11 +1683,22 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     reason = event.executionRewound.reason.value
                 break
 
-        # Recursively rewind failed sub-orchestrations.
-        for task_id, sub_instance_id in created_sub_orchs.items():
+        # Recursively rewind failed sub-orchestrations.  If the sub was
+        # purged (no longer in _instances), re-create it from the
+        # subOrchestrationInstanceCreated event so it runs fresh.
+        for task_id, event in created_sub_orch_events.items():
             if task_id not in completed_sub_orch_task_ids:
+                sub_info = event.subOrchestrationInstanceCreated
+                sub_instance_id = sub_info.instanceId
                 sub_instance = self._instances.get(sub_instance_id)
-                if (sub_instance and sub_instance.status == pb.ORCHESTRATION_STATUS_FAILED):
+                if sub_instance is None:
+                    # Sub-orchestration was purged — re-create it.
+                    sub_name = sub_info.name
+                    sub_input = sub_info.input.value if sub_info.HasField("input") else None
+                    sub_version = sub_info.version.value if sub_info.HasField("version") else None
+                    self._create_instance_internal(
+                        sub_instance_id, sub_name, sub_input, version=sub_version)
+                elif sub_instance.status == pb.ORCHESTRATION_STATUS_FAILED:
                     self._prepare_rewind(sub_instance, reason)
                 self._watch_sub_orchestration(
                     instance.instance_id, sub_instance_id, task_id)
