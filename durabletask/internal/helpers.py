@@ -27,7 +27,8 @@ def new_orchestrator_completed_event() -> pb.HistoryEvent:
 
 def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None,
                                 tags: Optional[dict[str, str]] = None,
-                                version: Optional[str] = None) -> pb.HistoryEvent:
+                                version: Optional[str] = None,
+                                parent_trace_context: Optional[pb.TraceContext] = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -36,7 +37,8 @@ def new_execution_started_event(name: str, instance_id: str, encoded_input: Opti
             version=get_string_value(version),
             input=get_string_value(encoded_input),
             orchestrationInstance=pb.OrchestrationInstance(instanceId=instance_id),
-            tags=tags))
+            tags=tags,
+            parentTraceContext=parent_trace_context))
 
 
 def new_timer_created_event(timer_id: int, fire_at: datetime) -> pb.HistoryEvent:
@@ -238,11 +240,13 @@ def new_create_timer_action(id: int, fire_at: datetime) -> pb.OrchestratorAction
 
 
 def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
-                             tags: Optional[dict[str, str]]) -> pb.OrchestratorAction:
+                             tags: Optional[dict[str, str]],
+                             parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, scheduleTask=pb.ScheduleTaskAction(
         name=name,
         input=get_string_value(encoded_input),
-        tags=tags
+        tags=tags,
+        parentTraceContext=parent_trace_context,
     ))
 
 
@@ -317,12 +321,14 @@ def new_create_sub_orchestration_action(
         name: str,
         instance_id: Optional[str],
         encoded_input: Optional[str],
-        version: Optional[str]) -> pb.OrchestratorAction:
+        version: Optional[str],
+        parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, createSubOrchestration=pb.CreateSubOrchestrationAction(
         name=name,
         instanceId=instance_id,
         input=get_string_value(encoded_input),
-        version=get_string_value(version)
+        version=get_string_value(version),
+        parentTraceContext=parent_trace_context,
     ))
 
 
