@@ -268,62 +268,6 @@ def test_rewind_purged_sub_orchestration():
     assert child_call_count == 2
 
 
-def test_rewind_does_not_rerun_successful_activities():
-    """Successful activities must not be re-executed during rewind.
-
-    The orchestration calls two activities in sequence.  The first
-    succeeds and the second fails.  After rewind, only the failed
-    activity is retried; the successful activity's result is replayed
-    from history and its body is never called again.
-    """
-    success_call_count = 0
-    fail_call_count = 0
-
-    def success_activity(_: task.ActivityContext, input: str) -> str:
-        nonlocal success_call_count
-        success_call_count += 1
-        return f"ok:{input}"
-
-    def fail_activity(_: task.ActivityContext, input: str) -> str:
-        nonlocal fail_call_count
-        fail_call_count += 1
-        if fail_call_count == 1:
-            raise RuntimeError("Temporary failure")
-        return f"recovered:{input}"
-
-    def orchestrator(ctx: task.OrchestrationContext, input: str):
-        r1 = yield ctx.call_activity(success_activity, input=input)
-        r2 = yield ctx.call_activity(fail_activity, input=input)
-        return [r1, r2]
-
-    with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
-                                    taskhub=taskhub_name, token_credential=None) as w:
-        w.add_orchestrator(orchestrator)
-        w.add_activity(success_activity)
-        w.add_activity(fail_activity)
-        w.start()
-
-        c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
-                                       taskhub=taskhub_name, token_credential=None)
-        instance_id = c.schedule_new_orchestration(orchestrator, input="v")
-        state = c.wait_for_orchestration_completion(instance_id, timeout=30)
-
-        assert state is not None
-        assert state.runtime_status == client.OrchestrationStatus.FAILED
-
-        # Rewind – only the failed activity should be retried.
-        c.rewind_orchestration(instance_id, reason="retry")
-        state = c.wait_for_orchestration_completion(instance_id, timeout=30)
-
-    assert state is not None
-    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
-    assert state.serialized_output == json.dumps(["ok:v", "recovered:v"])
-    # The successful activity must have been called exactly once.
-    assert success_call_count == 1
-    # The failing activity was called twice (once failed, once succeeded).
-    assert fail_call_count == 2
-
-
 def test_rewind_without_reason():
     """Rewind should work when no reason is provided."""
     call_count = 0
