@@ -593,8 +593,14 @@ class SendEntityMessageAction(_message.Message):
     entityUnlockSent: EntityUnlockSentEvent
     def __init__(self, entityOperationSignaled: _Optional[_Union[EntityOperationSignaledEvent, _Mapping]] = ..., entityOperationCalled: _Optional[_Union[EntityOperationCalledEvent, _Mapping]] = ..., entityLockRequested: _Optional[_Union[EntityLockRequestedEvent, _Mapping]] = ..., entityUnlockSent: _Optional[_Union[EntityUnlockSentEvent, _Mapping]] = ...) -> None: ...
 
+class RewindOrchestrationAction(_message.Message):
+    __slots__ = ("newHistory",)
+    NEWHISTORY_FIELD_NUMBER: _ClassVar[int]
+    newHistory: _containers.RepeatedCompositeFieldContainer[HistoryEvent]
+    def __init__(self, newHistory: _Optional[_Iterable[_Union[HistoryEvent, _Mapping]]] = ...) -> None: ...
+
 class OrchestratorAction(_message.Message):
-    __slots__ = ("id", "scheduleTask", "createSubOrchestration", "createTimer", "sendEvent", "completeOrchestration", "terminateOrchestration", "sendEntityMessage")
+    __slots__ = ("id", "scheduleTask", "createSubOrchestration", "createTimer", "sendEvent", "completeOrchestration", "terminateOrchestration", "sendEntityMessage", "rewindOrchestration")
     ID_FIELD_NUMBER: _ClassVar[int]
     SCHEDULETASK_FIELD_NUMBER: _ClassVar[int]
     CREATESUBORCHESTRATION_FIELD_NUMBER: _ClassVar[int]
@@ -603,6 +609,7 @@ class OrchestratorAction(_message.Message):
     COMPLETEORCHESTRATION_FIELD_NUMBER: _ClassVar[int]
     TERMINATEORCHESTRATION_FIELD_NUMBER: _ClassVar[int]
     SENDENTITYMESSAGE_FIELD_NUMBER: _ClassVar[int]
+    REWINDORCHESTRATION_FIELD_NUMBER: _ClassVar[int]
     id: int
     scheduleTask: ScheduleTaskAction
     createSubOrchestration: CreateSubOrchestrationAction
@@ -611,7 +618,8 @@ class OrchestratorAction(_message.Message):
     completeOrchestration: CompleteOrchestrationAction
     terminateOrchestration: TerminateOrchestrationAction
     sendEntityMessage: SendEntityMessageAction
-    def __init__(self, id: _Optional[int] = ..., scheduleTask: _Optional[_Union[ScheduleTaskAction, _Mapping]] = ..., createSubOrchestration: _Optional[_Union[CreateSubOrchestrationAction, _Mapping]] = ..., createTimer: _Optional[_Union[CreateTimerAction, _Mapping]] = ..., sendEvent: _Optional[_Union[SendEventAction, _Mapping]] = ..., completeOrchestration: _Optional[_Union[CompleteOrchestrationAction, _Mapping]] = ..., terminateOrchestration: _Optional[_Union[TerminateOrchestrationAction, _Mapping]] = ..., sendEntityMessage: _Optional[_Union[SendEntityMessageAction, _Mapping]] = ...) -> None: ...
+    rewindOrchestration: RewindOrchestrationAction
+    def __init__(self, id: _Optional[int] = ..., scheduleTask: _Optional[_Union[ScheduleTaskAction, _Mapping]] = ..., createSubOrchestration: _Optional[_Union[CreateSubOrchestrationAction, _Mapping]] = ..., createTimer: _Optional[_Union[CreateTimerAction, _Mapping]] = ..., sendEvent: _Optional[_Union[SendEventAction, _Mapping]] = ..., completeOrchestration: _Optional[_Union[CompleteOrchestrationAction, _Mapping]] = ..., terminateOrchestration: _Optional[_Union[TerminateOrchestrationAction, _Mapping]] = ..., sendEntityMessage: _Optional[_Union[SendEntityMessageAction, _Mapping]] = ..., rewindOrchestration: _Optional[_Union[RewindOrchestrationAction, _Mapping]] = ...) -> None: ...
 
 class OrchestrationTraceContext(_message.Message):
     __slots__ = ("spanID", "spanStartTime")
@@ -1250,16 +1258,50 @@ class SkipGracefulOrchestrationTerminationsResponse(_message.Message):
     def __init__(self, unterminatedInstanceIds: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class GetWorkItemsRequest(_message.Message):
-    __slots__ = ("maxConcurrentOrchestrationWorkItems", "maxConcurrentActivityWorkItems", "maxConcurrentEntityWorkItems", "capabilities")
+    __slots__ = ("maxConcurrentOrchestrationWorkItems", "maxConcurrentActivityWorkItems", "maxConcurrentEntityWorkItems", "capabilities", "workItemFilters")
     MAXCONCURRENTORCHESTRATIONWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     MAXCONCURRENTACTIVITYWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     MAXCONCURRENTENTITYWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+    WORKITEMFILTERS_FIELD_NUMBER: _ClassVar[int]
     maxConcurrentOrchestrationWorkItems: int
     maxConcurrentActivityWorkItems: int
     maxConcurrentEntityWorkItems: int
     capabilities: _containers.RepeatedScalarFieldContainer[WorkerCapability]
-    def __init__(self, maxConcurrentOrchestrationWorkItems: _Optional[int] = ..., maxConcurrentActivityWorkItems: _Optional[int] = ..., maxConcurrentEntityWorkItems: _Optional[int] = ..., capabilities: _Optional[_Iterable[_Union[WorkerCapability, str]]] = ...) -> None: ...
+    workItemFilters: WorkItemFilters
+    def __init__(self, maxConcurrentOrchestrationWorkItems: _Optional[int] = ..., maxConcurrentActivityWorkItems: _Optional[int] = ..., maxConcurrentEntityWorkItems: _Optional[int] = ..., capabilities: _Optional[_Iterable[_Union[WorkerCapability, str]]] = ..., workItemFilters: _Optional[_Union[WorkItemFilters, _Mapping]] = ...) -> None: ...
+
+class WorkItemFilters(_message.Message):
+    __slots__ = ("orchestrations", "activities", "entities")
+    ORCHESTRATIONS_FIELD_NUMBER: _ClassVar[int]
+    ACTIVITIES_FIELD_NUMBER: _ClassVar[int]
+    ENTITIES_FIELD_NUMBER: _ClassVar[int]
+    orchestrations: _containers.RepeatedCompositeFieldContainer[OrchestrationFilter]
+    activities: _containers.RepeatedCompositeFieldContainer[ActivityFilter]
+    entities: _containers.RepeatedCompositeFieldContainer[EntityFilter]
+    def __init__(self, orchestrations: _Optional[_Iterable[_Union[OrchestrationFilter, _Mapping]]] = ..., activities: _Optional[_Iterable[_Union[ActivityFilter, _Mapping]]] = ..., entities: _Optional[_Iterable[_Union[EntityFilter, _Mapping]]] = ...) -> None: ...
+
+class OrchestrationFilter(_message.Message):
+    __slots__ = ("name", "versions")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    VERSIONS_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    versions: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, name: _Optional[str] = ..., versions: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class ActivityFilter(_message.Message):
+    __slots__ = ("name", "versions")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    VERSIONS_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    versions: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, name: _Optional[str] = ..., versions: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class EntityFilter(_message.Message):
+    __slots__ = ("name",)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class WorkItem(_message.Message):
     __slots__ = ("orchestratorRequest", "activityRequest", "entityRequest", "healthPing", "entityRequestV2", "completionToken")
