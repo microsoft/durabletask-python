@@ -1419,6 +1419,10 @@ class _OrchestrationExecutor:
         For failed sub-orchestrations, the ``subOrchestrationInstanceCreated``
         event is kept so the backend can identify which sub-orchestration
         instances to recursively rewind.
+
+        WARNING!!!:
+        If any changes are made to how this method modifies the orchestration's history, then corresponding changes *must* 
+        be made in the backend implementations that rely on this method for executing a rewind.
         """
         self._logger.info(
             f"{instance_id}: Orchestration {orchestration_name} is being rewound"
