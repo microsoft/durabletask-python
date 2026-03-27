@@ -12,6 +12,8 @@ from durabletask.worker import (
     ActivityWorkItemFilter,
     EntityWorkItemFilter,
     OrchestrationWorkItemFilter,
+    VersioningOptions,
+    VersionMatchStrategy,
     WorkItemFilters,
 )
 from durabletask.testing import create_test_backend
@@ -256,3 +258,131 @@ def test_non_matching_entity_not_processed():
 
     assert matched_invoked
     assert not unmatched_invoked
+
+
+# ------------------------------------------------------------------
+# Tests: version-aware filtering with strict versioning
+# ------------------------------------------------------------------
+
+def _simple_v2_orchestrator(ctx: task.OrchestrationContext, input: int):
+    """Orchestrator that returns immediately (no activities) for version tests."""
+    return input + 1
+
+
+def test_strict_version_matching_orchestration_completes():
+    """Orchestration scheduled with the matching version is processed."""
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(_simple_v2_orchestrator)
+        w.use_versioning(VersioningOptions(
+            version="2.0",
+            match_strategy=VersionMatchStrategy.STRICT,
+        ))
+        w.use_work_item_filters()  # auto-generate with version
+        w.start()
+
+        c = client.TaskHubGrpcClient(host_address=HOST)
+        id = c.schedule_new_orchestration(
+            _simple_v2_orchestrator, input=10, version="2.0")
+        state = c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_output == "11"
+
+
+def test_strict_version_incompatible_orchestration_stays_pending():
+    """Orchestration with an incompatible version is not dispatched and stays pending."""
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(_simple_v2_orchestrator)
+        w.use_versioning(VersioningOptions(
+            version="2.0",
+            match_strategy=VersionMatchStrategy.STRICT,
+        ))
+        w.use_work_item_filters()
+        w.start()
+
+        c = client.TaskHubGrpcClient(host_address=HOST)
+
+        # Schedule with version "1.0" — incompatible with the worker's "2.0"
+        bad_id = c.schedule_new_orchestration(
+            _simple_v2_orchestrator, input=5, version="1.0")
+
+        # Schedule a compatible one so we can confirm the worker is active
+        good_id = c.schedule_new_orchestration(
+            _simple_v2_orchestrator, input=5, version="2.0")
+        good_state = c.wait_for_orchestration_completion(good_id, timeout=30)
+
+        assert good_state is not None
+        assert good_state.runtime_status == client.OrchestrationStatus.COMPLETED
+
+        # The incompatible orchestration must remain pending (not failed)
+        bad_state = c.get_orchestration_state(bad_id)
+        assert bad_state is not None
+        assert bad_state.runtime_status == client.OrchestrationStatus.PENDING
+
+
+def test_strict_version_no_version_orchestration_stays_pending():
+    """Orchestration scheduled without a version is not dispatched by a strict worker."""
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(_simple_v2_orchestrator)
+        w.use_versioning(VersioningOptions(
+            version="2.0",
+            match_strategy=VersionMatchStrategy.STRICT,
+        ))
+        w.use_work_item_filters()
+        w.start()
+
+        c = client.TaskHubGrpcClient(host_address=HOST)
+
+        # Schedule without any version
+        no_ver_id = c.schedule_new_orchestration(
+            _simple_v2_orchestrator, input=1)
+
+        # Schedule a compatible one to prove the worker is running
+        good_id = c.schedule_new_orchestration(
+            _simple_v2_orchestrator, input=1, version="2.0")
+        good_state = c.wait_for_orchestration_completion(good_id, timeout=30)
+        assert good_state is not None
+        assert good_state.runtime_status == client.OrchestrationStatus.COMPLETED
+
+        # The unversioned orchestration must remain pending
+        no_ver_state = c.get_orchestration_state(no_ver_id)
+        assert no_ver_state is not None
+        assert no_ver_state.runtime_status == client.OrchestrationStatus.PENDING
+
+
+def test_strict_version_explicit_filters_with_versions():
+    """Explicit filters with version constraints enforce strict matching."""
+    custom_filters = WorkItemFilters(
+        orchestrations=[
+            OrchestrationWorkItemFilter(
+                name=task.get_name(_simple_v2_orchestrator),
+                versions=["3.0"],
+            ),
+        ],
+    )
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(_simple_v2_orchestrator)
+        w.use_work_item_filters(custom_filters)
+        w.start()
+
+        c = client.TaskHubGrpcClient(host_address=HOST)
+
+        # Version "2.0" does not match the filter's "3.0"
+        bad_id = c.schedule_new_orchestration(
+            _simple_v2_orchestrator, input=1, version="2.0")
+
+        # Version "3.0" should match
+        good_id = c.schedule_new_orchestration(
+            _simple_v2_orchestrator, input=1, version="3.0")
+        good_state = c.wait_for_orchestration_completion(good_id, timeout=30)
+
+        assert good_state is not None
+        assert good_state.runtime_status == client.OrchestrationStatus.COMPLETED
+        assert good_state.serialized_output == "2"
+
+        # Mismatched version must remain pending
+        bad_state = c.get_orchestration_state(bad_id)
+        assert bad_state is not None
+        assert bad_state.runtime_status == client.OrchestrationStatus.PENDING

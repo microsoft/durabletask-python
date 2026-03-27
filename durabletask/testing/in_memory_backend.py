@@ -57,6 +57,7 @@ class ActivityWorkItem:
     task_id: int
     input: Optional[str]
     completion_token: int
+    version: Optional[str] = None
 
 
 @dataclass
@@ -439,14 +440,50 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     @staticmethod
     def _parse_work_item_filters(request: pb.GetWorkItemsRequest):
-        """Extract filter name sets from the request, or None if unfiltered."""
+        """Extract filters from the request.
+
+        Returns a tuple of three values, one per work-item category.  Each
+        value is either ``None`` (no filtering -- dispatch everything) or a
+        ``dict`` mapping a task name to a ``frozenset`` of accepted versions
+        (empty frozenset means *any* version of that name is accepted).
+        An empty ``dict`` means the worker opted into filtering for that
+        category but listed no names, so *nothing* should match.
+        """
         if not request.HasField("workItemFilters"):
             return None, None, None
         wf = request.workItemFilters
-        orch_names = {f.name for f in wf.orchestrations} if wf.orchestrations else None
-        activity_names = {f.name for f in wf.activities} if wf.activities else None
-        entity_names = {f.name for f in wf.entities} if wf.entities else None
-        return orch_names, activity_names, entity_names
+
+        def _build_filter(filters):
+            result: dict[str, frozenset[str]] = {}
+            for f in filters:
+                versions = frozenset(f.versions) if f.versions else frozenset()
+                existing = result.get(f.name, frozenset())
+                result[f.name] = existing | versions
+            return result
+
+        orch_filter = _build_filter(wf.orchestrations)
+        activity_filter = _build_filter(wf.activities)
+        entity_filter = {f.name: frozenset() for f in wf.entities}
+        return orch_filter, activity_filter, entity_filter
+
+    @staticmethod
+    def _matches_filter(name: str, version: Optional[str],
+                        filt: Optional[dict[str, frozenset[str]]]) -> bool:
+        """Check whether a work item matches the parsed filter.
+
+        *filt* is ``None`` when the worker did not opt into filtering
+        (everything matches).  Otherwise it is a dict mapping accepted
+        names to a frozenset of accepted versions.  An empty frozenset
+        means any version of that name is accepted.
+        """
+        if filt is None:
+            return True
+        accepted_versions = filt.get(name)
+        if accepted_versions is None:
+            return False
+        if not accepted_versions:
+            return True  # empty set -- any version
+        return (version or "") in accepted_versions
 
     def GetWorkItems(self, request: pb.GetWorkItemsRequest, context):
         """Streams work items to the worker (orchestration and activity work items)."""
@@ -468,8 +505,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         if not instance or not instance.pending_events:
                             continue
 
-                        # Skip if orchestration name doesn't match filters
-                        if orch_filter is not None and instance.name not in orch_filter:
+                        # Skip if orchestration doesn't match filters
+                        if not self._matches_filter(
+                                instance.name, instance.version, orch_filter):
                             skipped_orchs.append(instance_id)
                             continue
 
@@ -515,7 +553,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         matched_activity = None
                         while self._activity_queue:
                             candidate = self._activity_queue.popleft()
-                            if activity_filter is not None and candidate.name not in activity_filter:
+                            if not self._matches_filter(
+                                    candidate.name, candidate.version,
+                                    activity_filter):
                                 skipped.append(candidate)
                                 continue
                             matched_activity = candidate
@@ -548,7 +588,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                                 if entity_filter is not None:
                                     try:
                                         parsed = EntityInstanceId.parse(entity_id)
-                                        if parsed.entity not in entity_filter:
+                                        if not self._matches_filter(
+                                                parsed.entity, None,
+                                                entity_filter):
                                             skipped_entities.append(entity_id)
                                             continue
                                     except ValueError:
@@ -1313,12 +1355,15 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             instance.status = pb.ORCHESTRATION_STATUS_RUNNING
 
         # Queue activity for execution
+        task_version = schedule_task.version.value \
+            if schedule_task.HasField("version") else None
         self._activity_queue.append(ActivityWorkItem(
             instance_id=instance.instance_id,
             name=task_name,
             task_id=task_id,
             input=input_value,
-            completion_token=instance.completion_token
+            completion_token=instance.completion_token,
+            version=task_version,
         ))
         self._work_available.set()
 

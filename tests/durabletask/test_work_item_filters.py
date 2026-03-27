@@ -47,6 +47,18 @@ class TestEntityWorkItemFilter:
         f = EntityWorkItemFilter(name="myentity")
         assert f.name == "myentity"
 
+    def test_name_normalized_to_lowercase(self):
+        f = EntityWorkItemFilter(name="Counter")
+        assert f.name == "counter"
+
+    def test_invalid_name_raises(self):
+        with pytest.raises(ValueError):
+            EntityWorkItemFilter(name="bad@name")
+
+    def test_empty_name_raises(self):
+        with pytest.raises(ValueError):
+            EntityWorkItemFilter(name="")
+
 
 # ---------------------------------------------------------------------------
 # WorkItemFilters construction

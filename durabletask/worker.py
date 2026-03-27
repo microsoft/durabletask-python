@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -181,8 +181,11 @@ class EntityWorkItemFilter:
 
         Args:
             name: The name of the entity to filter.
+                  The name is normalized to lowercase to match
+                  entity registration and instance ID conventions.
         """
-        self.name = name
+        EntityInstanceId.validate_entity_name(name)
+        self.name = name.lower()
 
 
 class WorkItemFilters:
@@ -515,6 +518,15 @@ class TaskHubGrpcWorker:
         if self._is_running:
             raise RuntimeError("Cannot set default version while the worker is running.")
         self._registry.versioning = version
+
+    @overload
+    def use_work_item_filters(self) -> None: ...
+
+    @overload
+    def use_work_item_filters(self, filters: WorkItemFilters) -> None: ...
+
+    @overload
+    def use_work_item_filters(self, filters: None) -> None: ...
 
     def use_work_item_filters(
         self,
