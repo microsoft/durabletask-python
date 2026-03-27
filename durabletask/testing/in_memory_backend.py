@@ -26,6 +26,7 @@ from google.protobuf import empty_pb2, timestamp_pb2, wrappers_pb2
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.helpers as helpers
+from durabletask.entities.entity_instance_id import EntityInstanceId
 
 
 @dataclass
@@ -436,9 +437,21 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             f"Restarted instance '{request.instanceId}' as '{new_instance_id}'")
         return pb.RestartInstanceResponse(instanceId=new_instance_id)
 
+    @staticmethod
+    def _parse_work_item_filters(request: pb.GetWorkItemsRequest):
+        """Extract filter name sets from the request, or None if unfiltered."""
+        if not request.HasField("workItemFilters"):
+            return None, None, None
+        wf = request.workItemFilters
+        orch_names = {f.name for f in wf.orchestrations} if wf.orchestrations else None
+        activity_names = {f.name for f in wf.activities} if wf.activities else None
+        entity_names = {f.name for f in wf.entities} if wf.entities else None
+        return orch_names, activity_names, entity_names
+
     def GetWorkItems(self, request: pb.GetWorkItemsRequest, context):
         """Streams work items to the worker (orchestration and activity work items)."""
         self._logger.info("Worker connected and requesting work items")
+        orch_filter, activity_filter, entity_filter = self._parse_work_item_filters(request)
 
         try:
             while context.is_active() and not self._shutdown_event.is_set():
@@ -446,6 +459,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
                 with self._lock:
                     # Check for orchestration work
+                    skipped_orchs: list[str] = []
                     while self._orchestration_queue:
                         instance_id = self._orchestration_queue.popleft()
                         self._orchestration_queue_set.discard(instance_id)
@@ -454,11 +468,14 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         if not instance or not instance.pending_events:
                             continue
 
+                        # Skip if orchestration name doesn't match filters
+                        if orch_filter is not None and instance.name not in orch_filter:
+                            skipped_orchs.append(instance_id)
+                            continue
+
                         if instance_id in self._orchestration_in_flight:
                             # Already being processed — re-add to queue
-                            if instance_id not in self._orchestration_queue_set:
-                                self._orchestration_queue.append(instance_id)
-                                self._orchestration_queue_set.add(instance_id)
+                            skipped_orchs.append(instance_id)
                             break
 
                         # Move pending events to dispatched_events
@@ -485,27 +502,58 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         )
                         break
 
+                    # Re-queue skipped orchestrations for other workers
+                    for s in skipped_orchs:
+                        if s not in self._orchestration_queue_set:
+                            self._orchestration_queue.append(s)
+                            self._orchestration_queue_set.add(s)
+
                     # Check for activity work
                     if not work_item and self._activity_queue:
-                        activity = self._activity_queue.popleft()
-                        work_item = pb.WorkItem(
-                            completionToken=str(activity.completion_token),
-                            activityRequest=pb.ActivityRequest(
-                                name=activity.name,
-                                taskId=activity.task_id,
-                                input=wrappers_pb2.StringValue(value=activity.input) if activity.input else None,
-                                orchestrationInstance=pb.OrchestrationInstance(instanceId=activity.instance_id)
+                        # Scan for the first matching activity
+                        skipped: list = []
+                        matched_activity = None
+                        while self._activity_queue:
+                            candidate = self._activity_queue.popleft()
+                            if activity_filter is not None and candidate.name not in activity_filter:
+                                skipped.append(candidate)
+                                continue
+                            matched_activity = candidate
+                            break
+                        # Put back non-matching items
+                        for s in skipped:
+                            self._activity_queue.append(s)
+
+                        if matched_activity is not None:
+                            work_item = pb.WorkItem(
+                                completionToken=str(matched_activity.completion_token),
+                                activityRequest=pb.ActivityRequest(
+                                    name=matched_activity.name,
+                                    taskId=matched_activity.task_id,
+                                    input=wrappers_pb2.StringValue(value=matched_activity.input) if matched_activity.input else None,
+                                    orchestrationInstance=pb.OrchestrationInstance(instanceId=matched_activity.instance_id)
+                                )
                             )
-                        )
 
                     # Check for entity work
                     if not work_item:
+                        skipped_entities: list[str] = []
                         while self._entity_queue:
                             entity_id = self._entity_queue.popleft()
                             self._entity_queue_set.discard(entity_id)
                             entity = self._entities.get(entity_id)
 
                             if entity and entity.pending_operations:
+                                # Skip if entity name doesn't match filters
+                                if entity_filter is not None:
+                                    try:
+                                        parsed = EntityInstanceId.parse(entity_id)
+                                        if parsed.entity not in entity_filter:
+                                            skipped_entities.append(entity_id)
+                                            continue
+                                    except ValueError:
+                                        pass
+
                                 # Skip if this entity is already being processed
                                 if entity_id in self._entity_in_flight:
                                     continue
@@ -531,6 +579,12 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                                     ),
                                 )
                                 break
+
+                        # Re-queue skipped entities for other workers
+                        for s in skipped_entities:
+                            if s not in self._entity_queue_set:
+                                self._entity_queue.append(s)
+                                self._entity_queue_set.add(s)
 
                 if work_item:
                     yield work_item
