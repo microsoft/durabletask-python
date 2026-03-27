@@ -1,0 +1,134 @@
+name: 🔎 PR Verification Agent
+
+# Security: This workflow has write permissions to contents, issues, and PRs, so
+# it must NOT use the `pull_request` trigger (which checks out untrusted PR code
+# and could exfiltrate the job token). Instead, it runs on schedule/manual
+# dispatch only. The agent fetches each PR's branch itself before building and
+# verifying. The contents:write permission is needed to push verification sample
+# code to verification/pr-<N> branches.
+on:
+  # Run periodically to pick up PRs labeled pending-verification
+  schedule:
+    - cron: "0 */6 * * *" # Every 6 hours
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  verify-prs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Prevent overlapping runs from racing on label updates / comment posts
+    concurrency:
+      group: pr-verification
+      cancel-in-progress: false
+
+    env:
+      PYTHON_VER: "3.12"
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VER }}
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install -e . -e ./durabletask-azuremanaged
+          pip install -r dev-requirements.txt
+
+      - name: 🐳 Start DTS Emulator
+        run: |
+          docker run --name dts-emulator -d --rm -p 8080:8080 \
+            mcr.microsoft.com/dts/dts-emulator:latest
+
+          echo "Waiting for emulator to be ready..."
+          for i in $(seq 1 30); do
+            if nc -z localhost 8080 2>/dev/null; then
+              echo "Emulator is ready!"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Emulator failed to start within 30 seconds"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: 🤖 Install GitHub Copilot CLI
+        run: npm install -g @github/copilot
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: 🔎 Run PR Verification Agent
+        run: |
+          AGENT_PROMPT=$(cat .github/agents/pr-verification.agent.md)
+
+          FULL_PROMPT=$(cat <<PROMPT_EOF
+          $AGENT_PROMPT
+
+          ---
+
+          ## Execution Context
+
+          You are running in CI. Today's date is $(date +%Y-%m-%d).
+          Repository: ${{ github.repository }}
+
+          Environment variables available:
+          - ENDPOINT=$ENDPOINT
+          - TASKHUB=$TASKHUB
+
+          Execute the full workflow described above:
+          1. Find PRs labeled pending-verification
+          2. For each PR: understand the fix, extract the scenario, checkout the PR branch, install, create and run verification sample
+          3. Post verification results to the linked issue
+          4. Update PR labels accordingly
+
+          Remember:
+          - Process PRs one at a time
+          - Always checkout the PR branch and reinstall before verifying
+          - If a verification sample fails, retry up to 2 times before reporting failure
+          - Maximum timeout per PR: 5 minutes
+          PROMPT_EOF
+          )
+
+          EXIT_CODE=0
+          timeout --foreground --signal=TERM --kill-after=30s 1200s \
+            copilot \
+              --prompt "$FULL_PROMPT" \
+              --model "claude-opus-4.6" \
+              --allow-all-tools \
+              --allow-all-paths \
+              < /dev/null 2>&1 || EXIT_CODE=$?
+
+          if [ $EXIT_CODE -eq 124 ]; then
+            echo "::warning::Agent timed out after 20 minutes"
+          elif [ $EXIT_CODE -ne 0 ]; then
+            echo "::warning::Agent exited with code $EXIT_CODE"
+          fi
+
+          echo "PR verification agent completed."
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          ENDPOINT: localhost:8080
+          TASKHUB: default
+          CI: "true"
+          NO_COLOR: "1"
+          TERM: "dumb"
+
+      - name: 🧹 Stop DTS Emulator
+        if: always()
+        run: docker stop dts-emulator 2>/dev/null || true
