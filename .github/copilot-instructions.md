@@ -15,13 +15,20 @@ building durable orchestrations. The repo contains two packages:
 - Follow PEP 8 conventions.
 - Use `autopep8` for Python formatting.
 
+## Python Type Checking
+
+Before linting, check for and fix any Pylance errors in the files you
+changed. Use the editor's diagnostics (or the `get_errors` tool) to
+identify type errors and resolve them first — type safety takes
+priority over style.
+
 ## Python Linting
 
 This repository uses [flake8](https://flake8.pycqa.org/) for Python
 linting. Run it after making changes to verify there are no issues:
 
 ```bash
-flake8 path/to/changed/file.py
+python -m flake8 path/to/changed/file.py
 ```
 
 ## Markdown Style
@@ -57,19 +64,19 @@ repository root.
 To lint a single file:
 
 ```bash
-pymarkdown -c .pymarkdown.json scan path/to/file.md
+python -m pymarkdown -c .pymarkdown.json scan path/to/file.md
 ```
 
 To lint all Markdown files in the repository:
 
 ```bash
-pymarkdown -c .pymarkdown.json scan **/*.md
+python -m pymarkdown -c .pymarkdown.json scan **/*.md
 ```
 
 Install the linter via the dev dependencies:
 
 ```bash
-pip install -r dev-requirements.txt
+python -m pip install -r dev-requirements.txt
 ```
 
 ## Building and Testing
@@ -77,18 +84,25 @@ pip install -r dev-requirements.txt
 Install the packages locally in editable mode:
 
 ```bash
-pip install -e . -e ./durabletask-azuremanaged
+python -m pip install -e . -e ./durabletask-azuremanaged
 ```
 
 Run tests with pytest:
 
 ```bash
-pytest
+python -m pytest
 ```
 
 ## Project Structure
 
 - `durabletask/` — core SDK source
+  - `payload/` — public payload externalization API (`PayloadStore` ABC,
+    `LargePayloadStorageOptions`, helper functions)
+  - `extensions/azure_blob_payloads/` — Azure Blob Storage payload store
+    (installed via `pip install durabletask[azure-blob-payloads]`)
+  - `entities/` — durable entity support
+  - `testing/` — in-memory backend for testing without a sidecar
+  - `internal/` — protobuf definitions, gRPC helpers, tracing (not public API)
 - `durabletask-azuremanaged/` — Azure managed provider source
 - `examples/` — example orchestrations (see `examples/README.md`)
 - `tests/` — test suite

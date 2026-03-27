@@ -150,6 +150,151 @@ Orchestrations can be suspended using the `suspend_orchestration` client API and
 
 Orchestrations can specify retry policies for activities and sub-orchestrations. These policies control how many times and how frequently an activity or sub-orchestration will be retried in the event of a transient error.
 
+### Large payload externalization
+
+Orchestration inputs, outputs, and event data are transmitted through
+gRPC messages. When these payloads become very large they can exceed
+gRPC message size limits or degrade performance. Large payload
+externalization solves this by transparently offloading oversized
+payloads to an external store (such as Azure Blob Storage) and
+replacing them with compact reference tokens in the gRPC messages.
+
+This feature is **opt-in** and requires installing an optional
+dependency:
+
+```bash
+pip install durabletask[azure-blob-payloads]
+```
+
+#### How it works
+
+1. When the worker or client sends a payload that exceeds the
+   configured threshold (default 900 KB), the payload is
+   compressed (GZip, enabled by default) and uploaded to the
+   external store.
+2. The original payload in the gRPC message is replaced with a
+   compact token (e.g. `blob:v1:<container>:<blobName>`).
+3. When the worker or client receives a message containing a token,
+   it downloads and decompresses the original payload automatically.
+
+This process is fully transparent to orchestrator and activity code —
+no changes are needed in your workflow logic.
+
+#### Configuring the blob payload store
+
+The built-in `BlobPayloadStore` uses Azure Blob Storage. Create a
+store instance and pass it to both the worker and client:
+
+```python
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+
+store = BlobPayloadStore(BlobPayloadStoreOptions(
+    connection_string="DefaultEndpointsProtocol=https;...",
+    container_name="durabletask-payloads",  # default
+    threshold_bytes=900_000,                # default (900 KB)
+    max_stored_payload_bytes=10_485_760,    # default (10 MB)
+    enable_compression=True,                # default
+))
+```
+
+Then pass the store to the worker and client:
+
+```python
+with DurableTaskSchedulerWorker(
+    host_address=endpoint,
+    secure_channel=secure_channel,
+    taskhub=taskhub_name,
+    token_credential=credential,
+    payload_store=store,
+) as w:
+    # ... register orchestrators and activities ...
+    w.start()
+
+    c = DurableTaskSchedulerClient(
+        host_address=endpoint,
+        secure_channel=secure_channel,
+        taskhub=taskhub_name,
+        token_credential=credential,
+        payload_store=store,
+    )
+```
+
+You can also authenticate using `account_url` and a
+`TokenCredential` instead of a connection string:
+
+```python
+from azure.identity import DefaultAzureCredential
+
+store = BlobPayloadStore(BlobPayloadStoreOptions(
+    account_url="https://<account>.blob.core.windows.net",
+    credential=DefaultAzureCredential(),
+))
+```
+
+#### Configuration options
+
+| Option | Default | Description |
+|---|---|---|
+| `threshold_bytes` | 900,000 (900 KB) | Payloads larger than this are externalized |
+| `max_stored_payload_bytes` | 10,485,760 (10 MB) | Maximum size for externalized payloads |
+| `enable_compression` | `True` | GZip-compress payloads before uploading |
+| `container_name` | `"durabletask-payloads"` | Azure Blob container name |
+| `connection_string` | `None` | Azure Storage connection string |
+| `account_url` | `None` | Azure Storage account URL (use with `credential`) |
+| `credential` | `None` | `TokenCredential` for token-based auth |
+
+#### Cross-SDK compatibility
+
+The blob token format (`blob:v1:<container>:<blobName>`) is
+compatible with the .NET Durable Task SDK, enabling
+interoperability between Python and .NET workers sharing the same
+task hub and storage account. Note that message serialization strategies
+may differ for complex objects and custom types.
+
+#### Custom payload stores
+
+You can implement a custom payload store by subclassing
+`PayloadStore` from `durabletask.payload` and implementing
+the `upload`, `upload_async`, `download`, `download_async`, and
+`is_known_token` methods:
+
+```python
+from typing import Optional
+
+from durabletask.payload import PayloadStore, LargePayloadStorageOptions
+
+
+class MyPayloadStore(PayloadStore):
+
+    def __init__(self, options: LargePayloadStorageOptions):
+        self._options = options
+
+    @property
+    def options(self) -> LargePayloadStorageOptions:
+        return self._options
+
+    def upload(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+        # Store data and return a unique token string
+        ...
+
+    async def upload_async(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+        ...
+
+    def download(self, token: str) -> bytes:
+        # Retrieve data by token
+        ...
+
+    async def download_async(self, token: str) -> bytes:
+        ...
+
+    def is_known_token(self, value: str) -> bool:
+        # Return True if the value looks like a token from this store
+        ...
+```
+
+See the [large payload example](../examples/large_payload/) for a
+complete working sample.
+
 ### Logging configuration
 
 Both the TaskHubGrpcWorker and TaskHubGrpcClient (as well as DurableTaskSchedulerWorker and DurableTaskSchedulerClient for durabletask-azuremanaged) accept a log_handler and log_formatter object from `logging`. These can be used to customize verbosity, output location, and format of logs emitted by these sources.
@@ -164,5 +309,5 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_cha
                                 taskhub=taskhub_name, token_credential=credential, log_handler=log_handler) as w:
 ```
 
-**NOTE**
-The worker and client output many logs at the `DEBUG` level that will be useful when understanding orchestration flow and diagnosing issues with Durable applications. Before submitting issues, please attempt a repro of the issue with debug logging enabled.
+> [!NOTE]
+> The worker and client output many logs at the `DEBUG` level that will be useful when understanding orchestration flow and diagnosing issues with Durable applications. Before submitting issues, please attempt a repro of the issue with debug logging enabled.

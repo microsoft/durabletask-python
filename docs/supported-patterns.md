@@ -119,3 +119,56 @@ def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
 ```
 
 See the full [version-aware orchestrator sample](../examples/version_aware_orchestrator.py)
+
+### Large payload externalization
+
+When orchestrations work with very large inputs, outputs, or event
+data, the payloads can exceed gRPC message size limits. The large
+payload externalization pattern transparently offloads these payloads
+to Azure Blob Storage and replaces them with compact reference tokens
+in the gRPC messages.
+
+No changes are required in orchestrator or activity code. Simply
+install the optional dependency and configure a payload store on the
+worker and client:
+
+```python
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+# Configure the blob payload store
+store = BlobPayloadStore(BlobPayloadStoreOptions(
+    connection_string="DefaultEndpointsProtocol=https;...",
+))
+
+# Pass the store to both worker and client
+with DurableTaskSchedulerWorker(
+    host_address=endpoint, secure_channel=secure_channel,
+    taskhub=taskhub_name, token_credential=credential,
+    payload_store=store,
+) as w:
+    w.add_orchestrator(my_orchestrator)
+    w.add_activity(process_large_data)
+    w.start()
+
+    c = DurableTaskSchedulerClient(
+        host_address=endpoint, secure_channel=secure_channel,
+        taskhub=taskhub_name, token_credential=credential,
+        payload_store=store,
+    )
+
+    # This large input is automatically externalized to blob storage
+    large_input = "x" * 1_000_000  # 1 MB string
+    instance_id = c.schedule_new_orchestration(my_orchestrator, input=large_input)
+    state = c.wait_for_orchestration_completion(instance_id, timeout=60)
+```
+
+In this example, any payload exceeding the threshold (default 900 KB)
+is compressed and uploaded to the configured Azure Blob container.
+When the worker or client reads the message, it downloads and
+decompresses the payload automatically.
+
+See the full [large payload example](../examples/large_payload/) and
+[feature documentation](./features.md#large-payload-externalization)
+for configuration options and details.

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- Added large payload externalization support for automatically
+  offloading oversized orchestration payloads to Azure Blob Storage.
+  Install with `pip install durabletask[azure-blob-payloads]`.
+  Pass a `BlobPayloadStore` to the worker and client via the
+  `payload_store` parameter.
+- Added `durabletask.extensions.azure_blob_payloads` extension
+  package with `BlobPayloadStore` and `BlobPayloadStoreOptions`
+- Added `PayloadStore` abstract base class in
+  `durabletask.payload` for custom storage backends
 - Added `durabletask.testing` module with `InMemoryOrchestrationBackend` for testing orchestrations without a sidecar process
 - Added `AsyncTaskHubGrpcClient` for asyncio-based applications using `grpc.aio`
 - Added `DefaultAsyncClientInterceptorImpl` for async gRPC metadata interceptors
