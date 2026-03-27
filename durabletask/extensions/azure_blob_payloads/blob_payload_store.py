@@ -10,6 +10,7 @@ import logging
 import uuid
 from typing import Optional
 
+from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
 
@@ -81,6 +82,30 @@ class BlobPayloadStore(PayloadStore):
             )
 
         self._ensure_container_created = False
+
+    # ------------------------------------------------------------------
+    # Lifecycle / resource management
+    # ------------------------------------------------------------------
+
+    def close(self) -> None:
+        """Close the underlying sync blob service client."""
+        self._blob_service_client.close()
+
+    async def close_async(self) -> None:
+        """Close the underlying async blob service client."""
+        await self._async_blob_service_client.close()
+
+    def __enter__(self) -> BlobPayloadStore:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    async def __aenter__(self) -> BlobPayloadStore:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.close_async()
 
     @property
     def options(self) -> BlobPayloadStoreOptions:
@@ -185,8 +210,7 @@ class BlobPayloadStore(PayloadStore):
         container_client = self._blob_service_client.get_container_client(self._container_name)
         try:
             container_client.create_container()
-        except Exception:
-            # Container may already exist — that is fine.
+        except ResourceExistsError:
             pass
         self._ensure_container_created = True
 
@@ -196,7 +220,6 @@ class BlobPayloadStore(PayloadStore):
         container_client = self._async_blob_service_client.get_container_client(self._container_name)
         try:
             await container_client.create_container()
-        except Exception:
-            # Container may already exist — that is fine.
+        except ResourceExistsError:
             pass
         self._ensure_container_created = True

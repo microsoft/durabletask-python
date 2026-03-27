@@ -84,6 +84,12 @@ async def deexternalize_payloads_async(
 # Internal recursive walkers – sync
 # ------------------------------------------------------------------
 
+def _is_map_field(fd) -> bool:
+    """Return True if the field descriptor represents a protobuf map field."""
+    mt = fd.message_type
+    return mt is not None and fd.is_repeated and mt.GetOptions().map_entry
+
+
 def _walk_and_externalize(
     msg: proto_message.Message,
     store: PayloadStore,
@@ -95,7 +101,21 @@ def _walk_and_externalize(
         if fd.message_type is None:
             continue
 
-        if fd.is_repeated:
+        if _is_map_field(fd):
+            # Map fields: iterate values. ScalarMap values are not
+            # messages and will be skipped by the isinstance check.
+            for map_value in getattr(msg, fd.name).values():
+                if isinstance(map_value, proto_message.Message):
+                    if isinstance(map_value, wrappers_pb2.StringValue):
+                        _try_externalize_field(
+                            fd.name, map_value, store,
+                            threshold, max_bytes, instance_id,
+                        )
+                    else:
+                        _walk_and_externalize(
+                            map_value, store, threshold, max_bytes, instance_id
+                        )
+        elif fd.is_repeated:
             value = getattr(msg, fd.name)
             for item in value:
                 if isinstance(item, proto_message.Message):
@@ -162,7 +182,14 @@ def _walk_and_deexternalize(
         if fd.message_type is None:
             continue
 
-        if fd.is_repeated:
+        if _is_map_field(fd):
+            for map_value in getattr(msg, fd.name).values():
+                if isinstance(map_value, proto_message.Message):
+                    if isinstance(map_value, wrappers_pb2.StringValue):
+                        _try_deexternalize_field(map_value, store)
+                    else:
+                        _walk_and_deexternalize(map_value, store)
+        elif fd.is_repeated:
             value = getattr(msg, fd.name)
             for item in value:
                 if isinstance(item, proto_message.Message):
@@ -207,7 +234,19 @@ async def _walk_and_externalize_async(
         if fd.message_type is None:
             continue
 
-        if fd.is_repeated:
+        if _is_map_field(fd):
+            for map_value in getattr(msg, fd.name).values():
+                if isinstance(map_value, proto_message.Message):
+                    if isinstance(map_value, wrappers_pb2.StringValue):
+                        await _try_externalize_field_async(
+                            fd.name, map_value, store,
+                            threshold, max_bytes, instance_id,
+                        )
+                    else:
+                        await _walk_and_externalize_async(
+                            map_value, store, threshold, max_bytes, instance_id,
+                        )
+        elif fd.is_repeated:
             value = getattr(msg, fd.name)
             for item in value:
                 if isinstance(item, proto_message.Message):
@@ -273,7 +312,14 @@ async def _walk_and_deexternalize_async(
         if fd.message_type is None:
             continue
 
-        if fd.is_repeated:
+        if _is_map_field(fd):
+            for map_value in getattr(msg, fd.name).values():
+                if isinstance(map_value, proto_message.Message):
+                    if isinstance(map_value, wrappers_pb2.StringValue):
+                        await _try_deexternalize_field_async(map_value, store)
+                    else:
+                        await _walk_and_deexternalize_async(map_value, store)
+        elif fd.is_repeated:
             value = getattr(msg, fd.name)
             for item in value:
                 if isinstance(item, proto_message.Message):
