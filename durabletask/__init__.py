@@ -3,8 +3,8 @@
 
 """Durable Task SDK for Python"""
 
-from durabletask.worker import ConcurrencyOptions, VersioningOptions
+from durabletask.worker import ConcurrencyOptions, VersioningOptions, WorkItemFilters
 
-__all__ = ["ConcurrencyOptions", "VersioningOptions"]
+__all__ = ["ConcurrencyOptions", "VersioningOptions", "WorkItemFilters"]
 
 PACKAGE_NAME = "durabletask"
