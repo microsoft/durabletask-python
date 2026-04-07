@@ -32,6 +32,8 @@ from durabletask.internal.client_helpers import (
     prepare_async_interceptors,
     prepare_sync_interceptors,
 )
+from durabletask.payload import helpers as payload_helpers
+from durabletask.payload.store import PayloadStore
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
@@ -152,7 +154,8 @@ class TaskHubGrpcClient:
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
-                 default_version: Optional[str] = None):
+                 default_version: Optional[str] = None,
+                 payload_store: Optional[PayloadStore] = None):
 
         interceptors = prepare_sync_interceptors(metadata, interceptors)
 
@@ -165,6 +168,7 @@ class TaskHubGrpcClient:
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
+        self._payload_store = payload_store
 
     def close(self) -> None:
         """Closes the underlying gRPC channel."""
@@ -198,12 +202,20 @@ class TaskHubGrpcClient:
                 req.parentTraceContext.CopyFrom(parent_trace_ctx)
 
             self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
+            # Externalize any large payloads in the request
+            if self._payload_store is not None:
+                payload_helpers.externalize_payloads(
+                    req, self._payload_store, instance_id=req.instanceId,
+                )
             res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
             return res.instanceId
 
     def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         res: pb.GetInstanceResponse = self._stub.GetInstance(req)
+        # De-externalize any large-payload tokens in the response
+        if self._payload_store is not None and res.exists:
+            payload_helpers.deexternalize_payloads(res, self._payload_store)
         return new_orchestration_state(req.instanceId, res)
 
     def get_all_orchestration_states(self,
@@ -220,6 +232,8 @@ class TaskHubGrpcClient:
         while True:
             req = build_query_instances_req(orchestration_query, _continuation_token)
             resp: pb.QueryInstancesResponse = self._stub.QueryInstances(req)
+            if self._payload_store is not None:
+                payload_helpers.deexternalize_payloads(resp, self._payload_store)
             states += [parse_orchestration_state(res) for res in resp.orchestrationState]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
@@ -235,6 +249,8 @@ class TaskHubGrpcClient:
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
             res: pb.GetInstanceResponse = self._stub.WaitForInstanceStart(req, timeout=timeout)
+            if self._payload_store is not None and res.exists:
+                payload_helpers.deexternalize_payloads(res, self._payload_store)
             return new_orchestration_state(req.instanceId, res)
         except grpc.RpcError as rpc_error:
             if rpc_error.code() == grpc.StatusCode.DEADLINE_EXCEEDED:  # type: ignore
@@ -250,6 +266,8 @@ class TaskHubGrpcClient:
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
             res: pb.GetInstanceResponse = self._stub.WaitForInstanceCompletion(req, timeout=timeout)
+            if self._payload_store is not None and res.exists:
+                payload_helpers.deexternalize_payloads(res, self._payload_store)
             state = new_orchestration_state(req.instanceId, res)
             log_completion_state(self._logger, instance_id, state)
             return state
@@ -264,6 +282,10 @@ class TaskHubGrpcClient:
         with tracing.start_raise_event_span(event_name, instance_id):
             req = build_raise_event_req(instance_id, event_name, data)
             self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+            if self._payload_store is not None:
+                payload_helpers.externalize_payloads(
+                    req, self._payload_store, instance_id=instance_id,
+                )
             self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self, instance_id: str, *,
@@ -272,6 +294,10 @@ class TaskHubGrpcClient:
         req = build_terminate_req(instance_id, output, recursive)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
+        if self._payload_store is not None:
+            payload_helpers.externalize_payloads(
+                req, self._payload_store, instance_id=instance_id,
+            )
         self._stub.TerminateInstance(req)
 
     def suspend_orchestration(self, instance_id: str) -> None:
@@ -330,6 +356,10 @@ class TaskHubGrpcClient:
                       input: Optional[Any] = None) -> None:
         req = build_signal_entity_req(entity_instance_id, operation_name, input)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
+        if self._payload_store is not None:
+            payload_helpers.externalize_payloads(
+                req, self._payload_store, instance_id=str(entity_instance_id),
+            )
         self._stub.SignalEntity(req, None)  # TODO: Cancellation timeout?
 
     def get_entity(self,
@@ -341,7 +371,8 @@ class TaskHubGrpcClient:
         res: pb.GetEntityResponse = self._stub.GetEntity(req)
         if not res.exists:
             return None
-
+        if self._payload_store is not None:
+            payload_helpers.deexternalize_payloads(res, self._payload_store)
         return EntityMetadata.from_entity_metadata(res.entity, include_state)
 
     def get_all_entities(self,
@@ -357,6 +388,8 @@ class TaskHubGrpcClient:
         while True:
             query_request = build_query_entities_req(entity_query, _continuation_token)
             resp: pb.QueryEntitiesResponse = self._stub.QueryEntities(query_request)
+            if self._payload_store is not None:
+                payload_helpers.deexternalize_payloads(resp, self._payload_store)
             entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
@@ -402,7 +435,8 @@ class AsyncTaskHubGrpcClient:
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
-                 default_version: Optional[str] = None):
+                 default_version: Optional[str] = None,
+                 payload_store: Optional[PayloadStore] = None):
 
         interceptors = prepare_async_interceptors(metadata, interceptors)
 
@@ -415,6 +449,7 @@ class AsyncTaskHubGrpcClient:
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("async_client", log_handler, log_formatter)
         self.default_version = default_version
+        self._payload_store = payload_store
 
     async def close(self) -> None:
         """Closes the underlying gRPC channel."""
@@ -451,6 +486,11 @@ class AsyncTaskHubGrpcClient:
                 req.parentTraceContext.CopyFrom(parent_trace_ctx)
 
             self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
+            # Externalize any large payloads in the request
+            if self._payload_store is not None:
+                await payload_helpers.externalize_payloads_async(
+                    req, self._payload_store, instance_id=req.instanceId,
+                )
             res: pb.CreateInstanceResponse = await self._stub.StartInstance(req)
             return res.instanceId
 
@@ -458,6 +498,8 @@ class AsyncTaskHubGrpcClient:
                                       fetch_payloads: bool = True) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         res: pb.GetInstanceResponse = await self._stub.GetInstance(req)
+        if self._payload_store is not None and res.exists:
+            await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
         return new_orchestration_state(req.instanceId, res)
 
     async def get_all_orchestration_states(self,
@@ -474,6 +516,8 @@ class AsyncTaskHubGrpcClient:
         while True:
             req = build_query_instances_req(orchestration_query, _continuation_token)
             resp: pb.QueryInstancesResponse = await self._stub.QueryInstances(req)
+            if self._payload_store is not None:
+                await payload_helpers.deexternalize_payloads_async(resp, self._payload_store)
             states += [parse_orchestration_state(res) for res in resp.orchestrationState]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
@@ -489,6 +533,8 @@ class AsyncTaskHubGrpcClient:
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
             res: pb.GetInstanceResponse = await self._stub.WaitForInstanceStart(req, timeout=timeout)
+            if self._payload_store is not None and res.exists:
+                await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
             return new_orchestration_state(req.instanceId, res)
         except grpc.aio.AioRpcError as rpc_error:
             if rpc_error.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
@@ -503,6 +549,8 @@ class AsyncTaskHubGrpcClient:
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
             res: pb.GetInstanceResponse = await self._stub.WaitForInstanceCompletion(req, timeout=timeout)
+            if self._payload_store is not None and res.exists:
+                await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
             state = new_orchestration_state(req.instanceId, res)
             log_completion_state(self._logger, instance_id, state)
             return state
@@ -517,6 +565,10 @@ class AsyncTaskHubGrpcClient:
         with tracing.start_raise_event_span(event_name, instance_id):
             req = build_raise_event_req(instance_id, event_name, data)
             self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+            if self._payload_store is not None:
+                await payload_helpers.externalize_payloads_async(
+                    req, self._payload_store, instance_id=instance_id,
+                )
             await self._stub.RaiseEvent(req)
 
     async def terminate_orchestration(self, instance_id: str, *,
@@ -525,6 +577,10 @@ class AsyncTaskHubGrpcClient:
         req = build_terminate_req(instance_id, output, recursive)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
+        if self._payload_store is not None:
+            await payload_helpers.externalize_payloads_async(
+                req, self._payload_store, instance_id=instance_id,
+            )
         await self._stub.TerminateInstance(req)
 
     async def suspend_orchestration(self, instance_id: str) -> None:
@@ -583,6 +639,10 @@ class AsyncTaskHubGrpcClient:
                             input: Optional[Any] = None) -> None:
         req = build_signal_entity_req(entity_instance_id, operation_name, input)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
+        if self._payload_store is not None:
+            await payload_helpers.externalize_payloads_async(
+                req, self._payload_store, instance_id=str(entity_instance_id),
+            )
         await self._stub.SignalEntity(req, None)
 
     async def get_entity(self,
@@ -594,7 +654,8 @@ class AsyncTaskHubGrpcClient:
         res: pb.GetEntityResponse = await self._stub.GetEntity(req)
         if not res.exists:
             return None
-
+        if self._payload_store is not None:
+            await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
         return EntityMetadata.from_entity_metadata(res.entity, include_state)
 
     async def get_all_entities(self,
@@ -610,6 +671,8 @@ class AsyncTaskHubGrpcClient:
         while True:
             query_request = build_query_entities_req(entity_query, _continuation_token)
             resp: pb.QueryEntitiesResponse = await self._stub.QueryEntities(query_request)
+            if self._payload_store is not None:
+                await payload_helpers.deexternalize_payloads_async(resp, self._payload_store)
             entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
