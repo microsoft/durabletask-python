@@ -503,13 +503,16 @@ class TaskHubGrpcWorker:
         self._registry.versioning = version
 
     @overload
-    def use_work_item_filters(self) -> None: ...
+    def use_work_item_filters(self) -> None:
+        ...
 
     @overload
-    def use_work_item_filters(self, filters: WorkItemFilters) -> None: ...
+    def use_work_item_filters(self, filters: WorkItemFilters) -> None:
+        ...
 
     @overload
-    def use_work_item_filters(self, filters: None) -> None: ...
+    def use_work_item_filters(self, filters: None) -> None:
+        ...
 
     def use_work_item_filters(
         self,
