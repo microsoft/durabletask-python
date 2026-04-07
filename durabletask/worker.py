@@ -1158,8 +1158,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             and self._maximum_timer_interval > timedelta(0)
             and self.current_utc_datetime + self._maximum_timer_interval < final_fire_at
         ):
-            timer_task = task.LongTimerTask(final_fire_at, self._maximum_timer_interval)
-            next_fire_at = timer_task.start(self.current_utc_datetime)
+            timer_task = task.TimerTask(final_fire_at, self._maximum_timer_interval)
+            next_fire_at = timer_task._get_next_fire_at(self.current_utc_datetime)
         else:
             timer_task = task.TimerTask()
 
@@ -1675,7 +1675,7 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
                         )
                     return
-                if not (isinstance(timer_task, task.TimerTask) or isinstance(timer_task, task.LongTimerTask)):
+                if not isinstance(timer_task, task.TimerTask):
                     if not ctx._is_replaying:
                         self._logger.warning(
                             f"{ctx.instance_id}: Ignoring timerFired event with non-timer task ID = {timer_id}."
@@ -1692,7 +1692,7 @@ class _OrchestrationExecutor:
                             scheduled_time_ns=created_ns,
                             parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
                         )
-                next_fire_at = timer_task.complete(event.timerFired.fireAt.ToDatetime())
+                next_fire_at = timer_task._handle_timer_fired(event.timerFired.fireAt.ToDatetime())
                 if next_fire_at is not None:
                     id = ctx.next_sequence_number()
                     new_action = ph.new_create_timer_action(id, next_fire_at)

@@ -521,26 +521,22 @@ class RetryableTask(CompletableTask[T]):
 
 
 class TimerTask(CancellableTask[None]):
-    def set_retryable_parent(self, retryable_task: RetryableTask):
-        self._retryable_parent = retryable_task
-
-    def complete(self, _: datetime) -> None:
-        super().complete(None)
-
-
-class LongTimerTask(TimerTask):
-    def __init__(self, final_fire_at: datetime, maximum_timer_interval: timedelta):
+    def __init__(self, final_fire_at: Optional[datetime] = None,
+                 maximum_timer_interval: Optional[timedelta] = None):
         super().__init__()
         self._final_fire_at = final_fire_at
         self._maximum_timer_interval = maximum_timer_interval
 
-    def start(self, current_utc_datetime: datetime) -> datetime:
-        return self._get_next_fire_at(current_utc_datetime)
+    def set_retryable_parent(self, retryable_task: RetryableTask):
+        self._retryable_parent = retryable_task
 
-    def complete(self, current_utc_datetime: datetime) -> Optional[datetime]:
-        if current_utc_datetime < self._final_fire_at:
+    def _handle_timer_fired(self, current_utc_datetime: datetime) -> Optional[datetime]:
+        if (self._final_fire_at is not None
+                and self._maximum_timer_interval is not None
+                and current_utc_datetime < self._final_fire_at):
             return self._get_next_fire_at(current_utc_datetime)
-        return super().complete(current_utc_datetime)
+        super().complete(None)
+        return None
 
     def _get_next_fire_at(self, current_utc_datetime: datetime) -> datetime:
         if current_utc_datetime + self._maximum_timer_interval < self._final_fire_at:
