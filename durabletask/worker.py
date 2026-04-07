@@ -34,8 +34,10 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
 import durabletask.internal.tracing as tracing
+from durabletask.payload import helpers as payload_helpers
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+from durabletask.payload.store import PayloadStore
 
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
@@ -323,7 +325,8 @@ class TaskHubGrpcWorker:
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
             concurrency_options: Optional[ConcurrencyOptions] = None,
-            maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL
+            maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+            payload_store: Optional[PayloadStore] = None,
     ):
         self._registry = _Registry()
         self._host_address = (
@@ -333,6 +336,7 @@ class TaskHubGrpcWorker:
         self._shutdown = Event()
         self._is_running = False
         self._secure_channel = secure_channel
+        self._payload_store = payload_store
 
         # Use provided concurrency options or create default ones
         self._concurrency_options = (
@@ -506,9 +510,13 @@ class TaskHubGrpcWorker:
             try:
                 assert current_stub is not None
                 stub = current_stub
+                capabilities = []
+                if self._payload_store is not None:
+                    capabilities.append(pb.WORKER_CAPABILITY_LARGE_PAYLOADS)
                 get_work_items_request = pb.GetWorkItemsRequest(
                     maxConcurrentOrchestrationWorkItems=self._concurrency_options.maximum_concurrent_orchestration_work_items,
                     maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items,
+                    capabilities=capabilities,
                 )
                 self._response_stream = stub.GetWorkItems(get_work_items_request)
                 self._logger.info(
@@ -649,6 +657,10 @@ class TaskHubGrpcWorker:
     ):
         instance_id = req.instanceId
 
+        # De-externalize any large-payload tokens in the incoming request
+        if self._payload_store is not None:
+            payload_helpers.deexternalize_payloads(req, self._payload_store)
+
         # Extract parent trace context from executionStarted event
         parent_trace_ctx = None
         orchestration_name = "<unknown>"
@@ -757,6 +769,11 @@ class TaskHubGrpcWorker:
             )
 
         try:
+            # Externalize any large payloads in the response
+            if self._payload_store is not None:
+                payload_helpers.externalize_payloads(
+                    res, self._payload_store, instance_id=instance_id,
+                )
             stub.CompleteOrchestratorTask(res)
         except Exception as ex:
             self._logger.exception(
@@ -783,6 +800,10 @@ class TaskHubGrpcWorker:
             completionToken,
     ):
         instance_id = req.orchestrationInstance.instanceId
+
+        # De-externalize any large-payload tokens in the incoming request
+        if self._payload_store is not None:
+            payload_helpers.deexternalize_payloads(req, self._payload_store)
         try:
             executor = _ActivityExecutor(self._registry, self._logger)
             with tracing.start_span(
@@ -818,6 +839,11 @@ class TaskHubGrpcWorker:
             )
 
         try:
+            # Externalize any large payloads in the response
+            if self._payload_store is not None:
+                payload_helpers.externalize_payloads(
+                    res, self._payload_store, instance_id=instance_id,
+                )
             stub.CompleteActivityTask(res)
         except Exception as ex:
             self._logger.exception(
@@ -846,6 +872,10 @@ class TaskHubGrpcWorker:
         operation_infos: list[pb.OperationInfo] = []
         if isinstance(req, pb.EntityRequest):
             req, operation_infos = helpers.convert_to_entity_batch_request(req)
+
+        # De-externalize any large-payload tokens in the incoming request
+        if self._payload_store is not None:
+            payload_helpers.deexternalize_payloads(req, self._payload_store)
 
         entity_state = StateShim(shared.from_json(req.entityState.value) if req.entityState.value else None)
 
@@ -912,6 +942,11 @@ class TaskHubGrpcWorker:
         )
 
         try:
+            # Externalize any large payloads in the response
+            if self._payload_store is not None:
+                payload_helpers.externalize_payloads(
+                    batch_result, self._payload_store, instance_id=instance_id,
+                )
             stub.CompleteEntityTask(batch_result)
         except Exception as ex:
             self._logger.exception(

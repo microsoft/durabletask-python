@@ -9,6 +9,7 @@ from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import \
     DTSDefaultClientInterceptorImpl
+from durabletask.payload.store import PayloadStore
 from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 
 
@@ -30,6 +31,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         concurrency_options (Optional[ConcurrencyOptions], optional): Configuration
             for controlling worker concurrency limits. If None, default concurrency
             settings will be used.
+        payload_store (Optional[PayloadStore], optional): A payload store for
+            externalizing large payloads. If None, payloads are sent inline.
         log_handler (Optional[logging.Handler], optional): Custom logging handler for worker logs.
         log_formatter (Optional[logging.Formatter], optional): Custom log formatter for worker logs.
 
@@ -63,6 +66,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  token_credential: Optional[TokenCredential],
                  secure_channel: bool = True,
                  concurrency_options: Optional[ConcurrencyOptions] = None,
+                 payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None):
 
@@ -82,5 +86,6 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             interceptors=interceptors,
             concurrency_options=concurrency_options,
             # DTS natively supports long timers so chunking is unnecessary
-            maximum_timer_interval=None
+            maximum_timer_interval=None,
+            payload_store=payload_store
         )

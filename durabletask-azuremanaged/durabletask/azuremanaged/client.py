@@ -13,6 +13,7 @@ from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSDefaultClientInterceptorImpl,
 )
 from durabletask.client import AsyncTaskHubGrpcClient, TaskHubGrpcClient
+from durabletask.payload.store import PayloadStore
 
 
 # Client class used for Durable Task Scheduler (DTS)
@@ -23,6 +24,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  token_credential: Optional[TokenCredential],
                  secure_channel: bool = True,
                  default_version: Optional[str] = None,
+                 payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None):
 
@@ -40,7 +42,8 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
             log_handler=log_handler,
             log_formatter=log_formatter,
             interceptors=interceptors,
-            default_version=default_version)
+            default_version=default_version,
+            payload_store=payload_store)
 
 
 # Async client class used for Durable Task Scheduler (DTS)
@@ -60,6 +63,8 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to True.
         default_version (Optional[str], optional): Default version string for orchestrations.
+        payload_store (Optional[PayloadStore], optional): A payload store for
+            externalizing large payloads. If None, payloads are sent inline.
         log_handler (Optional[logging.Handler], optional): Custom logging handler for client logs.
         log_formatter (Optional[logging.Formatter], optional): Custom log formatter for client logs.
 
@@ -85,6 +90,7 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
                  token_credential: Optional[AsyncTokenCredential],
                  secure_channel: bool = True,
                  default_version: Optional[str] = None,
+                 payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None):
 
@@ -102,4 +108,5 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
             log_handler=log_handler,
             log_formatter=log_formatter,
             interceptors=interceptors,
-            default_version=default_version)
+            default_version=default_version,
+            payload_store=payload_store)

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `AsyncDurableTaskSchedulerClient` for async/await usage with `grpc.aio`
 - Added `DTSAsyncDefaultClientInterceptorImpl` async gRPC interceptor for DTS authentication
+- Added `payload_store` parameter to `DurableTaskSchedulerWorker`,
+  `DurableTaskSchedulerClient`, and `AsyncDurableTaskSchedulerClient`
+  for large payload externalization support
+- Added `azure-blob-payloads` optional dependency that installs
+  `durabletask[azure-blob-payloads]` — install with
+  `pip install durabletask.azuremanaged[azure-blob-payloads]`
 
 ## v1.3.0
 
