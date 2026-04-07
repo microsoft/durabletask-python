@@ -100,5 +100,3 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_cha
         print(f"  Completed: {state.serialized_output}")
     elif state:
         print(f"  Failed: {state.failure_details}")
-
-    exit()

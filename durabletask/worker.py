@@ -9,6 +9,7 @@ import os
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
@@ -145,49 +146,43 @@ class VersioningOptions:
 _AUTO_GENERATE_FILTERS = object()
 
 
+@dataclass(frozen=True)
 class OrchestrationWorkItemFilter:
     """Specifies a filter for orchestration work items."""
 
-    def __init__(self, name: str, versions: Optional[list[str]] = None):
-        """Initialize an orchestration filter.
-
-        Args:
-            name: The name of the orchestration to filter.
-            versions: Optional list of versions to filter.
-        """
-        self.name = name
-        self.versions: list[str] = versions if versions is not None else []
+    name: str
+    """The name of the orchestration to filter."""
+    versions: list[str] = field(default_factory=list)
+    """Optional list of versions to filter."""
 
 
+@dataclass(frozen=True)
 class ActivityWorkItemFilter:
     """Specifies a filter for activity work items."""
 
-    def __init__(self, name: str, versions: Optional[list[str]] = None):
-        """Initialize an activity filter.
-
-        Args:
-            name: The name of the activity to filter.
-            versions: Optional list of versions to filter.
-        """
-        self.name = name
-        self.versions: list[str] = versions if versions is not None else []
+    name: str
+    """The name of the activity to filter."""
+    versions: list[str] = field(default_factory=list)
+    """Optional list of versions to filter."""
 
 
+@dataclass(frozen=True)
 class EntityWorkItemFilter:
-    """Specifies a filter for entity work items."""
+    """Specifies a filter for entity work items.
 
-    def __init__(self, name: str):
-        """Initialize an entity filter.
+    The name is normalized to lowercase to match entity registration
+    and instance ID conventions.
+    """
 
-        Args:
-            name: The name of the entity to filter.
-                  The name is normalized to lowercase to match
-                  entity registration and instance ID conventions.
-        """
-        EntityInstanceId.validate_entity_name(name)
-        self.name = name.lower()
+    name: str
+    """The name of the entity to filter."""
+
+    def __post_init__(self):
+        EntityInstanceId.validate_entity_name(self.name)
+        object.__setattr__(self, 'name', self.name.lower())
 
 
+@dataclass(frozen=True)
 class WorkItemFilters:
     """Work item filters for a Durable Task Worker.
 
@@ -199,28 +194,12 @@ class WorkItemFilters:
     :meth:`TaskHubGrpcWorker.use_work_item_filters` to enable filtering.
     """
 
-    def __init__(
-        self,
-        orchestrations: Optional[list[OrchestrationWorkItemFilter]] = None,
-        activities: Optional[list[ActivityWorkItemFilter]] = None,
-        entities: Optional[list[EntityWorkItemFilter]] = None,
-    ):
-        """Initialize work item filters.
-
-        Args:
-            orchestrations: List of orchestration filters.
-            activities: List of activity filters.
-            entities: List of entity filters.
-        """
-        self.orchestrations: list[OrchestrationWorkItemFilter] = (
-            orchestrations if orchestrations is not None else []
-        )
-        self.activities: list[ActivityWorkItemFilter] = (
-            activities if activities is not None else []
-        )
-        self.entities: list[EntityWorkItemFilter] = (
-            entities if entities is not None else []
-        )
+    orchestrations: list[OrchestrationWorkItemFilter] = field(default_factory=list)
+    """List of orchestration filters."""
+    activities: list[ActivityWorkItemFilter] = field(default_factory=list)
+    """List of activity filters."""
+    entities: list[EntityWorkItemFilter] = field(default_factory=list)
+    """List of entity filters."""
 
     @classmethod
     def _from_registry(cls, registry: '_Registry') -> 'WorkItemFilters':

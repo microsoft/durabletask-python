@@ -594,7 +594,11 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                                             skipped_entities.append(entity_id)
                                             continue
                                     except ValueError:
-                                        pass
+                                        self._logger.warning(
+                                            f"Cannot parse entity ID '{entity_id}' "
+                                            f"for filter matching; skipping")
+                                        skipped_entities.append(entity_id)
+                                        continue
 
                                 # Skip if this entity is already being processed
                                 if entity_id in self._entity_in_flight:
