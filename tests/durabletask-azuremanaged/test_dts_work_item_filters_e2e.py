@@ -46,6 +46,26 @@ def _other_orchestrator(ctx: task.OrchestrationContext, _):
     return "other"
 
 
+# Dedicated helpers for no-filter tests to avoid emulator filter-cache
+# interference from prior tests that registered filters for the shared helpers.
+def _nf_plus_one(_: task.ActivityContext, input: int) -> int:
+    return input + 1
+
+
+def _nf_orchestrator(ctx: task.OrchestrationContext, start_val: int):
+    result = yield ctx.call_activity(_nf_plus_one, input=start_val)
+    return result
+
+
+def _cf_plus_one(_: task.ActivityContext, input: int) -> int:
+    return input + 1
+
+
+def _cf_orchestrator(ctx: task.OrchestrationContext, start_val: int):
+    result = yield ctx.call_activity(_cf_plus_one, input=start_val)
+    return result
+
+
 # ------------------------------------------------------------------
 # Tests: auto-generated filters
 # ------------------------------------------------------------------
@@ -109,15 +129,16 @@ def test_explicit_filters_matching():
 
 def test_no_filters_processes_all():
     """Without filters the worker processes all work items."""
+    time.sleep(2)  # Allow emulator filter cache to settle
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
-        w.add_orchestrator(_orchestrator_with_activity)
-        w.add_activity(_plus_one)
+        w.add_orchestrator(_nf_orchestrator)
+        w.add_activity(_nf_plus_one)
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                        taskhub=taskhub_name, token_credential=None)
-        id = c.schedule_new_orchestration(_orchestrator_with_activity, input=7)
+        id = c.schedule_new_orchestration(_nf_orchestrator, input=7)
         state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
@@ -131,17 +152,18 @@ def test_no_filters_processes_all():
 
 def test_cleared_filters_processes_all():
     """Clearing filters with None restores process-all behavior."""
+    time.sleep(2)  # Allow emulator filter cache to settle
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
-        w.add_orchestrator(_orchestrator_with_activity)
-        w.add_activity(_plus_one)
+        w.add_orchestrator(_cf_orchestrator)
+        w.add_activity(_cf_plus_one)
         w.use_work_item_filters()
         w.use_work_item_filters(None)
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                        taskhub=taskhub_name, token_credential=None)
-        id = c.schedule_new_orchestration(_orchestrator_with_activity, input=3)
+        id = c.schedule_new_orchestration(_cf_orchestrator, input=3)
         state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
