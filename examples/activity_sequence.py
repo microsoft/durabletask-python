@@ -1,5 +1,6 @@
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
+import logging
 import os
 
 from azure.identity import DefaultAzureCredential
@@ -7,6 +8,8 @@ from azure.identity import DefaultAzureCredential
 from durabletask import client, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+logger = logging.getLogger("activity_sequence")
 
 
 def hello(ctx: task.ActivityContext, name: str) -> str:
@@ -16,10 +19,15 @@ def hello(ctx: task.ActivityContext, name: str) -> str:
 
 def sequence(ctx: task.OrchestrationContext, _):
     """Orchestrator function that calls the 'hello' activity function in a sequence"""
+    # Create a replay-safe logger to avoid duplicate log messages during replay
+    replay_logger = ctx.create_replay_safe_logger(logger)
+
+    replay_logger.info("Starting activity sequence for instance %s", ctx.instance_id)
     # call "hello" activity function in a sequence
     result1 = yield ctx.call_activity(hello, input='Tokyo')
     result2 = yield ctx.call_activity(hello, input='Seattle')
     result3 = yield ctx.call_activity(hello, input='London')
+    replay_logger.info("All activities completed")
 
     # return an array of results
     return [result1, result2, result3]

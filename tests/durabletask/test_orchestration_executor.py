@@ -1269,6 +1269,53 @@ def test_replay_safe_logger_direct():
     assert log_calls == ["should appear"]
 
 
+def test_replay_safe_logger_log_method():
+    """Validates the generic log() method respects the replay flag."""
+    log_calls: list[str] = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_calls.append(record.getMessage())
+
+    inner_logger = logging.getLogger("test_replay_safe_logger_log_method")
+    inner_logger.setLevel(logging.DEBUG)
+    inner_logger.addHandler(_RecordingHandler())
+
+    replaying = True
+    replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+
+    replay_logger.log(logging.WARNING, "suppressed warning")
+    assert log_calls == []
+
+    replaying = False
+    replay_logger.log(logging.WARNING, "visible warning")
+    assert log_calls == ["visible warning"]
+
+
+def test_replay_safe_logger_is_enabled_for():
+    """Validates isEnabledFor returns False during replay."""
+    inner_logger = logging.getLogger("test_replay_safe_logger_enabled")
+    inner_logger.setLevel(logging.DEBUG)
+
+    replaying = True
+    replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+
+    # During replay, isEnabledFor should always return False
+    assert replay_logger.isEnabledFor(logging.DEBUG) is False
+    assert replay_logger.isEnabledFor(logging.INFO) is False
+    assert replay_logger.isEnabledFor(logging.CRITICAL) is False
+
+    # After replay, delegates to the inner logger
+    replaying = False
+    assert replay_logger.isEnabledFor(logging.DEBUG) is True
+    assert replay_logger.isEnabledFor(logging.INFO) is True
+
+    # If a level is below the inner logger's level, should return False
+    inner_logger.setLevel(logging.WARNING)
+    assert replay_logger.isEnabledFor(logging.DEBUG) is False
+    assert replay_logger.isEnabledFor(logging.WARNING) is True
+
+
 def test_when_any_with_retry():
     """Tests that a when_any pattern works correctly with retries"""
     def dummy_activity(_, inp: str):

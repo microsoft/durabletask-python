@@ -107,3 +107,18 @@ python -m pytest
 - `examples/` — example orchestrations (see `examples/README.md`)
 - `tests/` — test suite
 - `dev-requirements.txt` — development dependencies
+
+## Cross-Package Compatibility
+
+The `durabletask-azuremanaged` package extends the core `durabletask`
+package (e.g. `DurableTaskSchedulerWorker` subclasses
+`TaskHubGrpcWorker`). When adding or changing features in
+`durabletask/`, always verify that `durabletask-azuremanaged` still
+works correctly:
+
+- Check whether the azuremanaged worker, client, or tests override or
+  depend on the code you changed.
+- Run the azuremanaged unit tests if they exist for the affected area.
+- If a new public API is added to the core SDK (e.g. a method on
+  `OrchestrationContext`), confirm it is accessible through the
+  azuremanaged package and add a test or example if appropriate.

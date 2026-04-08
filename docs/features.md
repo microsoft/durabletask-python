@@ -150,6 +150,47 @@ Orchestrations can be suspended using the `suspend_orchestration` client API and
 
 Orchestrations can specify retry policies for activities and sub-orchestrations. These policies control how many times and how frequently an activity or sub-orchestration will be retried in the event of a transient error.
 
+### Replay-safe logging
+
+Orchestrator functions replay their history each time they are resumed,
+which can cause duplicate log messages. The `create_replay_safe_logger`
+method on `OrchestrationContext` returns a `ReplaySafeLogger` that wraps
+a standard `logging.Logger` and automatically suppresses output while
+the orchestrator is replaying. `ReplaySafeLogger` extends Python's
+`logging.LoggerAdapter`, which is the idiomatic way to add context or
+modify behavior on an existing logger.
+
+```python
+import logging
+
+logger = logging.getLogger("my_orchestrator")
+
+def my_orchestrator(ctx: task.OrchestrationContext, input):
+    replay_logger = ctx.create_replay_safe_logger(logger)
+    replay_logger.info("Starting orchestration %s", ctx.instance_id)
+    result = yield ctx.call_activity(my_activity, input=input)
+    replay_logger.info("Activity returned: %s", result)
+    return result
+```
+
+> [!NOTE]
+> Unlike the .NET SDK, where `CreateReplaySafeLogger` accepts a
+> category name string and internally creates the logger via
+> `ILoggerFactory`, the Python SDK requires you to pass an existing
+> `logging.Logger` instance. This is because Python's
+> `logging.getLogger(name)` already serves as the global factory and
+> is the standard way to obtain loggers.
+
+The replay-safe logger supports all standard log levels: `debug`,
+`info`, `warning`, `error`, `critical`, and `exception`, as well as
+the generic `log(level, msg)` method. It also exposes `isEnabledFor`
+which returns `False` during replay so callers can skip expensive
+message formatting.
+
+> [!TIP]
+> Create the replay-safe logger once at the start of your orchestrator
+> and reuse it throughout the function.
+
 ### Large payload externalization
 
 Orchestration inputs, outputs, and event data are transmitted through

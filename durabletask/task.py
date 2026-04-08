@@ -300,10 +300,10 @@ class OrchestrationContext(ABC):
         return ReplaySafeLogger(logger, lambda: self.is_replaying)
 
 
-class ReplaySafeLogger:
-    """A logger wrapper that suppresses log messages during orchestration replay.
+class ReplaySafeLogger(logging.LoggerAdapter):
+    """A logger adapter that suppresses log messages during orchestration replay.
 
-    This class wraps a standard :class:`logging.Logger` and only emits log
+    This class extends :class:`logging.LoggerAdapter` and only emits log
     messages when the orchestrator is *not* replaying. Use this to avoid
     duplicate log entries that would otherwise appear every time the
     orchestrator replays its history.
@@ -312,41 +312,18 @@ class ReplaySafeLogger:
     """
 
     def __init__(self, logger: logging.Logger, is_replaying: Callable[[], bool]) -> None:
-        self._logger = logger
+        super().__init__(logger, {})
         self._is_replaying = is_replaying
 
-    def _should_log(self) -> bool:
-        return not self._is_replaying()
+    def isEnabledFor(self, level: int) -> bool:
+        """Return whether logging is enabled for the given level.
 
-    def debug(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log a DEBUG-level message if the orchestrator is not replaying."""
-        if self._should_log():
-            self._logger.debug(msg, *args, **kwargs)
-
-    def info(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log an INFO-level message if the orchestrator is not replaying."""
-        if self._should_log():
-            self._logger.info(msg, *args, **kwargs)
-
-    def warning(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log a WARNING-level message if the orchestrator is not replaying."""
-        if self._should_log():
-            self._logger.warning(msg, *args, **kwargs)
-
-    def error(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log an ERROR-level message if the orchestrator is not replaying."""
-        if self._should_log():
-            self._logger.error(msg, *args, **kwargs)
-
-    def critical(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log a CRITICAL-level message if the orchestrator is not replaying."""
-        if self._should_log():
-            self._logger.critical(msg, *args, **kwargs)
-
-    def exception(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log an ERROR-level message with exception info if the orchestrator is not replaying."""
-        if self._should_log():
-            self._logger.exception(msg, *args, **kwargs)
+        Returns ``False`` while the orchestrator is replaying so that callers
+        can skip expensive message formatting during replay.
+        """
+        if self._is_replaying():
+            return False
+        return self.logger.isEnabledFor(level)
 
 
 class FailureDetails:
