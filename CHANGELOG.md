@@ -32,20 +32,13 @@ ADDED
 
 CHANGED
 
-- Refactored `TaskHubGrpcClient` to share request-building and validation logic
-  with `AsyncTaskHubGrpcClient` via module-level helper functions
-- Updated generated protobuf definitions to the latest durabletask-protobuf commit
 - Improved timer scheduling behavior for orchestrator timers
-- Updated GitHub workflow permissions for release and test pipelines
-- Added GitHub Copilot agent workflows for PR verification, daily code review, and issue triage
-- Updated examples and docs across orchestration, entity, fan-out/fan-in, and versioning samples
 
 FIXED:
 
 - Fix unbound variable in entity V1 processing
 - Fixed `compute_next_delay` returning `None` when `max_retry_interval` is not set
 - Fixed multiple entity-related bugs across ID parsing and failure handling
-- Fixed flaky in-memory backend tests
 
 ## v1.3.0
 
