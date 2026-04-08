@@ -56,7 +56,25 @@ Update azuremanaged dependency floors:
 - Keep entries concise and grouped by type (`ADDED`, `CHANGED`, `FIXED`, `REMOVED`) where
   applicable.
 
-### 4. Draft GitHub release bodies
+### 4. Validate
+
+- Run diagnostics on changed markdown and TOML files.
+- Fix formatting or heading issues introduced by release prep changes.
+- Verify the final diff only contains release-prep updates.
+
+### 5. Wait for merge and tags before release drafting
+
+Before creating draft releases in GitHub UI, require explicit user
+confirmation of both conditions:
+
+- The version-bump/release-prep PR is merged
+- Tags `v<version>` and `azuremanaged-v<version>` already exist in the target
+  repository
+
+If either condition is not met, stop after preparing release body text and ask
+the user to confirm once merge and tags are complete.
+
+### 6. Draft GitHub release bodies
 
 Draft two release body texts for the GitHub Releases UI (do not add files to
 the repository):
@@ -79,11 +97,6 @@ Include:
 - Keep drafts in the assistant response (or PR comment) so they can be pasted
   directly into the Releases section
 
-### 5. Validate
-
-- Run diagnostics on changed markdown and TOML files.
-- Fix formatting or heading issues introduced by release prep changes.
-- Verify the final diff only contains release-prep updates.
 
 ## Output
 
