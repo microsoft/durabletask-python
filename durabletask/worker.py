@@ -9,11 +9,12 @@ import os
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -141,6 +142,109 @@ class VersioningOptions:
         self.default_version = default_version
         self.match_strategy = match_strategy
         self.failure_strategy = failure_strategy
+
+
+# Sentinel object used to distinguish "auto-generate filters" from "clear filters (None)".
+_AUTO_GENERATE_FILTERS = object()
+
+
+@dataclass(frozen=True)
+class OrchestrationWorkItemFilter:
+    """Specifies a filter for orchestration work items."""
+
+    name: str
+    """The name of the orchestration to filter."""
+    versions: list[str] = field(default_factory=list)
+    """Optional list of versions to filter."""
+
+
+@dataclass(frozen=True)
+class ActivityWorkItemFilter:
+    """Specifies a filter for activity work items."""
+
+    name: str
+    """The name of the activity to filter."""
+    versions: list[str] = field(default_factory=list)
+    """Optional list of versions to filter."""
+
+
+@dataclass(frozen=True)
+class EntityWorkItemFilter:
+    """Specifies a filter for entity work items.
+
+    The name is normalized to lowercase to match entity registration
+    and instance ID conventions.
+    """
+
+    name: str
+    """The name of the entity to filter."""
+
+    def __post_init__(self):
+        EntityInstanceId.validate_entity_name(self.name)
+        object.__setattr__(self, 'name', self.name.lower())
+
+
+@dataclass(frozen=True)
+class WorkItemFilters:
+    """Work item filters for a Durable Task Worker.
+
+    These filters are passed to the backend and only work items matching the
+    filters will be processed by the worker. If no filters are provided, the
+    worker will process all work items.
+
+    By default, no filters are applied. Call
+    :meth:`TaskHubGrpcWorker.use_work_item_filters` to enable filtering.
+    """
+
+    orchestrations: list[OrchestrationWorkItemFilter] = field(default_factory=list)
+    """List of orchestration filters."""
+    activities: list[ActivityWorkItemFilter] = field(default_factory=list)
+    """List of activity filters."""
+    entities: list[EntityWorkItemFilter] = field(default_factory=list)
+    """List of entity filters."""
+
+    @classmethod
+    def _from_registry(cls, registry: '_Registry') -> 'WorkItemFilters':
+        """Auto-generate work item filters from the task registry."""
+        versions: list[str] = []
+        v = registry.versioning
+        if v and v.match_strategy == VersionMatchStrategy.STRICT and v.version:
+            versions = [registry.versioning.version]
+
+        orchestrations = [
+            OrchestrationWorkItemFilter(name=name, versions=list(versions))
+            for name in registry.orchestrators
+        ]
+        activities = [
+            ActivityWorkItemFilter(name=name, versions=list(versions))
+            for name in registry.activities
+        ]
+        entities = [
+            EntityWorkItemFilter(name=name)
+            for name in registry.entities
+        ]
+        return cls(
+            orchestrations=orchestrations,
+            activities=activities,
+            entities=entities,
+        )
+
+    def _to_grpc(self) -> pb.WorkItemFilters:
+        """Convert to a gRPC WorkItemFilters message."""
+        grpc_filters = pb.WorkItemFilters()
+        for f in self.orchestrations:
+            grpc_filters.orchestrations.append(
+                pb.OrchestrationFilter(name=f.name, versions=f.versions)
+            )
+        for f in self.activities:
+            grpc_filters.activities.append(
+                pb.ActivityFilter(name=f.name, versions=f.versions)
+            )
+        for f in self.entities:
+            grpc_filters.entities.append(
+                pb.EntityFilter(name=f.name)
+            )
+        return grpc_filters
 
 
 class _Registry:
@@ -354,6 +458,8 @@ class TaskHubGrpcWorker:
             self._interceptors = None
 
         self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options, self._logger)
+        self._work_item_filters: Optional[WorkItemFilters] = None
+        self._auto_generate_work_item_filters: bool = False
 
     @property
     def concurrency_options(self) -> ConcurrencyOptions:
@@ -396,10 +502,64 @@ class TaskHubGrpcWorker:
             raise RuntimeError("Cannot set default version while the worker is running.")
         self._registry.versioning = version
 
+    @overload
+    def use_work_item_filters(self) -> None:
+        ...
+
+    @overload
+    def use_work_item_filters(self, filters: WorkItemFilters) -> None:
+        ...
+
+    @overload
+    def use_work_item_filters(self, filters: None) -> None:
+        ...
+
+    def use_work_item_filters(
+        self,
+        filters: Union[WorkItemFilters, None, object] = _AUTO_GENERATE_FILTERS,
+    ) -> None:
+        """Configures work item filters for the worker.
+
+        Work item filters tell the backend which orchestrations, activities,
+        and entities this worker can handle. When enabled, only matching work
+        items are dispatched to this worker.
+
+        By default no filters are applied and the worker processes all work
+        items. Calling this method enables filtering.
+
+        Args:
+            filters: The filters to apply. If omitted (default), filters are
+                auto-generated from registered orchestrations, activities, and
+                entities at :meth:`start` time. Pass a :class:`WorkItemFilters`
+                instance to provide explicit filters. Pass ``None`` to clear
+                any previously configured filters.
+        """
+        if self._is_running:
+            raise RuntimeError(
+                "Work item filters cannot be changed while the worker is running."
+            )
+        if filters is _AUTO_GENERATE_FILTERS:
+            self._auto_generate_work_item_filters = True
+            self._work_item_filters = None
+        elif filters is None:
+            self._auto_generate_work_item_filters = False
+            self._work_item_filters = None
+        elif isinstance(filters, WorkItemFilters):
+            self._auto_generate_work_item_filters = False
+            self._work_item_filters = filters
+        else:
+            raise TypeError(
+                "filters must be a WorkItemFilters instance, None, or omitted."
+            )
+
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
         if self._is_running:
             raise RuntimeError("The worker is already running.")
+
+        # Auto-generate work item filters from registry if opted in
+        if self._auto_generate_work_item_filters:
+            self._work_item_filters = WorkItemFilters._from_registry(self._registry)
 
         def run_loop():
             loop = asyncio.new_event_loop()
@@ -510,6 +670,10 @@ class TaskHubGrpcWorker:
                     maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items,
                     capabilities=capabilities,
                 )
+                if self._work_item_filters is not None:
+                    get_work_items_request.workItemFilters.CopyFrom(
+                        self._work_item_filters._to_grpc()
+                    )
                 self._response_stream = stub.GetWorkItems(get_work_items_request)
                 self._logger.info(
                     f"Successfully connected to {self._host_address}. Waiting for work items..."
