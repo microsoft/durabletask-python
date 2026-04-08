@@ -8,6 +8,17 @@ building durable orchestrations. The repo contains two packages:
 - `durabletask` — core SDK (in `durabletask/`)
 - `durabletask.azuremanaged` — Azure Durable Task Scheduler provider (in `durabletask-azuremanaged/`)
 
+## Changelog Requirements
+
+- ALWAYS document user-facing changes in the appropriate changelog under
+  `## Unreleased`.
+- Update `CHANGELOG.md` for core SDK changes and
+  `durabletask-azuremanaged/CHANGELOG.md` for provider changes.
+- If a change affects both packages, update both changelogs.
+- Do NOT document internal-only changes in changelogs, including CI/workflow
+  updates, test-only changes, refactors with no user-visible behavior change,
+  and implementation details that do not affect public behavior or API.
+
 ## Language and Style
 
 - Python 3.10+ is required.

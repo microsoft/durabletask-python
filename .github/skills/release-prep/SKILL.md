@@ -52,9 +52,12 @@ Update azuremanaged dependency floors:
 - Add a new `## v<version>` section directly under `## Unreleased` in:
   - `CHANGELOG.md`
   - `durabletask-azuremanaged/CHANGELOG.md`
-- Ensure all commits since the previous release tags are represented.
+- Ensure user-facing changes since the previous release tags are represented.
 - Keep entries concise and grouped by type (`ADDED`, `CHANGED`, `FIXED`, `REMOVED`) where
   applicable.
+- Exclude internal-only changes from changelogs (for example CI/workflow-only
+  updates, test-only changes, and implementation refactors with no public
+  behavior or API impact).
 
 ### 4. Validate
 
@@ -96,6 +99,8 @@ Include:
 - Contributor handles from the commit range
 - Keep drafts in the assistant response (or PR comment) so they can be pasted
   directly into the Releases section
+- Keep the release body focused on user-facing changes and avoid internal-only
+  details (CI/test updates or implementation-only notes)
 
 
 ## Output
