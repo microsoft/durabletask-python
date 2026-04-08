@@ -4,6 +4,7 @@
 # See https://peps.python.org/pep-0563/
 from __future__ import annotations
 
+import logging
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -278,6 +279,74 @@ class OrchestrationContext(ABC):
     @abstractmethod
     def _exit_critical_section(self) -> None:
         pass
+
+    def create_replay_safe_logger(self, logger: logging.Logger) -> ReplaySafeLogger:
+        """Create a replay-safe logger that suppresses log messages during orchestration replay.
+
+        The returned logger wraps the provided logger and only emits log messages when
+        the orchestrator is not replaying. This prevents duplicate log messages from
+        appearing as a side effect of orchestration replay.
+
+        Parameters
+        ----------
+        logger : logging.Logger
+            The underlying logger to wrap.
+
+        Returns
+        -------
+        ReplaySafeLogger
+            A logger that only emits log messages when the orchestrator is not replaying.
+        """
+        return ReplaySafeLogger(logger, lambda: self.is_replaying)
+
+
+class ReplaySafeLogger:
+    """A logger wrapper that suppresses log messages during orchestration replay.
+
+    This class wraps a standard :class:`logging.Logger` and only emits log
+    messages when the orchestrator is *not* replaying. Use this to avoid
+    duplicate log entries that would otherwise appear every time the
+    orchestrator replays its history.
+
+    Obtain an instance by calling :meth:`OrchestrationContext.create_replay_safe_logger`.
+    """
+
+    def __init__(self, logger: logging.Logger, is_replaying: Callable[[], bool]) -> None:
+        self._logger = logger
+        self._is_replaying = is_replaying
+
+    def _should_log(self) -> bool:
+        return not self._is_replaying()
+
+    def debug(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """Log a DEBUG-level message if the orchestrator is not replaying."""
+        if self._should_log():
+            self._logger.debug(msg, *args, **kwargs)
+
+    def info(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """Log an INFO-level message if the orchestrator is not replaying."""
+        if self._should_log():
+            self._logger.info(msg, *args, **kwargs)
+
+    def warning(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """Log a WARNING-level message if the orchestrator is not replaying."""
+        if self._should_log():
+            self._logger.warning(msg, *args, **kwargs)
+
+    def error(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """Log an ERROR-level message if the orchestrator is not replaying."""
+        if self._should_log():
+            self._logger.error(msg, *args, **kwargs)
+
+    def critical(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """Log a CRITICAL-level message if the orchestrator is not replaying."""
+        if self._should_log():
+            self._logger.critical(msg, *args, **kwargs)
+
+    def exception(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        """Log an ERROR-level message with exception info if the orchestrator is not replaying."""
+        if self._should_log():
+            self._logger.exception(msg, *args, **kwargs)
 
 
 class FailureDetails:

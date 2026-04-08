@@ -1152,6 +1152,123 @@ def test_when_any():
     assert complete_action.result.value == encoded_output
 
 
+def test_replay_safe_logger_suppresses_during_replay():
+    """Validates that the replay-safe logger suppresses log messages during replay."""
+    log_calls: list[str] = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_calls.append(record.getMessage())
+
+    inner_logger = logging.getLogger("test_replay_safe_logger")
+    inner_logger.setLevel(logging.DEBUG)
+    inner_logger.addHandler(_RecordingHandler())
+
+    activity_name = "say_hello"
+
+    def say_hello(_, name: str) -> str:
+        return f"Hello, {name}!"
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        replay_logger = ctx.create_replay_safe_logger(inner_logger)
+        replay_logger.info("Starting orchestration")
+        result = yield ctx.call_activity(say_hello, input="World")
+        replay_logger.info("Activity completed: %s", result)
+        return result
+
+    registry = worker._Registry()
+    activity_name = registry.add_activity(say_hello)
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+
+    # First execution: starts the orchestration. The orchestrator runs without
+    # replay, so both log calls should be emitted.
+    new_events = [
+        helpers.new_orchestrator_started_event(datetime.now()),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+    assert result.actions  # should have scheduled the activity
+
+    assert log_calls == ["Starting orchestration"]
+    log_calls.clear()
+
+    # Second execution: the orchestrator replays from history and then processes the
+    # activity completion. The "Starting orchestration" message is emitted during
+    # replay and should be suppressed; "Activity completed" is emitted after replay
+    # ends and should appear exactly once.
+    old_events = new_events + [
+        helpers.new_task_scheduled_event(1, activity_name),
+    ]
+    encoded_output = json.dumps(say_hello(None, "World"))
+    new_events = [helpers.new_task_completed_event(1, encoded_output)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+
+    assert log_calls == ["Activity completed: Hello, World!"]
+
+
+def test_replay_safe_logger_all_levels():
+    """Validates that all log levels are suppressed during replay and emitted otherwise."""
+    log_levels: list[str] = []
+
+    class _LevelRecorder(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_levels.append(record.levelname)
+
+    inner_logger = logging.getLogger("test_replay_safe_logger_levels")
+    inner_logger.setLevel(logging.DEBUG)
+    inner_logger.addHandler(_LevelRecorder())
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        replay_logger = ctx.create_replay_safe_logger(inner_logger)
+        replay_logger.debug("debug msg")
+        replay_logger.info("info msg")
+        replay_logger.warning("warning msg")
+        replay_logger.error("error msg")
+        replay_logger.critical("critical msg")
+        return "done"
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+
+    new_events = [
+        helpers.new_orchestrator_started_event(datetime.now()),
+        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+
+    assert log_levels == ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+
+def test_replay_safe_logger_direct():
+    """Unit test for ReplaySafeLogger — verifies suppression based on is_replaying flag."""
+    log_calls: list[str] = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_calls.append(record.getMessage())
+
+    inner_logger = logging.getLogger("test_replay_safe_logger_direct")
+    inner_logger.setLevel(logging.DEBUG)
+    inner_logger.addHandler(_RecordingHandler())
+
+    replaying = True
+    replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+
+    replay_logger.info("should be suppressed")
+    assert log_calls == []
+
+    replaying = False
+    replay_logger.info("should appear")
+    assert log_calls == ["should appear"]
+
+
 def test_when_any_with_retry():
     """Tests that a when_any pattern works correctly with retries"""
     def dummy_activity(_, inp: str):
