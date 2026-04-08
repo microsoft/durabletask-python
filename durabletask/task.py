@@ -98,7 +98,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def create_timer(self, fire_at: Union[datetime, timedelta]) -> Task:
+    def create_timer(self, fire_at: Union[datetime, timedelta]) -> CancellableTask:
         """Create a Timer Task to fire after at the specified deadline.
 
         Parameters
@@ -228,10 +228,10 @@ class OrchestrationContext(ABC):
         """
         pass
 
-    # TOOD: Add a timeout parameter, which allows the task to be canceled if the event is
+    # TOOD: Add a timeout parameter, which allows the task to be cancelled if the event is
     # not received within the specified timeout. This requires support for task cancellation.
     @abstractmethod
-    def wait_for_external_event(self, name: str) -> CompletableTask:
+    def wait_for_external_event(self, name: str) -> CancellableTask:
         """Wait asynchronously for an event to be raised with the name `name`.
 
         Parameters
@@ -322,6 +322,10 @@ class NonDeterminismError(Exception):
 
 class OrchestrationStateError(Exception):
     pass
+
+
+class TaskCancelledError(Exception):
+    """Exception type for cancelled orchestration tasks."""
 
 
 class Task(ABC, Generic[T]):
@@ -435,6 +439,48 @@ class CompletableTask(Task[T]):
             self._parent.on_child_completed(self)
 
 
+class CancellableTask(CompletableTask[T]):
+    """A completable task that can be cancelled before it finishes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._is_cancelled = False
+        self._cancel_handler: Optional[Callable[[], None]] = None
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Returns True if the task was cancelled, False otherwise."""
+        return self._is_cancelled
+
+    def get_result(self) -> T:
+        if self._is_cancelled:
+            raise TaskCancelledError('The task was cancelled.')
+        return super().get_result()
+
+    def set_cancel_handler(self, cancel_handler: Callable[[], None]) -> None:
+        self._cancel_handler = cancel_handler
+
+    def cancel(self) -> bool:
+        """Attempts to cancel this task.
+
+        Returns
+        -------
+        bool
+            True if cancellation was applied, False if the task had already completed.
+        """
+        if self._is_complete:
+            return False
+
+        if self._cancel_handler is not None:
+            self._cancel_handler()
+
+        self._is_cancelled = True
+        self._is_complete = True
+        if self._parent is not None:
+            self._parent.on_child_completed(self)
+        return True
+
+
 class RetryableTask(CompletableTask[T]):
     """A task that can be retried according to a retry policy."""
 
@@ -474,13 +520,28 @@ class RetryableTask(CompletableTask[T]):
         return None
 
 
-class TimerTask(CompletableTask[T]):
-
-    def __init__(self) -> None:
+class TimerTask(CancellableTask[None]):
+    def __init__(self, final_fire_at: Optional[datetime] = None,
+                 maximum_timer_interval: Optional[timedelta] = None):
         super().__init__()
+        self._final_fire_at = final_fire_at
+        self._maximum_timer_interval = maximum_timer_interval
 
     def set_retryable_parent(self, retryable_task: RetryableTask):
         self._retryable_parent = retryable_task
+
+    def _handle_timer_fired(self, current_utc_datetime: datetime) -> Optional[datetime]:
+        if (self._final_fire_at is not None
+                and self._maximum_timer_interval is not None
+                and current_utc_datetime < self._final_fire_at):
+            return self._get_next_fire_at(current_utc_datetime)
+        super().complete(None)
+        return None
+
+    def _get_next_fire_at(self, current_utc_datetime: datetime) -> datetime:
+        if current_utc_datetime + self._maximum_timer_interval < self._final_fire_at:
+            return current_utc_datetime + self._maximum_timer_interval
+        return self._final_fire_at
 
 
 class WhenAnyTask(CompositeTask[Task]):

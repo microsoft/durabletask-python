@@ -64,12 +64,12 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     # Orders of $1000 or more require manager approval
     yield ctx.call_activity(send_approval_request, input=order)
 
-    # Approvals must be received within 24 hours or they will be canceled.
+    # Approvals must be received within 24 hours or they will be cancelled.
     approval_event = ctx.wait_for_external_event("approval_received")
     timeout_event = ctx.create_timer(timedelta(hours=24))
     winner = yield task.when_any([approval_event, timeout_event])
     if winner == timeout_event:
-        return "Canceled"
+        return "Cancelled"
 
     # The order was approved
     yield ctx.call_activity(place_order, input=order)
