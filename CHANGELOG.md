@@ -2,8 +2,8 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
@@ -20,7 +20,8 @@ ADDED
   package with `BlobPayloadStore` and `BlobPayloadStoreOptions`
 - Added `PayloadStore` abstract base class in
   `durabletask.payload` for custom storage backends
-- Added `durabletask.testing` module with `InMemoryOrchestrationBackend` for testing orchestrations without a sidecar process
+- Added `durabletask.testing` module with `InMemoryOrchestrationBackend` for testing orchestrations
+  without a sidecar process
 - Added `AsyncTaskHubGrpcClient` for asyncio-based applications using `grpc.aio`
 - Added `DefaultAsyncClientInterceptorImpl` for async gRPC metadata interceptors
 - Added `get_async_grpc_channel` helper for creating async gRPC channels
@@ -28,7 +29,8 @@ ADDED
 - Added batch client actions for purge and query operations across orchestrations and entities
 - Added worker work item filtering support
 - Added new `work_item_filtering` sample
-- Improved distributed tracing support with full span coverage for orchestrations, activities, sub-orchestrations, timers, and events
+- Improved distributed tracing support with full span coverage for orchestrations, activities,
+  sub-orchestrations, timers, and events
 
 CHANGED
 
@@ -101,7 +103,8 @@ FIXED:
 
 ## v0.4.1
 
-- Fixed an issue where orchestrations would still throw non-determinism errors even when versioning logic should have prevented it
+- Fixed an issue where orchestrations would still throw non-determinism errors even when versioning
+  logic should have prevented it
 
 ## v0.4.0
 
@@ -112,7 +115,8 @@ FIXED:
 
 ADDED
 
-- Added `ConcurrencyOptions` class for fine-grained concurrency control with separate limits for activities and orchestrations. The thread pool worker count can also be configured.
+- Added `ConcurrencyOptions` class for fine-grained concurrency control with separate limits for
+  activities and orchestrations. The thread pool worker count can also be configured.
 
 FIXED
 
@@ -122,15 +126,29 @@ FIXED
 
 ADDED
 
-- Added `set_custom_status` orchestrator API ([#31](https://github.com/microsoft/durabletask-python/pull/31)) - contributed by [@famarting](https://github.com/famarting)
-- Added `purge_orchestration` client API ([#34](https://github.com/microsoft/durabletask-python/pull/34)) - contributed by [@famarting](https://github.com/famarting)
-- Added new `durabletask-azuremanaged` package for use with the [Durable Task Scheduler](https://learn.microsoft.com/azure/azure-functions/durable/durable-task-scheduler/durable-task-scheduler) - by [@RyanLettieri](https://github.com/RyanLettieri)
+- Added `set_custom_status` orchestrator API
+  ([#31](https://github.com/microsoft/durabletask-python/pull/31)) - contributed by
+  [@famarting](https://github.com/famarting)
+- Added `purge_orchestration` client API
+  ([#34](https://github.com/microsoft/durabletask-python/pull/34)) - contributed by
+  [@famarting](https://github.com/famarting)
+- Added new `durabletask-azuremanaged` package for use with the [Durable Task
+  Scheduler](https://learn.microsoft.com/azure/azure-functions/durable/durable-task-scheduler/durable-task-scheduler)
+  - by [@RyanLettieri](https://github.com/RyanLettieri)
 
 CHANGED
 
-- Protos are compiled with gRPC 1.62.3 / protobuf 3.25.X instead of the latest release. This ensures compatibility with a wider range of grpcio versions for better compatibility with other packages / libraries ([#36](https://github.com/microsoft/durabletask-python/pull/36)) - by [@berndverst](https://github.com/berndverst)
-- Http and grpc protocols and their secure variants are stripped from the host name parameter if provided. Secure mode is enabled if the protocol provided is https or grpcs ([#38](https://github.com/microsoft/durabletask-python/pull/38) - by [@berndverst)(https://github.com/berndverst)
-- Improve ProtoGen by downloading proto file directly instead of using submodule ([#39](https://github.com/microsoft/durabletask-python/pull/39) - by [@berndverst](https://github.com/berndverst)
+- Protos are compiled with gRPC 1.62.3 / protobuf 3.25.X instead of the latest release. This ensures
+  compatibility with a wider range of grpcio versions for better compatibility with other packages /
+  libraries ([#36](https://github.com/microsoft/durabletask-python/pull/36)) - by
+  [@berndverst](https://github.com/berndverst)
+- Http and grpc protocols and their secure variants are stripped from the host name parameter if
+  provided. Secure mode is enabled if the protocol provided is https or grpcs
+  ([#38](https://github.com/microsoft/durabletask-python/pull/38) - by
+  [@berndverst)(https://github.com/berndverst)
+- Improve ProtoGen by downloading proto file directly instead of using submodule
+  ([#39](https://github.com/microsoft/durabletask-python/pull/39) - by
+  [@berndverst](https://github.com/berndverst)
 
 CHANGED
 
@@ -140,45 +158,59 @@ CHANGED
 
 ADDED
 
-- Add recursive flag in terminate_orchestration to support cascade terminate ([#27](https://github.com/microsoft/durabletask-python/pull/27)) - contributed by [@shivamkm07](https://github.com/shivamkm07)
+- Add recursive flag in terminate_orchestration to support cascade terminate
+  ([#27](https://github.com/microsoft/durabletask-python/pull/27)) - contributed by
+  [@shivamkm07](https://github.com/shivamkm07)
 
 ## v0.1.0
 
 ADDED
 
-- Retry policies for activities and sub-orchestrations ([#11](https://github.com/microsoft/durabletask-python/pull/11)) - contributed by [@DeepanshuA](https://github.com/DeepanshuA)
+- Retry policies for activities and sub-orchestrations
+  ([#11](https://github.com/microsoft/durabletask-python/pull/11)) - contributed by
+  [@DeepanshuA](https://github.com/DeepanshuA)
 
 FIXED
 
-- Fix try/except in orchestrator functions not being handled correctly ([#21](https://github.com/microsoft/durabletask-python/pull/21)) - by [@cgillum](https://github.com/cgillum)
-- Updated `durabletask-protobuf` submodule reference to latest distributed tracing commit - by [@cgillum](https://github.com/cgillum)
+- Fix try/except in orchestrator functions not being handled correctly
+  ([#21](https://github.com/microsoft/durabletask-python/pull/21)) - by
+  [@cgillum](https://github.com/cgillum)
+- Updated `durabletask-protobuf` submodule reference to latest distributed tracing commit - by
+  [@cgillum](https://github.com/cgillum)
 
 ## v0.1.0a5
 
 ADDED
 
-- Adds support for secure channels ([#18](https://github.com/microsoft/durabletask-python/pull/18)) - contributed by [@elena-kolevska](https://github.com/elena-kolevska)
+- Adds support for secure channels ([#18](https://github.com/microsoft/durabletask-python/pull/18))
+  - contributed by [@elena-kolevska](https://github.com/elena-kolevska)
 
 FIXED
 
-- Fix zero argument values sent to activities as None ([#13](https://github.com/microsoft/durabletask-python/pull/13)) - contributed by [@DeepanshuA](https://github.com/DeepanshuA)
+- Fix zero argument values sent to activities as None
+  ([#13](https://github.com/microsoft/durabletask-python/pull/13)) - contributed by
+  [@DeepanshuA](https://github.com/DeepanshuA)
 
 ## v0.1.0a3
 
 ADDED
 
-- Add gRPC metadata option ([#16](https://github.com/microsoft/durabletask-python/pull/16)) - contributed by [@DeepanshuA](https://github.com/DeepanshuA)
+- Add gRPC metadata option ([#16](https://github.com/microsoft/durabletask-python/pull/16)) -
+  contributed by [@DeepanshuA](https://github.com/DeepanshuA)
 
 CHANGED
 
-- Removed Python 3.7 support due to EOL ([#14](https://github.com/microsoft/durabletask-python/pull/14)) - contributed by [@berndverst](https://github.com/berndverst)
+- Removed Python 3.7 support due to EOL
+  ([#14](https://github.com/microsoft/durabletask-python/pull/14)) - contributed by
+  [@berndverst](https://github.com/berndverst)
 
 ## v0.1.0a2
 
 ADDED
 
 - Continue-as-new ([#9](https://github.com/microsoft/durabletask-python/pull/9))
-- Support for Python 3.7+ ([#10](https://github.com/microsoft/durabletask-python/pull/10)) - contributed by [@DeepanshuA](https://github.com/DeepanshuA)
+- Support for Python 3.7+ ([#10](https://github.com/microsoft/durabletask-python/pull/10)) -
+  contributed by [@DeepanshuA](https://github.com/DeepanshuA)
 
 ## v0.1.0a1
 
