@@ -9,11 +9,12 @@ import os
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -42,6 +43,7 @@ from durabletask.payload.store import PayloadStore
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
 DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
+DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
 
 
 class ConcurrencyOptions:
@@ -141,6 +143,109 @@ class VersioningOptions:
         self.default_version = default_version
         self.match_strategy = match_strategy
         self.failure_strategy = failure_strategy
+
+
+# Sentinel object used to distinguish "auto-generate filters" from "clear filters (None)".
+_AUTO_GENERATE_FILTERS = object()
+
+
+@dataclass(frozen=True)
+class OrchestrationWorkItemFilter:
+    """Specifies a filter for orchestration work items."""
+
+    name: str
+    """The name of the orchestration to filter."""
+    versions: list[str] = field(default_factory=list)
+    """Optional list of versions to filter."""
+
+
+@dataclass(frozen=True)
+class ActivityWorkItemFilter:
+    """Specifies a filter for activity work items."""
+
+    name: str
+    """The name of the activity to filter."""
+    versions: list[str] = field(default_factory=list)
+    """Optional list of versions to filter."""
+
+
+@dataclass(frozen=True)
+class EntityWorkItemFilter:
+    """Specifies a filter for entity work items.
+
+    The name is normalized to lowercase to match entity registration
+    and instance ID conventions.
+    """
+
+    name: str
+    """The name of the entity to filter."""
+
+    def __post_init__(self):
+        EntityInstanceId.validate_entity_name(self.name)
+        object.__setattr__(self, 'name', self.name.lower())
+
+
+@dataclass(frozen=True)
+class WorkItemFilters:
+    """Work item filters for a Durable Task Worker.
+
+    These filters are passed to the backend and only work items matching the
+    filters will be processed by the worker. If no filters are provided, the
+    worker will process all work items.
+
+    By default, no filters are applied. Call
+    :meth:`TaskHubGrpcWorker.use_work_item_filters` to enable filtering.
+    """
+
+    orchestrations: list[OrchestrationWorkItemFilter] = field(default_factory=list)
+    """List of orchestration filters."""
+    activities: list[ActivityWorkItemFilter] = field(default_factory=list)
+    """List of activity filters."""
+    entities: list[EntityWorkItemFilter] = field(default_factory=list)
+    """List of entity filters."""
+
+    @classmethod
+    def _from_registry(cls, registry: '_Registry') -> 'WorkItemFilters':
+        """Auto-generate work item filters from the task registry."""
+        versions: list[str] = []
+        v = registry.versioning
+        if v and v.match_strategy == VersionMatchStrategy.STRICT and v.version:
+            versions = [registry.versioning.version]
+
+        orchestrations = [
+            OrchestrationWorkItemFilter(name=name, versions=list(versions))
+            for name in registry.orchestrators
+        ]
+        activities = [
+            ActivityWorkItemFilter(name=name, versions=list(versions))
+            for name in registry.activities
+        ]
+        entities = [
+            EntityWorkItemFilter(name=name)
+            for name in registry.entities
+        ]
+        return cls(
+            orchestrations=orchestrations,
+            activities=activities,
+            entities=entities,
+        )
+
+    def _to_grpc(self) -> pb.WorkItemFilters:
+        """Convert to a gRPC WorkItemFilters message."""
+        grpc_filters = pb.WorkItemFilters()
+        for f in self.orchestrations:
+            grpc_filters.orchestrations.append(
+                pb.OrchestrationFilter(name=f.name, versions=f.versions)
+            )
+        for f in self.activities:
+            grpc_filters.activities.append(
+                pb.ActivityFilter(name=f.name, versions=f.versions)
+            )
+        for f in self.entities:
+            grpc_filters.entities.append(
+                pb.EntityFilter(name=f.name)
+            )
+        return grpc_filters
 
 
 class _Registry:
@@ -311,7 +416,7 @@ class TaskHubGrpcWorker:
             activity function.
     """
 
-    _response_stream: Optional[grpc.Future] = None
+    _response_stream: Optional[Any] = None
     _interceptors: Optional[list[shared.ClientInterceptor]] = None
 
     def __init__(
@@ -324,6 +429,7 @@ class TaskHubGrpcWorker:
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
             concurrency_options: Optional[ConcurrencyOptions] = None,
+            maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
             payload_store: Optional[PayloadStore] = None,
     ):
         self._registry = _Registry()
@@ -354,11 +460,19 @@ class TaskHubGrpcWorker:
             self._interceptors = None
 
         self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options, self._logger)
+        self._maximum_timer_interval = maximum_timer_interval
+        self._work_item_filters: Optional[WorkItemFilters] = None
+        self._auto_generate_work_item_filters: bool = False
 
     @property
     def concurrency_options(self) -> ConcurrencyOptions:
         """Get the current concurrency options for this worker."""
         return self._concurrency_options
+
+    @property
+    def maximum_timer_interval(self) -> Optional[timedelta]:
+        """Get the configured maximum timer interval for long timer chunking."""
+        return self._maximum_timer_interval
 
     def __enter__(self):
         return self
@@ -396,10 +510,64 @@ class TaskHubGrpcWorker:
             raise RuntimeError("Cannot set default version while the worker is running.")
         self._registry.versioning = version
 
+    @overload
+    def use_work_item_filters(self) -> None:
+        ...
+
+    @overload
+    def use_work_item_filters(self, filters: WorkItemFilters) -> None:
+        ...
+
+    @overload
+    def use_work_item_filters(self, filters: None) -> None:
+        ...
+
+    def use_work_item_filters(
+        self,
+        filters: Union[WorkItemFilters, None, object] = _AUTO_GENERATE_FILTERS,
+    ) -> None:
+        """Configures work item filters for the worker.
+
+        Work item filters tell the backend which orchestrations, activities,
+        and entities this worker can handle. When enabled, only matching work
+        items are dispatched to this worker.
+
+        By default no filters are applied and the worker processes all work
+        items. Calling this method enables filtering.
+
+        Args:
+            filters: The filters to apply. If omitted (default), filters are
+                auto-generated from registered orchestrations, activities, and
+                entities at :meth:`start` time. Pass a :class:`WorkItemFilters`
+                instance to provide explicit filters. Pass ``None`` to clear
+                any previously configured filters.
+        """
+        if self._is_running:
+            raise RuntimeError(
+                "Work item filters cannot be changed while the worker is running."
+            )
+        if filters is _AUTO_GENERATE_FILTERS:
+            self._auto_generate_work_item_filters = True
+            self._work_item_filters = None
+        elif filters is None:
+            self._auto_generate_work_item_filters = False
+            self._work_item_filters = None
+        elif isinstance(filters, WorkItemFilters):
+            self._auto_generate_work_item_filters = False
+            self._work_item_filters = filters
+        else:
+            raise TypeError(
+                "filters must be a WorkItemFilters instance, None, or omitted."
+            )
+
     def start(self):
         """Starts the worker on a background thread and begins listening for work items."""
         if self._is_running:
             raise RuntimeError("The worker is already running.")
+
+        # Auto-generate work item filters from registry if opted in
+        if self._auto_generate_work_item_filters:
+            self._work_item_filters = WorkItemFilters._from_registry(self._registry)
 
         def run_loop():
             loop = asyncio.new_event_loop()
@@ -510,6 +678,10 @@ class TaskHubGrpcWorker:
                     maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items,
                     capabilities=capabilities,
                 )
+                if self._work_item_filters is not None:
+                    get_work_items_request.workItemFilters.CopyFrom(
+                        self._work_item_filters._to_grpc()
+                    )
                 self._response_stream = stub.GetWorkItems(get_work_items_request)
                 self._logger.info(
                     f"Successfully connected to {self._host_address}. Waiting for work items..."
@@ -522,7 +694,11 @@ class TaskHubGrpcWorker:
 
                 def stream_reader():
                     try:
-                        for work_item in self._response_stream:
+                        response_stream = self._response_stream
+                        if response_stream is None:
+                            return
+
+                        for work_item in response_stream:
                             work_item_queue.put(work_item)
                     except Exception as e:
                         work_item_queue.put(e)
@@ -674,7 +850,8 @@ class TaskHubGrpcWorker:
         try:
             executor = _OrchestrationExecutor(
                 self._registry, self._logger,
-                persisted_orch_span_id=persisted_orch_span_id)
+                persisted_orch_span_id=persisted_orch_span_id,
+                maximum_timer_interval=self.maximum_timer_interval)
             result = executor.execute(instance_id, req.pastEvents, req.newEvents)
 
             # Determine completion status for span
@@ -962,7 +1139,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     _generator: Optional[Generator[task.Task, Any, Any]]
     _previous_task: Optional[task.Task]
 
-    def __init__(self, instance_id: str, registry: _Registry):
+    def __init__(self,
+                 instance_id: str,
+                 registry: _Registry,
+                 maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+                 ):
         self._generator = None
         self._is_replaying = True
         self._is_complete = False
@@ -983,12 +1164,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._version: Optional[str] = None
         self._completion_status: Optional[pb.OrchestrationStatus] = None
         self._received_events: dict[str, list[Any]] = {}
-        self._pending_events: dict[str, list[task.CompletableTask]] = {}
+        self._pending_events: dict[str, list[task.CancellableTask]] = {}
         self._new_input: Optional[Any] = None
         self._save_events = False
         self._encoded_custom_status: Optional[str] = None
         self._parent_trace_context: Optional[pb.TraceContext] = None
         self._orchestration_trace_context: Optional[pb.TraceContext] = None
+        self._maximum_timer_interval = maximum_timer_interval
 
     def run(self, generator: Generator[task.Task, Any, Any]):
         self._generator = generator
@@ -1154,7 +1336,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             shared.to_json(custom_status) if custom_status is not None else None
         )
 
-    def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.Task:
+    def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.CancellableTask:
         return self.create_timer_internal(fire_at)
 
     def create_timer_internal(
@@ -1164,11 +1346,30 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     ) -> task.TimerTask:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
-            fire_at = self.current_utc_datetime + fire_at
-        action = ph.new_create_timer_action(id, fire_at)
+            final_fire_at = self.current_utc_datetime + fire_at
+        else:
+            final_fire_at = fire_at
+
+        next_fire_at: datetime = final_fire_at
+
+        if (
+            self._maximum_timer_interval is not None
+            and self._maximum_timer_interval > timedelta(0)
+            and self.current_utc_datetime + self._maximum_timer_interval < final_fire_at
+        ):
+            timer_task = task.TimerTask(final_fire_at, self._maximum_timer_interval)
+            next_fire_at = timer_task._get_next_fire_at(self.current_utc_datetime)
+        else:
+            timer_task = task.TimerTask()
+
+        action = ph.new_create_timer_action(id, next_fire_at)
         self._pending_actions[id] = action
 
-        timer_task: task.TimerTask = task.TimerTask()
+        def _cancel_timer() -> None:
+            self._pending_actions.pop(id, None)
+            self._pending_tasks.pop(id, None)
+
+        timer_task.set_cancel_handler(_cancel_timer)
         if retryable_task is not None:
             timer_task.set_retryable_parent(retryable_task)
         self._pending_tasks[id] = timer_task
@@ -1399,13 +1600,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)
             self._pending_actions[task_id] = action
 
-    def wait_for_external_event(self, name: str) -> task.CompletableTask:
+    def wait_for_external_event(self, name: str) -> task.CancellableTask:
         # Check to see if this event has already been received, in which case we
         # can return it immediately. Otherwise, record out intent to receive an
         # event with the given name so that we can resume the generator when it
         # arrives. If there are multiple events with the same name, we return
         # them in the order they were received.
-        external_event_task: task.CompletableTask = task.CompletableTask()
+        external_event_task: task.CancellableTask = task.CancellableTask()
         event_name = name.casefold()
         event_list = self._received_events.get(event_name, None)
         if event_list:
@@ -1419,6 +1620,19 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 task_list = []
                 self._pending_events[event_name] = task_list
             task_list.append(external_event_task)
+
+            def _cancel_wait() -> None:
+                waiting_tasks = self._pending_events.get(event_name)
+                if waiting_tasks is None:
+                    return
+                try:
+                    waiting_tasks.remove(external_event_task)
+                except ValueError:
+                    return
+                if not waiting_tasks:
+                    del self._pending_events[event_name]
+
+            external_event_task.set_cancel_handler(_cancel_wait)
         return external_event_task
 
     def continue_as_new(self, new_input, *, save_events: bool = False) -> None:
@@ -1461,9 +1675,11 @@ class _OrchestrationExecutor:
         registry: _Registry,
         logger: logging.Logger,
         persisted_orch_span_id: Optional[str] = None,
+        maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
     ):
         self._registry = registry
         self._logger = logger
+        self._maximum_timer_interval = maximum_timer_interval
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
         self._persisted_orch_span_id = persisted_orch_span_id
@@ -1497,7 +1713,11 @@ class _OrchestrationExecutor:
                 "The new history event list must have at least one event in it."
             )
 
-        ctx = _RuntimeOrchestrationContext(instance_id, self._registry)
+        ctx = _RuntimeOrchestrationContext(
+            instance_id,
+            self._registry,
+            maximum_timer_interval=self._maximum_timer_interval,
+        )
         try:
             # Rebuild local state by replaying old history into the orchestrator function
             self._logger.debug(
@@ -1654,6 +1874,12 @@ class _OrchestrationExecutor:
                             f"{ctx.instance_id}: Ignoring unexpected timerFired event with ID = {timer_id}."
                         )
                     return
+                if not isinstance(timer_task, task.TimerTask):
+                    if not ctx._is_replaying:
+                        self._logger.warning(
+                            f"{ctx.instance_id}: Ignoring timerFired event with non-timer task ID = {timer_id}."
+                        )
+                    return
                 # Emit timer span with backdated start time (skip during replay)
                 if not ctx.is_replaying:
                     timer_info = self._timer_fire_at.get(timer_id)
@@ -1665,27 +1891,39 @@ class _OrchestrationExecutor:
                             scheduled_time_ns=created_ns,
                             parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,
                         )
-                timer_task.complete(None)
-                if timer_task._retryable_parent is not None:
-                    activity_action = timer_task._retryable_parent._action
+                next_fire_at = timer_task._handle_timer_fired(event.timerFired.fireAt.ToDatetime())
+                if next_fire_at is not None:
+                    id = ctx.next_sequence_number()
+                    new_action = ph.new_create_timer_action(id, next_fire_at)
+                    ctx._pending_tasks[id] = timer_task
+                    ctx._pending_actions[id] = new_action
 
-                    if not timer_task._retryable_parent._is_sub_orch:
-                        cur_task = activity_action.scheduleTask
-                        instance_id = None
-                    else:
-                        cur_task = activity_action.createSubOrchestration
-                        instance_id = cur_task.instanceId
-                    ctx.call_activity_function_helper(
-                        id=activity_action.id,
-                        activity_function=cur_task.name,
-                        input=cur_task.input.value,
-                        retry_policy=timer_task._retryable_parent._retry_policy,
-                        is_sub_orch=timer_task._retryable_parent._is_sub_orch,
-                        instance_id=instance_id,
-                        fn_task=timer_task._retryable_parent,
-                    )
+                    def _cancel_timer() -> None:
+                        ctx._pending_actions.pop(id, None)
+                        ctx._pending_tasks.pop(id, None)
+
+                    timer_task.set_cancel_handler(_cancel_timer)
                 else:
-                    ctx.resume()
+                    if timer_task._retryable_parent is not None:
+                        activity_action = timer_task._retryable_parent._action
+
+                        if not timer_task._retryable_parent._is_sub_orch:
+                            cur_task = activity_action.scheduleTask
+                            instance_id = None
+                        else:
+                            cur_task = activity_action.createSubOrchestration
+                            instance_id = cur_task.instanceId
+                        ctx.call_activity_function_helper(
+                            id=activity_action.id,
+                            activity_function=cur_task.name,
+                            input=cur_task.input.value,
+                            retry_policy=timer_task._retryable_parent._retry_policy,
+                            is_sub_orch=timer_task._retryable_parent._is_sub_orch,
+                            instance_id=instance_id,
+                            fn_task=timer_task._retryable_parent,
+                        )
+                    else:
+                        ctx.resume()
             elif event.HasField("taskScheduled"):
                 # This history event confirms that the activity execution was successfully scheduled.
                 # Remove the taskScheduled event from the pending action list so we don't schedule it again.

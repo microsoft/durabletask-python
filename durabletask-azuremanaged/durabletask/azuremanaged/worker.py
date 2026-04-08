@@ -85,4 +85,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             log_formatter=log_formatter,
             interceptors=interceptors,
             concurrency_options=concurrency_options,
-            payload_store=payload_store)
+            # DTS natively supports long timers so chunking is unnecessary
+            maximum_timer_interval=None,
+            payload_store=payload_store
+        )

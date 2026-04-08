@@ -64,12 +64,12 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     # Orders of $1000 or more require manager approval
     yield ctx.call_activity(send_approval_request, input=order)
 
-    # Approvals must be received within 24 hours or they will be canceled.
+    # Approvals must be received within 24 hours or they will be cancelled.
     approval_event = ctx.wait_for_external_event("approval_received")
     timeout_event = ctx.create_timer(timedelta(hours=24))
     winner = yield task.when_any([approval_event, timeout_event])
     if winner == timeout_event:
-        return "Canceled"
+        return "Cancelled"
 
     # The order was approved
     yield ctx.call_activity(place_order, input=order)
@@ -119,6 +119,51 @@ def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
 ```
 
 See the full [version-aware orchestrator sample](../examples/version_aware_orchestrator.py)
+
+### Work item filtering
+
+When running multiple workers against the same task hub, each
+worker can declare which work items it handles. The backend then
+dispatches only the matching orchestrations, activities, and
+entities, avoiding unnecessary round-trips. Filtering is opt-in
+and supports both auto-generated and explicit filter sets.
+
+The simplest approach auto-generates filters from the worker's
+registry:
+
+```python
+with DurableTaskSchedulerWorker(...) as w:
+    w.add_orchestrator(greeting_orchestrator)
+    w.add_activity(greet)
+    w.use_work_item_filters()  # auto-generate from registry
+    w.start()
+```
+
+For more control you can provide explicit filters, including
+version constraints:
+
+```python
+from durabletask.worker import (
+    WorkItemFilters,
+    OrchestrationWorkItemFilter,
+    ActivityWorkItemFilter,
+)
+
+w.use_work_item_filters(WorkItemFilters(
+    orchestrations=[
+        OrchestrationWorkItemFilter(
+            name="greeting_orchestrator",
+            versions=["2.0.0"],
+        ),
+    ],
+    activities=[
+        ActivityWorkItemFilter(name="greet"),
+    ],
+))
+```
+
+See the full
+[work item filtering sample](../examples/work_item_filtering.py).
 
 ### Large payload externalization
 
