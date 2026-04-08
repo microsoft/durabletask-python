@@ -4,13 +4,24 @@
 """Durable Task SDK for Python"""
 
 from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
-from durabletask.worker import ConcurrencyOptions, VersioningOptions
+from durabletask.worker import (
+    ActivityWorkItemFilter,
+    ConcurrencyOptions,
+    EntityWorkItemFilter,
+    OrchestrationWorkItemFilter,
+    VersioningOptions,
+    WorkItemFilters,
+)
 
 __all__ = [
+    "ActivityWorkItemFilter",
     "ConcurrencyOptions",
+    "EntityWorkItemFilter",
     "LargePayloadStorageOptions",
+    "OrchestrationWorkItemFilter",
     "PayloadStore",
     "VersioningOptions",
+    "WorkItemFilters",
 ]
 
 PACKAGE_NAME = "durabletask"

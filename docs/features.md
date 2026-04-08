@@ -311,3 +311,69 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_cha
 
 > [!NOTE]
 > The worker and client output many logs at the `DEBUG` level that will be useful when understanding orchestration flow and diagnosing issues with Durable applications. Before submitting issues, please attempt a repro of the issue with debug logging enabled.
+
+### Work item filtering
+
+By default a worker receives **all** work items from the backend,
+regardless of which orchestrations, activities, or entities are
+registered. Work item filtering lets you explicitly tell the backend
+which work items a worker can handle so that only matching items are
+dispatched. This is useful when running multiple specialized workers
+against the same task hub.
+
+Work item filtering is **opt-in**. Call `use_work_item_filters()` on
+the worker before starting it.
+
+#### Auto-generated filters
+
+Calling `use_work_item_filters()` with no arguments builds filters
+automatically from the worker's registry at start time:
+
+```python
+with DurableTaskSchedulerWorker(...) as w:
+    w.add_orchestrator(my_orchestrator)
+    w.add_activity(my_activity)
+    w.use_work_item_filters()  # auto-generate from registry
+    w.start()
+```
+
+When versioning is configured with `VersionMatchStrategy.STRICT`,
+the worker's version is included in every filter so the backend
+only dispatches work items that match that exact version.
+
+#### Explicit filters
+
+Pass a `WorkItemFilters` instance for fine-grained control:
+
+```python
+from durabletask.worker import (
+    WorkItemFilters,
+    OrchestrationWorkItemFilter,
+    ActivityWorkItemFilter,
+    EntityWorkItemFilter,
+)
+
+w.use_work_item_filters(WorkItemFilters(
+    orchestrations=[
+        OrchestrationWorkItemFilter(name="my_orch", versions=["2.0.0"]),
+    ],
+    activities=[
+        ActivityWorkItemFilter(name="my_activity"),
+    ],
+    entities=[
+        EntityWorkItemFilter(name="my_entity"),
+    ],
+))
+```
+
+#### Clearing filters
+
+Pass `None` to clear any previously configured filters and return
+to the default behaviour of processing all work items:
+
+```python
+w.use_work_item_filters(None)
+```
+
+See the full
+[work item filtering sample](../examples/work_item_filtering.py).
