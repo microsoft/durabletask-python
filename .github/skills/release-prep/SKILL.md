@@ -58,10 +58,11 @@ Update azuremanaged dependency floors:
 
 ### 4. Draft GitHub release bodies
 
-Create draft release body markdown files in `.github/releases/`:
+Draft two release body texts for the GitHub Releases UI (do not add files to
+the repository):
 
-- `.github/releases/v<version>.md`
-- `.github/releases/azuremanaged-v<version>.md`
+- Tag: `v<version>`
+- Tag: `azuremanaged-v<version>`
 
 Match existing release structure:
 
@@ -75,6 +76,8 @@ Include:
 - PyPI link for the exact release version
 - Full changelog compare link
 - Contributor handles from the commit range
+- Keep drafts in the assistant response (or PR comment) so they can be pasted
+  directly into the Releases section
 
 ### 5. Validate
 
