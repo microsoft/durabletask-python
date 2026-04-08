@@ -163,12 +163,14 @@ modify behavior on an existing logger.
 ```python
 import logging
 
+from durabletask import task
+
 logger = logging.getLogger("my_orchestrator")
 
-def my_orchestrator(ctx: task.OrchestrationContext, input):
+def my_orchestrator(ctx: task.OrchestrationContext, payload):
     replay_logger = ctx.create_replay_safe_logger(logger)
     replay_logger.info("Starting orchestration %s", ctx.instance_id)
-    result = yield ctx.call_activity(my_activity, input=input)
+    result = yield ctx.call_activity(my_activity, input=payload)
     replay_logger.info("Activity returned: %s", result)
     return result
 ```

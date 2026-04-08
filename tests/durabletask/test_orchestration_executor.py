@@ -1509,54 +1509,61 @@ def test_replay_safe_logger_suppresses_during_replay():
         def emit(self, record: logging.LogRecord) -> None:
             log_calls.append(record.getMessage())
 
+    handler = _RecordingHandler()
     inner_logger = logging.getLogger("test_replay_safe_logger")
     inner_logger.setLevel(logging.DEBUG)
-    inner_logger.addHandler(_RecordingHandler())
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
 
-    activity_name = "say_hello"
+    try:
+        activity_name = "say_hello"
 
-    def say_hello(_, name: str) -> str:
-        return f"Hello, {name}!"
+        def say_hello(_, name: str) -> str:
+            return f"Hello, {name}!"
 
-    def orchestrator(ctx: task.OrchestrationContext, _):
-        replay_logger = ctx.create_replay_safe_logger(inner_logger)
-        replay_logger.info("Starting orchestration")
-        result = yield ctx.call_activity(say_hello, input="World")
-        replay_logger.info("Activity completed: %s", result)
-        return result
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            replay_logger = ctx.create_replay_safe_logger(inner_logger)
+            replay_logger.info("Starting orchestration")
+            result = yield ctx.call_activity(say_hello, input="World")
+            replay_logger.info("Activity completed: %s", result)
+            return result
 
-    registry = worker._Registry()
-    activity_name = registry.add_activity(say_hello)
-    orchestrator_name = registry.add_orchestrator(orchestrator)
+        registry = worker._Registry()
+        activity_name = registry.add_activity(say_hello)
+        orchestrator_name = registry.add_orchestrator(orchestrator)
 
-    # First execution: starts the orchestration. The orchestrator runs without
-    # replay, so both log calls should be emitted.
-    new_events = [
-        helpers.new_orchestrator_started_event(datetime.now()),
-        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
-    ]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
-    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
-    assert result.actions  # should have scheduled the activity
+        # First execution: starts the orchestration. The orchestrator runs without
+        # replay, emits the initial log message, and then schedules the activity.
+        new_events = [
+            helpers.new_orchestrator_started_event(datetime.now()),
+            helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        ]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+        assert result.actions  # should have scheduled the activity
 
-    assert log_calls == ["Starting orchestration"]
-    log_calls.clear()
+        assert log_calls == ["Starting orchestration"]
+        log_calls.clear()
 
-    # Second execution: the orchestrator replays from history and then processes the
-    # activity completion. The "Starting orchestration" message is emitted during
-    # replay and should be suppressed; "Activity completed" is emitted after replay
-    # ends and should appear exactly once.
-    old_events = new_events + [
-        helpers.new_task_scheduled_event(1, activity_name),
-    ]
-    encoded_output = json.dumps(say_hello(None, "World"))
-    new_events = [helpers.new_task_completed_event(1, encoded_output)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
-    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
-    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
-    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+        # Second execution: the orchestrator replays from history and then processes the
+        # activity completion. The "Starting orchestration" message is emitted during
+        # replay and should be suppressed; "Activity completed" is emitted after replay
+        # ends and should appear exactly once.
+        old_events = new_events + [
+            helpers.new_task_scheduled_event(1, activity_name),
+        ]
+        encoded_output = json.dumps(say_hello(None, "World"))
+        new_events = [helpers.new_task_completed_event(1, encoded_output)]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+        complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+        assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
 
-    assert log_calls == ["Activity completed: Hello, World!"]
+        assert log_calls == ["Activity completed: Hello, World!"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
 
 
 def test_replay_safe_logger_all_levels():
@@ -1567,32 +1574,39 @@ def test_replay_safe_logger_all_levels():
         def emit(self, record: logging.LogRecord) -> None:
             log_levels.append(record.levelname)
 
+    handler = _LevelRecorder()
     inner_logger = logging.getLogger("test_replay_safe_logger_levels")
     inner_logger.setLevel(logging.DEBUG)
-    inner_logger.addHandler(_LevelRecorder())
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
 
-    def orchestrator(ctx: task.OrchestrationContext, _):
-        replay_logger = ctx.create_replay_safe_logger(inner_logger)
-        replay_logger.debug("debug msg")
-        replay_logger.info("info msg")
-        replay_logger.warning("warning msg")
-        replay_logger.error("error msg")
-        replay_logger.critical("critical msg")
-        return "done"
+    try:
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            replay_logger = ctx.create_replay_safe_logger(inner_logger)
+            replay_logger.debug("debug msg")
+            replay_logger.info("info msg")
+            replay_logger.warning("warning msg")
+            replay_logger.error("error msg")
+            replay_logger.critical("critical msg")
+            return "done"
 
-    registry = worker._Registry()
-    orchestrator_name = registry.add_orchestrator(orchestrator)
+        registry = worker._Registry()
+        orchestrator_name = registry.add_orchestrator(orchestrator)
 
-    new_events = [
-        helpers.new_orchestrator_started_event(datetime.now()),
-        helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
-    ]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
-    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
-    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
-    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+        new_events = [
+            helpers.new_orchestrator_started_event(datetime.now()),
+            helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        ]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+        complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+        assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
 
-    assert log_levels == ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        assert log_levels == ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
 
 
 def test_replay_safe_logger_direct():
@@ -1603,19 +1617,26 @@ def test_replay_safe_logger_direct():
         def emit(self, record: logging.LogRecord) -> None:
             log_calls.append(record.getMessage())
 
+    handler = _RecordingHandler()
     inner_logger = logging.getLogger("test_replay_safe_logger_direct")
     inner_logger.setLevel(logging.DEBUG)
-    inner_logger.addHandler(_RecordingHandler())
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
 
-    replaying = True
-    replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+    try:
+        replaying = True
+        replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
 
-    replay_logger.info("should be suppressed")
-    assert log_calls == []
+        replay_logger.info("should be suppressed")
+        assert log_calls == []
 
-    replaying = False
-    replay_logger.info("should appear")
-    assert log_calls == ["should appear"]
+        replaying = False
+        replay_logger.info("should appear")
+        assert log_calls == ["should appear"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
 
 
 def test_replay_safe_logger_log_method():
@@ -1626,19 +1647,26 @@ def test_replay_safe_logger_log_method():
         def emit(self, record: logging.LogRecord) -> None:
             log_calls.append(record.getMessage())
 
+    handler = _RecordingHandler()
     inner_logger = logging.getLogger("test_replay_safe_logger_log_method")
     inner_logger.setLevel(logging.DEBUG)
-    inner_logger.addHandler(_RecordingHandler())
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
 
-    replaying = True
-    replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+    try:
+        replaying = True
+        replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
 
-    replay_logger.log(logging.WARNING, "suppressed warning")
-    assert log_calls == []
+        replay_logger.log(logging.WARNING, "suppressed warning")
+        assert log_calls == []
 
-    replaying = False
-    replay_logger.log(logging.WARNING, "visible warning")
-    assert log_calls == ["visible warning"]
+        replaying = False
+        replay_logger.log(logging.WARNING, "visible warning")
+        assert log_calls == ["visible warning"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
 
 
 def test_replay_safe_logger_is_enabled_for():
