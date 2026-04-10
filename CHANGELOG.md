@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added `GrpcChannelOptions` and `GrpcRetryPolicyOptions` for configuring
+  gRPC transport behavior, including message-size limits, keepalive settings,
+  and channel-level retry policy service configuration.
+- Added optional `channel` and `channel_options` parameters to
+  `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` to
+  support pre-configured channel passthrough and low-level gRPC channel
+  customization.
+
 ## v1.4.0
 
 ADDED

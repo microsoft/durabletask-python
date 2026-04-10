@@ -13,6 +13,7 @@ import grpc.aio
 
 from durabletask.entities import EntityInstanceId
 from durabletask.entities.entity_metadata import EntityMetadata
+from durabletask.grpc_options import GrpcChannelOptions
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
@@ -152,18 +153,21 @@ class TaskHubGrpcClient:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
+                 channel: Optional[grpc.Channel] = None,
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+                 channel_options: Optional[GrpcChannelOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
-        interceptors = prepare_sync_interceptors(metadata, interceptors)
-
-        channel = shared.get_grpc_channel(
-            host_address=host_address,
-            secure_channel=secure_channel,
-            interceptors=interceptors
-        )
+        if channel is None:
+            interceptors = prepare_sync_interceptors(metadata, interceptors)
+            channel = shared.get_grpc_channel(
+                host_address=host_address,
+                secure_channel=secure_channel,
+                interceptors=interceptors,
+                channel_options=channel_options,
+            )
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
@@ -433,18 +437,21 @@ class AsyncTaskHubGrpcClient:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
+                 channel: Optional[grpc.aio.Channel] = None,
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
+                 channel_options: Optional[GrpcChannelOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
-        interceptors = prepare_async_interceptors(metadata, interceptors)
-
-        channel = shared.get_async_grpc_channel(
-            host_address=host_address,
-            secure_channel=secure_channel,
-            interceptors=interceptors
-        )
+        if channel is None:
+            interceptors = prepare_async_interceptors(metadata, interceptors)
+            channel = shared.get_async_grpc_channel(
+                host_address=host_address,
+                secure_channel=secure_channel,
+                interceptors=interceptors,
+                channel_options=channel_options,
+            )
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("async_client", log_handler, log_formatter)

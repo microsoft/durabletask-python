@@ -9,6 +9,7 @@ from typing import Any, Optional, Sequence, Union
 
 import grpc
 import grpc.aio
+from durabletask.grpc_options import GrpcChannelOptions
 
 ClientInterceptor = Union[
     grpc.UnaryUnaryClientInterceptor,
@@ -39,7 +40,8 @@ def get_default_host_address() -> str:
 def get_grpc_channel(
         host_address: Optional[str],
         secure_channel: bool = False,
-        interceptors: Optional[Sequence[ClientInterceptor]] = None) -> grpc.Channel:
+        interceptors: Optional[Sequence[ClientInterceptor]] = None,
+        channel_options: Optional[GrpcChannelOptions] = None) -> grpc.Channel:
 
     if host_address is None:
         host_address = get_default_host_address()
@@ -59,10 +61,21 @@ def get_grpc_channel(
             break
 
     # Create the base channel
+    options = channel_options.to_grpc_options() if channel_options is not None else None
     if secure_channel:
-        channel = grpc.secure_channel(host_address, grpc.ssl_channel_credentials())
+        if options is None:
+            channel = grpc.secure_channel(host_address, grpc.ssl_channel_credentials())
+        else:
+            channel = grpc.secure_channel(
+                host_address,
+                grpc.ssl_channel_credentials(),
+                options=options,
+            )
     else:
-        channel = grpc.insecure_channel(host_address)
+        if options is None:
+            channel = grpc.insecure_channel(host_address)
+        else:
+            channel = grpc.insecure_channel(host_address, options=options)
 
     # Apply interceptors ONLY if they exist
     if interceptors:
@@ -73,7 +86,8 @@ def get_grpc_channel(
 def get_async_grpc_channel(
         host_address: Optional[str],
         secure_channel: bool = False,
-        interceptors: Optional[Sequence[AsyncClientInterceptor]] = None) -> grpc.aio.Channel:
+        interceptors: Optional[Sequence[AsyncClientInterceptor]] = None,
+        channel_options: Optional[GrpcChannelOptions] = None) -> grpc.aio.Channel:
 
     if host_address is None:
         host_address = get_default_host_address()
@@ -90,14 +104,34 @@ def get_async_grpc_channel(
             host_address = host_address[len(protocol):]
             break
 
+    options = channel_options.to_grpc_options() if channel_options is not None else None
+
     if secure_channel:
-        channel = grpc.aio.secure_channel(
-            host_address, grpc.ssl_channel_credentials(),
-            interceptors=interceptors)
+        if options is None:
+            channel = grpc.aio.secure_channel(
+                host_address,
+                grpc.ssl_channel_credentials(),
+                interceptors=interceptors,
+            )
+        else:
+            channel = grpc.aio.secure_channel(
+                host_address,
+                grpc.ssl_channel_credentials(),
+                interceptors=interceptors,
+                options=options,
+            )
     else:
-        channel = grpc.aio.insecure_channel(
-            host_address,
-            interceptors=interceptors)
+        if options is None:
+            channel = grpc.aio.insecure_channel(
+                host_address,
+                interceptors=interceptors,
+            )
+        else:
+            channel = grpc.aio.insecure_channel(
+                host_address,
+                interceptors=interceptors,
+                options=options,
+            )
 
     return channel
 

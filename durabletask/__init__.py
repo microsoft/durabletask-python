@@ -3,6 +3,7 @@
 
 """Durable Task SDK for Python"""
 
+from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
 from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
 from durabletask.worker import (
     ActivityWorkItemFilter,
@@ -17,6 +18,8 @@ __all__ = [
     "ActivityWorkItemFilter",
     "ConcurrencyOptions",
     "EntityWorkItemFilter",
+    "GrpcChannelOptions",
+    "GrpcRetryPolicyOptions",
     "LargePayloadStorageOptions",
     "OrchestrationWorkItemFilter",
     "PayloadStore",

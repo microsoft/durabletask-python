@@ -2,13 +2,19 @@
 # Licensed under the MIT License.
 
 import logging
+import os
+import socket
+import uuid
 
-from typing import Optional
+from typing import Optional, Sequence
 
+import grpc
 from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import \
     DTSDefaultClientInterceptorImpl
+from durabletask.grpc_options import GrpcChannelOptions
+import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
 from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 
@@ -64,7 +70,10 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  host_address: str,
                  taskhub: str,
                  token_credential: Optional[TokenCredential],
+                 channel: Optional[grpc.Channel] = None,
                  secure_channel: bool = True,
+                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+                 channel_options: Optional[GrpcChannelOptions] = None,
                  concurrency_options: Optional[ConcurrencyOptions] = None,
                  payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
@@ -73,17 +82,25 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         if not taskhub:
             raise ValueError("The taskhub value cannot be empty.")
 
-        interceptors = [DTSDefaultClientInterceptorImpl(token_credential, taskhub)]
+        worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4()}"
+        resolved_interceptors: list[shared.ClientInterceptor] = (
+            list(interceptors) if interceptors is not None else []
+        )
+        resolved_interceptors.append(
+            DTSDefaultClientInterceptorImpl(token_credential, taskhub, worker_id=worker_id)
+        )
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
             host_address=host_address,
+            channel=channel,
             secure_channel=secure_channel,
             metadata=None,
             log_handler=log_handler,
             log_formatter=log_formatter,
-            interceptors=interceptors,
+            interceptors=resolved_interceptors,
+            channel_options=channel_options,
             concurrency_options=concurrency_options,
             # DTS natively supports long timers so chunking is unnecessary
             maximum_timer_interval=None,

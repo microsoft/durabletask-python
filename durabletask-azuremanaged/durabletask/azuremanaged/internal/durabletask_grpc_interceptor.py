@@ -25,7 +25,11 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
     StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an
     interceptor to add additional headers to all calls as needed."""
 
-    def __init__(self, token_credential: Optional[TokenCredential], taskhub_name: str):
+    def __init__(
+            self,
+            token_credential: Optional[TokenCredential],
+            taskhub_name: str,
+            worker_id: Optional[str] = None):
         try:
             # Get the version of the azuremanaged package
             sdk_version = version('durabletask-azuremanaged')
@@ -35,7 +39,9 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
         user_agent = f"durabletask-python/{sdk_version}"
         self._metadata = [
             ("taskhub", taskhub_name),
-            ("x-user-agent", user_agent)]  # 'user-agent' is a reserved header in grpc, so we use 'x-user-agent' instead
+            ("x-user-agent", user_agent)]  # 'user-agent' is a reserved header; use 'x-user-agent'
+        if worker_id is not None:
+            self._metadata.append(("workerid", worker_id))
         super().__init__(self._metadata)
 
         self._token_manager = None
@@ -44,7 +50,17 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
             self._token_manager = AccessTokenManager(token_credential=self._token_credential)
             access_token = self._token_manager.get_access_token()
             if access_token is not None:
-                self._metadata.append(("authorization", f"Bearer {access_token.token}"))
+                self._upsert_authorization_header(access_token.token)
+
+    def _upsert_authorization_header(self, token: str) -> None:
+        found = False
+        for i, (key, _) in enumerate(self._metadata):
+            if key.lower() == "authorization":
+                self._metadata[i] = ("authorization", f"Bearer {token}")
+                found = True
+                break
+        if not found:
+            self._metadata.append(("authorization", f"Bearer {token}"))
 
     def _intercept_call(
             self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
@@ -56,15 +72,7 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
         if self._token_manager is not None:
             access_token = self._token_manager.get_access_token()
             if access_token is not None:
-                # Update the existing authorization header
-                found = False
-                for i, (key, _) in enumerate(self._metadata):
-                    if key.lower() == "authorization":
-                        self._metadata[i] = ("authorization", f"Bearer {access_token.token}")
-                        found = True
-                        break
-                if not found:
-                    self._metadata.append(("authorization", f"Bearer {access_token.token}"))
+                self._upsert_authorization_header(access_token.token)
 
         return super()._intercept_call(client_call_details)
 
@@ -96,6 +104,16 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
             self._token_credential = token_credential
             self._token_manager = AsyncAccessTokenManager(token_credential=self._token_credential)
 
+    def _upsert_authorization_header(self, token: str) -> None:
+        found = False
+        for i, (key, _) in enumerate(self._metadata):
+            if key.lower() == "authorization":
+                self._metadata[i] = ("authorization", f"Bearer {token}")
+                found = True
+                break
+        if not found:
+            self._metadata.append(("authorization", f"Bearer {token}"))
+
     async def _intercept_call(
             self, client_call_details: _AsyncClientCallDetails) -> grpc.aio.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
@@ -106,16 +124,6 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
         if self._token_manager is not None:
             access_token = await self._token_manager.get_access_token()
             if access_token is not None:
-                # Update the existing authorization header, or append one if this
-                # is the first successful token acquisition (token is lazily
-                # fetched on the first call since async constructors aren't possible).
-                found = False
-                for i, (key, _) in enumerate(self._metadata):
-                    if key.lower() == "authorization":
-                        self._metadata[i] = ("authorization", f"Bearer {access_token.token}")
-                        found = True
-                        break
-                if not found:
-                    self._metadata.append(("authorization", f"Bearer {access_token.token}"))
+                self._upsert_authorization_header(access_token.token)
 
         return await super()._intercept_call(client_call_details)
