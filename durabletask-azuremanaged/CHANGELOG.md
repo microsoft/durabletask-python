@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v1.4.0
+
+- Updates base dependency to durabletask v1.4.0
+  - Includes restart support, batch actions, work item filtering, timer improvements,
+    distributed tracing improvements, and entity bug fixes
 - Added `AsyncDurableTaskSchedulerClient` for async/await usage with `grpc.aio`
 - Added `DTSAsyncDefaultClientInterceptorImpl` async gRPC interceptor for DTS authentication
 - Added `payload_store` parameter to `DurableTaskSchedulerWorker`,
@@ -15,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `azure-blob-payloads` optional dependency that installs
   `durabletask[azure-blob-payloads]` — install with
   `pip install durabletask.azuremanaged[azure-blob-payloads]`
+- Improved worker timer handling to align with durabletask timer updates
 
 ## v1.3.0
 
