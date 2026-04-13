@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added `ReplaySafeLogger` and `OrchestrationContext.create_replay_safe_logger()`
+  for suppressing duplicate log messages during orchestrator replay
+
 ## v1.4.0
 
 ADDED
