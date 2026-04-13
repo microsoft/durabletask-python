@@ -35,21 +35,21 @@ easy-to-use Docker container.
 
 2. Pull the Docker Image for the Emulator:
 
-```bash
-docker pull mcr.microsoft.com/dts/dts-emulator:v0.0.6
-```
+    ```bash
+    docker pull mcr.microsoft.com/dts/dts-emulator:v0.0.6
+    ```
 
-1. Run the Emulator: Wait a few seconds for the container to be ready.
+3. Run the Emulator: Wait a few seconds for the container to be ready.
 
-```bash
-docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:v0.0.6
-```
+    ```bash
+    docker run --name dtsemulator -d -p 8080:8080 mcr.microsoft.com/dts/dts-emulator:v0.0.6
+    ```
 
-1. Install the Required Packages:
+4. Install the Required Packages:
 
-```bash
-pip install -r requirements.txt
-```
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 Note: The example code has been updated to use the default emulator settings automatically
 (endpoint: [http://localhost:8080](http://localhost:8080), taskhub: default). You don't need to set
@@ -62,43 +62,43 @@ Azure CLI:
 
 1. Create a Scheduler:
 
-```bash
-az durabletask scheduler create --resource-group <testrg> \
-  --name <testscheduler> \
-  --location <eastus> --ip-allowlist "[0.0.0.0/0]" --sku-capacity 1 \
-  --sku-name "Dedicated" --tags "{'myattribute':'myvalue'}"
-```
+    ```bash
+    az durabletask scheduler create --resource-group <testrg> \
+      --name <testscheduler> \
+      --location <eastus> --ip-allowlist "[0.0.0.0/0]" --sku-capacity 1 \
+      --sku-name "Dedicated" --tags "{'myattribute':'myvalue'}"
+    ```
 
-1. Create Your Taskhub:
+2. Create Your Taskhub:
 
-```bash
-az durabletask taskhub create --resource-group <testrg> \
-  --scheduler-name <testscheduler> --name <testtaskhub>
-```
+    ```bash
+    az durabletask taskhub create --resource-group <testrg> \
+      --scheduler-name <testscheduler> --name <testtaskhub>
+    ```
 
-1. Retrieve the Endpoint for the Scheduler: Locate the taskhub in the Azure portal to find the
+3. Retrieve the Endpoint for the Scheduler: Locate the taskhub in the Azure portal to find the
    endpoint.
 
-2. Set the Environment Variables:
-Bash:
+4. Set the Environment Variables:
+   Bash:
 
-```bash
-export TASKHUB=<taskhubname>
-export ENDPOINT=<taskhubEndpoint>
-```
+   ```bash
+   export TASKHUB=<taskhubname>
+   export ENDPOINT=<taskhubEndpoint>
+   ```
 
-Powershell:
+   PowerShell:
 
-```powershell
-$env:TASKHUB = "<taskhubname>"
-$env:ENDPOINT = "<taskhubEndpoint>"
-```
+   ```powershell
+   $env:TASKHUB = "<taskhubname>"
+   $env:ENDPOINT = "<taskhubEndpoint>"
+   ```
 
-1. Install the Required Packages:
+5. Install the Required Packages:
 
-```bash
-pip install -r requirements.txt
-```
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 ### Running the Python Components
 
@@ -123,7 +123,7 @@ You should start seeing logs for processing orders in both shell outputs.
 
 To access the Durable Task Scheduler Dashboard, follow these steps:
 
-- **Using the Emulator**: By default, the dashboard runs on portal 8082.
+- **Using the Emulator**: By default, the dashboard runs on port 8082.
   Navigate to [http://localhost:8082](http://localhost:8082) and click on the default task hub.
 
 - **Using a Deployed Scheduler**: Navigate to the Scheduler resource. Then, go to the Task Hub

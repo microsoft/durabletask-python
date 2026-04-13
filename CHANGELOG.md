@@ -144,8 +144,8 @@ CHANGED
   [@berndverst](https://github.com/berndverst)
 - Http and grpc protocols and their secure variants are stripped from the host name parameter if
   provided. Secure mode is enabled if the protocol provided is https or grpcs
-  ([#38](https://github.com/microsoft/durabletask-python/pull/38) - by
-  [@berndverst)(https://github.com/berndverst)
+  ([#38](https://github.com/microsoft/durabletask-python/pull/38)) - by
+  [@berndverst](https://github.com/berndverst)
 - Improve ProtoGen by downloading proto file directly instead of using submodule
   ([#39](https://github.com/microsoft/durabletask-python/pull/39) - by
   [@berndverst](https://github.com/berndverst)

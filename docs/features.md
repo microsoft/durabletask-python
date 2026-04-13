@@ -175,7 +175,7 @@ Entities can perform actions such signaling other entities or starting new orche
 
 ##### Locking and concurrency
 
-Because entites can be accessed from multiple running orchestrations at the same time, entities may
+Because entities can be accessed from multiple running orchestrations at the same time, entities may
 also be locked by a single orchestrator ensuring exclusive access during the duration of the lock
 (also known as a critical section). Think semaphores:
 
@@ -191,7 +191,7 @@ details and advanced usage, see the examples and API documentation.
 
 ##### Deleting entities
 
-Entites are represented as orchestration instances in your Task Hub, and their state is persisted in
+Entities are represented as orchestration instances in your Task Hub, and their state is persisted in
 the Task Hub as well. When using the Durable Task Scheduler as your durability provider, the backend
 will automatically clean up entities when their state is empty, this is effectively the "delete"
 operation to save space in the Task Hub. In the DTS Dashboard, "delete entity" simply signals the

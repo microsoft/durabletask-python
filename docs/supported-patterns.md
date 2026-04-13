@@ -22,7 +22,7 @@ def sequence(ctx: task.OrchestrationContext, _):
 
 See the full [function chaining example](../examples/activity_sequence.py).
 
-### Fan-out/fan-in
+## Fan-out/fan-in
 
 An orchestration can fan-out a dynamic number of function calls in parallel and then fan-in the
 results using the following syntax:
@@ -51,9 +51,9 @@ def orchestrator(ctx: task.OrchestrationContext, _):
 
 See the full [fan-out sample](../examples/fanout_fanin.py).
 
-### Human interaction and durable timers
+## Human interaction and durable timers
 
-An orchestration can wait for a user-defined event, such as a human approval event, before proceding
+An orchestration can wait for a user-defined event, such as a human approval event, before proceeding
 to the next step. In addition, the orchestration can create a timer with an arbitrary duration that
 triggers some alternate action if the external event hasn't been received:
 
@@ -87,7 +87,7 @@ automatically by the SDK.
 
 See the full [human interaction sample](../examples/human_interaction.py).
 
-### Version-aware orchestrator
+## Version-aware orchestrator
 
 When utilizing orchestration versioning, it is possible for an orchestrator to remain
 backwards-compatible with orchestrations created using the previously defined version. For instance,
@@ -104,7 +104,7 @@ def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
 Assume that any orchestrations created using this orchestrator were versioned 1.0.0. If the
 signature of this method needs to be updated to call activity_three between the calls to
 activity_one and activity_two, ordinarily this would break any running orchestrations at the time of
-deployment. However, the following orchestrator will be able to process both orchestraions versioned
+deployment. However, the following orchestrator will be able to process both orchestrations versioned
 1.0.0 and 2.0.0 after the change:
 
 ```python
@@ -132,7 +132,7 @@ def my_orchestrator(ctx: task.OrchestrationContext, order: Order):
 
 See the full [version-aware orchestrator sample](../examples/version_aware_orchestrator.py)
 
-### Work item filtering
+## Work item filtering
 
 When running multiple workers against the same task hub, each worker can declare which work items it
 handles. The backend then dispatches only the matching orchestrations, activities, and entities,
@@ -173,7 +173,7 @@ w.use_work_item_filters(WorkItemFilters(
 
 See the full [work item filtering sample](../examples/work_item_filtering.py).
 
-### Large payload externalization
+## Large payload externalization
 
 When orchestrations work with very large inputs, outputs, or event data, the payloads can exceed
 gRPC message size limits. The large payload externalization pattern transparently offloads these
