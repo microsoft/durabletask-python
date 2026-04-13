@@ -31,10 +31,21 @@ class GrpcRetryPolicyOptions:
             raise ValueError("max_backoff_seconds must be >= initial_backoff_seconds")
         if len(self.retryable_status_codes) == 0:
             raise ValueError("retryable_status_codes cannot be empty")
+        # Validate that backoff values are representable as non-zero gRPC duration strings.
+        self._format_duration(self.initial_backoff_seconds)
+        self._format_duration(self.max_backoff_seconds)
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
-        return f"{seconds:.3f}s"
+        formatted = f"{seconds:.9f}".rstrip('0')
+        if formatted.endswith('.'):
+            formatted += '0'
+        if float(formatted) == 0:
+            raise ValueError(
+                f"Duration {seconds!r} rounds to zero; use a value large enough to "
+                "produce a non-zero gRPC duration string."
+            )
+        return f"{formatted}s"
 
     def to_service_config(self) -> dict[str, Any]:
         return {

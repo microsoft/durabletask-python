@@ -160,6 +160,7 @@ class TaskHubGrpcClient:
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
+        self._owns_channel = channel is None
         if channel is None:
             interceptors = prepare_sync_interceptors(metadata, interceptors)
             channel = shared.get_grpc_channel(
@@ -175,8 +176,15 @@ class TaskHubGrpcClient:
         self._payload_store = payload_store
 
     def close(self) -> None:
-        """Closes the underlying gRPC channel."""
-        self._channel.close()
+        """Closes the underlying gRPC channel.
+
+        Only closes channels created internally. If a pre-configured channel
+        was passed via the ``channel`` constructor parameter, this method is
+        a no-op — the caller retains ownership and is responsible for closing
+        it.
+        """
+        if self._owns_channel:
+            self._channel.close()
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Optional[TInput] = None,
@@ -444,6 +452,7 @@ class AsyncTaskHubGrpcClient:
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
+        self._owns_channel = channel is None
         if channel is None:
             interceptors = prepare_async_interceptors(metadata, interceptors)
             channel = shared.get_async_grpc_channel(
@@ -459,8 +468,15 @@ class AsyncTaskHubGrpcClient:
         self._payload_store = payload_store
 
     async def close(self) -> None:
-        """Closes the underlying gRPC channel."""
-        await self._channel.close()
+        """Closes the underlying gRPC channel.
+
+        Only closes channels created internally. If a pre-configured channel
+        was passed via the ``channel`` constructor parameter, this method is
+        a no-op — the caller retains ownership and is responsible for closing
+        it.
+        """
+        if self._owns_channel:
+            await self._channel.close()
 
     async def __aenter__(self):
         return self

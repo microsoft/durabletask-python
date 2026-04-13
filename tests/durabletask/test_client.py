@@ -1,4 +1,5 @@
 import json
+import pytest
 from unittest.mock import ANY, MagicMock, patch
 
 from durabletask.client import AsyncTaskHubGrpcClient, TaskHubGrpcClient
@@ -60,6 +61,15 @@ def test_get_grpc_channel_with_retry_policy_service_config():
         retry_policy = service_config['methodConfig'][0]['retryPolicy']
         assert retry_policy['maxAttempts'] == 5
         assert retry_policy['retryableStatusCodes'] == ['UNAVAILABLE']
+
+
+def test_retry_policy_format_duration_raises_on_zero():
+    with pytest.raises(ValueError, match="rounds to zero"):
+        GrpcRetryPolicyOptions(
+            max_attempts=2,
+            initial_backoff_seconds=1e-15,
+            max_backoff_seconds=1e-15,
+        )
 
 
 def test_get_grpc_channel_default_host_address():
