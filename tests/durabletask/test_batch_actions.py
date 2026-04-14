@@ -340,7 +340,8 @@ def test_list_instance_ids_paginates_terminal_instances(backend):
     assert set(first_page.items + second_page.items) == {completed_id, failed_id}
     assert failed_state is not None
     assert failed_state.runtime_status == client.OrchestrationStatus.FAILED
-    assert first_page.continuation_token in {completed_id, failed_id}
+    assert first_page.continuation_token is not None
+    assert any(instance_id in first_page.continuation_token for instance_id in {completed_id, failed_id})
     assert second_page.continuation_token is None
 
 

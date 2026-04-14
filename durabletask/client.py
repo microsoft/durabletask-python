@@ -247,7 +247,7 @@ class TaskHubGrpcClient:
                           page_size: Optional[int] = None,
                           continuation_token: Optional[str] = None) -> Page[str]:
         req = pb.ListInstanceIdsRequest(
-            runtimeStatus=[status.value for status in runtime_status] if runtime_status else None,
+            runtimeStatus=[status.value for status in runtime_status] if runtime_status else [],
             completedTimeFrom=helpers.new_timestamp(completed_time_from) if completed_time_from else None,
             completedTimeTo=helpers.new_timestamp(completed_time_to) if completed_time_to else None,
             pageSize=page_size or 0,
@@ -569,7 +569,7 @@ class AsyncTaskHubGrpcClient:
                                 page_size: Optional[int] = None,
                                 continuation_token: Optional[str] = None) -> Page[str]:
         req = pb.ListInstanceIdsRequest(
-            runtimeStatus=[status.value for status in runtime_status] if runtime_status else None,
+            runtimeStatus=[status.value for status in runtime_status] if runtime_status else [],
             completedTimeFrom=helpers.new_timestamp(completed_time_from) if completed_time_from else None,
             completedTimeTo=helpers.new_timestamp(completed_time_to) if completed_time_to else None,
             pageSize=page_size or 0,

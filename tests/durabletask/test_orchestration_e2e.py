@@ -144,9 +144,12 @@ def test_get_orchestration_history():
         w.start()
 
         task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
-        instance_id = task_hub_client.schedule_new_orchestration(simple, input=1)
-        state = task_hub_client.wait_for_orchestration_completion(instance_id, timeout=30)
-        events = task_hub_client.get_orchestration_history(instance_id)
+        try:
+            instance_id = task_hub_client.schedule_new_orchestration(simple, input=1)
+            state = task_hub_client.wait_for_orchestration_completion(instance_id, timeout=30)
+            events = task_hub_client.get_orchestration_history(instance_id)
+        finally:
+            task_hub_client.close()
 
     assert state is not None
     assert len(events) > 0

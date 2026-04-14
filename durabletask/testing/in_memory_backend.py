@@ -10,6 +10,7 @@ unit testing and integration testing scenarios where a sidecar process
 or external storage is not desired.
 """
 
+import bisect
 import logging
 import threading
 import time
@@ -96,6 +97,10 @@ class StateWaiter:
     predicate: Callable[[OrchestrationInstance], bool]
     event: threading.Event = field(default_factory=threading.Event)
     result: Optional[OrchestrationInstance] = None
+
+
+_DEFAULT_PAGE_SIZE = 100
+_TOKEN_SEP = '|'
 
 
 class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
@@ -473,19 +478,24 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 matching.append(instance)
 
             matching.sort(key=lambda i: (i.completed_at, i.instance_id))
+            sort_keys = [(i.completed_at, i.instance_id) for i in matching]
 
             start_index = 0
             if request.HasField("lastInstanceKey") and request.lastInstanceKey.value:
-                for idx, instance in enumerate(matching):
-                    if instance.instance_id == request.lastInstanceKey.value:
-                        start_index = idx + 1
-                        break
+                token = request.lastInstanceKey.value
+                sep_idx = token.index(_TOKEN_SEP)
+                token_ts = datetime.fromisoformat(token[:sep_idx]).replace(tzinfo=timezone.utc)
+                token_id = token[sep_idx + 1:]
+                # bisect_right positions us just after the cursor entry
+                start_index = bisect.bisect_right(sort_keys, (token_ts, token_id))
 
-            page_size = request.pageSize if request.pageSize > 0 else len(matching)
+            page_size = request.pageSize if request.pageSize > 0 else _DEFAULT_PAGE_SIZE
             page = matching[start_index:start_index + page_size]
             next_token = None
             if start_index + page_size < len(matching) and page:
-                next_token = wrappers_pb2.StringValue(value=page[-1].instance_id)
+                last = page[-1]
+                encoded = f"{last.completed_at.isoformat()}{_TOKEN_SEP}{last.instance_id}"
+                next_token = wrappers_pb2.StringValue(value=encoded)
 
         return pb.ListInstanceIdsResponse(
             instanceIds=[instance.instance_id for instance in page],

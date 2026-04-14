@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from google.protobuf import json_format
@@ -254,7 +254,7 @@ def to_dict(event: HistoryEvent) -> dict[str, Any]:
 def _base_kwargs(event: pb.HistoryEvent) -> dict[str, Any]:
     return {
         'event_id': event.eventId,
-        'timestamp': event.timestamp.ToDatetime(),
+        'timestamp': event.timestamp.ToDatetime(timezone.utc),
     }
 
 
@@ -266,7 +266,7 @@ def _string_value(msg: Message, field_name: str) -> Optional[str]:
 
 def _timestamp_value(msg: Message, field_name: str) -> Optional[datetime]:
     if msg.HasField(field_name):
-        return getattr(msg, field_name).ToDatetime()
+        return getattr(msg, field_name).ToDatetime(timezone.utc)
     return None
 
 
@@ -398,11 +398,11 @@ _EVENT_CONVERTERS: dict[str, Any] = {
     ),
     'timerCreated': lambda event: TimerCreatedEvent(
         **_base_kwargs(event),
-        fire_at=event.timerCreated.fireAt.ToDatetime(),
+        fire_at=event.timerCreated.fireAt.ToDatetime(timezone.utc),
     ),
     'timerFired': lambda event: TimerFiredEvent(
         **_base_kwargs(event),
-        fire_at=event.timerFired.fireAt.ToDatetime(),
+        fire_at=event.timerFired.fireAt.ToDatetime(timezone.utc),
         timer_id=event.timerFired.timerId,
     ),
     'orchestratorStarted': lambda event: OrchestratorStartedEvent(**_base_kwargs(event)),
