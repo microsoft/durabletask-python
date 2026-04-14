@@ -10,8 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ADDED
 
 - Added `get_orchestration_history()` and `list_instance_ids()` to the sync and async gRPC clients.
-- Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` to enable history retrieval and completion-window pagination in tests.
-- Added internal history helpers for aggregating streamed history events, de-externalizing payload-backed values, and converting history events to dictionaries.
+- Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` so local orchestration tests can retrieve history and page terminal instance IDs by completion window.
 
 ## v1.4.0
 
