@@ -41,6 +41,7 @@ class OrchestrationInstance:
     custom_status: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
     failure_details: Optional[pb.TaskFailureDetails] = None
     history: list[pb.HistoryEvent] = field(default_factory=list)
     pending_events: list[pb.HistoryEvent] = field(default_factory=list)
@@ -238,6 +239,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 input=request.input.value if request.input else None,
                 created_at=now,
                 last_updated_at=now,
+                completed_at=None,
                 completion_token=self._next_completion_token,
                 tags=dict(request.tags) if request.tags else None,
             )
@@ -452,6 +454,43 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._logger.info(
             f"Restarted instance '{request.instanceId}' as '{new_instance_id}'")
         return pb.RestartInstanceResponse(instanceId=new_instance_id)
+
+    def ListInstanceIds(self, request: pb.ListInstanceIdsRequest, context):
+        """Lists terminal orchestration instance IDs with completion-time pagination."""
+        with self._lock:
+            matching = []
+            for instance in self._instances.values():
+                if not self._is_terminal_status(instance.status):
+                    continue
+                if request.runtimeStatus and instance.status not in request.runtimeStatus:
+                    continue
+                if instance.completed_at is None:
+                    continue
+                if request.HasField("completedTimeFrom") and instance.completed_at < request.completedTimeFrom.ToDatetime(timezone.utc):
+                    continue
+                if request.HasField("completedTimeTo") and instance.completed_at >= request.completedTimeTo.ToDatetime(timezone.utc):
+                    continue
+                matching.append(instance)
+
+            matching.sort(key=lambda i: (i.completed_at, i.instance_id))
+
+            start_index = 0
+            if request.HasField("lastInstanceKey") and request.lastInstanceKey.value:
+                for idx, instance in enumerate(matching):
+                    if instance.instance_id == request.lastInstanceKey.value:
+                        start_index = idx + 1
+                        break
+
+            page_size = request.pageSize if request.pageSize > 0 else len(matching)
+            page = matching[start_index:start_index + page_size]
+            next_token = None
+            if start_index + page_size < len(matching) and page:
+                next_token = wrappers_pb2.StringValue(value=page[-1].instance_id)
+
+        return pb.ListInstanceIdsResponse(
+            instanceIds=[instance.instance_id for instance in page],
+            lastInstanceKey=next_token,
+        )
 
     @staticmethod
     def _parse_work_item_filters(request: pb.GetWorkItemsRequest):
@@ -1084,8 +1123,18 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         )
 
     def StreamInstanceHistory(self, request: pb.StreamInstanceHistoryRequest, context):
-        """Streams instance history (not implemented)."""
-        context.abort(grpc.StatusCode.UNIMPLEMENTED, "StreamInstanceHistory not implemented")
+        """Streams orchestration history for an instance."""
+        with self._lock:
+            instance = self._instances.get(request.instanceId)
+            if instance is None:
+                context.abort(grpc.StatusCode.NOT_FOUND,
+                              f"Orchestration instance '{request.instanceId}' not found")
+                return
+            history = [self._clone_history_event(event) for event in instance.history]
+
+        chunk_size = 100
+        for offset in range(0, len(history), chunk_size):
+            yield pb.HistoryChunk(events=history[offset:offset + chunk_size])
 
     def CreateTaskHub(self, request: pb.CreateTaskHubRequest, context):
         """Creates task hub resources (no-op for in-memory)."""
@@ -1178,6 +1227,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             input=encoded_input,
             created_at=now,
             last_updated_at=now,
+            completed_at=None,
             completion_token=self._next_completion_token,
         )
         self._next_completion_token += 1
@@ -1239,6 +1289,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             orchestrationStatus=instance.status,
             createdTimestamp=created_ts,
             lastUpdatedTimestamp=updated_ts,
+            completedTimestamp=helpers.new_timestamp(instance.completed_at) if instance.completed_at else None,
             input=wrappers_pb2.StringValue(value=instance.input) if include_payloads and instance.input else None,
             output=wrappers_pb2.StringValue(value=instance.output) if include_payloads and instance.output else None,
             customStatus=wrappers_pb2.StringValue(value=instance.custom_status) if instance.custom_status else None,
@@ -1319,6 +1370,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance.status = status
         instance.output = complete_action.result.value if complete_action.result else None
         instance.failure_details = complete_action.failureDetails if complete_action.failureDetails else None
+        instance.completed_at = datetime.now(timezone.utc) if self._is_terminal_status(status) else None
 
         if status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             # Handle continue-as-new
@@ -1336,6 +1388,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             instance.output = None
             instance.failure_details = None
             instance.status = pb.ORCHESTRATION_STATUS_PENDING
+            instance.completed_at = None
 
             # Save any events that arrived during the in-flight dispatch so
             # they can be appended AFTER the new execution started events.
@@ -1356,6 +1409,12 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             instance.pending_events.extend(new_arrivals)
 
             self._enqueue_orchestration(instance.instance_id)
+
+    @staticmethod
+    def _clone_history_event(event: pb.HistoryEvent) -> pb.HistoryEvent:
+        cloned_event = pb.HistoryEvent()
+        cloned_event.CopyFrom(event)
+        return cloned_event
 
     def _process_schedule_task_action(self, instance: OrchestrationInstance,
                                       action: pb.OrchestratorAction):
