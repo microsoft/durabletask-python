@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- Added `ReplaySafeLogger` and `OrchestrationContext.create_replay_safe_logger()`
+  for suppressing duplicate log messages during orchestrator replay
 - Added `get_orchestration_history()` and `list_instance_ids()` to the sync and async gRPC clients.
 - Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` so local orchestration tests can retrieve history and page terminal instance IDs by completion window.
 
