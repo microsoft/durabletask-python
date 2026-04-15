@@ -6,14 +6,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, List, Optional, Sequence, TypeVar, Union
+from typing import Any, Generic, List, Optional, Sequence, TypeVar, Union
 
 import grpc
 import grpc.aio
 
+import durabletask.history as history
 from durabletask.entities import EntityInstanceId
 from durabletask.entities.entity_metadata import EntityMetadata
 import durabletask.internal.helpers as helpers
+import durabletask.internal.history_helpers as history_helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
@@ -37,6 +39,7 @@ from durabletask.payload.store import PayloadStore
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
+TItem = TypeVar('TItem')
 
 
 class OrchestrationStatus(Enum):
@@ -97,6 +100,12 @@ class EntityQuery:
 class PurgeInstancesResult:
     deleted_instance_count: int
     is_complete: bool
+
+
+@dataclass
+class Page(Generic[TItem]):
+    items: List[TItem]
+    continuation_token: Optional[str]
 
 
 @dataclass
@@ -217,6 +226,44 @@ class TaskHubGrpcClient:
         if self._payload_store is not None and res.exists:
             payload_helpers.deexternalize_payloads(res, self._payload_store)
         return new_orchestration_state(req.instanceId, res)
+
+    def get_orchestration_history(self,
+                                  instance_id: str, *,
+                                  execution_id: Optional[str] = None,
+                                  for_work_item_processing: bool = False) -> List[history.HistoryEvent]:
+        req = pb.StreamInstanceHistoryRequest(
+            instanceId=instance_id,
+            executionId=helpers.get_string_value(execution_id),
+            forWorkItemProcessing=for_work_item_processing,
+        )
+        self._logger.info(f"Retrieving history for instance '{instance_id}'.")
+        stream = self._stub.StreamInstanceHistory(req)
+        return history_helpers.collect_history_events(stream, self._payload_store)
+
+    def list_instance_ids(self,
+                          runtime_status: Optional[List[OrchestrationStatus]] = None,
+                          completed_time_from: Optional[datetime] = None,
+                          completed_time_to: Optional[datetime] = None,
+                          page_size: Optional[int] = None,
+                          continuation_token: Optional[str] = None) -> Page[str]:
+        req = pb.ListInstanceIdsRequest(
+            runtimeStatus=[status.value for status in runtime_status] if runtime_status else [],
+            completedTimeFrom=helpers.new_timestamp(completed_time_from) if completed_time_from else None,
+            completedTimeTo=helpers.new_timestamp(completed_time_to) if completed_time_to else None,
+            pageSize=page_size or 0,
+            lastInstanceKey=helpers.get_string_value(continuation_token),
+        )
+        self._logger.info(
+            "Listing terminal instance IDs with filters: "
+            f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
+            f"completed_time_from={completed_time_from}, "
+            f"completed_time_to={completed_time_to}, "
+            f"page_size={page_size}, "
+            f"continuation_token={continuation_token}"
+        )
+        resp: pb.ListInstanceIdsResponse = self._stub.ListInstanceIds(req)
+        next_token = resp.lastInstanceKey.value if resp.HasField("lastInstanceKey") else None
+        return Page(items=list(resp.instanceIds), continuation_token=next_token)
 
     def get_all_orchestration_states(self,
                                      orchestration_query: Optional[OrchestrationQuery] = None
@@ -501,6 +548,44 @@ class AsyncTaskHubGrpcClient:
         if self._payload_store is not None and res.exists:
             await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
         return new_orchestration_state(req.instanceId, res)
+
+    async def get_orchestration_history(self,
+                                        instance_id: str, *,
+                                        execution_id: Optional[str] = None,
+                                        for_work_item_processing: bool = False) -> List[history.HistoryEvent]:
+        req = pb.StreamInstanceHistoryRequest(
+            instanceId=instance_id,
+            executionId=helpers.get_string_value(execution_id),
+            forWorkItemProcessing=for_work_item_processing,
+        )
+        self._logger.info(f"Retrieving history for instance '{instance_id}'.")
+        stream = self._stub.StreamInstanceHistory(req)
+        return await history_helpers.collect_history_events_async(stream, self._payload_store)
+
+    async def list_instance_ids(self,
+                                runtime_status: Optional[List[OrchestrationStatus]] = None,
+                                completed_time_from: Optional[datetime] = None,
+                                completed_time_to: Optional[datetime] = None,
+                                page_size: Optional[int] = None,
+                                continuation_token: Optional[str] = None) -> Page[str]:
+        req = pb.ListInstanceIdsRequest(
+            runtimeStatus=[status.value for status in runtime_status] if runtime_status else [],
+            completedTimeFrom=helpers.new_timestamp(completed_time_from) if completed_time_from else None,
+            completedTimeTo=helpers.new_timestamp(completed_time_to) if completed_time_to else None,
+            pageSize=page_size or 0,
+            lastInstanceKey=helpers.get_string_value(continuation_token),
+        )
+        self._logger.info(
+            "Listing terminal instance IDs with filters: "
+            f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
+            f"completed_time_from={completed_time_from}, "
+            f"completed_time_to={completed_time_to}, "
+            f"page_size={page_size}, "
+            f"continuation_token={continuation_token}"
+        )
+        resp: pb.ListInstanceIdsResponse = await self._stub.ListInstanceIds(req)
+        next_token = resp.lastInstanceKey.value if resp.HasField("lastInstanceKey") else None
+        return Page(items=list(resp.instanceIds), continuation_token=next_token)
 
     async def get_all_orchestration_states(self,
                                            orchestration_query: Optional[OrchestrationQuery] = None
