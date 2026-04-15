@@ -15,9 +15,19 @@ building durable orchestrations. The repo contains two packages:
 - Update `CHANGELOG.md` for core SDK changes and
   `durabletask-azuremanaged/CHANGELOG.md` for provider changes.
 - If a change affects both packages, update both changelogs.
+- Include changelog entries for externally observable outcomes only, such as
+  new public APIs, behavior changes, bug fixes users can notice, breaking
+  changes, and new configuration capabilities.
 - Do NOT document internal-only changes in changelogs, including CI/workflow
   updates, test-only changes, refactors with no user-visible behavior change,
   and implementation details that do not affect public behavior or API.
+- When in doubt, write the changelog entry in terms of user impact (what users
+  can now do or what behavior changed), not implementation mechanism (how it
+  was implemented internally).
+
+Examples:
+- Include: "Added `get_orchestration_history()` to retrieve orchestration history from the client."
+- Exclude: "Added internal helper functions to aggregate streamed history chunks."
 
 ## Language and Style
 

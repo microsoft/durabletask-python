@@ -305,6 +305,46 @@ def test_purge_orchestrations_by_time_range(backend):
         worker.stop()
 
 
+def test_list_instance_ids_paginates_terminal_instances(backend):
+    worker = TaskHubGrpcWorker(host_address=HOST)
+    c = TaskHubGrpcClient(host_address=HOST)
+
+    worker.add_orchestrator(empty_orchestrator)
+    worker.add_orchestrator(failing_orchestrator)
+    worker.start()
+
+    try:
+        completed_id = c.schedule_new_orchestration(empty_orchestrator, input='done')
+        c.wait_for_orchestration_completion(completed_id, timeout=30)
+
+        failed_id = c.schedule_new_orchestration(failing_orchestrator)
+        failed_state = c.wait_for_orchestration_completion(failed_id, timeout=30)
+
+        window_start = datetime.now(timezone.utc) - timedelta(minutes=1)
+        first_page = c.list_instance_ids(
+            runtime_status=[client.OrchestrationStatus.COMPLETED, client.OrchestrationStatus.FAILED],
+            completed_time_from=window_start,
+            page_size=1,
+        )
+        second_page = c.list_instance_ids(
+            runtime_status=[client.OrchestrationStatus.COMPLETED, client.OrchestrationStatus.FAILED],
+            completed_time_from=window_start,
+            page_size=1,
+            continuation_token=first_page.continuation_token,
+        )
+    finally:
+        worker.stop()
+
+    assert len(first_page.items) == 1
+    assert len(second_page.items) == 1
+    assert set(first_page.items + second_page.items) == {completed_id, failed_id}
+    assert failed_state is not None
+    assert failed_state.runtime_status == client.OrchestrationStatus.FAILED
+    assert first_page.continuation_token is not None
+    assert any(instance_id in first_page.continuation_token for instance_id in {completed_id, failed_id})
+    assert second_page.continuation_token is None
+
+
 def test_get_all_entities(backend):
     counter_value = 0
 

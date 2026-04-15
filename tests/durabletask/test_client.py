@@ -1,6 +1,13 @@
-from unittest.mock import ANY, MagicMock, patch
+from datetime import datetime, timezone
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-from durabletask.client import AsyncTaskHubGrpcClient
+import pytest
+from google.protobuf import wrappers_pb2
+
+import durabletask.history as history
+import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus, TaskHubGrpcClient
+from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
 
 from durabletask.internal.grpc_interceptor import (
     DefaultAsyncClientInterceptorImpl,
@@ -15,6 +22,37 @@ from durabletask.internal.shared import (
 HOST_ADDRESS = 'localhost:50051'
 METADATA = [('key1', 'value1'), ('key2', 'value2')]
 INTERCEPTORS = [DefaultClientInterceptorImpl(METADATA)]
+
+
+class FakePayloadStore(PayloadStore):
+    TOKEN_PREFIX = 'fake://'
+
+    def __init__(self):
+        self._options = LargePayloadStorageOptions(threshold_bytes=1, max_stored_payload_bytes=1024 * 1024)
+        self._blobs: dict[str, bytes] = {}
+        self._counter = 0
+
+    @property
+    def options(self) -> LargePayloadStorageOptions:
+        return self._options
+
+    def upload(self, payload: bytes, *, instance_id=None) -> str:
+        self._counter += 1
+        token = f'{self.TOKEN_PREFIX}{self._counter}'
+        self._blobs[token] = payload
+        return token
+
+    def download(self, token: str) -> bytes:
+        return self._blobs[token]
+
+    def is_known_token(self, value: str) -> bool:
+        return value.startswith(self.TOKEN_PREFIX)
+
+    async def upload_async(self, payload: bytes, *, instance_id=None) -> str:
+        return self.upload(payload, instance_id=instance_id)
+
+    async def download_async(self, token: str) -> bytes:
+        return self.download(token)
 
 
 # ==== Sync channel tests ====
@@ -185,3 +223,105 @@ def test_async_client_creates_with_metadata():
         assert interceptors is not None
         assert len(interceptors) == 1
         assert isinstance(interceptors[0], DefaultAsyncClientInterceptorImpl)
+
+
+def test_get_orchestration_history_aggregates_chunks_and_deexternalizes_payloads():
+    store = FakePayloadStore()
+    token = store.upload(b'history payload')
+    stream = [
+        pb.HistoryChunk(events=[
+            pb.HistoryEvent(
+                eventId=1,
+                taskCompleted=pb.TaskCompletedEvent(
+                    taskScheduledId=42,
+                    result=wrappers_pb2.StringValue(value=token),
+                ),
+            )
+        ]),
+        pb.HistoryChunk(events=[pb.HistoryEvent(eventId=2, executionCompleted=pb.ExecutionCompletedEvent())]),
+    ]
+
+    stub = MagicMock()
+    stub.StreamInstanceHistory.return_value = stream
+
+    with patch('durabletask.client.shared.get_grpc_channel', return_value=MagicMock()), patch(
+            'durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        history_client = TaskHubGrpcClient(payload_store=store)
+        events = history_client.get_orchestration_history('abc')
+
+    assert [event.event_id for event in events] == [1, 2]
+    assert isinstance(events[0], history.TaskCompletedEvent)
+    assert events[0].result == 'history payload'
+    req = stub.StreamInstanceHistory.call_args.args[0]
+    assert req.instanceId == 'abc'
+
+
+def test_list_instance_ids_returns_page():
+    stub = MagicMock()
+    stub.ListInstanceIds.return_value = pb.ListInstanceIdsResponse(
+        instanceIds=['a', 'b'],
+        lastInstanceKey=wrappers_pb2.StringValue(value='b'),
+    )
+
+    with patch('durabletask.client.shared.get_grpc_channel', return_value=MagicMock()), patch(
+            'durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        history_client = TaskHubGrpcClient()
+        page = history_client.list_instance_ids(
+            runtime_status=[OrchestrationStatus.COMPLETED],
+            completed_time_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            page_size=2,
+            continuation_token='prev',
+        )
+
+    assert page.items == ['a', 'b']
+    assert page.continuation_token == 'b'
+    req = stub.ListInstanceIds.call_args.args[0]
+    assert list(req.runtimeStatus) == [pb.ORCHESTRATION_STATUS_COMPLETED]
+    assert req.pageSize == 2
+    assert req.lastInstanceKey.value == 'prev'
+
+
+@pytest.mark.asyncio
+async def test_async_get_orchestration_history_aggregates_chunks_and_deexternalizes_payloads():
+    store = FakePayloadStore()
+    token = store.upload(b'async history payload')
+
+    async def stream():
+        yield pb.HistoryChunk(events=[
+            pb.HistoryEvent(
+                eventId=3,
+                taskCompleted=pb.TaskCompletedEvent(
+                    taskScheduledId=43,
+                    result=wrappers_pb2.StringValue(value=token),
+                ),
+            )
+        ])
+
+    stub = MagicMock()
+    stub.StreamInstanceHistory.return_value = stream()
+
+    with patch('durabletask.client.shared.get_async_grpc_channel', return_value=MagicMock()), patch(
+            'durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        history_client = AsyncTaskHubGrpcClient(payload_store=store)
+        events = await history_client.get_orchestration_history('async-abc')
+
+    assert [event.event_id for event in events] == [3]
+    assert isinstance(events[0], history.TaskCompletedEvent)
+    assert events[0].result == 'async history payload'
+
+
+@pytest.mark.asyncio
+async def test_async_list_instance_ids_returns_page():
+    stub = MagicMock()
+    stub.ListInstanceIds = AsyncMock(return_value=pb.ListInstanceIdsResponse(
+        instanceIds=['one'],
+        lastInstanceKey=wrappers_pb2.StringValue(value='one'),
+    ))
+
+    with patch('durabletask.client.shared.get_async_grpc_channel', return_value=MagicMock()), patch(
+            'durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        history_client = AsyncTaskHubGrpcClient()
+        page = await history_client.list_instance_ids(page_size=1)
+
+    assert page.items == ['one']
+    assert page.continuation_token == 'one'

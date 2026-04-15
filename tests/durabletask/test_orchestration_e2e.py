@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 from durabletask import client, task, worker
+import durabletask.history as history
 from durabletask.testing import create_test_backend
 
 HOST = "localhost:50054"
@@ -126,6 +127,35 @@ def test_activity_error_handling():
     assert state.failure_details is None
     assert state.serialized_custom_status is None
     assert compensation_counter == 2
+
+
+def test_get_orchestration_history():
+
+    def plus_one(_: task.ActivityContext, input: int) -> int:
+        return input + 1
+
+    def simple(ctx: task.OrchestrationContext, value: int):
+        result = yield ctx.call_activity(plus_one, input=value)
+        return result
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(simple)
+        w.add_activity(plus_one)
+        w.start()
+
+        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
+        try:
+            instance_id = task_hub_client.schedule_new_orchestration(simple, input=1)
+            state = task_hub_client.wait_for_orchestration_completion(instance_id, timeout=30)
+            events = task_hub_client.get_orchestration_history(instance_id)
+        finally:
+            task_hub_client.close()
+
+    assert state is not None
+    assert len(events) > 0
+    assert any(isinstance(event, history.ExecutionStartedEvent) for event in events)
+    assert any(isinstance(event, history.TaskScheduledEvent) for event in events)
+    assert any(isinstance(event, history.TaskCompletedEvent) for event in events)
 
 
 def test_sub_orchestration_fan_out():
