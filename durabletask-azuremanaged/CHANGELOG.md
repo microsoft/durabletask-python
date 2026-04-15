@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Added optional `interceptors`, `channel`, and `channel_options` parameters to
+  `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
+  `DurableTaskSchedulerWorker` to allow combining custom gRPC interceptors with
+  DTS defaults and to support pre-configured/customized gRPC channels.
+- Added `workerid` gRPC metadata on Durable Task Scheduler worker calls for
+  improved worker identity and observability.
+- Improved sync access token refresh concurrency handling to avoid duplicate
+  refresh operations under concurrent access.
+
 ## v1.4.0
 
 - Updates base dependency to durabletask v1.4.0

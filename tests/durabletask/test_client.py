@@ -1,8 +1,12 @@
+import json
+import pytest
+from unittest.mock import ANY, MagicMock, patch
+from google.protobuf import wrappers_pb2
+
+from durabletask.client import AsyncTaskHubGrpcClient, TaskHubGrpcClient
+from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
 from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
-
-import pytest
-from google.protobuf import wrappers_pb2
 
 import durabletask.history as history
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -69,6 +73,42 @@ def test_get_grpc_channel_secure():
             'grpc.ssl_channel_credentials') as mock_credentials:
         get_grpc_channel(HOST_ADDRESS, True, interceptors=INTERCEPTORS)
         mock_channel.assert_called_once_with(HOST_ADDRESS, mock_credentials.return_value)
+
+
+def test_get_grpc_channel_with_channel_options():
+    options = GrpcChannelOptions(max_receive_message_length=1234)
+    with patch('grpc.insecure_channel') as mock_channel:
+        get_grpc_channel(HOST_ADDRESS, False, channel_options=options)
+        mock_channel.assert_called_once_with(
+            HOST_ADDRESS,
+            options=[('grpc.max_receive_message_length', 1234)],
+        )
+
+
+def test_get_grpc_channel_with_retry_policy_service_config():
+    retry = GrpcRetryPolicyOptions(max_attempts=5, retryable_status_codes=['UNAVAILABLE'])
+    options = GrpcChannelOptions(retry_policy=retry)
+    with patch('grpc.insecure_channel') as mock_channel:
+        get_grpc_channel(HOST_ADDRESS, False, channel_options=options)
+        _, kwargs = mock_channel.call_args
+        channel_options = kwargs['options']
+        assert ('grpc.enable_retries', 1) in channel_options
+        service_config_value = next(
+            option[1] for option in channel_options if option[0] == 'grpc.service_config'
+        )
+        service_config = json.loads(service_config_value)
+        retry_policy = service_config['methodConfig'][0]['retryPolicy']
+        assert retry_policy['maxAttempts'] == 5
+        assert retry_policy['retryableStatusCodes'] == ['UNAVAILABLE']
+
+
+def test_retry_policy_format_duration_raises_on_zero():
+    with pytest.raises(ValueError, match="rounds to zero"):
+        GrpcRetryPolicyOptions(
+            max_attempts=2,
+            initial_backoff_seconds=1e-15,
+            max_backoff_seconds=1e-15,
+        )
 
 
 def test_get_grpc_channel_default_host_address():
@@ -178,6 +218,17 @@ def test_get_async_grpc_channel_with_interceptors():
         mock_channel.assert_called_once_with(HOST_ADDRESS, interceptors=async_interceptors)
 
 
+def test_get_async_grpc_channel_with_channel_options():
+    options = GrpcChannelOptions(max_send_message_length=4321)
+    with patch('grpc.aio.insecure_channel') as mock_channel:
+        get_async_grpc_channel(HOST_ADDRESS, False, channel_options=options)
+        mock_channel.assert_called_once_with(
+            HOST_ADDRESS,
+            interceptors=None,
+            options=[('grpc.max_send_message_length', 4321)],
+        )
+
+
 def test_async_grpc_channel_protocol_stripping():
     with patch('grpc.aio.insecure_channel') as mock_insecure, patch(
             'grpc.aio.secure_channel') as mock_secure:
@@ -225,6 +276,20 @@ def test_async_client_creates_with_metadata():
         assert isinstance(interceptors[0], DefaultAsyncClientInterceptorImpl)
 
 
+def test_client_uses_provided_channel_directly():
+    provided_channel = MagicMock()
+    with patch('durabletask.internal.shared.get_grpc_channel') as mock_get_channel:
+        client = TaskHubGrpcClient(channel=provided_channel, host_address=HOST_ADDRESS)
+        assert client._channel is provided_channel
+        mock_get_channel.assert_not_called()
+
+
+def test_async_client_uses_provided_channel_directly():
+    provided_channel = MagicMock()
+    with patch('durabletask.internal.shared.get_async_grpc_channel') as mock_get_channel:
+        client = AsyncTaskHubGrpcClient(channel=provided_channel, host_address=HOST_ADDRESS)
+        assert client._channel is provided_channel
+        mock_get_channel.assert_not_called()
 def test_get_orchestration_history_aggregates_chunks_and_deexternalizes_payloads():
     store = FakePayloadStore()
     token = store.upload(b'history payload')
