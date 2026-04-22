@@ -1,16 +1,14 @@
 import json
 import pytest
-from unittest.mock import ANY, MagicMock, patch
-from google.protobuf import wrappers_pb2
-
-from durabletask.client import AsyncTaskHubGrpcClient, TaskHubGrpcClient
-from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
 from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+from google.protobuf import wrappers_pb2
 
 import durabletask.history as history
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus, TaskHubGrpcClient
+from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
 from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
 
 from durabletask.internal.grpc_interceptor import (
@@ -290,6 +288,8 @@ def test_async_client_uses_provided_channel_directly():
         client = AsyncTaskHubGrpcClient(channel=provided_channel, host_address=HOST_ADDRESS)
         assert client._channel is provided_channel
         mock_get_channel.assert_not_called()
+
+
 def test_get_orchestration_history_aggregates_chunks_and_deexternalizes_payloads():
     store = FakePayloadStore()
     token = store.upload(b'history payload')
