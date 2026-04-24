@@ -31,7 +31,7 @@
 - Modify: `durabletask/grpc_options.py`
 - Create: `tests/durabletask/test_grpc_resiliency.py`
 
-- [ ] **Step 1: Write the failing option tests**
+- [x] **Step 1: Write the failing option tests**
 
 ```python
 import pytest
@@ -81,13 +81,13 @@ def test_client_resiliency_rejects_negative_cooldown():
         GrpcClientResiliencyOptions(min_recreate_interval_seconds=-1.0)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `python -m pytest tests/durabletask/test_grpc_resiliency.py -v`
 
 Expected: FAIL with `ImportError` or `AttributeError` because the new option classes do not exist yet.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 ```python
 from dataclasses import dataclass, field
@@ -131,13 +131,13 @@ class GrpcClientResiliencyOptions:
             raise ValueError("min_recreate_interval_seconds must be >= 0")
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/durabletask/test_grpc_resiliency.py -v`
 
 Expected: PASS for the new option validation tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add durabletask/grpc_options.py tests/durabletask/test_grpc_resiliency.py
@@ -154,7 +154,7 @@ git commit -m "Add gRPC resiliency option types"
 - Modify: `tests/durabletask/test_client.py`
 - Create: `tests/durabletask-azuremanaged/test_grpc_resiliency.py`
 
-- [ ] **Step 1: Write the failing constructor and wrapper tests**
+- [x] **Step 1: Write the failing constructor and wrapper tests**
 
 ```python
 from unittest.mock import MagicMock, patch
@@ -225,13 +225,13 @@ def test_dts_worker_passes_resiliency_options_to_base_worker():
     assert mock_init.call_args.kwargs["resiliency_options"] is resiliency
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/durabletask/test_client.py tests/durabletask-azuremanaged/test_grpc_resiliency.py -v`
 
 Expected: FAIL because the constructors do not accept `resiliency_options` yet and do not retain enough transport state for later recreation.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 ```python
 self._host_address = host_address if host_address else shared.get_default_host_address()
@@ -279,13 +279,13 @@ super().__init__(
 )
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/durabletask/test_client.py tests/durabletask-azuremanaged/test_grpc_resiliency.py -v`
 
 Expected: PASS for the new constructor and wrapper pass-through tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add durabletask/client.py durabletask/worker.py durabletask-azuremanaged/durabletask/azuremanaged/client.py durabletask-azuremanaged/durabletask/azuremanaged/worker.py tests/durabletask/test_client.py tests/durabletask-azuremanaged/test_grpc_resiliency.py
@@ -298,7 +298,7 @@ git commit -m "Thread gRPC resiliency options through constructors"
 - Create: `durabletask/internal/grpc_resiliency.py`
 - Modify: `tests/durabletask/test_grpc_resiliency.py`
 
-- [ ] **Step 1: Write the failing helper tests**
+- [x] **Step 1: Write the failing helper tests**
 
 ```python
 import grpc
@@ -340,13 +340,13 @@ def test_worker_transport_failure_filters_application_errors():
     assert is_worker_transport_failure(grpc.StatusCode.NOT_FOUND) is False
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/durabletask/test_grpc_resiliency.py -k "jitter or tracker or transport_failure" -v`
 
 Expected: FAIL because the shared helper module and helper functions do not exist yet.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 ```python
 import random
@@ -399,13 +399,13 @@ def is_worker_transport_failure(status_code: grpc.StatusCode) -> bool:
     }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/durabletask/test_grpc_resiliency.py -v`
 
 Expected: PASS for the helper and option tests together.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add durabletask/internal/grpc_resiliency.py tests/durabletask/test_grpc_resiliency.py
@@ -418,7 +418,7 @@ git commit -m "Add shared gRPC resiliency helpers"
 - Modify: `durabletask/worker.py`
 - Create: `tests/durabletask/test_worker_resiliency.py`
 
-- [ ] **Step 1: Write the failing worker resiliency tests**
+- [x] **Step 1: Write the failing worker resiliency tests**
 
 ```python
 import grpc
@@ -461,13 +461,13 @@ def test_worker_does_not_recreate_caller_owned_channel():
     assert worker._can_recreate_channel() is False
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/durabletask/test_worker_resiliency.py -v`
 
 Expected: FAIL because the worker does not expose explicit stream-outcome helpers yet and still uses ad hoc reconnect bookkeeping.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 ```python
 class _WorkItemStreamOutcome(Enum):
@@ -513,13 +513,13 @@ if work_item.HasField("healthPing"):
     continue
 ```
 
-- [ ] **Step 4: Run the worker tests**
+- [x] **Step 4: Run the worker tests**
 
 Run: `python -m pytest tests/durabletask/test_worker_resiliency.py -v`
 
 Expected: PASS for the worker classification and ownership tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add durabletask/worker.py tests/durabletask/test_worker_resiliency.py
@@ -532,7 +532,7 @@ git commit -m "Harden worker gRPC stream reconnect behavior"
 - Modify: `durabletask/client.py`
 - Modify: `tests/durabletask/test_client.py`
 
-- [ ] **Step 1: Write the failing sync client recreation tests**
+- [x] **Step 1: Write the failing sync client recreation tests**
 
 ```python
 import grpc
@@ -589,13 +589,13 @@ def test_sync_client_does_not_count_long_poll_deadline():
         assert client._client_failure_tracker.consecutive_failures == 0
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/durabletask/test_client.py -k "recreates_sdk_owned_channel or long_poll_deadline" -v`
 
 Expected: FAIL because client calls still go directly through the stub and the client has no failure tracker or channel recreation path.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 ```python
 self._client_failure_tracker = FailureTracker(
@@ -643,13 +643,13 @@ def _maybe_recreate_channel(self) -> None:
         threading.Timer(30.0, old_channel.close).start()
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/durabletask/test_client.py -k "recreates_sdk_owned_channel or long_poll_deadline" -v`
 
 Expected: PASS for both new sync client tests and no regressions in the existing client construction tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add durabletask/client.py tests/durabletask/test_client.py
@@ -662,7 +662,7 @@ git commit -m "Add sync client gRPC channel recreation"
 - Modify: `durabletask/client.py`
 - Modify: `tests/durabletask/test_client.py`
 
-- [ ] **Step 1: Write the failing async client recreation tests**
+- [x] **Step 1: Write the failing async client recreation tests**
 
 ```python
 import grpc
@@ -716,13 +716,13 @@ async def test_async_client_does_not_count_wait_for_orchestration_deadline():
         assert client._client_failure_tracker.consecutive_failures == 0
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/durabletask/test_client.py -k "async_client_recreates_sdk_owned_channel or async_client_does_not_count" -v`
 
 Expected: FAIL because the async client still awaits stub methods directly and has no async-safe recreation path.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 ```python
 self._client_failure_tracker = FailureTracker(
@@ -775,13 +775,13 @@ async def _close_retired_channel(self, channel: grpc.aio.Channel) -> None:
     await channel.close()
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/durabletask/test_client.py -k "async_client_recreates_sdk_owned_channel or async_client_does_not_count" -v`
 
 Expected: PASS for the async recreation tests and no regressions in the existing async client construction tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add durabletask/client.py tests/durabletask/test_client.py
@@ -796,7 +796,7 @@ git commit -m "Add async client gRPC channel recreation"
 - Modify: `docs/superpowers/specs/2026-04-23-grpc-resiliency-design.md` (only if the implementation changed the agreed design)
 - Modify: `docs/superpowers/plans/2026-04-23-grpc-resiliency.md` (check off completed steps only after execution)
 
-- [ ] **Step 1: Add the changelog entries**
+- [x] **Step 1: Add the changelog entries**
 
 ```markdown
 ## Unreleased
@@ -814,7 +814,7 @@ git commit -m "Add async client gRPC channel recreation"
 - Added pass-through support for the new gRPC resiliency option types on Azure Managed clients and workers.
 ```
 
-- [ ] **Step 2: Run the focused tests**
+- [x] **Step 2: Run the focused tests**
 
 Run:
 
@@ -824,7 +824,7 @@ python -m pytest tests/durabletask/test_grpc_resiliency.py tests/durabletask/tes
 
 Expected: PASS for all new and touched unit tests.
 
-- [ ] **Step 3: Run lint on the changed Python files**
+- [x] **Step 3: Run lint on the changed Python files**
 
 Run:
 
@@ -834,7 +834,7 @@ python -m flake8 durabletask/grpc_options.py durabletask/internal/grpc_resilienc
 
 Expected: no output
 
-- [ ] **Step 4: Run the full test suite**
+- [x] **Step 4: Run the full test suite**
 
 Run:
 
@@ -844,7 +844,7 @@ python -m pytest
 
 Expected: PASS across the repository, including the existing orchestration and Azure Managed test suites.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add CHANGELOG.md durabletask-azuremanaged/CHANGELOG.md durabletask/grpc_options.py durabletask/internal/grpc_resiliency.py durabletask/client.py durabletask/worker.py durabletask-azuremanaged/durabletask/azuremanaged/client.py durabletask-azuremanaged/durabletask/azuremanaged/worker.py tests/durabletask/test_grpc_resiliency.py tests/durabletask/test_worker_resiliency.py tests/durabletask/test_client.py tests/durabletask-azuremanaged/test_grpc_resiliency.py
