@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added `ReplaySafeLogger` and `OrchestrationContext.create_replay_safe_logger()`
+  for suppressing duplicate log messages during orchestrator replay
 - Added `GrpcChannelOptions` and `GrpcRetryPolicyOptions` for configuring
   gRPC transport behavior, including message-size limits, keepalive settings,
   and channel-level retry policy service configuration.
