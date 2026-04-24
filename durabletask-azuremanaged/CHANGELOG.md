@@ -11,10 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
   `DurableTaskSchedulerWorker` to allow combining custom gRPC interceptors with
   DTS defaults and to support pre-configured/customized gRPC channels.
-- Added optional `resiliency_options` parameters to
+- Added pass-through `resiliency_options` support on
   `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
-  `DurableTaskSchedulerWorker` so applications can pass gRPC resiliency
-  settings through their constructors.
+  `DurableTaskSchedulerWorker` so Azure Managed applications can use the core
+  SDK's gRPC resiliency option types through their constructors.
 - Added `workerid` gRPC metadata on Durable Task Scheduler worker calls for
   improved worker identity and observability.
 - Improved sync access token refresh concurrency handling to avoid duplicate

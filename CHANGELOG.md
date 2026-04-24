@@ -12,16 +12,15 @@ ADDED
 - Added `GrpcChannelOptions` and `GrpcRetryPolicyOptions` for configuring
   gRPC transport behavior, including message-size limits, keepalive settings,
   and channel-level retry policy service configuration.
-- Added `GrpcWorkerResiliencyOptions` and `GrpcClientResiliencyOptions` for
-  configuring public gRPC reconnect, hello timeout, and channel recreation
-  thresholds.
 - Added optional `channel` and `channel_options` parameters to
   `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` to
   support pre-configured channel passthrough and low-level gRPC channel
   customization.
-- Added optional `resiliency_options` parameters to `TaskHubGrpcClient`,
-  `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` so applications can pass
-  gRPC resiliency settings through constructor APIs.
+- Added `GrpcWorkerResiliencyOptions` and `GrpcClientResiliencyOptions`, plus
+  `resiliency_options` constructor parameters on `TaskHubGrpcClient`,
+  `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`, to configure hello
+  deadlines, silent-disconnect detection, reconnect backoff, and channel
+  recreation thresholds for SDK-managed gRPC connections.
 - Added `get_orchestration_history()` and `list_instance_ids()` to the sync
   and async gRPC clients.
 - Added in-memory backend support for `StreamInstanceHistory` and
@@ -30,18 +29,13 @@ ADDED
 
 FIXED
 
-- Hardened `TaskHubGrpcWorker` reconnect handling so configured hello timeouts
-  apply on fresh connections, received work items reset failure tracking,
-  SDK-owned channels are cleaned up on shutdown and full resets, and
-  caller-owned channels are never recreated or closed during worker reconnects.
-- Fixed sync `TaskHubGrpcClient` transport resiliency so SDK-owned channels are
-  recreated after repeated transport failures while long-poll timeout
-  deadlines, successful replies, and application-level RPC errors reset the
-  failure tracker.
-- Fixed async `AsyncTaskHubGrpcClient` transport resiliency so SDK-owned
-  channels are recreated after repeated transport failures while long-poll
-  timeout deadlines, successful replies, and application-level RPC errors
-  reset the failure tracker.
+- Improved `TaskHubGrpcWorker` recovery from stale or disconnected gRPC streams
+  so configured hello timeouts apply on fresh connections, received work resets
+  failure tracking, SDK-owned channels are refreshed and cleaned up safely, and
+  caller-owned channels are never recreated or closed during reconnects.
+- Improved sync and async gRPC clients so repeated transport failures recreate
+  SDK-owned channels, while long-poll deadlines, successful replies, and
+  application-level RPC errors do not trigger unnecessary channel replacement.
 
 ## v1.4.0
 

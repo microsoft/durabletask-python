@@ -135,14 +135,16 @@ The monitor reports one of these outcomes:
 The outer worker loop uses those outcomes as follows:
 
 - `message_received`: reset health counters
-- `graceful_close_before_first_message`: count as channel poison
-- `graceful_close_after_message`: reconnect immediately without poisoning the
-  channel
+- `graceful_close_before_first_message`: immediately reset the current stream
+  and force a fresh SDK-owned channel on the next connect attempt
+- `graceful_close_after_message`: immediately reset the current stream and
+  reconnect without incrementing the transport-failure counter
 - `silent_disconnect`: count as channel poison
 - `shutdown`: exit cleanly
 
-This keeps rolling upgrades and normal peer-driven reconnects from being
-treated the same as a stale half-open stream.
+This keeps rolling upgrades and normal peer-driven reconnects from inflating
+the failure threshold while still forcing SDK-owned workers to establish a
+fresh channel after graceful stream closures.
 
 #### Failure counting and recreation
 
@@ -150,9 +152,8 @@ The worker increments the consecutive-failure counter only for
 transport-shaped failures:
 
 - `UNAVAILABLE`
-- `Hello` `DEADLINE_EXCEEDED`
+- `DEADLINE_EXCEEDED`
 - explicit silent-disconnect timeout
-- graceful stream close before the first message
 
 It does not increment the counter for errors that channel recreation is
 unlikely to fix, such as:
@@ -160,10 +161,13 @@ unlikely to fix, such as:
 - `UNAUTHENTICATED`
 - `NOT_FOUND`
 - orchestration or activity execution failures
+- graceful stream closures before or after work items
 
 When the threshold is reached and the worker owns the channel, it recreates the
-channel and stub. When the worker does not own the channel, it keeps retrying
-the existing transport and logs that the channel could not be recreated.
+channel and stub. Graceful stream closures also force an immediate fresh
+SDK-owned channel even though they do not increment the threshold. When the
+worker does not own the channel, it keeps retrying the existing transport and
+logs that the channel could not be recreated.
 
 ### Client behavior
 
@@ -284,9 +288,9 @@ Add focused unit tests for the new behavior.
 
 - hello deadline failure counts toward recreation
 - silent-disconnect timeout is detected and classified
-- graceful close before the first message poisons the channel
-- graceful close after a message triggers reconnect without poisoning
-- user-supplied channels are not recreated
+- graceful stream closes force a fresh SDK-owned connection without increasing
+  the failure counter
+- user-supplied channels are not recreated or closed
 
 ### Client tests
 
