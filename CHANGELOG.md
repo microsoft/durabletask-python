@@ -22,8 +22,11 @@ ADDED
 - Added optional `resiliency_options` parameters to `TaskHubGrpcClient`,
   `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` so applications can pass
   gRPC resiliency settings through constructor APIs.
-- Added `get_orchestration_history()` and `list_instance_ids()` to the sync and async gRPC clients.
-- Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` so local orchestration tests can retrieve history and page terminal instance IDs by completion window.
+- Added `get_orchestration_history()` and `list_instance_ids()` to the sync
+  and async gRPC clients.
+- Added in-memory backend support for `StreamInstanceHistory` and
+  `ListInstanceIds` so local orchestration tests can retrieve history and page
+  terminal instance IDs by completion window.
 
 FIXED
 
@@ -32,8 +35,9 @@ FIXED
   SDK-owned channels are cleaned up on shutdown and full resets, and
   caller-owned channels are never recreated or closed during worker reconnects.
 - Fixed sync `TaskHubGrpcClient` transport resiliency so SDK-owned channels are
-  recreated after repeated transport failures without counting long-poll
-  timeout deadlines against the recreation threshold.
+  recreated after repeated transport failures while long-poll timeout
+  deadlines, successful replies, and application-level RPC errors reset the
+  failure tracker.
 
 ## v1.4.0
 

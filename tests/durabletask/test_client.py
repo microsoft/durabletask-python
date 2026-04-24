@@ -359,10 +359,20 @@ def test_sync_client_recreates_sdk_owned_channel_after_repeated_unavailable():
     timer.start.assert_called_once_with()
 
 
-def test_sync_client_does_not_count_long_poll_deadline():
+@pytest.mark.parametrize(
+    ("stub_method_name", "client_method_name"),
+    [
+        ("WaitForInstanceStart", "wait_for_orchestration_start"),
+        ("WaitForInstanceCompletion", "wait_for_orchestration_completion"),
+    ],
+)
+def test_sync_client_resets_failure_tracking_after_long_poll_deadline(
+        stub_method_name: str,
+        client_method_name: str,
+):
     stub = MagicMock()
     stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
-    stub.WaitForInstanceStart.side_effect = FakeRpcError(grpc.StatusCode.DEADLINE_EXCEEDED)
+    getattr(stub, stub_method_name).side_effect = FakeRpcError(grpc.StatusCode.DEADLINE_EXCEEDED)
 
     with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
             "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
@@ -373,8 +383,8 @@ def test_sync_client_does_not_count_long_poll_deadline():
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         with pytest.raises(TimeoutError):
-            client.wait_for_orchestration_start("abc")
-        assert client._client_failure_tracker.consecutive_failures == 1
+            getattr(client, client_method_name)("abc")
+        assert client._client_failure_tracker.consecutive_failures == 0
 
 
 def test_sync_client_does_not_recreate_caller_owned_channel():

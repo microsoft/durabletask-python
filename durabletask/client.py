@@ -234,7 +234,7 @@ class TaskHubGrpcClient:
                 should_recreate = self._client_failure_tracker.record_failure()
                 if should_recreate:
                     self._maybe_recreate_channel()
-            elif status_code != grpc.StatusCode.DEADLINE_EXCEEDED:
+            else:
                 self._client_failure_tracker.record_success()
             raise
         else:
