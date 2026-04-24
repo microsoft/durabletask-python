@@ -78,6 +78,16 @@ class DummyWorkerManager:
         self._shutdown_event.set()
 
 
+def _complete_activity_request(req, stub, completion_token):
+    stub.CompleteActivityTask(
+        pb.ActivityResponse(
+            instanceId=req.orchestrationInstance.instanceId,
+            taskId=req.taskId,
+            completionToken=completion_token,
+        )
+    )
+
+
 def _make_activity_work_item() -> pb.WorkItem:
     return pb.WorkItem(
         activityRequest=pb.ActivityRequest(
@@ -329,6 +339,119 @@ async def test_worker_closes_sdk_owned_channel_on_graceful_stream_reset(monkeypa
     assert stub_channels == created_channels
     created_channels[0].close.assert_called_once()
     created_channels[1].close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_defers_sdk_owned_channel_close_until_inflight_completion_finishes(monkeypatch):
+    worker = TaskHubGrpcWorker()
+    worker_manager = DummyWorkerManager()
+    worker._async_worker_manager = worker_manager
+    worker._execute_activity = _complete_activity_request
+    monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
+
+    created_channels = []
+
+    def get_grpc_channel(*args, **kwargs):
+        channel = MagicMock(name=f"channel-{len(created_channels) + 1}")
+        created_channels.append(channel)
+        return channel
+
+    completed_responses = []
+    first_stub = MagicMock()
+    first_stub.GetWorkItems.return_value = FakeResponseStream(items=[_make_activity_work_item()])
+
+    def complete_activity(response):
+        assert created_channels[0].close.call_count == 0
+        completed_responses.append(response)
+
+    first_stub.CompleteActivityTask.side_effect = complete_activity
+
+    second_stub = MagicMock()
+    second_stub.GetWorkItems.side_effect = FakeRpcError(
+        grpc.StatusCode.CANCELLED,
+        "stop",
+    )
+
+    stubs = [first_stub, second_stub]
+    stub_channels = []
+
+    def create_stub(channel):
+        stub_channels.append(channel)
+        return stubs.pop(0)
+
+    monkeypatch.setattr("durabletask.worker.shared.get_grpc_channel", get_grpc_channel)
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", create_stub)
+
+    await worker._async_run_loop()
+
+    assert len(worker_manager.submissions) == 1
+    assert len(created_channels) == 2
+    assert stub_channels == created_channels
+    created_channels[0].close.assert_not_called()
+    created_channels[1].close.assert_called_once()
+
+    _, submission = worker_manager.submissions[0]
+    func, _, req, stub, completion_token = submission
+    func(req, stub, completion_token)
+
+    assert len(completed_responses) == 1
+    assert completed_responses[0].completionToken == "token"
+    created_channels[0].close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_never_closes_caller_owned_channel_after_graceful_reset(monkeypatch):
+    provided_channel = MagicMock(name="provided-channel")
+    worker = TaskHubGrpcWorker(channel=provided_channel)
+    worker_manager = DummyWorkerManager()
+    worker._async_worker_manager = worker_manager
+    worker._execute_activity = _complete_activity_request
+    monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
+
+    completed_responses = []
+    first_stub = MagicMock()
+    first_stub.GetWorkItems.return_value = FakeResponseStream(items=[_make_activity_work_item()])
+
+    def complete_activity(response):
+        assert provided_channel.close.call_count == 0
+        completed_responses.append(response)
+
+    first_stub.CompleteActivityTask.side_effect = complete_activity
+
+    second_stub = MagicMock()
+    second_stub.GetWorkItems.side_effect = FakeRpcError(
+        grpc.StatusCode.CANCELLED,
+        "stop",
+    )
+
+    stubs = [first_stub, second_stub]
+    stub_channels = []
+
+    def create_stub(channel):
+        stub_channels.append(channel)
+        return stubs.pop(0)
+
+    monkeypatch.setattr(
+        "durabletask.worker.shared.get_grpc_channel",
+        lambda *args, **kwargs: pytest.fail(
+            "SDK channel factory should not run for caller-owned channels"
+        ),
+    )
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", create_stub)
+
+    await worker._async_run_loop()
+
+    assert len(worker_manager.submissions) == 1
+    assert stub_channels == [provided_channel, provided_channel]
+    provided_channel.close.assert_not_called()
+
+    _, submission = worker_manager.submissions[0]
+    func, _, req, stub, completion_token = submission
+    func(req, stub, completion_token)
+
+    assert len(completed_responses) == 1
+    assert completed_responses[0].completionToken == "token"
+    provided_channel.close.assert_not_called()
 
 
 @pytest.mark.asyncio

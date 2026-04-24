@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
 from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union, overload
@@ -128,6 +128,73 @@ class _WorkItemStreamOutcome(Enum):
     GRACEFUL_CLOSE_BEFORE_FIRST_MESSAGE = "graceful_close_before_first_message"
     GRACEFUL_CLOSE_AFTER_MESSAGE = "graceful_close_after_message"
     SILENT_DISCONNECT = "silent_disconnect"
+
+
+@dataclass
+class _TrackedChannelState:
+    channel: Any
+    ref_count: int = 0
+    close_when_released: bool = False
+
+
+class _InFlightChannelTracker:
+    def __init__(self):
+        self._lock = Lock()
+        self._states: dict[int, _TrackedChannelState] = {}
+
+    def acquire(self, channel: Any):
+        channel_key = id(channel)
+        with self._lock:
+            state = self._states.get(channel_key)
+            if state is None:
+                state = _TrackedChannelState(channel=channel)
+                self._states[channel_key] = state
+            state.ref_count += 1
+
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+
+            channel_to_close = None
+            with self._lock:
+                state = self._states.get(channel_key)
+                if state is None:
+                    return
+
+                state.ref_count -= 1
+                if state.ref_count == 0:
+                    if state.close_when_released:
+                        channel_to_close = state.channel
+                    del self._states[channel_key]
+
+            if channel_to_close is not None:
+                self._close_channel(channel_to_close)
+
+        return release
+
+    def retire(self, channel: Any) -> None:
+        channel_key = id(channel)
+        channel_to_close = None
+        with self._lock:
+            state = self._states.get(channel_key)
+            if state is None:
+                channel_to_close = channel
+            else:
+                state.close_when_released = True
+
+        if channel_to_close is not None:
+            self._close_channel(channel_to_close)
+
+    @staticmethod
+    def _close_channel(channel: Any) -> None:
+        try:
+            channel.close()
+        except Exception:
+            pass
 
 
 class VersioningOptions:
@@ -642,6 +709,7 @@ class TaskHubGrpcWorker:
         failure_tracker = FailureTracker(
             threshold=self._resiliency_options.channel_recreate_failure_threshold,
         )
+        in_flight_channel_tracker = _InFlightChannelTracker()
 
         def get_reconnect_delay_seconds() -> float:
             return get_full_jitter_delay_seconds(
@@ -669,6 +737,45 @@ class TaskHubGrpcWorker:
             except Exception as e:
                 self._logger.warning(f"Failed to create connection: {e}")
                 current_stub = None
+                raise
+
+        def wrap_execution(handler, release):
+            def wrapped(*args, **kwargs):
+                result = handler(*args, **kwargs)
+                release()
+                return result
+
+            return wrapped
+
+        def wrap_cancellation(handler, release):
+            def wrapped(*args, **kwargs):
+                try:
+                    return handler(*args, **kwargs)
+                finally:
+                    release()
+
+            return wrapped
+
+        def submit_work_item(
+                submit_func,
+                handler,
+                cancellation_handler,
+                request,
+                stub,
+                completion_token,
+                channel,
+        ):
+            release = in_flight_channel_tracker.acquire(channel)
+            try:
+                submit_func(
+                    wrap_execution(handler, release),
+                    wrap_cancellation(cancellation_handler, release),
+                    request,
+                    stub,
+                    completion_token,
+                )
+            except Exception:
+                release()
                 raise
 
         def invalidate_connection(
@@ -700,10 +807,7 @@ class TaskHubGrpcWorker:
                     and self._can_recreate_channel()
                     and (recreate_channel or close_channel)
             ):
-                try:
-                    current_channel.close()
-                except Exception:
-                    pass
+                in_flight_channel_tracker.retire(current_channel)
                 current_channel = None
             current_stub = None
 
@@ -742,7 +846,9 @@ class TaskHubGrpcWorker:
                     continue
             try:
                 assert current_stub is not None
+                assert current_channel is not None
                 stub = current_stub
+                channel = current_channel
                 capabilities = []
                 if self._payload_store is not None:
                     capabilities.append(pb.WORKER_CAPABILITY_LARGE_PAYLOADS)
@@ -822,36 +928,44 @@ class TaskHubGrpcWorker:
 
                         failure_tracker.record_success()
                         if work_item.HasField("orchestratorRequest"):
-                            self._async_worker_manager.submit_orchestration(
+                            submit_work_item(
+                                self._async_worker_manager.submit_orchestration,
                                 self._execute_orchestrator,
                                 self._cancel_orchestrator,
                                 work_item.orchestratorRequest,
                                 stub,
                                 work_item.completionToken,
+                                channel,
                             )
                         elif work_item.HasField("activityRequest"):
-                            self._async_worker_manager.submit_activity(
+                            submit_work_item(
+                                self._async_worker_manager.submit_activity,
                                 self._execute_activity,
                                 self._cancel_activity,
                                 work_item.activityRequest,
                                 stub,
                                 work_item.completionToken,
+                                channel,
                             )
                         elif work_item.HasField("entityRequest"):
-                            self._async_worker_manager.submit_entity_batch(
+                            submit_work_item(
+                                self._async_worker_manager.submit_entity_batch,
                                 self._execute_entity_batch,
                                 self._cancel_entity_batch,
                                 work_item.entityRequest,
                                 stub,
                                 work_item.completionToken,
+                                channel,
                             )
                         elif work_item.HasField("entityRequestV2"):
-                            self._async_worker_manager.submit_entity_batch(
+                            submit_work_item(
+                                self._async_worker_manager.submit_entity_batch,
                                 self._execute_entity_batch,
                                 self._cancel_entity_batch,
                                 work_item.entityRequestV2,
                                 stub,
-                                work_item.completionToken
+                                work_item.completionToken,
+                                channel,
                             )
                         else:
                             self._logger.warning(
