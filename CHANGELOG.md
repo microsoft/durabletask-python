@@ -31,6 +31,9 @@ FIXED
   apply on fresh connections, received work items reset failure tracking,
   SDK-owned channels are cleaned up on shutdown and full resets, and
   caller-owned channels are never recreated or closed during worker reconnects.
+- Fixed sync `TaskHubGrpcClient` transport resiliency so SDK-owned channels are
+  recreated after repeated transport failures without counting long-poll
+  timeout deadlines against the recreation threshold.
 
 ## v1.4.0
 

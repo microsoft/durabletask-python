@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 
 import logging
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,6 +27,10 @@ import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
 import durabletask.internal.tracing as tracing
 from durabletask import task
+from durabletask.internal.grpc_resiliency import (
+    FailureTracker,
+    is_client_transport_failure,
+)
 from durabletask.internal.client_helpers import (
     build_query_entities_req,
     build_query_instances_req,
@@ -201,9 +207,60 @@ class TaskHubGrpcClient:
             )
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
+        self._client_failure_tracker = FailureTracker(
+            self._resiliency_options.channel_recreate_failure_threshold
+        )
+        self._last_recreate_time = 0.0
+        self._recreate_lock = threading.Lock()
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
+
+    def _invoke_unary(
+            self,
+            method_name: str,
+            request: Any,
+            *,
+            timeout: Optional[int] = None):
+        method = getattr(self._stub, method_name)
+        try:
+            if timeout is None:
+                response = method(request)
+            else:
+                response = method(request, timeout=timeout)
+        except grpc.RpcError as rpc_error:
+            status_code = rpc_error.code()
+            if is_client_transport_failure(method_name, status_code):
+                should_recreate = self._client_failure_tracker.record_failure()
+                if should_recreate:
+                    self._maybe_recreate_channel()
+            elif status_code != grpc.StatusCode.DEADLINE_EXCEEDED:
+                self._client_failure_tracker.record_success()
+            raise
+        else:
+            self._client_failure_tracker.record_success()
+            return response
+
+    def _maybe_recreate_channel(self) -> None:
+        if not self._owns_channel:
+            return
+        with self._recreate_lock:
+            now = time.monotonic()
+            if now - self._last_recreate_time < self._resiliency_options.min_recreate_interval_seconds:
+                return
+            old_channel = self._channel
+            self._channel = shared.get_grpc_channel(
+                host_address=self._host_address,
+                secure_channel=self._secure_channel,
+                interceptors=self._interceptors,
+                channel_options=self._channel_options,
+            )
+            self._stub = stubs.TaskHubSidecarServiceStub(self._channel)
+            self._last_recreate_time = now
+            self._client_failure_tracker.record_success()
+            close_timer = threading.Timer(30.0, old_channel.close)
+            close_timer.daemon = True
+            close_timer.start()
 
     def close(self) -> None:
         """Closes the underlying gRPC channel.
@@ -249,12 +306,12 @@ class TaskHubGrpcClient:
                 payload_helpers.externalize_payloads(
                     req, self._payload_store, instance_id=req.instanceId,
                 )
-            res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
+            res: pb.CreateInstanceResponse = self._invoke_unary("StartInstance", req)
             return res.instanceId
 
     def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
-        res: pb.GetInstanceResponse = self._stub.GetInstance(req)
+        res: pb.GetInstanceResponse = self._invoke_unary("GetInstance", req)
         # De-externalize any large-payload tokens in the response
         if self._payload_store is not None and res.exists:
             payload_helpers.deexternalize_payloads(res, self._payload_store)
@@ -294,7 +351,7 @@ class TaskHubGrpcClient:
             f"page_size={page_size}, "
             f"continuation_token={continuation_token}"
         )
-        resp: pb.ListInstanceIdsResponse = self._stub.ListInstanceIds(req)
+        resp: pb.ListInstanceIdsResponse = self._invoke_unary("ListInstanceIds", req)
         next_token = resp.lastInstanceKey.value if resp.HasField("lastInstanceKey") else None
         return Page(items=list(resp.instanceIds), continuation_token=next_token)
 
@@ -311,7 +368,7 @@ class TaskHubGrpcClient:
 
         while True:
             req = build_query_instances_req(orchestration_query, _continuation_token)
-            resp: pb.QueryInstancesResponse = self._stub.QueryInstances(req)
+            resp: pb.QueryInstancesResponse = self._invoke_unary("QueryInstances", req)
             if self._payload_store is not None:
                 payload_helpers.deexternalize_payloads(resp, self._payload_store)
             states += [parse_orchestration_state(res) for res in resp.orchestrationState]
@@ -328,7 +385,11 @@ class TaskHubGrpcClient:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
-            res: pb.GetInstanceResponse = self._stub.WaitForInstanceStart(req, timeout=timeout)
+            res: pb.GetInstanceResponse = self._invoke_unary(
+                "WaitForInstanceStart",
+                req,
+                timeout=timeout,
+            )
             if self._payload_store is not None and res.exists:
                 payload_helpers.deexternalize_payloads(res, self._payload_store)
             return new_orchestration_state(req.instanceId, res)
@@ -345,7 +406,11 @@ class TaskHubGrpcClient:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
-            res: pb.GetInstanceResponse = self._stub.WaitForInstanceCompletion(req, timeout=timeout)
+            res: pb.GetInstanceResponse = self._invoke_unary(
+                "WaitForInstanceCompletion",
+                req,
+                timeout=timeout,
+            )
             if self._payload_store is not None and res.exists:
                 payload_helpers.deexternalize_payloads(res, self._payload_store)
             state = new_orchestration_state(req.instanceId, res)
@@ -366,7 +431,7 @@ class TaskHubGrpcClient:
                 payload_helpers.externalize_payloads(
                     req, self._payload_store, instance_id=instance_id,
                 )
-            self._stub.RaiseEvent(req)
+            self._invoke_unary("RaiseEvent", req)
 
     def terminate_orchestration(self, instance_id: str, *,
                                 output: Optional[Any] = None,
@@ -378,17 +443,17 @@ class TaskHubGrpcClient:
             payload_helpers.externalize_payloads(
                 req, self._payload_store, instance_id=instance_id,
             )
-        self._stub.TerminateInstance(req)
+        self._invoke_unary("TerminateInstance", req)
 
     def suspend_orchestration(self, instance_id: str) -> None:
         req = pb.SuspendRequest(instanceId=instance_id)
         self._logger.info(f"Suspending instance '{instance_id}'.")
-        self._stub.SuspendInstance(req)
+        self._invoke_unary("SuspendInstance", req)
 
     def resume_orchestration(self, instance_id: str) -> None:
         req = pb.ResumeRequest(instanceId=instance_id)
         self._logger.info(f"Resuming instance '{instance_id}'.")
-        self._stub.ResumeInstance(req)
+        self._invoke_unary("ResumeInstance", req)
 
     def restart_orchestration(self, instance_id: str, *,
                               restart_with_new_instance_id: bool = False) -> str:
@@ -407,13 +472,13 @@ class TaskHubGrpcClient:
             restartWithNewInstanceId=restart_with_new_instance_id)
 
         self._logger.info(f"Restarting instance '{instance_id}'.")
-        res: pb.RestartInstanceResponse = self._stub.RestartInstance(req)
+        res: pb.RestartInstanceResponse = self._invoke_unary("RestartInstance", req)
         return res.instanceId
 
     def purge_orchestration(self, instance_id: str, recursive: bool = True) -> PurgeInstancesResult:
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
-        resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(req)
+        resp: pb.PurgeInstancesResponse = self._invoke_unary("PurgeInstances", req)
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
     def purge_orchestrations_by(self,
@@ -427,7 +492,7 @@ class TaskHubGrpcClient:
                           f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
                           f"recursive={recursive}")
         req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive)
-        resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(req)
+        resp: pb.PurgeInstancesResponse = self._invoke_unary("PurgeInstances", req)
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
     def signal_entity(self,
@@ -440,7 +505,7 @@ class TaskHubGrpcClient:
             payload_helpers.externalize_payloads(
                 req, self._payload_store, instance_id=str(entity_instance_id),
             )
-        self._stub.SignalEntity(req, None)  # TODO: Cancellation timeout?
+        self._invoke_unary("SignalEntity", req)  # TODO: Cancellation timeout?
 
     def get_entity(self,
                    entity_instance_id: EntityInstanceId,
@@ -448,7 +513,7 @@ class TaskHubGrpcClient:
                    ) -> Optional[EntityMetadata]:
         req = pb.GetEntityRequest(instanceId=str(entity_instance_id), includeState=include_state)
         self._logger.info(f"Getting entity '{entity_instance_id}'.")
-        res: pb.GetEntityResponse = self._stub.GetEntity(req)
+        res: pb.GetEntityResponse = self._invoke_unary("GetEntity", req)
         if not res.exists:
             return None
         if self._payload_store is not None:
@@ -467,7 +532,7 @@ class TaskHubGrpcClient:
 
         while True:
             query_request = build_query_entities_req(entity_query, _continuation_token)
-            resp: pb.QueryEntitiesResponse = self._stub.QueryEntities(query_request)
+            resp: pb.QueryEntitiesResponse = self._invoke_unary("QueryEntities", query_request)
             if self._payload_store is not None:
                 payload_helpers.deexternalize_payloads(resp, self._payload_store)
             entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
@@ -493,7 +558,7 @@ class TaskHubGrpcClient:
                 releaseOrphanedLocks=release_orphaned_locks,
                 continuationToken=_continuation_token
             )
-            resp: pb.CleanEntityStorageResponse = self._stub.CleanEntityStorage(req)
+            resp: pb.CleanEntityStorageResponse = self._invoke_unary("CleanEntityStorage", req)
             empty_entities_removed += resp.emptyEntitiesRemoved
             orphaned_locks_released += resp.orphanedLocksReleased
 

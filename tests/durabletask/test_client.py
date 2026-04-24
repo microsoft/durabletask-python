@@ -1,4 +1,5 @@
 import json
+import grpc
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -30,6 +31,15 @@ from durabletask.internal.shared import (
 HOST_ADDRESS = 'localhost:50051'
 METADATA = [('key1', 'value1'), ('key2', 'value2')]
 INTERCEPTORS = [DefaultClientInterceptorImpl(METADATA)]
+
+
+class FakeRpcError(grpc.RpcError):
+    def __init__(self, status_code: grpc.StatusCode):
+        super().__init__()
+        self._status_code = status_code
+
+    def code(self):
+        return self._status_code
 
 
 class FakePayloadStore(PayloadStore):
@@ -315,6 +325,117 @@ def test_client_stores_resiliency_options_for_recreation():
     assert client._secure_channel is True
     assert client._channel_options is channel_options
     assert client._interceptors == interceptors
+
+
+def test_sync_client_recreates_sdk_owned_channel_after_repeated_unavailable():
+    first_channel = MagicMock(name="first-channel")
+    second_channel = MagicMock(name="second-channel")
+    first_stub = MagicMock()
+    second_stub = MagicMock()
+    second_stub.GetInstance.return_value = MagicMock(exists=False)
+
+    rpc_error = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+    first_stub.GetInstance.side_effect = rpc_error
+
+    timer = MagicMock()
+
+    with patch("durabletask.client.shared.get_grpc_channel", side_effect=[first_channel, second_channel]), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
+    ), patch("threading.Timer", return_value=timer) as mock_timer:
+        client = TaskHubGrpcClient(
+            host_address="localhost:4001",
+            resiliency_options=GrpcClientResiliencyOptions(
+                channel_recreate_failure_threshold=1,
+                min_recreate_interval_seconds=0.0,
+            ),
+        )
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+        client.get_orchestration_state("abc")
+
+    assert client._channel is second_channel
+    mock_timer.assert_called_once_with(30.0, first_channel.close)
+    assert timer.daemon is True
+    timer.start.assert_called_once_with()
+
+
+def test_sync_client_does_not_count_long_poll_deadline():
+    stub = MagicMock()
+    stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+    stub.WaitForInstanceStart.side_effect = FakeRpcError(grpc.StatusCode.DEADLINE_EXCEEDED)
+
+    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    ):
+        client = TaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
+        )
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+        with pytest.raises(TimeoutError):
+            client.wait_for_orchestration_start("abc")
+        assert client._client_failure_tracker.consecutive_failures == 1
+
+
+def test_sync_client_does_not_recreate_caller_owned_channel():
+    provided_channel = MagicMock(name="provided-channel")
+    stub = MagicMock()
+    stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+
+    with patch("durabletask.client.shared.get_grpc_channel") as mock_get_channel, patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    ) as mock_stub:
+        client = TaskHubGrpcClient(
+            channel=provided_channel,
+            resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=1),
+        )
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+
+    assert client._channel is provided_channel
+    mock_get_channel.assert_not_called()
+    mock_stub.assert_called_once_with(provided_channel)
+
+
+def test_sync_client_resets_failure_tracking_after_success():
+    stub = MagicMock()
+    stub.GetInstance.side_effect = [
+        FakeRpcError(grpc.StatusCode.UNAVAILABLE),
+        MagicMock(exists=False),
+    ]
+
+    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    ):
+        client = TaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
+        )
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+        assert client.get_orchestration_state("abc") is None
+        assert client._client_failure_tracker.consecutive_failures == 0
+
+
+def test_sync_client_resets_failure_tracking_after_application_error():
+    stub = MagicMock()
+    stub.GetInstance.side_effect = [
+        FakeRpcError(grpc.StatusCode.UNAVAILABLE),
+        FakeRpcError(grpc.StatusCode.INVALID_ARGUMENT),
+    ]
+
+    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    ):
+        client = TaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
+        )
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+        assert client._client_failure_tracker.consecutive_failures == 0
 
 
 def test_async_client_stores_resolved_transport_inputs():
