@@ -1,5 +1,6 @@
 import asyncio
 import grpc
+from threading import Event
 from unittest.mock import MagicMock
 
 import pytest
@@ -38,6 +39,22 @@ class FakeResponseStream:
 
     def cancel(self):
         self.cancelled = True
+
+
+class BlockingResponseStream:
+    def __init__(self):
+        self._cancel_event = Event()
+        self.cancelled = False
+
+    def __iter__(self):
+        if not self._cancel_event.wait(timeout=0.5):
+            raise AssertionError("response stream was not cancelled")
+        return
+        yield
+
+    def cancel(self):
+        self.cancelled = True
+        self._cancel_event.set()
 
 
 class DummyWorkerManager:
@@ -218,6 +235,66 @@ async def test_worker_recreates_sdk_owned_channel_after_transport_failure_thresh
 
 
 @pytest.mark.asyncio
+async def test_worker_recreates_sdk_owned_channel_after_silent_disconnect(monkeypatch):
+    worker = TaskHubGrpcWorker(
+        resiliency_options=GrpcWorkerResiliencyOptions(
+            channel_recreate_failure_threshold=1,
+            silent_disconnect_timeout_seconds=0.01,
+        )
+    )
+    worker._async_worker_manager = DummyWorkerManager()
+
+    wait_calls = []
+
+    def shutdown_wait(timeout):
+        wait_calls.append(timeout)
+        return False
+
+    monkeypatch.setattr(worker._shutdown, "wait", shutdown_wait)
+
+    delay_calls = []
+
+    def fake_delay(attempt, *, base_seconds, cap_seconds):
+        delay_calls.append((attempt, base_seconds, cap_seconds))
+        return 0.25
+
+    created_channels = []
+
+    def get_grpc_channel(*args, **kwargs):
+        channel = MagicMock(name=f"channel-{len(created_channels) + 1}")
+        created_channels.append(channel)
+        return channel
+
+    blocking_stream = BlockingResponseStream()
+    stub_channels = []
+    stubs = [
+        MagicMock(GetWorkItems=MagicMock(return_value=blocking_stream)),
+        MagicMock(GetWorkItems=MagicMock(side_effect=FakeRpcError(
+            grpc.StatusCode.CANCELLED,
+            "stop",
+        ))),
+    ]
+
+    def create_stub(channel):
+        stub_channels.append(channel)
+        return stubs.pop(0)
+
+    monkeypatch.setattr("durabletask.worker.get_full_jitter_delay_seconds", fake_delay)
+    monkeypatch.setattr("durabletask.worker.shared.get_grpc_channel", get_grpc_channel)
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", create_stub)
+
+    await worker._async_run_loop()
+
+    assert blocking_stream.cancelled is True
+    assert delay_calls == [(1, 1.0, 30.0)]
+    assert wait_calls == [0.25]
+    assert len(created_channels) == 2
+    assert stub_channels == created_channels
+    created_channels[0].close.assert_called_once()
+    created_channels[1].close.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_worker_closes_sdk_owned_channel_on_graceful_stream_reset(monkeypatch):
     worker = TaskHubGrpcWorker()
     worker._async_worker_manager = DummyWorkerManager()
@@ -252,6 +329,60 @@ async def test_worker_closes_sdk_owned_channel_on_graceful_stream_reset(monkeypa
     assert stub_channels == created_channels
     created_channels[0].close.assert_called_once()
     created_channels[1].close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_uses_reconnect_backoff_helper_after_connection_failure(monkeypatch):
+    worker = TaskHubGrpcWorker(
+        resiliency_options=GrpcWorkerResiliencyOptions(
+            reconnect_backoff_base_seconds=1.5,
+            reconnect_backoff_cap_seconds=9.0,
+        )
+    )
+    worker._async_worker_manager = DummyWorkerManager()
+
+    wait_calls = []
+
+    def shutdown_wait(timeout):
+        wait_calls.append(timeout)
+        return False
+
+    monkeypatch.setattr(worker._shutdown, "wait", shutdown_wait)
+
+    delay_calls = []
+
+    def fake_delay(attempt, *, base_seconds, cap_seconds):
+        delay_calls.append((attempt, base_seconds, cap_seconds))
+        return 0.75
+
+    channel = MagicMock(name="channel-1")
+    stub_channels = []
+    first_stub = MagicMock()
+    first_stub.Hello.side_effect = FakeRpcError(
+        grpc.StatusCode.UNAVAILABLE,
+        "connect failed",
+    )
+    second_stub = MagicMock()
+    second_stub.GetWorkItems.side_effect = FakeRpcError(
+        grpc.StatusCode.CANCELLED,
+        "stop",
+    )
+    stubs = [first_stub, second_stub]
+
+    def create_stub(current_channel):
+        stub_channels.append(current_channel)
+        return stubs.pop(0)
+
+    monkeypatch.setattr("durabletask.worker.get_full_jitter_delay_seconds", fake_delay)
+    monkeypatch.setattr("durabletask.worker.shared.get_grpc_channel", lambda *args, **kwargs: channel)
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", create_stub)
+
+    await worker._async_run_loop()
+
+    assert delay_calls == [(1, 1.5, 9.0)]
+    assert wait_calls == [0.75]
+    assert stub_channels == [channel, channel]
+    channel.close.assert_called_once()
 
 
 @pytest.mark.asyncio
