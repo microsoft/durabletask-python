@@ -21,7 +21,10 @@ from packaging.version import InvalidVersion, parse
 import grpc
 from google.protobuf import empty_pb2
 
-from durabletask.grpc_options import GrpcChannelOptions
+from durabletask.grpc_options import (
+    GrpcChannelOptions,
+    GrpcWorkerResiliencyOptions,
+)
 from durabletask.entities.entity_operation_failed_exception import EntityOperationFailedException
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
@@ -369,6 +372,8 @@ class TaskHubGrpcWorker:
             interceptors to apply to the channel. Defaults to None.
         channel_options (Optional[GrpcChannelOptions], optional): Extra low-level gRPC
             channel configuration including retry/service config options.
+        resiliency_options (Optional[GrpcWorkerResiliencyOptions], optional): Worker-side
+            gRPC resiliency settings retained for reconnect handling.
         concurrency_options (Optional[ConcurrencyOptions], optional): Configuration for
             controlling worker concurrency limits. If None, default settings are used.
 
@@ -436,6 +441,7 @@ class TaskHubGrpcWorker:
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
             channel_options: Optional[GrpcChannelOptions] = None,
+            resiliency_options: Optional[GrpcWorkerResiliencyOptions] = None,
             concurrency_options: Optional[ConcurrencyOptions] = None,
             maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
             payload_store: Optional[PayloadStore] = None,
@@ -451,6 +457,11 @@ class TaskHubGrpcWorker:
         self._secure_channel = secure_channel
         self._payload_store = payload_store
         self._channel_options = channel_options
+        self._resiliency_options = (
+            resiliency_options
+            if resiliency_options is not None
+            else GrpcWorkerResiliencyOptions()
+        )
 
         # Use provided concurrency options or create default ones
         self._concurrency_options = (

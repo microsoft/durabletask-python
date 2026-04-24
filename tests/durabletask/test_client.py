@@ -8,8 +8,14 @@ from google.protobuf import wrappers_pb2
 import durabletask.history as history
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus, TaskHubGrpcClient
-from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
+from durabletask.grpc_options import (
+    GrpcChannelOptions,
+    GrpcClientResiliencyOptions,
+    GrpcRetryPolicyOptions,
+    GrpcWorkerResiliencyOptions,
+)
 from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
+from durabletask.worker import TaskHubGrpcWorker
 
 from durabletask.internal.grpc_interceptor import (
     DefaultAsyncClientInterceptorImpl,
@@ -288,6 +294,38 @@ def test_async_client_uses_provided_channel_directly():
         client = AsyncTaskHubGrpcClient(channel=provided_channel, host_address=HOST_ADDRESS)
         assert client._channel is provided_channel
         mock_get_channel.assert_not_called()
+
+
+def test_client_stores_resiliency_options_for_recreation():
+    resiliency = GrpcClientResiliencyOptions(channel_recreate_failure_threshold=7)
+    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()
+    ):
+        client = TaskHubGrpcClient(
+            host_address="localhost:4001",
+            resiliency_options=resiliency,
+        )
+    assert client._resiliency_options is resiliency
+    assert client._host_address == "localhost:4001"
+
+
+def test_async_client_stores_resolved_transport_inputs():
+    resiliency = GrpcClientResiliencyOptions()
+    with patch("durabletask.client.shared.get_async_grpc_channel", return_value=MagicMock()), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()
+    ):
+        client = AsyncTaskHubGrpcClient(
+            host_address="localhost:4001",
+            resiliency_options=resiliency,
+        )
+    assert client._resiliency_options is resiliency
+    assert client._host_address == "localhost:4001"
+
+
+def test_worker_stores_resiliency_options():
+    resiliency = GrpcWorkerResiliencyOptions(channel_recreate_failure_threshold=9)
+    worker = TaskHubGrpcWorker(resiliency_options=resiliency)
+    assert worker._resiliency_options is resiliency
 
 
 def test_get_orchestration_history_aggregates_chunks_and_deexternalizes_payloads():

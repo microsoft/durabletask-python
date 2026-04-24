@@ -13,7 +13,10 @@ from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import \
     DTSDefaultClientInterceptorImpl
-from durabletask.grpc_options import GrpcChannelOptions
+from durabletask.grpc_options import (
+    GrpcChannelOptions,
+    GrpcWorkerResiliencyOptions,
+)
 import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
 from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
@@ -34,6 +37,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             If None, anonymous authentication will be used.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to True.
+        resiliency_options (Optional[GrpcWorkerResiliencyOptions], optional): Worker-side
+            gRPC resiliency settings forwarded to the base worker.
         concurrency_options (Optional[ConcurrencyOptions], optional): Configuration
             for controlling worker concurrency limits. If None, default concurrency
             settings will be used.
@@ -74,6 +79,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  secure_channel: bool = True,
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
                  channel_options: Optional[GrpcChannelOptions] = None,
+                 resiliency_options: Optional[GrpcWorkerResiliencyOptions] = None,
                  concurrency_options: Optional[ConcurrencyOptions] = None,
                  payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
@@ -101,6 +107,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             log_formatter=log_formatter,
             interceptors=resolved_interceptors,
             channel_options=channel_options,
+            resiliency_options=resiliency_options,
             concurrency_options=concurrency_options,
             # DTS natively supports long timers so chunking is unnecessary
             maximum_timer_interval=None,

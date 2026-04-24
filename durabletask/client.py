@@ -14,7 +14,10 @@ import grpc.aio
 import durabletask.history as history
 from durabletask.entities import EntityInstanceId
 from durabletask.entities.entity_metadata import EntityMetadata
-from durabletask.grpc_options import GrpcChannelOptions
+from durabletask.grpc_options import (
+    GrpcChannelOptions,
+    GrpcClientResiliencyOptions,
+)
 import durabletask.internal.helpers as helpers
 import durabletask.internal.history_helpers as history_helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -166,16 +169,34 @@ class TaskHubGrpcClient:
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
                  channel_options: Optional[GrpcChannelOptions] = None,
+                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
         self._owns_channel = channel is None
+        self._host_address = (
+            host_address if host_address else shared.get_default_host_address()
+        )
+        self._secure_channel = secure_channel
+        self._channel_options = channel_options
+        self._resiliency_options = (
+            resiliency_options
+            if resiliency_options is not None
+            else GrpcClientResiliencyOptions()
+        )
+        resolved_interceptors = (
+            prepare_sync_interceptors(metadata, interceptors) if channel is None else interceptors
+        )
+        self._interceptors = (
+            list(resolved_interceptors)
+            if resolved_interceptors is not None
+            else None
+        )
         if channel is None:
-            interceptors = prepare_sync_interceptors(metadata, interceptors)
             channel = shared.get_grpc_channel(
-                host_address=host_address,
+                host_address=self._host_address,
                 secure_channel=secure_channel,
-                interceptors=interceptors,
+                interceptors=self._interceptors,
                 channel_options=channel_options,
             )
         self._channel = channel
@@ -496,16 +517,34 @@ class AsyncTaskHubGrpcClient:
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
                  channel_options: Optional[GrpcChannelOptions] = None,
+                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
         self._owns_channel = channel is None
+        self._host_address = (
+            host_address if host_address else shared.get_default_host_address()
+        )
+        self._secure_channel = secure_channel
+        self._channel_options = channel_options
+        self._resiliency_options = (
+            resiliency_options
+            if resiliency_options is not None
+            else GrpcClientResiliencyOptions()
+        )
+        resolved_interceptors = (
+            prepare_async_interceptors(metadata, interceptors) if channel is None else interceptors
+        )
+        self._interceptors = (
+            list(resolved_interceptors)
+            if resolved_interceptors is not None
+            else None
+        )
         if channel is None:
-            interceptors = prepare_async_interceptors(metadata, interceptors)
             channel = shared.get_async_grpc_channel(
-                host_address=host_address,
+                host_address=self._host_address,
                 secure_channel=secure_channel,
-                interceptors=interceptors,
+                interceptors=self._interceptors,
                 channel_options=channel_options,
             )
         self._channel = channel

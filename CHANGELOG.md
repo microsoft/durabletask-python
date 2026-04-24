@@ -19,6 +19,9 @@ ADDED
   `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` to
   support pre-configured channel passthrough and low-level gRPC channel
   customization.
+- Added optional `resiliency_options` parameters to `TaskHubGrpcClient`,
+  `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` so applications can pass
+  gRPC resiliency settings through constructor APIs.
 - Added `get_orchestration_history()` and `list_instance_ids()` to the sync and async gRPC clients.
 - Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` so local orchestration tests can retrieve history and page terminal instance IDs by completion window.
 
