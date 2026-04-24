@@ -2,7 +2,7 @@ import json
 import grpc
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 from google.protobuf import wrappers_pb2
 
@@ -327,23 +327,32 @@ def test_client_stores_resiliency_options_for_recreation():
     assert client._interceptors == interceptors
 
 
-def test_sync_client_recreates_sdk_owned_channel_after_repeated_unavailable():
+def test_sync_client_recreates_sdk_owned_channel_with_original_transport_inputs():
     first_channel = MagicMock(name="first-channel")
     second_channel = MagicMock(name="second-channel")
     first_stub = MagicMock()
     second_stub = MagicMock()
     second_stub.GetInstance.return_value = MagicMock(exists=False)
+    host_address = "localhost:4001"
+    interceptors = [DefaultClientInterceptorImpl(METADATA)]
+    channel_options = GrpcChannelOptions(max_receive_message_length=1234)
 
     rpc_error = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
     first_stub.GetInstance.side_effect = rpc_error
 
     timer = MagicMock()
 
-    with patch("durabletask.client.shared.get_grpc_channel", side_effect=[first_channel, second_channel]), patch(
+    with patch(
+            "durabletask.client.shared.get_grpc_channel",
+            side_effect=[first_channel, second_channel],
+    ) as mock_get_channel, patch(
             "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
     ), patch("threading.Timer", return_value=timer) as mock_timer:
         client = TaskHubGrpcClient(
-            host_address="localhost:4001",
+            host_address=host_address,
+            secure_channel=True,
+            interceptors=interceptors,
+            channel_options=channel_options,
             resiliency_options=GrpcClientResiliencyOptions(
                 channel_recreate_failure_threshold=1,
                 min_recreate_interval_seconds=0.0,
@@ -353,6 +362,16 @@ def test_sync_client_recreates_sdk_owned_channel_after_repeated_unavailable():
             client.get_orchestration_state("abc")
         client.get_orchestration_state("abc")
 
+    expected_channel_call = call(
+        host_address=host_address,
+        secure_channel=True,
+        interceptors=interceptors,
+        channel_options=channel_options,
+    )
+    assert mock_get_channel.call_args_list == [
+        expected_channel_call,
+        expected_channel_call,
+    ]
     assert client._channel is second_channel
     mock_timer.assert_called_once_with(30.0, first_channel.close)
     assert timer.daemon is True
