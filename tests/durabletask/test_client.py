@@ -298,28 +298,44 @@ def test_async_client_uses_provided_channel_directly():
 
 def test_client_stores_resiliency_options_for_recreation():
     resiliency = GrpcClientResiliencyOptions(channel_recreate_failure_threshold=7)
+    channel_options = GrpcChannelOptions(max_receive_message_length=1234)
+    interceptors = [DefaultClientInterceptorImpl(METADATA)]
     with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
             "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()
     ):
         client = TaskHubGrpcClient(
             host_address="localhost:4001",
+            secure_channel=True,
+            interceptors=interceptors,
+            channel_options=channel_options,
             resiliency_options=resiliency,
         )
     assert client._resiliency_options is resiliency
     assert client._host_address == "localhost:4001"
+    assert client._secure_channel is True
+    assert client._channel_options is channel_options
+    assert client._interceptors == interceptors
 
 
 def test_async_client_stores_resolved_transport_inputs():
     resiliency = GrpcClientResiliencyOptions()
+    channel_options = GrpcChannelOptions(max_send_message_length=4321)
+    interceptors = [DefaultAsyncClientInterceptorImpl(METADATA)]
     with patch("durabletask.client.shared.get_async_grpc_channel", return_value=MagicMock()), patch(
             "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()
     ):
         client = AsyncTaskHubGrpcClient(
             host_address="localhost:4001",
+            secure_channel=True,
+            interceptors=interceptors,
+            channel_options=channel_options,
             resiliency_options=resiliency,
         )
     assert client._resiliency_options is resiliency
     assert client._host_address == "localhost:4001"
+    assert client._secure_channel is True
+    assert client._channel_options is channel_options
+    assert client._interceptors == interceptors
 
 
 def test_worker_stores_resiliency_options():
