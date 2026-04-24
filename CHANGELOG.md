@@ -25,6 +25,12 @@ ADDED
 - Added `get_orchestration_history()` and `list_instance_ids()` to the sync and async gRPC clients.
 - Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` so local orchestration tests can retrieve history and page terminal instance IDs by completion window.
 
+FIXED
+
+- Hardened `TaskHubGrpcWorker` reconnect handling so configured hello timeouts
+  apply on fresh connections, received work items reset failure tracking, and
+  caller-owned channels are never recreated during worker reconnects.
+
 ## v1.4.0
 
 ADDED
