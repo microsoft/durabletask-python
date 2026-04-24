@@ -123,10 +123,17 @@ def test_failure_tracker_trips_at_threshold():
     assert tracker.consecutive_failures == 0
 
 
-def test_client_transport_failure_ignores_long_poll_deadlines():
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "WaitForInstanceStart",
+        "WaitForInstanceCompletion",
+    ],
+)
+def test_client_transport_failure_ignores_long_poll_deadlines(method_name):
     assert (
         is_client_transport_failure(
-            "WaitForInstanceStart",
+            method_name,
             grpc.StatusCode.DEADLINE_EXCEEDED,
         )
         is False
