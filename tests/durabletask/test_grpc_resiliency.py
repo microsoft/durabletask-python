@@ -29,21 +29,39 @@ def test_worker_resiliency_allows_disabling_timeout_and_threshold():
     assert options.channel_recreate_failure_threshold == 0
 
 
-def test_worker_resiliency_rejects_invalid_durations():
-    with pytest.raises(ValueError, match="hello_timeout_seconds must be > 0"):
-        GrpcWorkerResiliencyOptions(hello_timeout_seconds=0.0)
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            "reconnect_backoff_cap_seconds must be >= "
-            "reconnect_backoff_base_seconds"
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"hello_timeout_seconds": 0.0}, "hello_timeout_seconds must be > 0"),
+        (
+            {"silent_disconnect_timeout_seconds": -1.0},
+            "silent_disconnect_timeout_seconds must be >= 0",
         ),
-    ):
-        GrpcWorkerResiliencyOptions(
-            reconnect_backoff_base_seconds=5.0,
-            reconnect_backoff_cap_seconds=1.0,
-        )
+        (
+            {"channel_recreate_failure_threshold": -1},
+            "channel_recreate_failure_threshold must be >= 0",
+        ),
+        (
+            {"reconnect_backoff_base_seconds": 0.0},
+            "reconnect_backoff_base_seconds must be > 0",
+        ),
+        (
+            {"reconnect_backoff_cap_seconds": 0.0},
+            "reconnect_backoff_cap_seconds must be > 0",
+        ),
+        (
+            {
+                "reconnect_backoff_base_seconds": 5.0,
+                "reconnect_backoff_cap_seconds": 1.0,
+            },
+            "reconnect_backoff_cap_seconds must be >= "
+            "reconnect_backoff_base_seconds",
+        ),
+    ],
+)
+def test_worker_resiliency_rejects_invalid_values(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        GrpcWorkerResiliencyOptions(**kwargs)
 
 
 def test_client_resiliency_defaults_are_enabled():
@@ -53,8 +71,19 @@ def test_client_resiliency_defaults_are_enabled():
     assert options.min_recreate_interval_seconds == 30.0
 
 
-def test_client_resiliency_rejects_negative_cooldown():
-    with pytest.raises(
-        ValueError, match="min_recreate_interval_seconds must be >= 0"
-    ):
-        GrpcClientResiliencyOptions(min_recreate_interval_seconds=-1.0)
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        (
+            {"channel_recreate_failure_threshold": -1},
+            "channel_recreate_failure_threshold must be >= 0",
+        ),
+        (
+            {"min_recreate_interval_seconds": -1.0},
+            "min_recreate_interval_seconds must be >= 0",
+        ),
+    ],
+)
+def test_client_resiliency_rejects_invalid_values(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        GrpcClientResiliencyOptions(**kwargs)
