@@ -3,8 +3,10 @@
 
 import logging
 
-from typing import Optional
+from typing import Optional, Sequence
 
+import grpc
+import grpc.aio
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
@@ -13,6 +15,8 @@ from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSDefaultClientInterceptorImpl,
 )
 from durabletask.client import AsyncTaskHubGrpcClient, TaskHubGrpcClient
+from durabletask.grpc_options import GrpcChannelOptions
+import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
 
 
@@ -22,7 +26,10 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  host_address: str,
                  taskhub: str,
                  token_credential: Optional[TokenCredential],
+                 channel: Optional[grpc.Channel] = None,
                  secure_channel: bool = True,
+                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+                 channel_options: Optional[GrpcChannelOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
@@ -31,17 +38,22 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
 
-        interceptors = [DTSDefaultClientInterceptorImpl(token_credential, taskhub)]
+        resolved_interceptors: list[shared.ClientInterceptor] = (
+            list(interceptors) if interceptors is not None else []
+        )
+        resolved_interceptors.append(DTSDefaultClientInterceptorImpl(token_credential, taskhub))
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
             host_address=host_address,
+            channel=channel,
             secure_channel=secure_channel,
             metadata=None,
             log_handler=log_handler,
             log_formatter=log_formatter,
-            interceptors=interceptors,
+            interceptors=resolved_interceptors,
+            channel_options=channel_options,
             default_version=default_version,
             payload_store=payload_store)
 
@@ -88,7 +100,10 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
                  host_address: str,
                  taskhub: str,
                  token_credential: Optional[AsyncTokenCredential],
+                 channel: Optional[grpc.aio.Channel] = None,
                  secure_channel: bool = True,
+                 interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
+                 channel_options: Optional[GrpcChannelOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
@@ -97,16 +112,21 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
 
-        interceptors = [DTSAsyncDefaultClientInterceptorImpl(token_credential, taskhub)]
+        resolved_interceptors: list[shared.AsyncClientInterceptor] = (
+            list(interceptors) if interceptors is not None else []
+        )
+        resolved_interceptors.append(DTSAsyncDefaultClientInterceptorImpl(token_credential, taskhub))
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
             host_address=host_address,
+            channel=channel,
             secure_channel=secure_channel,
             metadata=None,
             log_handler=log_handler,
             log_formatter=log_formatter,
-            interceptors=interceptors,
+            interceptors=resolved_interceptors,
+            channel_options=channel_options,
             default_version=default_version,
             payload_store=payload_store)

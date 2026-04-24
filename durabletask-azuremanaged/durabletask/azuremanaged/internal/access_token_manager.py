@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 from typing import Optional
 
 from azure.core.credentials import AccessToken, TokenCredential
@@ -20,6 +21,7 @@ class AccessTokenManager:
         self._logger = shared.get_logger("token_manager")
 
         self._credential = token_credential
+        self._refresh_lock = Lock()
 
         if self._credential is not None:
             self._token = self._credential.get_token(self._scope)
@@ -30,7 +32,9 @@ class AccessTokenManager:
 
     def get_access_token(self) -> Optional[AccessToken]:
         if self._token is None or self.is_token_expired():
-            self.refresh_token()
+            with self._refresh_lock:
+                if self._token is None or self.is_token_expired():
+                    self.refresh_token()
         return self._token
 
     # Checks if the token is expired, or if it will expire in the next "refresh_interval_seconds" seconds.
