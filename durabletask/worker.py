@@ -6,12 +6,11 @@ import inspect
 import json
 import logging
 import os
-import random
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
 from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union, overload
@@ -21,7 +20,10 @@ from packaging.version import InvalidVersion, parse
 import grpc
 from google.protobuf import empty_pb2
 
-from durabletask.grpc_options import GrpcChannelOptions
+from durabletask.grpc_options import (
+    GrpcChannelOptions,
+    GrpcWorkerResiliencyOptions,
+)
 from durabletask.entities.entity_operation_failed_exception import EntityOperationFailedException
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
@@ -36,6 +38,11 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
 import durabletask.internal.tracing as tracing
+from durabletask.internal.grpc_resiliency import (
+    FailureTracker,
+    get_full_jitter_delay_seconds,
+    is_worker_transport_failure,
+)
 from durabletask.payload import helpers as payload_helpers
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
@@ -45,6 +52,7 @@ TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
 DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
+_STREAM_CLOSED_SENTINEL = object()
 
 
 class ConcurrencyOptions:
@@ -113,6 +121,80 @@ class VersionFailureStrategy(Enum):
 
     REJECT = 1
     FAIL = 2
+
+
+class _WorkItemStreamOutcome(Enum):
+    SHUTDOWN = "shutdown"
+    GRACEFUL_CLOSE_BEFORE_FIRST_MESSAGE = "graceful_close_before_first_message"
+    GRACEFUL_CLOSE_AFTER_MESSAGE = "graceful_close_after_message"
+    SILENT_DISCONNECT = "silent_disconnect"
+
+
+@dataclass
+class _TrackedChannelState:
+    channel: Any
+    ref_count: int = 0
+    close_when_released: bool = False
+
+
+class _InFlightChannelTracker:
+    def __init__(self):
+        self._lock = Lock()
+        self._states: dict[int, _TrackedChannelState] = {}
+
+    def acquire(self, channel: Any):
+        channel_key = id(channel)
+        with self._lock:
+            state = self._states.get(channel_key)
+            if state is None:
+                state = _TrackedChannelState(channel=channel)
+                self._states[channel_key] = state
+            state.ref_count += 1
+
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+
+            channel_to_close = None
+            with self._lock:
+                state = self._states.get(channel_key)
+                if state is None:
+                    return
+
+                state.ref_count -= 1
+                if state.ref_count == 0:
+                    if state.close_when_released:
+                        channel_to_close = state.channel
+                    del self._states[channel_key]
+
+            if channel_to_close is not None:
+                self._close_channel(channel_to_close)
+
+        return release
+
+    def retire(self, channel: Any) -> None:
+        channel_key = id(channel)
+        channel_to_close = None
+        with self._lock:
+            state = self._states.get(channel_key)
+            if state is None:
+                channel_to_close = channel
+            else:
+                state.close_when_released = True
+
+        if channel_to_close is not None:
+            self._close_channel(channel_to_close)
+
+    @staticmethod
+    def _close_channel(channel: Any) -> None:
+        try:
+            channel.close()
+        except Exception:
+            logging.debug("Ignoring channel close failure during worker cleanup.", exc_info=True)
 
 
 class VersioningOptions:
@@ -369,6 +451,8 @@ class TaskHubGrpcWorker:
             interceptors to apply to the channel. Defaults to None.
         channel_options (Optional[GrpcChannelOptions], optional): Extra low-level gRPC
             channel configuration including retry/service config options.
+        resiliency_options (Optional[GrpcWorkerResiliencyOptions], optional): Worker-side
+            gRPC resiliency settings retained for reconnect handling.
         concurrency_options (Optional[ConcurrencyOptions], optional): Configuration for
             controlling worker concurrency limits. If None, default settings are used.
 
@@ -436,6 +520,7 @@ class TaskHubGrpcWorker:
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
             channel_options: Optional[GrpcChannelOptions] = None,
+            resiliency_options: Optional[GrpcWorkerResiliencyOptions] = None,
             concurrency_options: Optional[ConcurrencyOptions] = None,
             maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
             payload_store: Optional[PayloadStore] = None,
@@ -451,6 +536,11 @@ class TaskHubGrpcWorker:
         self._secure_channel = secure_channel
         self._payload_store = payload_store
         self._channel_options = channel_options
+        self._resiliency_options = (
+            resiliency_options
+            if resiliency_options is not None
+            else GrpcWorkerResiliencyOptions()
+        )
 
         # Use provided concurrency options or create default ones
         self._concurrency_options = (
@@ -489,6 +579,27 @@ class TaskHubGrpcWorker:
 
     def __exit__(self, type, value, traceback):
         self.stop()
+
+    def _classify_stream_outcome(
+            self,
+            *,
+            saw_message: bool,
+            timed_out: bool,
+    ) -> _WorkItemStreamOutcome:
+        if timed_out:
+            return _WorkItemStreamOutcome.SILENT_DISCONNECT
+        if saw_message:
+            return _WorkItemStreamOutcome.GRACEFUL_CLOSE_AFTER_MESSAGE
+        return _WorkItemStreamOutcome.GRACEFUL_CLOSE_BEFORE_FIRST_MESSAGE
+
+    def _should_count_worker_failure(
+            self,
+            status_code: grpc.StatusCode,
+    ) -> bool:
+        return is_worker_transport_failure(status_code)
+
+    def _can_recreate_channel(self) -> bool:
+        return self._channel is None
 
     def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         """Registers an orchestrator function with the worker."""
@@ -579,6 +690,8 @@ class TaskHubGrpcWorker:
         if self._auto_generate_work_item_filters:
             self._work_item_filters = WorkItemFilters._from_registry(self._registry)
 
+        self._shutdown.clear()
+
         def run_loop():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -590,27 +703,29 @@ class TaskHubGrpcWorker:
         self._is_running = True
 
     async def _async_run_loop(self):
+        self._async_worker_manager.prepare_for_run()
         worker_task = asyncio.create_task(self._async_worker_manager.run())
-        # Connection state management for retry fix
-        current_channel = None
+        current_channel = self._channel
         current_stub = None
         current_reader_thread = None
         conn_retry_count = 0
-        conn_max_retry_delay = 60
+        failure_tracker = FailureTracker(
+            threshold=self._resiliency_options.channel_recreate_failure_threshold,
+        )
+        in_flight_channel_tracker = _InFlightChannelTracker()
+
+        def get_reconnect_delay_seconds() -> float:
+            return get_full_jitter_delay_seconds(
+                conn_retry_count,
+                base_seconds=self._resiliency_options.reconnect_backoff_base_seconds,
+                cap_seconds=self._resiliency_options.reconnect_backoff_cap_seconds,
+            )
 
         def create_fresh_connection():
             nonlocal current_channel, current_stub, conn_retry_count
-            if current_channel and self._channel is None:
-                try:
-                    current_channel.close()
-                except Exception:
-                    pass
-            current_channel = None
             current_stub = None
             try:
-                if self._channel is not None:
-                    current_channel = self._channel
-                else:
+                if current_channel is None:
                     current_channel = shared.get_grpc_channel(
                         self._host_address,
                         self._secure_channel,
@@ -618,16 +733,60 @@ class TaskHubGrpcWorker:
                         channel_options=self._channel_options,
                     )
                 current_stub = stubs.TaskHubSidecarServiceStub(current_channel)
-                current_stub.Hello(empty_pb2.Empty())
+                hello_timeout = self._resiliency_options.hello_timeout_seconds
+                current_stub.Hello(empty_pb2.Empty(), timeout=hello_timeout)
                 conn_retry_count = 0
                 self._logger.info(f"Created fresh connection to {self._host_address}")
             except Exception as e:
                 self._logger.warning(f"Failed to create connection: {e}")
-                current_channel = self._channel if self._channel is not None else None
                 current_stub = None
                 raise
 
-        def invalidate_connection():
+        def wrap_execution(handler, release):
+            def wrapped(*args, **kwargs):
+                try:
+                    return handler(*args, **kwargs)
+                finally:
+                    release()
+
+            return wrapped
+
+        def wrap_cancellation(handler, release):
+            def wrapped(*args, **kwargs):
+                try:
+                    return handler(*args, **kwargs)
+                finally:
+                    release()
+
+            return wrapped
+
+        def submit_work_item(
+                submit_func,
+                handler,
+                cancellation_handler,
+                request,
+                stub,
+                completion_token,
+                channel,
+        ):
+            release = in_flight_channel_tracker.acquire(channel)
+            try:
+                submit_func(
+                    wrap_execution(handler, release),
+                    wrap_cancellation(cancellation_handler, release),
+                    request,
+                    stub,
+                    completion_token,
+                )
+            except Exception:
+                release()
+                raise
+
+        def invalidate_connection(
+                *,
+                recreate_channel: bool = False,
+                close_channel: bool = False,
+        ):
             nonlocal current_channel, current_stub, current_reader_thread
             # Cancel the response stream first to signal the reader thread to stop
             if self._response_stream is not None:
@@ -647,13 +806,13 @@ class TaskHubGrpcWorker:
                     pass
                 current_reader_thread = None
 
-            # Close the channel
-            if current_channel and self._channel is None:
-                try:
-                    current_channel.close()
-                except Exception:
-                    pass
-            current_channel = self._channel if self._channel is not None else None
+            if (
+                    current_channel is not None
+                    and self._can_recreate_channel()
+                    and (recreate_channel or close_channel)
+            ):
+                in_flight_channel_tracker.retire(current_channel)
+                current_channel = None
             current_stub = None
 
         def should_invalidate_connection(rpc_error):
@@ -671,12 +830,18 @@ class TaskHubGrpcWorker:
             if current_stub is None:
                 try:
                     create_fresh_connection()
-                except Exception:
+                except Exception as ex:
+                    recreate_channel = False
+                    if isinstance(ex, grpc.RpcError):
+                        error_code = ex.code()  # type: ignore
+                        if self._should_count_worker_failure(error_code):
+                            recreate_channel = (
+                                failure_tracker.record_failure()
+                                and self._can_recreate_channel()
+                            )
+                    invalidate_connection(recreate_channel=recreate_channel)
                     conn_retry_count += 1
-                    delay = min(
-                        conn_max_retry_delay,
-                        (2 ** min(conn_retry_count, 6)) + random.uniform(0, 1),
-                    )
+                    delay = get_reconnect_delay_seconds()
                     self._logger.warning(
                         f"Connection failed, retrying in {delay:.2f} seconds (attempt {conn_retry_count})"
                     )
@@ -685,7 +850,9 @@ class TaskHubGrpcWorker:
                     continue
             try:
                 assert current_stub is not None
+                assert current_channel is not None
                 stub = current_stub
+                channel = current_channel
                 capabilities = []
                 if self._payload_store is not None:
                     capabilities.append(pb.WORKER_CAPABILITY_LARGE_PAYLOADS)
@@ -707,15 +874,18 @@ class TaskHubGrpcWorker:
                 import queue
 
                 work_item_queue = queue.Queue()
+                saw_message = False
 
                 def stream_reader():
                     try:
                         response_stream = self._response_stream
                         if response_stream is None:
+                            work_item_queue.put(_STREAM_CLOSED_SENTINEL)
                             return
 
                         for work_item in response_stream:
                             work_item_queue.put(work_item)
+                        work_item_queue.put(_STREAM_CLOSED_SENTINEL)
                     except Exception as e:
                         work_item_queue.put(e)
 
@@ -724,63 +894,126 @@ class TaskHubGrpcWorker:
                 current_reader_thread = threading.Thread(target=stream_reader, daemon=True)
                 current_reader_thread.start()
                 loop = asyncio.get_running_loop()
+                queue_timeout = (
+                    self._resiliency_options.silent_disconnect_timeout_seconds or None
+                )
+                stream_outcome = None
                 while not self._shutdown.is_set():
                     try:
-                        work_item = await loop.run_in_executor(
-                            None, work_item_queue.get
+                        work_item = await asyncio.wait_for(
+                            loop.run_in_executor(None, work_item_queue.get),
+                            timeout=queue_timeout,
                         )
+                    except asyncio.TimeoutError:
+                        work_item = None
+                        stream_outcome = self._classify_stream_outcome(
+                            saw_message=saw_message,
+                            timed_out=True,
+                        )
+                        break
+
+                    if work_item is _STREAM_CLOSED_SENTINEL:
+                        stream_outcome = self._classify_stream_outcome(
+                            saw_message=saw_message,
+                            timed_out=False,
+                        )
+                        break
+
+                    try:
                         if isinstance(work_item, Exception):
                             raise work_item
+
+                        saw_message = True
                         request_type = work_item.WhichOneof("request")
                         self._logger.debug(f'Received "{request_type}" work item')
+                        if work_item.HasField("healthPing"):
+                            failure_tracker.record_success()
+                            continue
+
+                        failure_tracker.record_success()
                         if work_item.HasField("orchestratorRequest"):
-                            self._async_worker_manager.submit_orchestration(
+                            submit_work_item(
+                                self._async_worker_manager.submit_orchestration,
                                 self._execute_orchestrator,
                                 self._cancel_orchestrator,
                                 work_item.orchestratorRequest,
                                 stub,
                                 work_item.completionToken,
+                                channel,
                             )
                         elif work_item.HasField("activityRequest"):
-                            self._async_worker_manager.submit_activity(
+                            submit_work_item(
+                                self._async_worker_manager.submit_activity,
                                 self._execute_activity,
                                 self._cancel_activity,
                                 work_item.activityRequest,
                                 stub,
                                 work_item.completionToken,
+                                channel,
                             )
                         elif work_item.HasField("entityRequest"):
-                            self._async_worker_manager.submit_entity_batch(
+                            submit_work_item(
+                                self._async_worker_manager.submit_entity_batch,
                                 self._execute_entity_batch,
                                 self._cancel_entity_batch,
                                 work_item.entityRequest,
                                 stub,
                                 work_item.completionToken,
+                                channel,
                             )
                         elif work_item.HasField("entityRequestV2"):
-                            self._async_worker_manager.submit_entity_batch(
+                            submit_work_item(
+                                self._async_worker_manager.submit_entity_batch,
                                 self._execute_entity_batch,
                                 self._cancel_entity_batch,
                                 work_item.entityRequestV2,
                                 stub,
-                                work_item.completionToken
+                                work_item.completionToken,
+                                channel,
                             )
-                        elif work_item.HasField("healthPing"):
-                            pass
                         else:
                             self._logger.warning(
                                 f"Unexpected work item type: {request_type}"
                             )
                     except Exception as e:
                         self._logger.warning(f"Error in work item stream: {e}")
-                        raise e
-                current_reader_thread.join(timeout=1)
-                self._logger.info("Work item stream ended normally")
+                        raise
+
+                if stream_outcome is _WorkItemStreamOutcome.GRACEFUL_CLOSE_BEFORE_FIRST_MESSAGE:
+                    self._logger.info(
+                        "Work item stream closed before receiving the first message"
+                    )
+                    invalidate_connection(close_channel=True)
+                    continue
+                if stream_outcome is _WorkItemStreamOutcome.GRACEFUL_CLOSE_AFTER_MESSAGE:
+                    self._logger.info("Work item stream closed after receiving messages")
+                    invalidate_connection(close_channel=True)
+                    continue
+                if stream_outcome is _WorkItemStreamOutcome.SILENT_DISCONNECT:
+                    self._logger.warning(
+                        f"Timed out waiting for work items from {self._host_address}"
+                    )
+                    recreate_channel = (
+                        failure_tracker.record_failure()
+                        and self._can_recreate_channel()
+                    )
+                    invalidate_connection(recreate_channel=recreate_channel)
+                    conn_retry_count += 1
+                    delay = get_reconnect_delay_seconds()
+                    if self._shutdown.wait(delay):
+                        break
+                    continue
             except grpc.RpcError as rpc_error:
                 should_invalidate = should_invalidate_connection(rpc_error)
-                if should_invalidate:
-                    invalidate_connection()
                 error_code = rpc_error.code()  # type: ignore
+                recreate_channel = False
+                if should_invalidate and self._should_count_worker_failure(error_code):
+                    recreate_channel = (
+                        failure_tracker.record_failure()
+                        and self._can_recreate_channel()
+                    )
+                if should_invalidate:
+                    invalidate_connection(recreate_channel=recreate_channel)
                 error_details = str(rpc_error)
 
                 if error_code == grpc.StatusCode.CANCELLED:
@@ -804,12 +1037,18 @@ class TaskHubGrpcWorker:
                     self._logger.warning(
                         f"Application-level gRPC error ({error_code}): {rpc_error}"
                     )
-                self._shutdown.wait(1)
+                conn_retry_count += 1
+                delay = get_reconnect_delay_seconds()
+                if self._shutdown.wait(delay):
+                    break
             except Exception as ex:
-                invalidate_connection()
+                invalidate_connection(close_channel=True)
                 self._logger.warning(f"Unexpected error: {ex}")
-                self._shutdown.wait(1)
-        invalidate_connection()
+                conn_retry_count += 1
+                delay = get_reconnect_delay_seconds()
+                if self._shutdown.wait(delay):
+                    break
+        invalidate_connection(close_channel=True)
         self._logger.info("No longer listening for work items")
         self._async_worker_manager.shutdown()
         await worker_task
@@ -825,6 +1064,11 @@ class TaskHubGrpcWorker:
             self._response_stream.cancel()
         if self._runLoop is not None:
             self._runLoop.join(timeout=30)
+            if self._runLoop.is_alive():
+                self._logger.info(
+                    "Waiting for pending work items to finish before completing shutdown..."
+                )
+                self._runLoop.join()
         self._async_worker_manager.shutdown()
         self._logger.info("Worker shutdown completed")
         self._is_running = False
@@ -2648,11 +2892,22 @@ class _AsyncWorkerManager:
         self._pending_activity_work: list = []
         self._pending_orchestration_work: list = []
         self._pending_entity_batch_work: list = []
-        self.thread_pool = ThreadPoolExecutor(
-            max_workers=concurrency_options.maximum_thread_pool_workers,
+        self.thread_pool = self._create_thread_pool()
+        self._shutdown = False
+
+    def _create_thread_pool(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(
+            max_workers=self.concurrency_options.maximum_thread_pool_workers,
             thread_name_prefix="DurableTask",
         )
+
+    def _ensure_thread_pool(self) -> None:
+        if getattr(self.thread_pool, "_shutdown", False):
+            self.thread_pool = self._create_thread_pool()
+
+    def prepare_for_run(self) -> None:
         self._shutdown = False
+        self._ensure_thread_pool()
 
     def _ensure_queues_for_current_loop(self):
         """Ensure queues are bound to the current event loop."""
@@ -2727,8 +2982,7 @@ class _AsyncWorkerManager:
         self._pending_entity_batch_work.clear()
 
     async def run(self):
-        # Reset shutdown flag in case this manager is being reused
-        self._shutdown = False
+        self._ensure_thread_pool()
 
         # Ensure queues are properly bound to the current event loop
         self._ensure_queues_for_current_loop()
@@ -2790,6 +3044,9 @@ class _AsyncWorkerManager:
                 except Exception as cancellation_exception:
                     self._logger.error(f"Uncaught error while cancelling entity batch work item: {cancellation_exception}")
             self.shutdown()
+        finally:
+            if not getattr(self.thread_pool, "_shutdown", False):
+                self.thread_pool.shutdown(wait=True)
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
         # List to track running tasks
@@ -2833,12 +3090,7 @@ class _AsyncWorkerManager:
             return await func(*args, **kwargs)
         else:
             loop = asyncio.get_running_loop()
-            # Avoid submitting to executor after shutdown
-            if (
-                    getattr(self, "_shutdown", False) and getattr(self, "thread_pool", None) and getattr(
-                        self.thread_pool, "_shutdown", False)
-            ):
-                return None
+            self._ensure_thread_pool()
             return await loop.run_in_executor(
                 self.thread_pool, lambda: func(*args, **kwargs)
             )
@@ -2878,11 +3130,10 @@ class _AsyncWorkerManager:
 
     def shutdown(self):
         self._shutdown = True
-        self.thread_pool.shutdown(wait=True)
 
     async def reset_for_new_run(self):
         """Reset the manager state for a new run."""
-        self._shutdown = False
+        self.prepare_for_run()
         # Clear any existing queues - they'll be recreated when needed
         if self.activity_queue is not None:
             # Clear existing queue by creating a new one

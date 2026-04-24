@@ -100,3 +100,44 @@ class GrpcChannelOptions:
             options.append(("grpc.service_config", json.dumps(self.retry_policy.to_service_config())))
 
         return options
+
+
+@dataclass
+class GrpcWorkerResiliencyOptions:
+    """Configuration for worker-side gRPC resiliency behavior."""
+
+    hello_timeout_seconds: float = 30.0
+    silent_disconnect_timeout_seconds: float = 120.0
+    channel_recreate_failure_threshold: int = 5
+    reconnect_backoff_base_seconds: float = 1.0
+    reconnect_backoff_cap_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if self.hello_timeout_seconds <= 0:
+            raise ValueError("hello_timeout_seconds must be > 0")
+        if self.silent_disconnect_timeout_seconds < 0:
+            raise ValueError("silent_disconnect_timeout_seconds must be >= 0")
+        if self.channel_recreate_failure_threshold < 0:
+            raise ValueError("channel_recreate_failure_threshold must be >= 0")
+        if self.reconnect_backoff_base_seconds <= 0:
+            raise ValueError("reconnect_backoff_base_seconds must be > 0")
+        if self.reconnect_backoff_cap_seconds <= 0:
+            raise ValueError("reconnect_backoff_cap_seconds must be > 0")
+        if self.reconnect_backoff_cap_seconds < self.reconnect_backoff_base_seconds:
+            raise ValueError(
+                "reconnect_backoff_cap_seconds must be >= reconnect_backoff_base_seconds"
+            )
+
+
+@dataclass
+class GrpcClientResiliencyOptions:
+    """Configuration for client-side gRPC resiliency behavior."""
+
+    channel_recreate_failure_threshold: int = 5
+    min_recreate_interval_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if self.channel_recreate_failure_threshold < 0:
+            raise ValueError("channel_recreate_failure_threshold must be >= 0")
+        if self.min_recreate_interval_seconds < 0:
+            raise ValueError("min_recreate_interval_seconds must be >= 0")

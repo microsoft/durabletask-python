@@ -18,8 +18,32 @@ ADDED
   `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` to
   support pre-configured channel passthrough and low-level gRPC channel
   customization.
-- Added `get_orchestration_history()` and `list_instance_ids()` to the sync and async gRPC clients.
-- Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` so local orchestration tests can retrieve history and page terminal instance IDs by completion window.
+- Added `GrpcWorkerResiliencyOptions` and `GrpcClientResiliencyOptions`, plus
+  `resiliency_options` constructor parameters on `TaskHubGrpcClient`,
+  `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`, to configure hello
+  deadlines, silent-disconnect detection, reconnect backoff, and channel
+  recreation thresholds for SDK-managed gRPC connections.
+- Added `get_orchestration_history()` and `list_instance_ids()` to the sync
+  and async gRPC clients.
+- Added in-memory backend support for `StreamInstanceHistory` and
+  `ListInstanceIds` so local orchestration tests can retrieve history and page
+  terminal instance IDs by completion window.
+
+FIXED
+
+- Improved `TaskHubGrpcWorker` recovery from stale or disconnected gRPC streams
+  so configured hello timeouts apply on fresh connections, received work resets
+  failure tracking, SDK-owned channels are refreshed and cleaned up safely, and
+  caller-owned channels are never recreated or closed during reconnects.
+- Fixed `TaskHubGrpcWorker` so in-flight and queued work item completions keep
+  draining across graceful gRPC stream resets and worker shutdown before the
+  worker retires an SDK-owned channel.
+- Improved sync and async gRPC clients so repeated transport failures recreate
+  SDK-owned channels, while long-poll deadlines, successful replies, and
+  application-level RPC errors do not trigger unnecessary channel replacement.
+- Fixed `TaskHubGrpcClient.close()` so explicit sync client shutdown now closes
+  any previously retired SDK-owned gRPC channels immediately instead of waiting
+  for the delayed cleanup timer.
 
 ## v1.4.0
 

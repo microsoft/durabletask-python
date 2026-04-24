@@ -72,6 +72,7 @@ def test_worker_concurrency_loop_async():
     async def run_test():
         # Clear stub state before each run
         stub.completed.clear()
+        grpc_worker._async_worker_manager.prepare_for_run()
         worker_task = asyncio.create_task(grpc_worker._async_worker_manager.run())
         # Need to yield to that thread in order to let it start up on the second run
         startup_attempts = 0
