@@ -211,8 +211,10 @@ class TaskHubGrpcClient:
         self._client_failure_tracker = FailureTracker(
             self._resiliency_options.channel_recreate_failure_threshold
         )
+        self._closing = False
         self._last_recreate_time = 0.0
         self._recreate_lock = threading.Lock()
+        self._retired_channels: dict[grpc.Channel, threading.Timer] = {}
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
@@ -243,9 +245,11 @@ class TaskHubGrpcClient:
             return response
 
     def _maybe_recreate_channel(self) -> None:
-        if not self._owns_channel:
+        if not self._owns_channel or self._closing:
             return
         with self._recreate_lock:
+            if self._closing:
+                return
             now = time.monotonic()
             if now - self._last_recreate_time < self._resiliency_options.min_recreate_interval_seconds:
                 return
@@ -259,9 +263,21 @@ class TaskHubGrpcClient:
             self._stub = stubs.TaskHubSidecarServiceStub(self._channel)
             self._last_recreate_time = now
             self._client_failure_tracker.record_success()
-            close_timer = threading.Timer(30.0, old_channel.close)
+            close_timer = threading.Timer(
+                30.0,
+                self._close_retired_channel,
+                args=(old_channel,),
+            )
             close_timer.daemon = True
+            self._retired_channels[old_channel] = close_timer
             close_timer.start()
+
+    def _close_retired_channel(self, channel: grpc.Channel) -> None:
+        with self._recreate_lock:
+            close_timer = self._retired_channels.pop(channel, None)
+            if close_timer is None:
+                return
+        channel.close()
 
     def close(self) -> None:
         """Closes the underlying gRPC channel.
@@ -272,7 +288,15 @@ class TaskHubGrpcClient:
         it.
         """
         if self._owns_channel:
-            self._channel.close()
+            with self._recreate_lock:
+                self._closing = True
+                retired_channels = list(self._retired_channels.items())
+                self._retired_channels.clear()
+                current_channel = self._channel
+            for retired_channel, close_timer in retired_channels:
+                close_timer.cancel()
+                retired_channel.close()
+            current_channel.close()
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Optional[TInput] = None,

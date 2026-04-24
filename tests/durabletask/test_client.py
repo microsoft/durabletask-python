@@ -382,9 +382,86 @@ def test_sync_client_recreates_sdk_owned_channel_with_original_transport_inputs(
         expected_channel_call,
     ]
     assert client._channel is second_channel
-    mock_timer.assert_called_once_with(30.0, first_channel.close)
+    mock_timer.assert_called_once()
+    timer_call = mock_timer.call_args
+    assert timer_call.args[0] == 30.0
+    assert timer_call.args[1].__self__ is client
+    assert timer_call.args[1].__func__ is TaskHubGrpcClient._close_retired_channel
+    assert timer_call.kwargs == {"args": (first_channel,)}
     assert timer.daemon is True
     timer.start.assert_called_once_with()
+
+
+def test_sync_client_close_closes_retired_channels_immediately():
+    first_channel = MagicMock(name="first-channel")
+    second_channel = MagicMock(name="second-channel")
+    first_stub = MagicMock()
+    first_stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+    second_stub = MagicMock()
+    second_stub.GetInstance.return_value = MagicMock(exists=False)
+    close_timer = MagicMock(name="close-timer")
+
+    with patch(
+            "durabletask.client.shared.get_grpc_channel",
+            side_effect=[first_channel, second_channel],
+    ), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
+    ), patch("threading.Timer", return_value=close_timer):
+        client = TaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(
+                channel_recreate_failure_threshold=1,
+                min_recreate_interval_seconds=0.0,
+            )
+        )
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+
+        client.close()
+
+    close_timer.cancel.assert_called_once_with()
+    first_channel.close.assert_called_once_with()
+    second_channel.close.assert_called_once_with()
+    assert client._retired_channels == {}
+
+
+def test_sync_client_close_closes_all_retired_sdk_channels_immediately():
+    first_channel = MagicMock(name="first-channel")
+    second_channel = MagicMock(name="second-channel")
+    third_channel = MagicMock(name="third-channel")
+    first_stub = MagicMock()
+    first_stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+    second_stub = MagicMock()
+    second_stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+    third_stub = MagicMock()
+    timer1 = MagicMock(name="close-timer-1")
+    timer2 = MagicMock(name="close-timer-2")
+
+    with patch(
+            "durabletask.client.shared.get_grpc_channel",
+            side_effect=[first_channel, second_channel, third_channel],
+    ), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub",
+            side_effect=[first_stub, second_stub, third_stub],
+    ), patch("threading.Timer", side_effect=[timer1, timer2]):
+        client = TaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(
+                channel_recreate_failure_threshold=1,
+                min_recreate_interval_seconds=0.0,
+            )
+        )
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+        with pytest.raises(FakeRpcError):
+            client.get_orchestration_state("abc")
+
+        client.close()
+
+    timer1.cancel.assert_called_once_with()
+    timer2.cancel.assert_called_once_with()
+    first_channel.close.assert_called_once_with()
+    second_channel.close.assert_called_once_with()
+    third_channel.close.assert_called_once_with()
+    assert client._retired_channels == {}
 
 
 @pytest.mark.parametrize(
@@ -431,11 +508,13 @@ def test_sync_client_does_not_recreate_caller_owned_channel():
             client.get_orchestration_state("abc")
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
+        client.close()
 
     assert client._channel is provided_channel
     mock_get_channel.assert_not_called()
     mock_stub.assert_called_once_with(provided_channel)
     mock_timer.assert_not_called()
+    provided_channel.close.assert_not_called()
 
 
 def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
@@ -478,7 +557,6 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
             client.get_orchestration_state("abc")
         assert client._channel is second_channel
         assert mock_get_channel.call_count == 2
-        mock_timer.assert_called_once_with(30.0, first_channel.close)
 
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
@@ -495,10 +573,16 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
         expected_channel_call,
         expected_channel_call,
     ]
-    assert mock_timer.call_args_list == [
-        call(30.0, first_channel.close),
-        call(30.0, second_channel.close),
-    ]
+    assert mock_timer.call_count == 2
+    first_timer_call, second_timer_call = mock_timer.call_args_list
+    assert first_timer_call.args[0] == 30.0
+    assert first_timer_call.args[1].__self__ is client
+    assert first_timer_call.args[1].__func__ is TaskHubGrpcClient._close_retired_channel
+    assert first_timer_call.kwargs == {"args": (first_channel,)}
+    assert second_timer_call.args[0] == 30.0
+    assert second_timer_call.args[1].__self__ is client
+    assert second_timer_call.args[1].__func__ is TaskHubGrpcClient._close_retired_channel
+    assert second_timer_call.kwargs == {"args": (second_channel,)}
     assert timer1.daemon is True
     assert timer2.daemon is True
     timer1.start.assert_called_once_with()

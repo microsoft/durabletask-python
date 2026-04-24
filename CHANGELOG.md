@@ -39,6 +39,9 @@ FIXED
 - Improved sync and async gRPC clients so repeated transport failures recreate
   SDK-owned channels, while long-poll deadlines, successful replies, and
   application-level RPC errors do not trigger unnecessary channel replacement.
+- Fixed `TaskHubGrpcClient.close()` so explicit sync client shutdown now closes
+  any previously retired SDK-owned gRPC channels immediately instead of waiting
+  for the delayed cleanup timer.
 
 ## v1.4.0
 
