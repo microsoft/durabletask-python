@@ -671,7 +671,11 @@ class TaskHubGrpcWorker:
                 current_stub = None
                 raise
 
-        def invalidate_connection(*, recreate_channel: bool = False):
+        def invalidate_connection(
+                *,
+                recreate_channel: bool = False,
+                close_channel: bool = False,
+        ):
             nonlocal current_channel, current_stub, current_reader_thread
             # Cancel the response stream first to signal the reader thread to stop
             if self._response_stream is not None:
@@ -691,7 +695,11 @@ class TaskHubGrpcWorker:
                     pass
                 current_reader_thread = None
 
-            if recreate_channel and current_channel is not None and self._can_recreate_channel():
+            if (
+                    current_channel is not None
+                    and self._can_recreate_channel()
+                    and (recreate_channel or close_channel)
+            ):
                 try:
                     current_channel.close()
                 except Exception:
@@ -857,11 +865,11 @@ class TaskHubGrpcWorker:
                     self._logger.info(
                         "Work item stream closed before receiving the first message"
                     )
-                    invalidate_connection()
+                    invalidate_connection(close_channel=True)
                     continue
                 if stream_outcome is _WorkItemStreamOutcome.GRACEFUL_CLOSE_AFTER_MESSAGE:
                     self._logger.info("Work item stream closed after receiving messages")
-                    invalidate_connection()
+                    invalidate_connection(close_channel=True)
                     continue
                 if stream_outcome is _WorkItemStreamOutcome.SILENT_DISCONNECT:
                     self._logger.warning(
@@ -916,13 +924,13 @@ class TaskHubGrpcWorker:
                 if self._shutdown.wait(delay):
                     break
             except Exception as ex:
-                invalidate_connection()
+                invalidate_connection(close_channel=True)
                 self._logger.warning(f"Unexpected error: {ex}")
                 conn_retry_count += 1
                 delay = get_reconnect_delay_seconds()
                 if self._shutdown.wait(delay):
                     break
-        invalidate_connection()
+        invalidate_connection(close_channel=True)
         self._logger.info("No longer listening for work items")
         self._async_worker_manager.shutdown()
         await worker_task

@@ -28,8 +28,9 @@ ADDED
 FIXED
 
 - Hardened `TaskHubGrpcWorker` reconnect handling so configured hello timeouts
-  apply on fresh connections, received work items reset failure tracking, and
-  caller-owned channels are never recreated during worker reconnects.
+  apply on fresh connections, received work items reset failure tracking,
+  SDK-owned channels are cleaned up on shutdown and full resets, and
+  caller-owned channels are never recreated or closed during worker reconnects.
 
 ## v1.4.0
 
