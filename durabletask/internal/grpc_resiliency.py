@@ -13,7 +13,8 @@ def get_full_jitter_delay_seconds(
         attempt: int,
         *,
         base_seconds: float,
-        cap_seconds: float) -> float:
+        cap_seconds: float,
+) -> float:
     capped_attempt = min(attempt, 30)
     upper_bound = min(cap_seconds, base_seconds * (2 ** capped_attempt))
     return random.random() * upper_bound

@@ -801,8 +801,8 @@ async def test_async_client_close_prevents_channel_recreation_race():
             client._recreate_lock.release()
 
         with pytest.raises(grpc.aio.AioRpcError):
-            await rpc_task
-        await close_task
+            _ = await rpc_task
+        _ = await close_task
 
     assert mock_get_channel.call_count == 1
     first_channel.close.assert_awaited_once()

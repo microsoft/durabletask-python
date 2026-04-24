@@ -224,7 +224,7 @@ class TaskHubGrpcClient:
             method_name: str,
             request: Any,
             *,
-            timeout: Optional[int] = None):
+            timeout: Optional[float] = None):
         method = getattr(self._stub, method_name)
         try:
             if timeout is None:
@@ -406,7 +406,7 @@ class TaskHubGrpcClient:
 
     def wait_for_orchestration_start(self, instance_id: str, *,
                                      fetch_payloads: bool = False,
-                                     timeout: int = 60) -> Optional[OrchestrationState]:
+                                     timeout: float = 60) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
@@ -427,7 +427,7 @@ class TaskHubGrpcClient:
 
     def wait_for_orchestration_completion(self, instance_id: str, *,
                                           fetch_payloads: bool = True,
-                                          timeout: int = 60) -> Optional[OrchestrationState]:
+                                          timeout: float = 60) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
@@ -685,7 +685,7 @@ class AsyncTaskHubGrpcClient:
             method_name: str,
             request: Any,
             *,
-            timeout: Optional[int] = None):
+            timeout: Optional[float] = None):
         method = getattr(self._stub, method_name)
         try:
             if timeout is None:
@@ -733,10 +733,9 @@ class AsyncTaskHubGrpcClient:
             await asyncio.sleep(30.0)
             await channel.close()
         finally:
-            try:
-                self._retired_channels.remove(channel)
-            except ValueError:
-                pass
+            async with self._recreate_lock:
+                if channel in self._retired_channels:
+                    self._retired_channels.remove(channel)
 
     async def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                          input: Optional[TInput] = None,
@@ -843,7 +842,7 @@ class AsyncTaskHubGrpcClient:
 
     async def wait_for_orchestration_start(self, instance_id: str, *,
                                            fetch_payloads: bool = False,
-                                           timeout: int = 60) -> Optional[OrchestrationState]:
+                                           timeout: float = 60) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
@@ -863,7 +862,7 @@ class AsyncTaskHubGrpcClient:
 
     async def wait_for_orchestration_completion(self, instance_id: str, *,
                                                 fetch_payloads: bool = True,
-                                                timeout: int = 60) -> Optional[OrchestrationState]:
+                                                timeout: float = 60) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")

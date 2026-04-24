@@ -194,7 +194,7 @@ class _InFlightChannelTracker:
         try:
             channel.close()
         except Exception:
-            pass
+            logging.debug("Ignoring channel close failure during worker cleanup.", exc_info=True)
 
 
 class VersioningOptions:
@@ -744,9 +744,10 @@ class TaskHubGrpcWorker:
 
         def wrap_execution(handler, release):
             def wrapped(*args, **kwargs):
-                result = handler(*args, **kwargs)
-                release()
-                return result
+                try:
+                    return handler(*args, **kwargs)
+                finally:
+                    release()
 
             return wrapped
 

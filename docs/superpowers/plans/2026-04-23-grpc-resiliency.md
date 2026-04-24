@@ -1,6 +1,10 @@
 # gRPC Resiliency Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> [!NOTE]
+> For agentic workers: REQUIRED SUB-SKILL:
+> Use superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement automatic healing of stale gRPC worker streams and client channels in `durabletask-python`, aligned with the behavior added in `durabletask-dotnet` PR 708.
 
