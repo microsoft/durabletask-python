@@ -12,6 +12,9 @@ ADDED
 - Added `GrpcChannelOptions` and `GrpcRetryPolicyOptions` for configuring
   gRPC transport behavior, including message-size limits, keepalive settings,
   and channel-level retry policy service configuration.
+- Added `GrpcWorkerResiliencyOptions` and `GrpcClientResiliencyOptions` for
+  configuring public gRPC reconnect, hello timeout, and channel recreation
+  thresholds.
 - Added optional `channel` and `channel_options` parameters to
   `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` to
   support pre-configured channel passthrough and low-level gRPC channel
