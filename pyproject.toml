@@ -51,7 +51,6 @@ include = ["durabletask", "durabletask.*"]
 minversion = "6.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--import-mode=importlib"
 markers = [
     "azurite: tests that require Azurite (local Azure Storage emulator)",
 ]
