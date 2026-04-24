@@ -33,8 +33,9 @@ FIXED
   so configured hello timeouts apply on fresh connections, received work resets
   failure tracking, SDK-owned channels are refreshed and cleaned up safely, and
   caller-owned channels are never recreated or closed during reconnects.
-- Fixed `TaskHubGrpcWorker` so in-flight work item completions can finish after
-  a graceful gRPC stream reset before the worker retires an SDK-owned channel.
+- Fixed `TaskHubGrpcWorker` so in-flight and queued work item completions keep
+  draining across graceful gRPC stream resets and worker shutdown before the
+  worker retires an SDK-owned channel.
 - Improved sync and async gRPC clients so repeated transport failures recreate
   SDK-owned channels, while long-poll deadlines, successful replies, and
   application-level RPC errors do not trigger unnecessary channel replacement.

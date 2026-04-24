@@ -1,13 +1,18 @@
 import asyncio
 import grpc
-from threading import Event
+from threading import Event, Timer
 from unittest.mock import MagicMock
 
 import pytest
 
 from durabletask.grpc_options import GrpcWorkerResiliencyOptions
 from durabletask.internal import orchestrator_service_pb2 as pb
-from durabletask.worker import TaskHubGrpcWorker, _WorkItemStreamOutcome
+from durabletask.worker import (
+    _AsyncWorkerManager,
+    ConcurrencyOptions,
+    TaskHubGrpcWorker,
+    _WorkItemStreamOutcome,
+)
 
 
 class FakeRpcError(grpc.RpcError):
@@ -62,6 +67,9 @@ class DummyWorkerManager:
         self._shutdown_event = asyncio.Event()
         self.submissions: list[tuple[str, tuple]] = []
 
+    def prepare_for_run(self):
+        self._shutdown_event = asyncio.Event()
+
     async def run(self):
         await self._shutdown_event.wait()
 
@@ -88,15 +96,57 @@ def _complete_activity_request(req, stub, completion_token):
     )
 
 
-def _make_activity_work_item() -> pb.WorkItem:
+def _make_activity_work_item(
+    task_id: int = 1,
+    completion_token: str = "token",
+    instance_id: str = "instance-id",
+) -> pb.WorkItem:
     return pb.WorkItem(
         activityRequest=pb.ActivityRequest(
             name="test_activity",
-            taskId=1,
-            orchestrationInstance=pb.OrchestrationInstance(instanceId="instance-id"),
+            taskId=task_id,
+            orchestrationInstance=pb.OrchestrationInstance(instanceId=instance_id),
         ),
-        completionToken="token",
+        completionToken=completion_token,
     )
+
+
+async def _wait_for_condition(predicate, *, timeout: float = 2.0):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError("condition was not met before timeout")
+        await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_async_worker_manager_honors_shutdown_requested_before_run():
+    manager = _AsyncWorkerManager(
+        ConcurrencyOptions(maximum_thread_pool_workers=1),
+        MagicMock(),
+    )
+
+    manager.shutdown()
+    await asyncio.wait_for(manager.run(), timeout=1.0)
+
+
+def test_worker_start_clears_prior_shutdown_request():
+    worker = TaskHubGrpcWorker()
+    worker._shutdown.set()
+    run_started = Event()
+
+    async def fake_run_loop():
+        run_started.set()
+
+    worker._async_run_loop = fake_run_loop
+    worker.start()
+    worker._runLoop.join(timeout=1.0)
+
+    assert run_started.is_set() is True
+    assert worker._shutdown.is_set() is False
+
+    worker.stop()
 
 
 def test_worker_classifies_graceful_close_before_first_message():
@@ -397,6 +447,148 @@ async def test_worker_defers_sdk_owned_channel_close_until_inflight_completion_f
     assert len(completed_responses) == 1
     assert completed_responses[0].completionToken == "token"
     created_channels[0].close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_drains_real_manager_work_before_closing_retired_sdk_channel(monkeypatch):
+    worker = TaskHubGrpcWorker(
+        concurrency_options=ConcurrencyOptions(
+            maximum_concurrent_activity_work_items=1,
+            maximum_thread_pool_workers=1,
+        )
+    )
+    worker._execute_activity = _complete_activity_request
+    monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
+
+    created_channels = []
+
+    def get_grpc_channel(*args, **kwargs):
+        channel = MagicMock(name=f"channel-{len(created_channels) + 1}")
+        created_channels.append(channel)
+        return channel
+
+    allow_first_completion = Event()
+    first_completion_started = Event()
+    completed_task_ids = []
+    first_stub = MagicMock()
+    first_stub.GetWorkItems.return_value = FakeResponseStream(items=[
+        _make_activity_work_item(task_id=1, completion_token="token-1"),
+        _make_activity_work_item(task_id=2, completion_token="token-2"),
+    ])
+
+    def complete_activity(response):
+        completed_task_ids.append(response.taskId)
+        if response.taskId == 1:
+            first_completion_started.set()
+            Timer(0.2, allow_first_completion.set).start()
+            assert allow_first_completion.wait(timeout=5.0)
+        elif response.taskId == 2:
+            assert created_channels[0].close.call_count == 0
+
+    first_stub.CompleteActivityTask.side_effect = complete_activity
+
+    second_stub = MagicMock()
+    second_stub.GetWorkItems.side_effect = FakeRpcError(
+        grpc.StatusCode.CANCELLED,
+        "stop",
+    )
+
+    stubs = [first_stub, second_stub]
+    stub_channels = []
+
+    def create_stub(channel):
+        stub_channels.append(channel)
+        return stubs.pop(0)
+
+    monkeypatch.setattr("durabletask.worker.shared.get_grpc_channel", get_grpc_channel)
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", create_stub)
+
+    run_task = asyncio.create_task(worker._async_run_loop())
+    await asyncio.wait_for(run_task, timeout=2.0)
+
+    assert first_completion_started.is_set() is True
+    assert len(created_channels) == 2
+    assert stub_channels == created_channels
+    assert completed_task_ids == [1, 2]
+    created_channels[0].close.assert_called_once()
+    created_channels[1].close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_runs_real_manager_cancellation_wrapper_before_closing_retired_sdk_channel(monkeypatch):
+    worker = TaskHubGrpcWorker(
+        concurrency_options=ConcurrencyOptions(
+            maximum_concurrent_activity_work_items=1,
+            maximum_thread_pool_workers=1,
+        )
+    )
+    monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
+
+    created_channels = []
+
+    def get_grpc_channel(*args, **kwargs):
+        channel = MagicMock(name=f"channel-{len(created_channels) + 1}")
+        created_channels.append(channel)
+        return channel
+
+    allow_first_completion = Event()
+    first_completion_started = Event()
+    completed_task_ids = []
+    cancelled_task_ids = []
+
+    def execute_activity(req, stub, completion_token):
+        if req.taskId == 1:
+            _complete_activity_request(req, stub, completion_token)
+        else:
+            raise RuntimeError("boom")
+
+    def cancel_activity(req, stub, completion_token):
+        cancelled_task_ids.append(req.taskId)
+        assert created_channels[0].close.call_count == 0
+
+    worker._execute_activity = execute_activity
+    worker._cancel_activity = cancel_activity
+
+    first_stub = MagicMock()
+    first_stub.GetWorkItems.return_value = FakeResponseStream(items=[
+        _make_activity_work_item(task_id=1, completion_token="token-1"),
+        _make_activity_work_item(task_id=2, completion_token="token-2"),
+    ])
+
+    def complete_activity(response):
+        completed_task_ids.append(response.taskId)
+        Timer(0.2, allow_first_completion.set).start()
+        first_completion_started.set()
+        assert allow_first_completion.wait(timeout=5.0)
+
+    first_stub.CompleteActivityTask.side_effect = complete_activity
+
+    second_stub = MagicMock()
+    second_stub.GetWorkItems.side_effect = FakeRpcError(
+        grpc.StatusCode.CANCELLED,
+        "stop",
+    )
+
+    stubs = [first_stub, second_stub]
+    stub_channels = []
+
+    def create_stub(channel):
+        stub_channels.append(channel)
+        return stubs.pop(0)
+
+    monkeypatch.setattr("durabletask.worker.shared.get_grpc_channel", get_grpc_channel)
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", create_stub)
+
+    run_task = asyncio.create_task(worker._async_run_loop())
+    await asyncio.wait_for(run_task, timeout=2.0)
+
+    assert first_completion_started.is_set() is True
+    assert len(created_channels) == 2
+    assert stub_channels == created_channels
+    assert completed_task_ids == [1]
+    assert cancelled_task_ids == [2]
+    created_channels[0].close.assert_called_once()
+    created_channels[1].close.assert_called_once()
 
 
 @pytest.mark.asyncio

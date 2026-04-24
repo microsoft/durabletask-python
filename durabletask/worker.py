@@ -690,6 +690,8 @@ class TaskHubGrpcWorker:
         if self._auto_generate_work_item_filters:
             self._work_item_filters = WorkItemFilters._from_registry(self._registry)
 
+        self._shutdown.clear()
+
         def run_loop():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -701,6 +703,7 @@ class TaskHubGrpcWorker:
         self._is_running = True
 
     async def _async_run_loop(self):
+        self._async_worker_manager.prepare_for_run()
         worker_task = asyncio.create_task(self._async_worker_manager.run())
         current_channel = self._channel
         current_stub = None
@@ -1060,6 +1063,11 @@ class TaskHubGrpcWorker:
             self._response_stream.cancel()
         if self._runLoop is not None:
             self._runLoop.join(timeout=30)
+            if self._runLoop.is_alive():
+                self._logger.info(
+                    "Waiting for pending work items to finish before completing shutdown..."
+                )
+                self._runLoop.join()
         self._async_worker_manager.shutdown()
         self._logger.info("Worker shutdown completed")
         self._is_running = False
@@ -2883,11 +2891,22 @@ class _AsyncWorkerManager:
         self._pending_activity_work: list = []
         self._pending_orchestration_work: list = []
         self._pending_entity_batch_work: list = []
-        self.thread_pool = ThreadPoolExecutor(
-            max_workers=concurrency_options.maximum_thread_pool_workers,
+        self.thread_pool = self._create_thread_pool()
+        self._shutdown = False
+
+    def _create_thread_pool(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(
+            max_workers=self.concurrency_options.maximum_thread_pool_workers,
             thread_name_prefix="DurableTask",
         )
+
+    def _ensure_thread_pool(self) -> None:
+        if getattr(self.thread_pool, "_shutdown", False):
+            self.thread_pool = self._create_thread_pool()
+
+    def prepare_for_run(self) -> None:
         self._shutdown = False
+        self._ensure_thread_pool()
 
     def _ensure_queues_for_current_loop(self):
         """Ensure queues are bound to the current event loop."""
@@ -2962,8 +2981,7 @@ class _AsyncWorkerManager:
         self._pending_entity_batch_work.clear()
 
     async def run(self):
-        # Reset shutdown flag in case this manager is being reused
-        self._shutdown = False
+        self._ensure_thread_pool()
 
         # Ensure queues are properly bound to the current event loop
         self._ensure_queues_for_current_loop()
@@ -3025,6 +3043,9 @@ class _AsyncWorkerManager:
                 except Exception as cancellation_exception:
                     self._logger.error(f"Uncaught error while cancelling entity batch work item: {cancellation_exception}")
             self.shutdown()
+        finally:
+            if not getattr(self.thread_pool, "_shutdown", False):
+                self.thread_pool.shutdown(wait=True)
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
         # List to track running tasks
@@ -3068,12 +3089,7 @@ class _AsyncWorkerManager:
             return await func(*args, **kwargs)
         else:
             loop = asyncio.get_running_loop()
-            # Avoid submitting to executor after shutdown
-            if (
-                    getattr(self, "_shutdown", False) and getattr(self, "thread_pool", None) and getattr(
-                        self.thread_pool, "_shutdown", False)
-            ):
-                return None
+            self._ensure_thread_pool()
             return await loop.run_in_executor(
                 self.thread_pool, lambda: func(*args, **kwargs)
             )
@@ -3113,11 +3129,10 @@ class _AsyncWorkerManager:
 
     def shutdown(self):
         self._shutdown = True
-        self.thread_pool.shutdown(wait=True)
 
     async def reset_for_new_run(self):
         """Reset the manager state for a new run."""
-        self._shutdown = False
+        self.prepare_for_run()
         # Clear any existing queues - they'll be recreated when needed
         if self.activity_queue is not None:
             # Clear existing queue by creating a new one
