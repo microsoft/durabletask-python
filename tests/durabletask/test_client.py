@@ -1,3 +1,4 @@
+import asyncio
 import json
 import grpc
 import pytest
@@ -40,6 +41,14 @@ class FakeRpcError(grpc.RpcError):
 
     def code(self):
         return self._status_code
+
+
+def make_aio_rpc_error(status_code: grpc.StatusCode) -> grpc.aio.AioRpcError:
+    return grpc.aio.AioRpcError(
+        status_code,
+        grpc.aio.Metadata(),
+        grpc.aio.Metadata(),
+    )
 
 
 class FakePayloadStore(PayloadStore):
@@ -554,6 +563,161 @@ def test_async_client_stores_resolved_transport_inputs():
     assert client._secure_channel is True
     assert client._channel_options is channel_options
     assert client._interceptors == interceptors
+
+
+@pytest.mark.asyncio
+async def test_async_client_recreates_sdk_owned_channel_after_unavailable():
+    rpc_error = make_aio_rpc_error(grpc.StatusCode.UNAVAILABLE)
+
+    first_stub = MagicMock()
+    first_stub.GetInstance = AsyncMock(side_effect=rpc_error)
+    second_stub = MagicMock()
+    second_stub.GetInstance = AsyncMock(return_value=MagicMock(exists=False))
+
+    with patch("durabletask.client.shared.get_async_grpc_channel", side_effect=[MagicMock(), MagicMock()]), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
+    ):
+        client = AsyncTaskHubGrpcClient(
+            host_address="localhost:4001",
+            resiliency_options=GrpcClientResiliencyOptions(
+                channel_recreate_failure_threshold=1,
+                min_recreate_interval_seconds=0.0,
+            ),
+        )
+        with pytest.raises(grpc.aio.AioRpcError):
+            await client.get_orchestration_state("abc")
+        await client.get_orchestration_state("abc")
+
+
+@pytest.mark.asyncio
+async def test_async_client_does_not_count_wait_for_orchestration_deadline():
+    stub = MagicMock()
+    stub.GetInstance = AsyncMock(side_effect=make_aio_rpc_error(grpc.StatusCode.UNAVAILABLE))
+    stub.WaitForInstanceCompletion = AsyncMock(side_effect=make_aio_rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED))
+
+    with patch("durabletask.client.shared.get_async_grpc_channel", return_value=MagicMock()), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    ):
+        client = AsyncTaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
+        )
+        with pytest.raises(grpc.aio.AioRpcError):
+            await client.get_orchestration_state("abc")
+        with pytest.raises(TimeoutError):
+            await client.wait_for_orchestration_completion("abc")
+        assert client._client_failure_tracker.consecutive_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_async_client_close_closes_retired_channels_immediately():
+    rpc_error = make_aio_rpc_error(grpc.StatusCode.UNAVAILABLE)
+    first_channel = MagicMock(name="first-channel")
+    first_channel.close = AsyncMock()
+    second_channel = MagicMock(name="second-channel")
+    second_channel.close = AsyncMock()
+    first_stub = MagicMock()
+    first_stub.GetInstance = AsyncMock(side_effect=rpc_error)
+    second_stub = MagicMock()
+    second_stub.GetInstance = AsyncMock(return_value=MagicMock(exists=False))
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def blocked_close_retired_channel(self, channel):
+        cleanup_started.set()
+        await release_cleanup.wait()
+        await channel.close()
+
+    with patch(
+            "durabletask.client.shared.get_async_grpc_channel",
+            side_effect=[first_channel, second_channel],
+    ), patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
+    ), patch.object(
+            AsyncTaskHubGrpcClient,
+            "_close_retired_channel",
+            new=blocked_close_retired_channel,
+    ):
+        client = AsyncTaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(
+                channel_recreate_failure_threshold=1,
+                min_recreate_interval_seconds=0.0,
+            )
+        )
+        with pytest.raises(grpc.aio.AioRpcError):
+            await client.get_orchestration_state("abc")
+        await cleanup_started.wait()
+
+        try:
+            await client.close()
+            first_channel.close.assert_awaited_once()
+            second_channel.close.assert_awaited_once()
+        finally:
+            release_cleanup.set()
+            await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_async_client_does_not_recreate_caller_owned_channel():
+    provided_channel = MagicMock(name="provided-channel")
+    stub = MagicMock()
+    stub.GetInstance = AsyncMock(side_effect=make_aio_rpc_error(grpc.StatusCode.UNAVAILABLE))
+
+    with patch("durabletask.client.shared.get_async_grpc_channel") as mock_get_channel, patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    ):
+        client = AsyncTaskHubGrpcClient(
+            channel=provided_channel,
+            resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=1),
+        )
+        with pytest.raises(grpc.aio.AioRpcError):
+            await client.get_orchestration_state("abc")
+        with pytest.raises(grpc.aio.AioRpcError):
+            await client.get_orchestration_state("abc")
+
+    assert client._channel is provided_channel
+    mock_get_channel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_client_close_prevents_channel_recreation_race():
+    first_channel = MagicMock(name="first-channel")
+    first_channel.close = AsyncMock()
+    second_channel = MagicMock(name="second-channel")
+    second_channel.close = AsyncMock()
+    first_stub = MagicMock()
+    first_stub.GetInstance = AsyncMock(side_effect=make_aio_rpc_error(grpc.StatusCode.UNAVAILABLE))
+    second_stub = MagicMock()
+    second_stub.GetInstance = AsyncMock(return_value=MagicMock(exists=False))
+
+    with patch(
+            "durabletask.client.shared.get_async_grpc_channel",
+            side_effect=[first_channel, second_channel],
+    ) as mock_get_channel, patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
+    ):
+        client = AsyncTaskHubGrpcClient(
+            resiliency_options=GrpcClientResiliencyOptions(
+                channel_recreate_failure_threshold=1,
+                min_recreate_interval_seconds=0.0,
+            )
+        )
+        await client._recreate_lock.acquire()
+        try:
+            rpc_task = asyncio.create_task(client.get_orchestration_state("abc"))
+            while first_stub.GetInstance.await_count == 0:
+                await asyncio.sleep(0)
+            close_task = asyncio.create_task(client.close())
+            await asyncio.sleep(0)
+        finally:
+            client._recreate_lock.release()
+
+        with pytest.raises(grpc.aio.AioRpcError):
+            await rpc_task
+        await close_task
+
+    assert mock_get_channel.call_count == 1
+    first_channel.close.assert_awaited_once()
+    second_channel.close.assert_not_awaited()
 
 
 def test_worker_stores_resiliency_options():

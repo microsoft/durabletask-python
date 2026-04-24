@@ -38,6 +38,10 @@ FIXED
   recreated after repeated transport failures while long-poll timeout
   deadlines, successful replies, and application-level RPC errors reset the
   failure tracker.
+- Fixed async `AsyncTaskHubGrpcClient` transport resiliency so SDK-owned
+  channels are recreated after repeated transport failures while long-poll
+  timeout deadlines, successful replies, and application-level RPC errors
+  reset the failure tracker.
 
 ## v1.4.0
 
