@@ -14,6 +14,7 @@ import grpc.aio
 import durabletask.history as history
 from durabletask.entities import EntityInstanceId
 from durabletask.entities.entity_metadata import EntityMetadata
+from durabletask.grpc_options import GrpcChannelOptions
 import durabletask.internal.helpers as helpers
 import durabletask.internal.history_helpers as history_helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -161,18 +162,22 @@ class TaskHubGrpcClient:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
+                 channel: Optional[grpc.Channel] = None,
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+                 channel_options: Optional[GrpcChannelOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
-        interceptors = prepare_sync_interceptors(metadata, interceptors)
-
-        channel = shared.get_grpc_channel(
-            host_address=host_address,
-            secure_channel=secure_channel,
-            interceptors=interceptors
-        )
+        self._owns_channel = channel is None
+        if channel is None:
+            interceptors = prepare_sync_interceptors(metadata, interceptors)
+            channel = shared.get_grpc_channel(
+                host_address=host_address,
+                secure_channel=secure_channel,
+                interceptors=interceptors,
+                channel_options=channel_options,
+            )
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
@@ -180,8 +185,15 @@ class TaskHubGrpcClient:
         self._payload_store = payload_store
 
     def close(self) -> None:
-        """Closes the underlying gRPC channel."""
-        self._channel.close()
+        """Closes the underlying gRPC channel.
+
+        Only closes channels created internally. If a pre-configured channel
+        was passed via the ``channel`` constructor parameter, this method is
+        a no-op — the caller retains ownership and is responsible for closing
+        it.
+        """
+        if self._owns_channel:
+            self._channel.close()
 
     def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
                                    input: Optional[TInput] = None,
@@ -480,18 +492,22 @@ class AsyncTaskHubGrpcClient:
                  metadata: Optional[list[tuple[str, str]]] = None,
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
+                 channel: Optional[grpc.aio.Channel] = None,
                  secure_channel: bool = False,
                  interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
+                 channel_options: Optional[GrpcChannelOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None):
 
-        interceptors = prepare_async_interceptors(metadata, interceptors)
-
-        channel = shared.get_async_grpc_channel(
-            host_address=host_address,
-            secure_channel=secure_channel,
-            interceptors=interceptors
-        )
+        self._owns_channel = channel is None
+        if channel is None:
+            interceptors = prepare_async_interceptors(metadata, interceptors)
+            channel = shared.get_async_grpc_channel(
+                host_address=host_address,
+                secure_channel=secure_channel,
+                interceptors=interceptors,
+                channel_options=channel_options,
+            )
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("async_client", log_handler, log_formatter)
@@ -499,8 +515,15 @@ class AsyncTaskHubGrpcClient:
         self._payload_store = payload_store
 
     async def close(self) -> None:
-        """Closes the underlying gRPC channel."""
-        await self._channel.close()
+        """Closes the underlying gRPC channel.
+
+        Only closes channels created internally. If a pre-configured channel
+        was passed via the ``channel`` constructor parameter, this method is
+        a no-op — the caller retains ownership and is responsible for closing
+        it.
+        """
+        if self._owns_channel:
+            await self._channel.close()
 
     async def __aenter__(self):
         return self

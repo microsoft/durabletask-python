@@ -21,6 +21,7 @@ from packaging.version import InvalidVersion, parse
 import grpc
 from google.protobuf import empty_pb2
 
+from durabletask.grpc_options import GrpcChannelOptions
 from durabletask.entities.entity_operation_failed_exception import EntityOperationFailedException
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
@@ -361,8 +362,13 @@ class TaskHubGrpcWorker:
             Defaults to None.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to False.
+        channel (Optional[grpc.Channel], optional): Pre-configured gRPC channel to use.
+            If set, host address, secure_channel, interceptors, and channel_options
+            are ignored when creating connections.
         interceptors (Optional[Sequence[shared.ClientInterceptor]], optional): Custom gRPC
             interceptors to apply to the channel. Defaults to None.
+        channel_options (Optional[GrpcChannelOptions], optional): Extra low-level gRPC
+            channel configuration including retry/service config options.
         concurrency_options (Optional[ConcurrencyOptions], optional): Configuration for
             controlling worker concurrency limits. If None, default settings are used.
 
@@ -426,8 +432,10 @@ class TaskHubGrpcWorker:
             metadata: Optional[list[tuple[str, str]]] = None,
             log_handler: Optional[logging.Handler] = None,
             log_formatter: Optional[logging.Formatter] = None,
+            channel: Optional[grpc.Channel] = None,
             secure_channel: bool = False,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+            channel_options: Optional[GrpcChannelOptions] = None,
             concurrency_options: Optional[ConcurrencyOptions] = None,
             maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
             payload_store: Optional[PayloadStore] = None,
@@ -439,8 +447,10 @@ class TaskHubGrpcWorker:
         self._logger = shared.get_logger("worker", log_handler, log_formatter)
         self._shutdown = Event()
         self._is_running = False
+        self._channel = channel
         self._secure_channel = secure_channel
         self._payload_store = payload_store
+        self._channel_options = channel_options
 
         # Use provided concurrency options or create default ones
         self._concurrency_options = (
@@ -590,7 +600,7 @@ class TaskHubGrpcWorker:
 
         def create_fresh_connection():
             nonlocal current_channel, current_stub, conn_retry_count
-            if current_channel:
+            if current_channel and self._channel is None:
                 try:
                     current_channel.close()
                 except Exception:
@@ -598,16 +608,22 @@ class TaskHubGrpcWorker:
             current_channel = None
             current_stub = None
             try:
-                current_channel = shared.get_grpc_channel(
-                    self._host_address, self._secure_channel, self._interceptors
-                )
+                if self._channel is not None:
+                    current_channel = self._channel
+                else:
+                    current_channel = shared.get_grpc_channel(
+                        self._host_address,
+                        self._secure_channel,
+                        self._interceptors,
+                        channel_options=self._channel_options,
+                    )
                 current_stub = stubs.TaskHubSidecarServiceStub(current_channel)
                 current_stub.Hello(empty_pb2.Empty())
                 conn_retry_count = 0
                 self._logger.info(f"Created fresh connection to {self._host_address}")
             except Exception as e:
                 self._logger.warning(f"Failed to create connection: {e}")
-                current_channel = None
+                current_channel = self._channel if self._channel is not None else None
                 current_stub = None
                 raise
 
@@ -632,12 +648,12 @@ class TaskHubGrpcWorker:
                 current_reader_thread = None
 
             # Close the channel
-            if current_channel:
+            if current_channel and self._channel is None:
                 try:
                     current_channel.close()
                 except Exception:
                     pass
-            current_channel = None
+            current_channel = self._channel if self._channel is not None else None
             current_stub = None
 
         def should_invalidate_connection(rpc_error):
