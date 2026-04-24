@@ -111,6 +111,21 @@ def test_full_jitter_delay_is_capped(monkeypatch):
     assert delay == 30.0
 
 
+def test_full_jitter_delay_large_attempt_is_still_capped(monkeypatch):
+    monkeypatch.setattr(
+        "durabletask.internal.grpc_resiliency.random.random",
+        lambda: 1.0,
+    )
+
+    delay = get_full_jitter_delay_seconds(
+        1_000,
+        base_seconds=1.0,
+        cap_seconds=30.0,
+    )
+
+    assert delay == 30.0
+
+
 def test_failure_tracker_trips_at_threshold():
     tracker = FailureTracker(threshold=3)
 
@@ -120,6 +135,15 @@ def test_failure_tracker_trips_at_threshold():
 
     tracker.record_success()
 
+    assert tracker.consecutive_failures == 0
+
+
+def test_failure_tracker_threshold_zero_never_trips():
+    tracker = FailureTracker(threshold=0)
+
+    assert tracker.record_failure() is False
+    assert tracker.record_failure() is False
+    assert tracker.record_failure() is False
     assert tracker.consecutive_failures == 0
 
 
