@@ -4,6 +4,7 @@
 # See https://peps.python.org/pep-0563/
 from __future__ import annotations
 
+import logging
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -278,6 +279,51 @@ class OrchestrationContext(ABC):
     @abstractmethod
     def _exit_critical_section(self) -> None:
         pass
+
+    def create_replay_safe_logger(self, logger: logging.Logger) -> ReplaySafeLogger:
+        """Create a replay-safe logger that suppresses log messages during orchestration replay.
+
+        The returned logger wraps the provided logger and only emits log messages when
+        the orchestrator is not replaying. This prevents duplicate log messages from
+        appearing as a side effect of orchestration replay.
+
+        Parameters
+        ----------
+        logger : logging.Logger
+            The underlying logger to wrap.
+
+        Returns
+        -------
+        ReplaySafeLogger
+            A logger that only emits log messages when the orchestrator is not replaying.
+        """
+        return ReplaySafeLogger(logger, lambda: self.is_replaying)
+
+
+class ReplaySafeLogger(logging.LoggerAdapter):
+    """A logger adapter that suppresses log messages during orchestration replay.
+
+    This class extends :class:`logging.LoggerAdapter` and only emits log
+    messages when the orchestrator is *not* replaying. Use this to avoid
+    duplicate log entries that would otherwise appear every time the
+    orchestrator replays its history.
+
+    Obtain an instance by calling :meth:`OrchestrationContext.create_replay_safe_logger`.
+    """
+
+    def __init__(self, logger: logging.Logger, is_replaying: Callable[[], bool]) -> None:
+        super().__init__(logger, {})
+        self._is_replaying = is_replaying
+
+    def isEnabledFor(self, level: int) -> bool:
+        """Return whether logging is enabled for the given level.
+
+        Returns ``False`` while the orchestrator is replaying so that callers
+        can skip expensive message formatting during replay.
+        """
+        if self._is_replaying():
+            return False
+        return self.logger.isEnabledFor(level)
 
 
 class FailureDetails:
