@@ -39,6 +39,9 @@ opentelemetry = [
 azure-blob-payloads = [
     "azure-storage-blob[aio]>=12.0.0"
 ]
+history-export-azure = [
+    "azure-storage-blob>=12.0.0"
+]
 
 [project.urls]
 repository = "https://github.com/microsoft/durabletask-python"

@@ -9,6 +9,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added `durabletask.extensions.history_export` for exporting the event history of
+  terminal orchestrations to an external destination. Includes
+  `ExportHistoryClient`, a per-job `ExportHistoryJobClient` returned by
+  `get_job_client(...)`, and `list_jobs(...)` for enumerating jobs by status
+  or last-modified window. Ships with a bundled `AzureBlobHistoryExportWriter`
+  (installed with `pip install durabletask[history-export-azure]`) and a
+  `HistoryWriter` protocol for plugging in custom destinations. Supports both
+  `ExportMode.BATCH` (export a window and complete) and `ExportMode.CONTINUOUS`
+  (tail terminal instances indefinitely until stopped via `delete_job`).
+  Exported blobs are self-describing: each blob carries an explicit
+  `schema_version`, the orchestration's `OrchestrationState` metadata, and
+  the full ordered event list. The export workflow retries each instance up
+  to 3 times with exponential backoff (15s/30s/60s), retries failed batches
+  up to 3 times, caps in-flight exports via `max_parallel_exports`
+  (default 32), continues-as-new every 5 page cycles to bound orchestrator
+  history, and re-fetches entity state at the top of every page loop so
+  external delete or mark-failed signals stop the orchestrator cleanly.
+  Job state lives in a durable entity with an explicit state-transition
+  matrix (PENDING / ACTIVE / COMPLETED / FAILED); invalid transitions raise
+  `ExportJobInvalidTransitionError`. Persisted entity state uses a
+  versioned, schema-stable JSON shape (`STATE_SCHEMA_VERSION`) with no
+  embedded Python type metadata. Each export job's driving orchestrator
+  uses a deterministic instance ID (`export-job-{job_id}`, exposed via
+  `orchestrator_instance_id_for(...)`) so callers can correlate a job ID
+  with its orchestrator for logging, monitoring, and restart.
 - Added `ReplaySafeLogger` and `OrchestrationContext.create_replay_safe_logger()`
   for suppressing duplicate log messages during orchestrator replay
 - Added `GrpcChannelOptions` and `GrpcRetryPolicyOptions` for configuring

@@ -1,0 +1,287 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""Durable entity that owns the state of a single export job.
+
+The entity persists its state through the SDK's default JSON encoder.
+To avoid embedding Python type metadata in the persisted payload (a
+known deserialization-attack vector), the on-disk shape is owned by
+:class:`~durabletask.extensions.history_export.models.ExportJobState`,
+a versioned dataclass whose ``_to_dict`` / ``_from_dict`` methods
+produce and consume pure JSON primitives keyed by literal field names
+plus an explicit ``schema_version``.
+
+Operations
+----------
+``create``
+    Initialise a fresh export job, or reset a terminal job back to
+    :attr:`ExportJobStatus.PENDING`.  Refuses to overwrite an active
+    job (raises :class:`ExportJobInvalidTransitionError`).
+``get``
+    Returns the persisted state dict, or ``None`` if the entity has
+    not been created (or has been deleted).
+``run``
+    Schedules the driving orchestrator (with a deterministic instance
+    ID derived from the job ID) and transitions the job to
+    :attr:`ExportJobStatus.ACTIVE`.  Idempotent so the client may
+    safely signal it more than once.
+``commit_checkpoint``
+    Applies an incremental update after a single export page.  When
+    ``mark_failed_on_batch`` is true *and* ``failures`` is non-empty,
+    transitions the job to :class:`ExportJobStatus.FAILED` and
+    records the failure summary as ``last_error``.
+``mark_completed``
+    Transitions the job to :class:`ExportJobStatus.COMPLETED`.
+``mark_failed``
+    Transitions the job to :class:`ExportJobStatus.FAILED` and
+    records ``payload["reason"]`` as the terminal error.
+``delete``
+    Clears all entity state.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, List, Mapping, Optional
+
+from durabletask import entities
+
+from durabletask.extensions.history_export._constants import (
+    ENTITY_NAME,
+    ORCHESTRATOR_INSTANCE_ID_PREFIX,
+    ORCHESTRATOR_NAME,
+    orchestrator_instance_id_for,
+)
+from durabletask.extensions.history_export._logging import logger
+from durabletask.extensions.history_export.models import (
+    ExportFailure,
+    ExportJobConfiguration,
+    ExportJobState,
+    ExportJobStatus,
+    _dt_from_iso,
+)
+from durabletask.extensions.history_export.transitions import (
+    assert_valid_transition,
+)
+
+
+__all__ = [
+    "ENTITY_NAME",
+    "ORCHESTRATOR_INSTANCE_ID_PREFIX",
+    "ExportJobEntity",
+    "orchestrator_instance_id_for",
+    "register",
+]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _summarize_failures(failures: List[ExportFailure], *, limit: int = 10) -> str:
+    if not failures:
+        return ""
+    head = "; ".join(f"{f.instance_id}: {f.reason}" for f in failures[:limit])
+    if len(failures) > limit:
+        head += f"; ... and {len(failures) - limit} more failures"
+    return head
+
+
+class ExportJobEntity(entities.DurableEntity):
+    """Durable entity that owns the lifecycle state of one export job."""
+
+    # ----- state helpers --------------------------------------------
+
+    def _load(self) -> Optional[ExportJobState]:
+        raw = self.get_state()
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise TypeError(
+                f"Unexpected entity state type {type(raw).__name__!r}; expected dict"
+            )
+        return ExportJobState._from_dict(raw)
+
+    def _save(self, state: ExportJobState) -> dict[str, Any]:
+        state.last_modified_at = _utcnow()
+        persisted = state._to_dict()
+        self.set_state(persisted)
+        return persisted
+
+    def _current_status(self) -> Optional[ExportJobStatus]:
+        state = self._load()
+        return state.status if state is not None else None
+
+    def _job_id(self) -> str:
+        return self.entity_context.entity_id.key
+
+    # ----- operations ------------------------------------------------
+
+    def create(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        job_id = self._job_id()
+        current = self._current_status()
+        assert_valid_transition(
+            "create", current, ExportJobStatus.PENDING, job_id=job_id,
+        )
+
+        config_dict = payload.get("config")
+        if not config_dict:
+            raise ValueError("create payload requires 'config'")
+        config = ExportJobConfiguration._from_dict(config_dict)
+
+        created_at_raw = payload.get("created_at")
+        created_at = _dt_from_iso(created_at_raw) if created_at_raw else _utcnow()
+        assert created_at is not None
+
+        state = ExportJobState(
+            status=ExportJobStatus.PENDING,
+            config=config,
+            created_at=created_at,
+            last_modified_at=created_at,
+        )
+        logger.info(
+            "Created export job %r in status %s", job_id, state.status.value,
+        )
+        return self._save(state)
+
+    def get(self, _: Any = None) -> Optional[dict[str, Any]]:
+        state = self._load()
+        return state._to_dict() if state is not None else None
+
+    def run(self, _: Any = None) -> Optional[dict[str, Any]]:
+        state = self._load()
+        if state is None:
+            raise ValueError("Cannot run uninitialized export job")
+        job_id = self._job_id()
+        assert_valid_transition(
+            "run", state.status, ExportJobStatus.ACTIVE, job_id=job_id,
+        )
+
+        # The entity itself schedules the driving orchestrator.  The
+        # client is therefore decoupled from the orchestrator's name
+        # and input shape.
+        if state.status is ExportJobStatus.PENDING:
+            instance_id = orchestrator_instance_id_for(job_id)
+            try:
+                self.entity_context.schedule_new_orchestration(
+                    ORCHESTRATOR_NAME,
+                    input={"job_id": job_id, "config": state.config._to_dict()},
+                    instance_id=instance_id,
+                )
+                state.orchestrator_instance_id = instance_id
+                logger.info(
+                    "Scheduled orchestrator %s for job %r with instance ID %s",
+                    ORCHESTRATOR_NAME, job_id, instance_id,
+                )
+            except Exception as ex:  # noqa: BLE001
+                state.status = ExportJobStatus.FAILED
+                state.last_error = (
+                    f"Failed to schedule orchestrator: {type(ex).__name__}: {ex}"
+                )
+                logger.exception(
+                    "Failed to schedule orchestrator for export job %r", job_id,
+                )
+                self._save(state)
+                raise
+
+        state.status = ExportJobStatus.ACTIVE
+        state.last_error = None
+        return self._save(state)
+
+    def commit_checkpoint(self, payload: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+        state = self._load()
+        if state is None:
+            raise ValueError("Cannot commit_checkpoint on uninitialized export job")
+        job_id = self._job_id()
+
+        # commit_checkpoint may transition ACTIVE -> ACTIVE (no-op) or
+        # ACTIVE -> FAILED (when the orchestrator signals a persistent
+        # batch failure).  The transitions matrix covers both.
+        scanned_delta = int(payload.get("scanned_delta", 0))
+        exported_delta = int(payload.get("exported_delta", 0))
+        failed_delta = int(payload.get("failed_delta", 0))
+        if scanned_delta < 0 or exported_delta < 0 or failed_delta < 0:
+            raise ValueError("checkpoint deltas must be non-negative")
+
+        failures_data = payload.get("failures") or []
+        new_failures = [ExportFailure._from_dict(f) for f in failures_data]
+        will_fail = bool(payload.get("mark_failed_on_batch")) and bool(new_failures)
+        target = ExportJobStatus.FAILED if will_fail else ExportJobStatus.ACTIVE
+        assert_valid_transition(
+            "commit_checkpoint", state.status, target, job_id=job_id,
+        )
+
+        state.scanned_instances += scanned_delta
+        state.exported_instances += exported_delta
+        state.failed_instances += failed_delta
+
+        if "last_instance_key" in payload:
+            state.checkpoint.last_instance_key = payload.get("last_instance_key")
+
+        checkpoint_time_raw = payload.get("checkpoint_time")
+        checkpoint_time = (
+            _dt_from_iso(checkpoint_time_raw) if checkpoint_time_raw else _utcnow()
+        )
+        state.last_checkpoint_time = checkpoint_time
+
+        if new_failures:
+            state.failures.extend(new_failures)
+
+        if will_fail:
+            state.status = ExportJobStatus.FAILED
+            summary = _summarize_failures(new_failures)
+            state.last_error = (
+                f"Batch export failed after retries. Failures: {summary}"
+                if summary
+                else "Batch export failed after retries."
+            )
+            logger.warning(
+                "Export job %r marked FAILED after batch retries (%d failures)",
+                job_id, len(new_failures),
+            )
+
+        return self._save(state)
+
+    def mark_completed(self, _: Any = None) -> Optional[dict[str, Any]]:
+        state = self._load()
+        if state is None:
+            raise ValueError("Cannot mark_completed on uninitialized export job")
+        job_id = self._job_id()
+        assert_valid_transition(
+            "mark_completed", state.status, ExportJobStatus.COMPLETED,
+            job_id=job_id,
+        )
+        state.status = ExportJobStatus.COMPLETED
+        state.last_error = None
+        logger.info("Export job %r marked COMPLETED", job_id)
+        return self._save(state)
+
+    def mark_failed(
+        self, payload: Optional[Mapping[str, Any]] = None
+    ) -> Optional[dict[str, Any]]:
+        state = self._load()
+        if state is None:
+            raise ValueError("Cannot mark_failed on uninitialized export job")
+        job_id = self._job_id()
+        assert_valid_transition(
+            "mark_failed", state.status, ExportJobStatus.FAILED, job_id=job_id,
+        )
+        reason = ""
+        if payload is not None:
+            reason = str(payload.get("reason", ""))
+        state.status = ExportJobStatus.FAILED
+        state.last_error = reason or None
+        logger.info("Export job %r marked FAILED: %s", job_id, reason or "(no reason)")
+        return self._save(state)
+
+    def delete(self, _: Any = None) -> None:  # type: ignore[override]
+        # The base class's delete() calls set_state(None) which is
+        # exactly what we want for export-job cleanup.  ``delete`` is
+        # always valid regardless of current status.
+        logger.info("Export job %r deleted", self._job_id())
+        super().delete()
+
+
+def register(worker_instance, *, name: str = ENTITY_NAME) -> None:
+    """Convenience helper to register :class:`ExportJobEntity` on *worker*."""
+    worker_instance.add_entity(ExportJobEntity, name=name)
