@@ -1,0 +1,50 @@
+jobs:
+  - job:
+    templateContext:
+      outputs:
+        - output: pipelineArtifact
+          path: $(Build.ArtifactStagingDirectory)
+          artifact: drop
+          sbomBuildDropPath: "$(System.DefaultWorkingDirectory)"
+          sbomPackageName: "Durable Task Python SBOM"
+
+    steps:
+      - checkout: self
+
+      - task: UsePythonVersion@0
+        displayName: "Use Python 3.12"
+        inputs:
+          versionSpec: "3.12"
+          addToPath: true
+
+      # Install build + lint tooling
+      - script: |
+          python -m pip install --upgrade pip
+          python -m pip install build flake8
+        displayName: "Install build tooling"
+
+      # Lint core SDK
+      - script: flake8 .
+        displayName: "flake8: durabletask"
+        workingDirectory: durabletask
+
+      # Lint azuremanaged provider
+      - script: flake8 .
+        displayName: "flake8: durabletask-azuremanaged"
+        workingDirectory: durabletask-azuremanaged
+
+      # Build sdist + wheel for durabletask (core SDK)
+      - script: |
+          python -m build --sdist --wheel --outdir $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask .
+        displayName: "Build durabletask (sdist + wheel)"
+
+      # Build sdist + wheel for durabletask-azuremanaged
+      - script: |
+          python -m build --sdist --wheel --outdir $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged ./durabletask-azuremanaged
+        displayName: "Build durabletask-azuremanaged (sdist + wheel)"
+
+      # List staged outputs for visibility in logs
+      - script: |
+          ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask
+          ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged
+        displayName: "List build outputs"
