@@ -17,6 +17,13 @@ jobs:
           versionSpec: "3.12"
           addToPath: true
 
+      # The 1ES pool is network-isolated, so direct pypi.org access is blocked.
+      # Authenticate pip to an ADO Artifacts feed that proxies PyPI as upstream.
+      - task: PipAuthenticate@1
+        displayName: "Pip Authenticate"
+        inputs:
+          artifactFeeds: "internal/PythonSDK_Internal_PublicPackages"
+
       # Install build + lint tooling
       - script: |
           python -m pip install --upgrade pip
