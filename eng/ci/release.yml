@@ -47,16 +47,12 @@ extends:
                   signcertname: "dts-esrp-cert"
                   clientid: "0b3ed1a4-0727-4a50-b82a-02c2bd9dec89"
                   intent: "PackageDistribution"
-                  # DRY-RUN: set to "NPM" while bringing up the pipeline so ESRP
-                  # signs and processes the artifact but does NOT push to PyPI
-                  # (mismatched destination router). Switch back to "PyPi" for
-                  # real releases. See https://aka.ms/python/publish.
-                  contenttype: "NPM"
+                  contenttype: "PyPi"
                   contentsource: "Folder"
                   folderlocation: "$(System.DefaultWorkingDirectory)/drop/buildoutputs/durabletask"
                   waitforreleasecompletion: true
-                  owners: "wangbill@microsoft.com"
-                  approvers: "kaibocai@microsoft.com"
+                  owners: "torosent@microsoft.com"
+                  approvers: "andystaples@microsoft.com;beverst@microsoft.com"
                   serviceendpointurl: "https://api.esrp.microsoft.com"
                   mainpublisher: "durabletask-java"
                   domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
@@ -82,16 +78,12 @@ extends:
                   signcertname: "dts-esrp-cert"
                   clientid: "0b3ed1a4-0727-4a50-b82a-02c2bd9dec89"
                   intent: "PackageDistribution"
-                  # DRY-RUN: set to "NPM" while bringing up the pipeline so ESRP
-                  # signs and processes the artifact but does NOT push to PyPI
-                  # (mismatched destination router). Switch back to "PyPi" for
-                  # real releases. See https://aka.ms/python/publish.
-                  contenttype: "NPM"
+                  contenttype: "PyPi"
                   contentsource: "Folder"
                   folderlocation: "$(System.DefaultWorkingDirectory)/drop/buildoutputs/durabletask-azuremanaged"
                   waitforreleasecompletion: true
-                  owners: "wangbill@microsoft.com"
-                  approvers: "kaibocai@microsoft.com"
+                  owners: "torosent@microsoft.com"
+                  approvers: "andystaples@microsoft.com;beverst@microsoft.com"
                   serviceendpointurl: "https://api.esrp.microsoft.com"
                   mainpublisher: "durabletask-java"
                   domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
