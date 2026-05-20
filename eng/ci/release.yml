@@ -10,10 +10,6 @@ resources:
   pipelines:
     - pipeline: DurableTaskPythonBuildPipeline
       source: durabletask-python.official
-      # NOTE: `branch:` is intentionally omitted during bring-up so the release
-      # can pull the latest successful build from any branch. Once this is
-      # merged to main and the official build has run there, restore
-      # `branch: main` so only main builds are releasable.
 
 extends:
   template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
