@@ -1,5 +1,6 @@
 jobs:
-  - job:
+  - job: BuildAndSign
+    displayName: "Build and sign"
     templateContext:
       outputs:
         - output: pipelineArtifact
@@ -24,10 +25,10 @@ jobs:
         inputs:
           artifactFeeds: "internal/PythonSDK_Internal_PublicPackages"
 
-      # Install build + lint tooling
+      # Install build + lint + test tooling
       - script: |
           python -m pip install --upgrade pip
-          python -m pip install build flake8
+          python -m pip install build flake8 pytest pytest-asyncio aiohttp
         displayName: "Install build tooling"
 
       # Lint core SDK
@@ -55,3 +56,25 @@ jobs:
           ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask
           ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged
         displayName: "List build outputs"
+
+      # Install the built wheels and run unit tests against them. We exclude
+      # tests marked `dts` (require the Durable Task Scheduler emulator) and
+      # `azurite` (require the Azurite blob emulator) since those external
+      # services aren't provisioned in this network-isolated pool. The full
+      # matrix (including emulator-backed tests) runs in GitHub Actions on
+      # PRs to main and main itself; this step is defense-in-depth to ensure
+      # the artifacts we're about to ship are at least importable and pass
+      # the pure-Python unit tests.
+      - script: |
+          set -e
+          python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask/*.whl
+          python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged/*.whl
+        displayName: "Install built wheels"
+
+      - script: pytest -m "not dts and not azurite" --verbose
+        displayName: "pytest: durabletask (unit tests, no emulators)"
+        workingDirectory: tests/durabletask
+
+      - script: pytest -m "not dts" --verbose
+        displayName: "pytest: durabletask-azuremanaged (unit tests, no emulators)"
+        workingDirectory: tests/durabletask-azuremanaged

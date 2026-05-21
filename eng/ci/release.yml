@@ -47,8 +47,13 @@ extends:
                   contentsource: "Folder"
                   folderlocation: "$(System.DefaultWorkingDirectory)/drop/buildoutputs/durabletask"
                   waitforreleasecompletion: true
-                  owners: "torosent@microsoft.com"
-                  approvers: "andystaples@microsoft.com;beverst@microsoft.com"
+                  # Auto-populate from the build queuer's identity so we don't
+                  # hardcode personal emails in source. ESRP will send the
+                  # release notification / approval link to whoever clicked
+                  # "Run pipeline". This matches the pattern used by
+                  # Azure/azure-sdk-for-python and microsoft/mcp pipelines.
+                  owners: $(Build.RequestedForEmail)
+                  approvers: $(Build.RequestedForEmail)
                   serviceendpointurl: "https://api.esrp.microsoft.com"
                   mainpublisher: "durabletask-java"
                   domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
@@ -78,8 +83,8 @@ extends:
                   contentsource: "Folder"
                   folderlocation: "$(System.DefaultWorkingDirectory)/drop/buildoutputs/durabletask-azuremanaged"
                   waitforreleasecompletion: true
-                  owners: "torosent@microsoft.com"
-                  approvers: "andystaples@microsoft.com;beverst@microsoft.com"
+                  owners: $(Build.RequestedForEmail)
+                  approvers: $(Build.RequestedForEmail)
                   serviceendpointurl: "https://api.esrp.microsoft.com"
                   mainpublisher: "durabletask-java"
                   domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
