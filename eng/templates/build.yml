@@ -1,0 +1,80 @@
+jobs:
+  - job: BuildAndSign
+    displayName: "Build and sign"
+    templateContext:
+      outputs:
+        - output: pipelineArtifact
+          path: $(Build.ArtifactStagingDirectory)
+          artifact: drop
+          sbomBuildDropPath: "$(System.DefaultWorkingDirectory)"
+          sbomPackageName: "Durable Task Python SBOM"
+
+    steps:
+      - checkout: self
+
+      - task: UsePythonVersion@0
+        displayName: "Use Python 3.12"
+        inputs:
+          versionSpec: "3.12"
+          addToPath: true
+
+      # The 1ES pool is network-isolated, so direct pypi.org access is blocked.
+      # Authenticate pip to an ADO Artifacts feed that proxies PyPI as upstream.
+      - task: PipAuthenticate@1
+        displayName: "Pip Authenticate"
+        inputs:
+          artifactFeeds: "internal/PythonSDK_Internal_PublicPackages"
+
+      # Install build + lint + test tooling
+      - script: |
+          python -m pip install --upgrade pip
+          python -m pip install build flake8 pytest pytest-asyncio aiohttp
+        displayName: "Install build tooling"
+
+      # Lint core SDK
+      - script: flake8 .
+        displayName: "flake8: durabletask"
+        workingDirectory: durabletask
+
+      # Lint azuremanaged provider
+      - script: flake8 .
+        displayName: "flake8: durabletask-azuremanaged"
+        workingDirectory: durabletask-azuremanaged
+
+      # Build sdist + wheel for durabletask (core SDK)
+      - script: |
+          python -m build --sdist --wheel --outdir $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask .
+        displayName: "Build durabletask (sdist + wheel)"
+
+      # Build sdist + wheel for durabletask-azuremanaged
+      - script: |
+          python -m build --sdist --wheel --outdir $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged ./durabletask-azuremanaged
+        displayName: "Build durabletask-azuremanaged (sdist + wheel)"
+
+      # List staged outputs for visibility in logs
+      - script: |
+          ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask
+          ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged
+        displayName: "List build outputs"
+
+      # Install the built wheels and run unit tests against them. We exclude
+      # tests marked `dts` (require the Durable Task Scheduler emulator) and
+      # `azurite` (require the Azurite blob emulator) since those external
+      # services aren't provisioned in this network-isolated pool. The full
+      # matrix (including emulator-backed tests) runs in GitHub Actions on
+      # PRs to main and main itself; this step is defense-in-depth to ensure
+      # the artifacts we're about to ship are at least importable and pass
+      # the pure-Python unit tests.
+      - script: |
+          set -e
+          python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask/*.whl
+          python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged/*.whl
+        displayName: "Install built wheels"
+
+      - script: pytest -m "not dts and not azurite" --verbose
+        displayName: "pytest: durabletask (unit tests, no emulators)"
+        workingDirectory: tests/durabletask
+
+      - script: pytest -m "not dts" --verbose
+        displayName: "pytest: durabletask-azuremanaged (unit tests, no emulators)"
+        workingDirectory: tests/durabletask-azuremanaged
