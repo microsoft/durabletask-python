@@ -25,10 +25,14 @@ jobs:
         inputs:
           artifactFeeds: "internal/PythonSDK_Internal_PublicPackages"
 
-      # Install build + lint + test tooling
+      # Install build + lint + test tooling. Note: we deliberately do NOT
+      # install the SDK's runtime dependencies (grpcio, protobuf, etc.) here.
+      # Those are pulled in later via the built wheels' declared metadata so
+      # that a wheel which accidentally drops a declared dependency surfaces
+      # the missing dep instead of being silently masked.
       - script: |
           python -m pip install --upgrade pip
-          python -m pip install build flake8 pytest pytest-asyncio aiohttp
+          python -m pip install build flake8 pytest pytest-asyncio
         displayName: "Install build tooling"
 
       # Lint core SDK
@@ -57,24 +61,36 @@ jobs:
           ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged
         displayName: "List build outputs"
 
-      # Install the built wheels and run unit tests against them. We exclude
-      # tests marked `dts` (require the Durable Task Scheduler emulator) and
-      # `azurite` (require the Azurite blob emulator) since those external
-      # services aren't provisioned in this network-isolated pool. The full
-      # matrix (including emulator-backed tests) runs in GitHub Actions on
-      # PRs to main and main itself; this step is defense-in-depth to ensure
-      # the artifacts we're about to ship are at least importable and pass
-      # the pure-Python unit tests.
+      # Install the built wheels with all declared optional extras and let
+      # pip resolve their runtime dependencies (grpcio, protobuf, packaging,
+      # azure-identity, azure-storage-blob, opentelemetry-*, etc.). This is
+      # intentional: if a wheel ever accidentally drops a declared
+      # dependency, this step will surface the missing dependency at install
+      # or test time instead of being masked by a preinstalled
+      # requirements.txt. Test-only tools (pytest, pytest-asyncio) are
+      # already installed in the "Install build tooling" step above.
       #
-      # `requirements.txt` brings in the test-time dependencies (opentelemetry,
-      # grpcio, etc.) that the test modules import. We install it before the
-      # built wheels so the wheels (which are what we're actually validating)
-      # take precedence over any editable/source install of the same package.
+      # >>> MAINTENANCE NOTE <<<
+      # When a new optional extra is added to either package's
+      # `pyproject.toml` under `[project.optional-dependencies]`, append it
+      # to the extras list below (e.g., add `,my-new-extra` inside the
+      # brackets). This keeps the smoke tests and dependency-resolution
+      # check exercising every shipping configuration.
+      #
+      # We exclude tests marked `dts` (require the Durable Task Scheduler
+      # emulator) and `azurite` (require the Azurite blob emulator) since
+      # those external services aren't provisioned in this network-isolated
+      # pool. The full matrix (including emulator-backed tests) runs in
+      # GitHub Actions on PRs to main and main itself.
       - script: |
           set -e
-          python -m pip install -r requirements.txt
-          python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask/*.whl
-          python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged/*.whl
+          # Resolve the wheel filename explicitly because bash treats
+          # `*.whl[extra]` as a glob with a character class and would not
+          # append the extras correctly.
+          DT_WHEEL=$(ls $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask/*.whl)
+          DT_AM_WHEEL=$(ls $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged/*.whl)
+          python -m pip install "${DT_WHEEL}[opentelemetry,azure-blob-payloads]"
+          python -m pip install "${DT_AM_WHEEL}[azure-blob-payloads]"
         displayName: "Install built wheels"
 
       - script: pytest -m "not dts and not azurite" --verbose
