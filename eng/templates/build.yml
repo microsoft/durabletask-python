@@ -81,11 +81,15 @@ jobs:
         displayName: "pytest: durabletask (unit tests, no emulators)"
         workingDirectory: tests/durabletask
 
-      - script: pytest -m "not dts" --ignore=test_dts_activity_sequence.py --verbose
-        displayName: "pytest: durabletask-azuremanaged (unit tests, no emulators)"
-        workingDirectory: tests/durabletask-azuremanaged
-        # NOTE: `test_dts_activity_sequence.py` is `--ignore`d because it calls
-        # `exit()` at module load time when TASKHUB isn't set, which crashes
-        # pytest collection before its `pytest.mark.dts` marker can be applied.
-        # The other `test_dts_*.py` files handle missing env vars more
-        # gracefully and are filtered out by `-m "not dts"` as intended.
+      # `tests/durabletask-azuremanaged/` is intentionally NOT exercised here.
+      # Every test in that directory requires the Durable Task Scheduler
+      # emulator (a Docker container) which isn't provisioned in the 1ES
+      # network-isolated pool. The full azuremanaged test suite gates merges
+      # via `.github/workflows/durabletask-azuremanaged.yml` on every PR to
+      # `main` and `release/*`, so artifacts that reach this build have
+      # already passed those tests. Instead, we run a smoke import below to
+      # confirm the built wheel is loadable.
+      - script: |
+          set -e
+          python -c "import durabletask.azuremanaged; from durabletask.azuremanaged.client import DurableTaskSchedulerClient; from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker; print('durabletask.azuremanaged smoke import OK')"
+        displayName: "smoke import: durabletask-azuremanaged"
