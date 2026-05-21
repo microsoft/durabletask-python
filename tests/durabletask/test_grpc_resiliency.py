@@ -147,6 +147,26 @@ def test_failure_tracker_threshold_zero_never_trips():
     assert tracker.consecutive_failures == 0
 
 
+def test_failure_tracker_record_failure_is_thread_safe():
+    import threading
+
+    tracker = FailureTracker(threshold=10_000)
+    iterations = 500
+    workers = 8
+
+    def increment() -> None:
+        for _ in range(iterations):
+            tracker.record_failure()
+
+    threads = [threading.Thread(target=increment) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert tracker.consecutive_failures == iterations * workers
+
+
 @pytest.mark.parametrize(
     "method_name",
     [

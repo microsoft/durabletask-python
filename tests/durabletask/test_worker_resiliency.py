@@ -131,6 +131,26 @@ async def test_async_worker_manager_honors_shutdown_requested_before_run():
     await asyncio.wait_for(manager.run(), timeout=1.0)
 
 
+@pytest.mark.asyncio
+async def test_async_worker_manager_recreates_thread_pool_after_run():
+    manager = _AsyncWorkerManager(
+        ConcurrencyOptions(maximum_thread_pool_workers=1),
+        MagicMock(),
+    )
+
+    original_pool = manager.thread_pool
+
+    manager.shutdown()
+    await asyncio.wait_for(manager.run(), timeout=1.0)
+
+    assert manager._pool_is_shutdown is True
+
+    manager.prepare_for_run()
+
+    assert manager._pool_is_shutdown is False
+    assert manager.thread_pool is not original_pool
+
+
 def test_worker_start_clears_prior_shutdown_request():
     worker = TaskHubGrpcWorker()
     worker._shutdown.set()
@@ -190,7 +210,7 @@ def test_worker_counts_only_transport_failures_for_recreation():
 
 def test_worker_does_not_recreate_caller_owned_channel():
     worker = TaskHubGrpcWorker(channel=MagicMock())
-    assert worker._can_recreate_channel() is False
+    assert worker._owns_channel is False
 
 
 @pytest.mark.asyncio

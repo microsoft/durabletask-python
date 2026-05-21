@@ -166,6 +166,12 @@ def parse_orchestration_state(state: pb.OrchestrationState) -> OrchestrationStat
         failure_details)
 
 
+# Grace period before a retired SDK-owned channel is force-closed. Long enough
+# for in-flight unary RPCs to drain on their own, short enough that recreate
+# storms don't pile up dozens of half-closed channels.
+_RETIRED_CHANNEL_CLOSE_DELAY_SECONDS = 30.0
+
+
 class TaskHubGrpcClient:
     def __init__(self, *,
                  host_address: Optional[str] = None,
@@ -264,7 +270,7 @@ class TaskHubGrpcClient:
             self._last_recreate_time = now
             self._client_failure_tracker.record_success()
             close_timer = threading.Timer(
-                30.0,
+                _RETIRED_CHANNEL_CLOSE_DELAY_SECONDS,
                 self._close_retired_channel,
                 args=(old_channel,),
             )
@@ -730,7 +736,7 @@ class AsyncTaskHubGrpcClient:
 
     async def _close_retired_channel(self, channel: grpc.aio.Channel) -> None:
         try:
-            await asyncio.sleep(30.0)
+            await asyncio.sleep(_RETIRED_CHANNEL_CLOSE_DELAY_SECONDS)
             await channel.close()
         finally:
             async with self._recreate_lock:

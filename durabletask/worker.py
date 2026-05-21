@@ -140,15 +140,19 @@ class _TrackedChannelState:
 class _InFlightChannelTracker:
     def __init__(self):
         self._lock = Lock()
-        self._states: dict[int, _TrackedChannelState] = {}
+        # Keyed on the channel itself; gRPC channels are hashable by identity
+        # and we keep a strong reference via _TrackedChannelState so reuse-after-
+        # GC isn't a concern. Using the channel directly (instead of ``id()``)
+        # makes the invariant local to this class rather than something a
+        # reader has to verify by tracing _TrackedChannelState lifetimes.
+        self._states: dict[Any, _TrackedChannelState] = {}
 
     def acquire(self, channel: Any):
-        channel_key = id(channel)
         with self._lock:
-            state = self._states.get(channel_key)
+            state = self._states.get(channel)
             if state is None:
                 state = _TrackedChannelState(channel=channel)
-                self._states[channel_key] = state
+                self._states[channel] = state
             state.ref_count += 1
 
         released = False
@@ -161,7 +165,7 @@ class _InFlightChannelTracker:
 
             channel_to_close = None
             with self._lock:
-                state = self._states.get(channel_key)
+                state = self._states.get(channel)
                 if state is None:
                     return
 
@@ -169,7 +173,7 @@ class _InFlightChannelTracker:
                 if state.ref_count == 0:
                     if state.close_when_released:
                         channel_to_close = state.channel
-                    del self._states[channel_key]
+                    del self._states[channel]
 
             if channel_to_close is not None:
                 self._close_channel(channel_to_close)
@@ -177,10 +181,9 @@ class _InFlightChannelTracker:
         return release
 
     def retire(self, channel: Any) -> None:
-        channel_key = id(channel)
         channel_to_close = None
         with self._lock:
-            state = self._states.get(channel_key)
+            state = self._states.get(channel)
             if state is None:
                 channel_to_close = channel
             else:
@@ -533,6 +536,10 @@ class TaskHubGrpcWorker:
         self._shutdown = Event()
         self._is_running = False
         self._channel = channel
+        # The SDK owns (and may recreate) the gRPC channel only when the caller
+        # did not provide one. Mirrors ``TaskHubGrpcClient._owns_channel`` so
+        # both files use the same name for the same concept.
+        self._owns_channel = channel is None
         self._secure_channel = secure_channel
         self._payload_store = payload_store
         self._channel_options = channel_options
@@ -597,9 +604,6 @@ class TaskHubGrpcWorker:
             status_code: grpc.StatusCode,
     ) -> bool:
         return is_worker_transport_failure(status_code)
-
-    def _can_recreate_channel(self) -> bool:
-        return self._channel is None
 
     def add_orchestrator(self, fn: task.Orchestrator[TInput, TOutput]) -> str:
         """Registers an orchestrator function with the worker."""
@@ -742,16 +746,7 @@ class TaskHubGrpcWorker:
                 current_stub = None
                 raise
 
-        def wrap_execution(handler, release):
-            def wrapped(*args, **kwargs):
-                try:
-                    return handler(*args, **kwargs)
-                finally:
-                    release()
-
-            return wrapped
-
-        def wrap_cancellation(handler, release):
+        def wrap_with_release(handler, release):
             def wrapped(*args, **kwargs):
                 try:
                     return handler(*args, **kwargs)
@@ -772,8 +767,8 @@ class TaskHubGrpcWorker:
             release = in_flight_channel_tracker.acquire(channel)
             try:
                 submit_func(
-                    wrap_execution(handler, release),
-                    wrap_cancellation(cancellation_handler, release),
+                    wrap_with_release(handler, release),
+                    wrap_with_release(cancellation_handler, release),
                     request,
                     stub,
                     completion_token,
@@ -808,7 +803,7 @@ class TaskHubGrpcWorker:
 
             if (
                     current_channel is not None
-                    and self._can_recreate_channel()
+                    and self._owns_channel
                     and (recreate_channel or close_channel)
             ):
                 in_flight_channel_tracker.retire(current_channel)
@@ -837,7 +832,7 @@ class TaskHubGrpcWorker:
                         if self._should_count_worker_failure(error_code):
                             recreate_channel = (
                                 failure_tracker.record_failure()
-                                and self._can_recreate_channel()
+                                and self._owns_channel
                             )
                     invalidate_connection(recreate_channel=recreate_channel)
                     conn_retry_count += 1
@@ -995,7 +990,7 @@ class TaskHubGrpcWorker:
                     )
                     recreate_channel = (
                         failure_tracker.record_failure()
-                        and self._can_recreate_channel()
+                        and self._owns_channel
                     )
                     invalidate_connection(recreate_channel=recreate_channel)
                     conn_retry_count += 1
@@ -1010,7 +1005,7 @@ class TaskHubGrpcWorker:
                 if should_invalidate and self._should_count_worker_failure(error_code):
                     recreate_channel = (
                         failure_tracker.record_failure()
-                        and self._can_recreate_channel()
+                        and self._owns_channel
                     )
                 if should_invalidate:
                     invalidate_connection(recreate_channel=recreate_channel)
@@ -2893,6 +2888,7 @@ class _AsyncWorkerManager:
         self._pending_orchestration_work: list = []
         self._pending_entity_batch_work: list = []
         self.thread_pool = self._create_thread_pool()
+        self._pool_is_shutdown = False
         self._shutdown = False
 
     def _create_thread_pool(self) -> ThreadPoolExecutor:
@@ -2902,8 +2898,12 @@ class _AsyncWorkerManager:
         )
 
     def _ensure_thread_pool(self) -> None:
-        if getattr(self.thread_pool, "_shutdown", False):
+        # Track the pool's shutdown state explicitly instead of reading
+        # ``ThreadPoolExecutor._shutdown`` (which is a CPython implementation
+        # detail and not part of ``concurrent.futures``'s public API).
+        if self._pool_is_shutdown:
             self.thread_pool = self._create_thread_pool()
+            self._pool_is_shutdown = False
 
     def prepare_for_run(self) -> None:
         self._shutdown = False
@@ -3045,8 +3045,9 @@ class _AsyncWorkerManager:
                     self._logger.error(f"Uncaught error while cancelling entity batch work item: {cancellation_exception}")
             self.shutdown()
         finally:
-            if not getattr(self.thread_pool, "_shutdown", False):
+            if not self._pool_is_shutdown:
                 self.thread_pool.shutdown(wait=True)
+                self._pool_is_shutdown = True
 
     async def _consume_queue(self, queue: asyncio.Queue, semaphore: asyncio.Semaphore):
         # List to track running tasks
