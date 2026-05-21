@@ -81,6 +81,11 @@ jobs:
         displayName: "pytest: durabletask (unit tests, no emulators)"
         workingDirectory: tests/durabletask
 
-      - script: pytest -m "not dts" --verbose
+      - script: pytest -m "not dts" --ignore=test_dts_activity_sequence.py --verbose
         displayName: "pytest: durabletask-azuremanaged (unit tests, no emulators)"
         workingDirectory: tests/durabletask-azuremanaged
+        # NOTE: `test_dts_activity_sequence.py` is `--ignore`d because it calls
+        # `exit()` at module load time when TASKHUB isn't set, which crashes
+        # pytest collection before its `pytest.mark.dts` marker can be applied.
+        # The other `test_dts_*.py` files handle missing env vars more
+        # gracefully and are filtered out by `-m "not dts"` as intended.
