@@ -65,8 +65,14 @@ jobs:
       # PRs to main and main itself; this step is defense-in-depth to ensure
       # the artifacts we're about to ship are at least importable and pass
       # the pure-Python unit tests.
+      #
+      # `requirements.txt` brings in the test-time dependencies (opentelemetry,
+      # grpcio, etc.) that the test modules import. We install it before the
+      # built wheels so the wheels (which are what we're actually validating)
+      # take precedence over any editable/source install of the same package.
       - script: |
           set -e
+          python -m pip install -r requirements.txt
           python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask/*.whl
           python -m pip install $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged/*.whl
         displayName: "Install built wheels"
