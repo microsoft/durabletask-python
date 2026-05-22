@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.5.0
+
 ADDED
 
 - Added `ReplaySafeLogger` and `OrchestrationContext.create_replay_safe_logger()`

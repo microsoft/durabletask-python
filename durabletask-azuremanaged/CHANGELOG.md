@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.5.0
+
+- Updates base dependency to durabletask v1.5.0
 - Added optional `interceptors`, `channel`, and `channel_options` parameters to
   `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
   `DurableTaskSchedulerWorker` to allow combining custom gRPC interceptors with
