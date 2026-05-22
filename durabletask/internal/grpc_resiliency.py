@@ -149,6 +149,9 @@ class AsyncClientResiliencyInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
             if self._failure_tracker.record_failure():
                 result = self._on_recreate()
                 if inspect.isawaitable(result):
-                    await result
+                    # ``_ =`` signals that we await purely for the side effect
+                    # of running the recreate callback to completion; the
+                    # awaitable's return value is intentionally discarded.
+                    _ = await result
         else:
             self._failure_tracker.record_success()
