@@ -170,8 +170,8 @@ def test_failure_tracker_record_failure_is_thread_safe():
 @pytest.mark.parametrize(
     "method_name",
     [
-        "WaitForInstanceStart",
-        "WaitForInstanceCompletion",
+        "/TaskHubSidecarService/WaitForInstanceStart",
+        "/TaskHubSidecarService/WaitForInstanceCompletion",
     ],
 )
 def test_client_transport_failure_ignores_long_poll_deadlines(method_name):
@@ -184,14 +184,14 @@ def test_client_transport_failure_ignores_long_poll_deadlines(method_name):
     )
     assert (
         is_client_transport_failure(
-            "StartInstance",
+            "/TaskHubSidecarService/StartInstance",
             grpc.StatusCode.DEADLINE_EXCEEDED,
         )
         is True
     )
     assert (
         is_client_transport_failure(
-            "GetInstance",
+            "/TaskHubSidecarService/GetInstance",
             grpc.StatusCode.UNAVAILABLE,
         )
         is True

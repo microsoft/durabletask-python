@@ -1,7 +1,9 @@
 import asyncio
+import inspect
 import json
 import grpc
 import pytest
+from collections import namedtuple
 from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
@@ -49,6 +51,187 @@ def make_aio_rpc_error(status_code: grpc.StatusCode) -> grpc.aio.AioRpcError:
         grpc.aio.Metadata(),
         grpc.aio.Metadata(),
     )
+
+
+# ----- Test helpers for the gRPC resiliency interceptor -----
+#
+# In production the resiliency interceptor is wired into the channel via
+# ``grpc.intercept_channel`` (sync) or by passing ``interceptors=`` to
+# ``grpc.aio.{secure,insecure}_channel`` (async). Tests in this file mock the
+# underlying stub class (``stubs.TaskHubSidecarServiceStub``) with
+# ``MagicMock`` instances so they can configure ``side_effect``s and assert
+# call counts without standing up a real gRPC server. Those mocks bypass the
+# real channel/interceptor wiring, so failure tracking and channel-recreate
+# triggering need a small test-only shim that mimics the interceptor pipeline.
+
+
+_TEST_SERVICE_PREFIX = "/TaskHubSidecarService"
+
+
+class _SimpleCallDetails(
+        namedtuple(
+            "_SimpleCallDetails",
+            ["method", "timeout", "metadata", "credentials", "wait_for_ready", "compression"],
+        )):
+    """Minimal stand-in for ``grpc.ClientCallDetails`` used by interceptor tests."""
+    pass
+
+
+class _SimulatedSyncCall:
+    """Mimics a sync gRPC unary Call-Future enough for the resiliency interceptor.
+
+    The interceptor inspects ``.exception()`` to learn the call outcome. We
+    eagerly evaluate the wrapped mock the first time either ``exception()`` or
+    ``result()`` is called and cache the result.
+    """
+
+    def __init__(self, method, request, timeout):
+        self._method = method
+        self._request = request
+        self._timeout = timeout
+        self._evaluated = False
+        self._result = None
+        self._error = None
+
+    def _evaluate(self):
+        if self._evaluated:
+            return
+        try:
+            if self._timeout is None:
+                self._result = self._method(self._request)
+            else:
+                self._result = self._method(self._request, timeout=self._timeout)
+        except grpc.RpcError as rpc_error:
+            self._error = rpc_error
+        self._evaluated = True
+
+    def exception(self):
+        self._evaluate()
+        return self._error
+
+    def result(self):
+        self._evaluate()
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+class _ResilientSyncTestStub:
+    """Wraps a ``MagicMock`` stub so calls flow through the sync interceptor."""
+
+    def __init__(self, mock_stub, interceptor):
+        self._stub = mock_stub
+        self._interceptor = interceptor
+
+    def __getattr__(self, name):
+        method = getattr(self._stub, name)
+        method_path = f"{_TEST_SERVICE_PREFIX}/{name}"
+        interceptor = self._interceptor
+
+        def wrapped(request, *, timeout=None):
+            details = _SimpleCallDetails(
+                method=method_path,
+                timeout=timeout,
+                metadata=None,
+                credentials=None,
+                wait_for_ready=False,
+                compression=None,
+            )
+            call = interceptor.intercept_unary_unary(
+                lambda d, r: _SimulatedSyncCall(method, r, timeout),
+                details,
+                request,
+            )
+            return call.result()
+
+        return wrapped
+
+
+class _SimulatedAsyncCall:
+    """Awaitable that mimics ``grpc.aio`` unary call resolution."""
+
+    def __init__(self, method, request, timeout):
+        self._method = method
+        self._request = request
+        self._timeout = timeout
+
+    def __await__(self):
+        if self._timeout is None:
+            coro_or_value = self._method(self._request)
+        else:
+            coro_or_value = self._method(self._request, timeout=self._timeout)
+        if asyncio.iscoroutine(coro_or_value):
+            return coro_or_value.__await__()
+
+        async def _wrap():
+            return coro_or_value
+
+        return _wrap().__await__()
+
+
+class _ResilientAsyncTestStub:
+    """Wraps a ``MagicMock`` stub so calls flow through the async interceptor."""
+
+    def __init__(self, mock_stub, interceptor):
+        self._stub = mock_stub
+        self._interceptor = interceptor
+
+    def __getattr__(self, name):
+        method = getattr(self._stub, name)
+        method_path = f"{_TEST_SERVICE_PREFIX}/{name}"
+        interceptor = self._interceptor
+
+        async def wrapped(request, *, timeout=None):
+            details = _SimpleCallDetails(
+                method=method_path,
+                timeout=timeout,
+                metadata=None,
+                credentials=None,
+                wait_for_ready=False,
+                compression=None,
+            )
+
+            async def continuation(d, r):
+                if timeout is None:
+                    return await method(r)
+                return await method(r, timeout=timeout)
+
+            return await interceptor.intercept_unary_unary(continuation, details, request)
+
+        return wrapped
+
+
+def install_resilient_test_stubs(client):
+    """Route the client's mocked stub through its resiliency interceptor.
+
+    Tests in this module patch ``stubs.TaskHubSidecarServiceStub`` to return
+    ``MagicMock`` stubs whose method calls bypass gRPC's real channel
+    interception pipeline. This helper wraps the current stub in a thin
+    interceptor-aware shim, and re-wraps after each ``_maybe_recreate_channel``
+    call so newly created stubs continue to participate in failure tracking.
+    """
+    is_async = inspect.iscoroutinefunction(client._maybe_recreate_channel)
+    wrapper_cls = _ResilientAsyncTestStub if is_async else _ResilientSyncTestStub
+
+    def wrap_if_needed():
+        if not isinstance(client._stub, wrapper_cls):
+            client._stub = wrapper_cls(client._stub, client._resiliency_interceptor)
+
+    wrap_if_needed()
+
+    original_recreate = client._maybe_recreate_channel
+
+    if is_async:
+        async def wrapped_recreate():
+            await original_recreate()
+            wrap_if_needed()
+    else:
+        def wrapped_recreate():
+            original_recreate()
+            wrap_if_needed()
+
+    client._maybe_recreate_channel = wrapped_recreate
+    client._resiliency_interceptor._on_recreate = wrapped_recreate
 
 
 class FakePayloadStore(PayloadStore):
@@ -280,23 +463,26 @@ def test_async_grpc_channel_protocol_stripping():
 def test_async_client_creates_with_defaults():
     with patch('grpc.aio.insecure_channel') as mock_channel:
         mock_channel.return_value = MagicMock()
-        _ = AsyncTaskHubGrpcClient()
+        client = AsyncTaskHubGrpcClient()
         mock_channel.assert_called_once_with(
-            get_default_host_address(), interceptors=None)
+            get_default_host_address(),
+            interceptors=[client._resiliency_interceptor])
 
 
 def test_async_client_creates_with_metadata():
     with patch('grpc.aio.insecure_channel') as mock_channel:
         mock_channel.return_value = MagicMock()
-        _ = AsyncTaskHubGrpcClient(
+        client = AsyncTaskHubGrpcClient(
             host_address=HOST_ADDRESS, metadata=METADATA)
         mock_channel.assert_called_once()
         args, kwargs = mock_channel.call_args
         assert args[0] == HOST_ADDRESS
         interceptors = kwargs.get('interceptors')
         assert interceptors is not None
-        assert len(interceptors) == 1
-        assert isinstance(interceptors[0], DefaultAsyncClientInterceptorImpl)
+        # Resiliency interceptor is prepended, followed by the metadata interceptor.
+        assert len(interceptors) == 2
+        assert interceptors[0] is client._resiliency_interceptor
+        assert isinstance(interceptors[1], DefaultAsyncClientInterceptorImpl)
 
 
 def test_client_uses_provided_channel_directly():
@@ -333,7 +519,8 @@ def test_client_stores_resiliency_options_for_recreation():
     assert client._host_address == "localhost:4001"
     assert client._secure_channel is True
     assert client._channel_options is channel_options
-    assert client._interceptors == interceptors
+    # The resiliency interceptor is prepended automatically; user interceptors follow.
+    assert client._interceptors == [client._resiliency_interceptor, *interceptors]
 
 
 def test_sync_client_recreates_sdk_owned_channel_with_original_transport_inputs():
@@ -367,6 +554,7 @@ def test_sync_client_recreates_sdk_owned_channel_with_original_transport_inputs(
                 min_recreate_interval_seconds=0.0,
             ),
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         client.get_orchestration_state("abc")
@@ -374,7 +562,7 @@ def test_sync_client_recreates_sdk_owned_channel_with_original_transport_inputs(
     expected_channel_call = call(
         host_address=host_address,
         secure_channel=True,
-        interceptors=interceptors,
+        interceptors=[client._resiliency_interceptor, *interceptors],
         channel_options=channel_options,
     )
     assert mock_get_channel.call_args_list == [
@@ -413,6 +601,7 @@ def test_sync_client_close_closes_retired_channels_immediately():
                 min_recreate_interval_seconds=0.0,
             )
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
 
@@ -449,6 +638,7 @@ def test_sync_client_close_closes_all_retired_sdk_channels_immediately():
                 min_recreate_interval_seconds=0.0,
             )
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         with pytest.raises(FakeRpcError):
@@ -485,6 +675,7 @@ def test_sync_client_resets_failure_tracking_after_long_poll_deadline(
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         with pytest.raises(TimeoutError):
@@ -504,6 +695,10 @@ def test_sync_client_does_not_recreate_caller_owned_channel():
             channel=provided_channel,
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=1),
         )
+        # Note: caller-owned channels are intentionally NOT wrapped with the
+        # resiliency interceptor (the channel is never recreated, so failure
+        # tracking against it would have no observable effect). The mocked
+        # stub therefore raises directly without triggering the interceptor.
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         with pytest.raises(FakeRpcError):
@@ -548,6 +743,7 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
                 min_recreate_interval_seconds=30.0,
             ),
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         assert client._channel is second_channel
@@ -565,7 +761,7 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
     expected_channel_call = call(
         host_address=HOST_ADDRESS,
         secure_channel=False,
-        interceptors=None,
+        interceptors=[client._resiliency_interceptor],
         channel_options=None,
     )
     assert mock_get_channel.call_args_list == [
@@ -602,6 +798,7 @@ def test_sync_client_resets_failure_tracking_after_success():
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         assert client.get_orchestration_state("abc") is None
@@ -621,6 +818,7 @@ def test_sync_client_resets_failure_tracking_after_application_error():
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
         with pytest.raises(FakeRpcError):
@@ -659,6 +857,7 @@ async def test_async_client_recreates_sdk_owned_channel_with_original_transport_
                 min_recreate_interval_seconds=0.0,
             ),
         )
+        install_resilient_test_stubs(client)
         try:
             with pytest.raises(grpc.aio.AioRpcError):
                 await client.get_orchestration_state("abc")
@@ -669,7 +868,7 @@ async def test_async_client_recreates_sdk_owned_channel_with_original_transport_
     expected_channel_call = call(
         host_address=host_address,
         secure_channel=True,
-        interceptors=interceptors,
+        interceptors=[client._resiliency_interceptor, *interceptors],
         channel_options=channel_options,
     )
     assert mock_get_channel.call_args_list == [
@@ -690,6 +889,7 @@ async def test_async_client_does_not_count_wait_for_orchestration_deadline():
         client = AsyncTaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(grpc.aio.AioRpcError):
             await client.get_orchestration_state("abc")
         with pytest.raises(TimeoutError):
@@ -732,6 +932,7 @@ async def test_async_client_close_closes_retired_channels_immediately():
                 min_recreate_interval_seconds=0.0,
             )
         )
+        install_resilient_test_stubs(client)
         with pytest.raises(grpc.aio.AioRpcError):
             await client.get_orchestration_state("abc")
         await cleanup_started.wait()
@@ -758,6 +959,8 @@ async def test_async_client_does_not_recreate_caller_owned_channel():
             channel=provided_channel,
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=1),
         )
+        # Caller-owned channels intentionally bypass the resiliency interceptor
+        # (we never recreate them).
         with pytest.raises(grpc.aio.AioRpcError):
             await client.get_orchestration_state("abc")
         with pytest.raises(grpc.aio.AioRpcError):
@@ -790,6 +993,7 @@ async def test_async_client_close_prevents_channel_recreation_race():
                 min_recreate_interval_seconds=0.0,
             )
         )
+        install_resilient_test_stubs(client)
         await client._recreate_lock.acquire()
         try:
             rpc_task = asyncio.create_task(client.get_orchestration_state("abc"))
