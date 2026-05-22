@@ -10,35 +10,15 @@ sandbox.
 Usage::
 
     from durabletask.azuremanaged.extensions.serverless import (
-        DurableTaskSchedulerServerlessWorker,
+        ServerlessWorker,
         ServerlessActivitiesClient,
     )
 """
 
-from durabletask.azuremanaged.extensions.serverless.client import (
-    DEFAULT_CPU,
-    DEFAULT_MAX_CONCURRENT_ACTIVITIES,
-    DEFAULT_MEMORY,
-    DEFAULT_WORKER_PROFILE_ID,
-    ServerlessActivitiesClient,
-    build_image_ref,
-    build_serverless_activity_declaration,
-    build_serverless_worker_heartbeat,
-    build_serverless_worker_start,
-    resolve_activity_names,
-)
-from durabletask.azuremanaged.extensions.serverless.worker import DurableTaskSchedulerServerlessWorker
+from durabletask.azuremanaged.extensions.serverless.client import ServerlessActivitiesClient
+from durabletask.azuremanaged.extensions.serverless.worker import ServerlessWorker
 
 __all__ = [
-    "DEFAULT_CPU",
-    "DEFAULT_MAX_CONCURRENT_ACTIVITIES",
-    "DEFAULT_MEMORY",
-    "DEFAULT_WORKER_PROFILE_ID",
-    "DurableTaskSchedulerServerlessWorker",
+    "ServerlessWorker",
     "ServerlessActivitiesClient",
-    "build_image_ref",
-    "build_serverless_activity_declaration",
-    "build_serverless_worker_heartbeat",
-    "build_serverless_worker_start",
-    "resolve_activity_names",
 ]

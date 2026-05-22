@@ -31,7 +31,7 @@ $env:DTS_SERVERLESS_MAX_ACTIVITIES = "1"
 ```
 
 The remote worker code cannot pass DTS runtime settings to the SDK. In a
-sandbox, `DurableTaskSchedulerServerlessWorker()` reads `DTS_ENDPOINT`,
+sandbox, `ServerlessWorker()` reads `DTS_ENDPOINT`,
 `DTS_TASK_HUB`, `DTS_WORKER_PROFILE_ID`, `DTS_SERVERLESS_MAX_ACTIVITIES`,
 `DTS_SUBSTRATE`, and `DTS_SANDBOX_ID` from environment variables injected by
 DTS. The worker reports its registered activity names when it connects, and

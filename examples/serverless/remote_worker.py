@@ -4,7 +4,7 @@ import os
 import time
 
 from durabletask import task
-from durabletask.azuremanaged.extensions.serverless import DurableTaskSchedulerServerlessWorker
+from durabletask.azuremanaged.extensions.serverless import ServerlessWorker
 
 
 def remote_hello(ctx: task.ActivityContext, name: str) -> str:
@@ -13,7 +13,7 @@ def remote_hello(ctx: task.ActivityContext, name: str) -> str:
     return f"Hello {name} from Python serverless worker {sandbox_id}!"
 
 
-with DurableTaskSchedulerServerlessWorker() as worker:
+with ServerlessWorker() as worker:
     worker.add_activity(remote_hello)
     worker.start()
     print("Python serverless remote worker is running. Press Ctrl+C to stop.")

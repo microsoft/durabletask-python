@@ -25,7 +25,7 @@ from durabletask.worker import (
 )
 
 
-class DurableTaskSchedulerServerlessWorker(DurableTaskSchedulerWorker):
+class ServerlessWorker(DurableTaskSchedulerWorker):
     """DTS worker mode for activity containers started by serverless activities.
 
     This worker registers a live worker session with DTS and restricts dispatch

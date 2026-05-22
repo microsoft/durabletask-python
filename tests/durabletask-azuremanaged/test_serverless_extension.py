@@ -3,8 +3,9 @@
 
 import inspect
 
-from durabletask.azuremanaged.extensions.serverless import (
-    DurableTaskSchedulerServerlessWorker,
+import durabletask.azuremanaged.extensions.serverless as serverless
+from durabletask.azuremanaged.extensions.serverless import ServerlessWorker
+from durabletask.azuremanaged.extensions.serverless.client import (
     build_image_ref,
     build_serverless_activity_declaration,
     build_serverless_worker_heartbeat,
@@ -19,6 +20,14 @@ def test_resolve_activity_names_trims_and_deduplicates() -> None:
         "RemoteHello",
         "Other",
     ]
+
+
+def test_public_serverless_package_exports_customer_entrypoints_only() -> None:
+    assert serverless.__all__ == [
+        "ServerlessWorker",
+        "ServerlessActivitiesClient",
+    ]
+    assert serverless.ServerlessWorker is ServerlessWorker
 
 
 def test_build_image_ref_matches_dotnet_options() -> None:
@@ -59,6 +68,15 @@ def test_build_serverless_activity_declaration() -> None:
     assert list(declaration.cmd) == ["/app/remote_worker.py"]
 
 
+def test_build_serverless_activity_declaration_accepts_single_name() -> None:
+    declaration = build_serverless_activity_declaration(
+        worker_profile_id="preview",
+        activity_names="RemoteHello",
+        container_image="example.azurecr.io/serverless-worker:v1")
+
+    assert list(declaration.activity_names) == ["RemoteHello"]
+
+
 def test_build_serverless_activity_declaration_preserves_public_pull() -> None:
     declaration = build_serverless_activity_declaration(
         worker_profile_id="preview",
@@ -90,14 +108,14 @@ def test_build_serverless_worker_start_and_heartbeat() -> None:
 
 
 def test_serverless_worker_constructor_does_not_expose_runtime_contract() -> None:
-    assert list(inspect.signature(DurableTaskSchedulerServerlessWorker).parameters) == []
+    assert list(inspect.signature(ServerlessWorker).parameters) == []
 
 
 def test_serverless_worker_does_not_own_wakeup_server(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
 
-    worker = DurableTaskSchedulerServerlessWorker()
+    worker = ServerlessWorker()
 
     assert not hasattr(worker, "_serverless_wakeup_port")
     assert not hasattr(worker, "_serverless_wakeup_server")
@@ -111,7 +129,7 @@ def test_serverless_worker_reads_sandbox_environment_and_registered_activities(m
     monkeypatch.setenv("DTS_SUBSTRATE", "AcaSessionPool")
     monkeypatch.setenv("DTS_SANDBOX_ID", "env-sandbox")
 
-    worker = DurableTaskSchedulerServerlessWorker()
+    worker = ServerlessWorker()
     worker._registry.add_named_activity("EnvActivity", lambda _ctx, value: value)
     worker._registry.add_named_activity("OtherActivity", lambda _ctx, value: value)
     worker._configure_serverless_activity_filters()
@@ -138,7 +156,7 @@ def test_serverless_worker_requires_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
 
-    worker = DurableTaskSchedulerServerlessWorker()
+    worker = ServerlessWorker()
 
     try:
         worker._configure_serverless_activity_filters()

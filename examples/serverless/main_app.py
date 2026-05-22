@@ -40,7 +40,7 @@ serverless_client = ServerlessActivitiesClient(
     taskhub=taskhub_name,
     token_credential=credential)
 serverless_client.declare_serverless_activities(
-    activity_names=[REMOTE_ACTIVITY_NAME],
+    activity_names=REMOTE_ACTIVITY_NAME,
     worker_profile_id=worker_profile_id,
     container_image=serverless_image,
     cpu=serverless_cpu,

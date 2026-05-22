@@ -21,10 +21,11 @@ DEFAULT_MEMORY = "2048Mi"
 DEFAULT_MAX_CONCURRENT_ACTIVITIES = 100
 
 
-def resolve_activity_names(activity_names: Iterable[str]) -> list[str]:
+def resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
     resolved: list[str] = []
     seen: set[str] = set()
-    for name in activity_names:
+    names = [activity_names] if isinstance(activity_names, str) else activity_names
+    for name in names:
         normalized = name.strip()
         if normalized and normalized not in seen:
             resolved.append(normalized)
@@ -60,7 +61,7 @@ def build_image_ref(
 
 def build_serverless_activity_declaration(
         *,
-        activity_names: Iterable[str],
+        activity_names: str | Iterable[str],
         worker_profile_id: str = DEFAULT_WORKER_PROFILE_ID,
         container_image: Optional[str] = None,
         registry_server: Optional[str] = None,
@@ -192,7 +193,7 @@ class ServerlessActivitiesClient:
     def declare_serverless_activities(
             self,
             *,
-            activity_names: Iterable[str],
+            activity_names: str | Iterable[str],
             worker_profile_id: str = DEFAULT_WORKER_PROFILE_ID,
             container_image: Optional[str] = None,
             registry_server: Optional[str] = None,
