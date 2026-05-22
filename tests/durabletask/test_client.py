@@ -209,6 +209,11 @@ def install_resilient_test_stubs(client):
     interception pipeline. This helper wraps the current stub in a thin
     interceptor-aware shim, and re-wraps after each ``_maybe_recreate_channel``
     call so newly created stubs continue to participate in failure tracking.
+
+    The interceptor's ``_on_recreate`` callback is intentionally left alone:
+    it is the client's ``_schedule_recreate`` (fire-and-forget), and tests
+    that need to observe the recreate's completion can wait on
+    ``client._recreate_done_event``.
     """
     is_async = inspect.iscoroutinefunction(client._maybe_recreate_channel)
     wrapper_cls = _ResilientAsyncTestStub if is_async else _ResilientSyncTestStub
@@ -231,7 +236,6 @@ def install_resilient_test_stubs(client):
             wrap_if_needed()
 
     client._maybe_recreate_channel = wrapped_recreate
-    client._resiliency_interceptor._on_recreate = wrapped_recreate
 
 
 class FakePayloadStore(PayloadStore):
@@ -557,6 +561,9 @@ def test_sync_client_recreates_sdk_owned_channel_with_original_transport_inputs(
         install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
+        # Fire-and-forget recreate runs on a daemon thread; wait for it to
+        # complete before issuing the call that should see the new channel.
+        assert client._recreate_done_event.wait(timeout=5.0)
         client.get_orchestration_state("abc")
 
     expected_channel_call = call(
@@ -641,8 +648,13 @@ def test_sync_client_close_closes_all_retired_sdk_channels_immediately():
         install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
+        # Wait for the first fire-and-forget recreate to complete so the
+        # single-flight guard in _schedule_recreate does not drop the second
+        # trigger.
+        assert client._recreate_done_event.wait(timeout=5.0)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
+        assert client._recreate_done_event.wait(timeout=5.0)
 
         client.close()
 
@@ -746,16 +758,23 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
         install_resilient_test_stubs(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
+        # Wait for the fire-and-forget recreate to complete before asserting
+        # the channel was swapped.
+        assert client._recreate_done_event.wait(timeout=5.0)
         assert client._channel is second_channel
         assert mock_get_channel.call_count == 2
 
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
+        # Cooldown should fire-and-forget but exit without recreating; wait
+        # for the no-op recreate to complete so the assertion is deterministic.
+        assert client._recreate_done_event.wait(timeout=5.0)
         assert client._channel is second_channel
         assert mock_get_channel.call_count == 2
 
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
+        assert client._recreate_done_event.wait(timeout=5.0)
         assert client._channel is third_channel
 
     expected_channel_call = call(
@@ -861,6 +880,10 @@ async def test_async_client_recreates_sdk_owned_channel_with_original_transport_
         try:
             with pytest.raises(grpc.aio.AioRpcError):
                 await client.get_orchestration_state("abc")
+            # Fire-and-forget recreate runs as an asyncio task; await its
+            # completion before issuing the call that should see the new
+            # channel.
+            await asyncio.wait_for(client._recreate_done_event.wait(), timeout=5.0)
             await client.get_orchestration_state("abc")
         finally:
             await client.close()

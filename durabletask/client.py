@@ -198,12 +198,28 @@ class TaskHubGrpcClient:
             if resiliency_options is not None
             else GrpcClientResiliencyOptions()
         )
+        # Resiliency state must be initialised BEFORE the interceptor is
+        # constructed because the interceptor receives a bound reference to
+        # ``self._schedule_recreate``; any failure handled during construction
+        # of the underlying channel could otherwise observe a half-built
+        # client.
+        self._closing = False
+        self._last_recreate_time = 0.0
+        self._recreate_lock = threading.Lock()
+        self._retired_channels: dict[grpc.Channel, threading.Timer] = {}
+        self._recreate_thread_lock = threading.Lock()
+        self._recreate_thread: Optional[threading.Thread] = None
+        # Test seam: set after each fire-and-forget recreate attempt finishes
+        # (whether it actually recreated the channel or short-circuited on
+        # close / cooldown). Lets tests synchronise without polling and lets
+        # ``close()`` wait deterministically for an in-flight recreate.
+        self._recreate_done_event = threading.Event()
         self._client_failure_tracker = FailureTracker(
             self._resiliency_options.channel_recreate_failure_threshold
         )
         self._resiliency_interceptor = ClientResiliencyInterceptor(
             self._client_failure_tracker,
-            self._maybe_recreate_channel,
+            self._schedule_recreate,
         )
         resolved_interceptors = (
             prepare_sync_interceptors(metadata, interceptors) if channel is None else interceptors
@@ -230,10 +246,6 @@ class TaskHubGrpcClient:
         # can prepend the interceptor themselves via grpc.intercept_channel.
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
-        self._closing = False
-        self._last_recreate_time = 0.0
-        self._recreate_lock = threading.Lock()
-        self._retired_channels: dict[grpc.Channel, threading.Timer] = {}
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
@@ -251,6 +263,48 @@ class TaskHubGrpcClient:
         if user_interceptors:
             composed.extend(user_interceptors)
         return composed
+
+    def _schedule_recreate(self) -> None:
+        """Spawn a daemon thread that recreates the channel fire-and-forget.
+
+        Called from the resiliency interceptor on the caller's thread when a
+        unary RPC fails with a transport error. The interceptor returns to its
+        caller as soon as this method returns, so the failing RPC's original
+        error propagates without being delayed by DNS, TLS handshake, or
+        contention on ``_recreate_lock``.
+
+        Single-flight under ``_recreate_thread_lock``: if a recreate thread is
+        still alive, the new trigger is dropped. The in-flight recreate will
+        pick up the latest channel state on completion; the cooldown inside
+        ``_maybe_recreate_channel`` further prevents thrash. ``thread.start()``
+        is called under the lock so a follow-up caller's ``is_alive()`` check
+        observes the running state rather than racing the start.
+        """
+        try:
+            if self._closing:
+                return
+            with self._recreate_thread_lock:
+                existing = self._recreate_thread
+                if existing is not None and existing.is_alive():
+                    return
+                self._recreate_done_event.clear()
+                thread = threading.Thread(
+                    target=self._run_recreate,
+                    name="durabletask-client-recreate",
+                    daemon=True,
+                )
+                self._recreate_thread = thread
+                thread.start()
+        except Exception:
+            self._logger.exception("Failed to schedule channel recreate")
+
+    def _run_recreate(self) -> None:
+        try:
+            self._maybe_recreate_channel()
+        except Exception:
+            self._logger.exception("Channel recreate failed")
+        finally:
+            self._recreate_done_event.set()
 
     def _maybe_recreate_channel(self) -> None:
         if not self._owns_channel or self._closing:
@@ -296,8 +350,14 @@ class TaskHubGrpcClient:
         it.
         """
         if self._owns_channel:
+            # Signal early so any in-flight recreate thread bails out of
+            # ``_maybe_recreate_channel`` before we tear the channel down.
+            self._closing = True
+            with self._recreate_thread_lock:
+                recreate_thread = self._recreate_thread
+            if recreate_thread is not None and recreate_thread.is_alive():
+                recreate_thread.join(timeout=5.0)
             with self._recreate_lock:
-                self._closing = True
                 retired_channels = list(self._retired_channels.items())
                 self._retired_channels.clear()
                 current_channel = self._channel
@@ -628,12 +688,28 @@ class AsyncTaskHubGrpcClient:
             if resiliency_options is not None
             else GrpcClientResiliencyOptions()
         )
+        # Resiliency state must be initialised BEFORE the interceptor is
+        # constructed because the interceptor receives a bound reference to
+        # ``self._schedule_recreate``; any failure handled during construction
+        # of the underlying channel could otherwise observe a half-built
+        # client.
+        self._closing = False
+        self._recreate_lock = asyncio.Lock()
+        self._last_recreate_time = 0.0
+        self._retired_channels: list[grpc.aio.Channel] = []
+        self._retired_channel_close_tasks: set[asyncio.Task[None]] = set()
+        self._recreate_task: Optional[asyncio.Task[None]] = None
+        # Test seam: set after each fire-and-forget recreate attempt finishes
+        # (whether it actually recreated the channel or short-circuited on
+        # close / cooldown). Lets tests synchronise without polling and lets
+        # ``close()`` await an in-flight recreate deterministically.
+        self._recreate_done_event = asyncio.Event()
         self._client_failure_tracker = FailureTracker(
             self._resiliency_options.channel_recreate_failure_threshold
         )
         self._resiliency_interceptor = AsyncClientResiliencyInterceptor(
             self._client_failure_tracker,
-            self._maybe_recreate_channel,
+            self._schedule_recreate,
         )
         resolved_interceptors = (
             prepare_async_interceptors(metadata, interceptors) if channel is None else interceptors
@@ -660,11 +736,6 @@ class AsyncTaskHubGrpcClient:
         # resiliency should let us create the channel.
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
-        self._closing = False
-        self._recreate_lock = asyncio.Lock()
-        self._last_recreate_time = 0.0
-        self._retired_channels: list[grpc.aio.Channel] = []
-        self._retired_channel_close_tasks: set[asyncio.Task[None]] = set()
         self._logger = shared.get_logger("async_client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
@@ -688,7 +759,17 @@ class AsyncTaskHubGrpcClient:
         it.
         """
         if self._owns_channel:
+            # Signal early so any in-flight recreate task bails out of
+            # ``_maybe_recreate_channel`` before we tear the channel down.
             self._closing = True
+            recreate_task = self._recreate_task
+            if recreate_task is not None and not recreate_task.done():
+                try:
+                    await recreate_task
+                except Exception:
+                    # Already logged by ``_run_recreate``; suppressing here
+                    # ensures close() always tears down cleanly.
+                    pass
             async with self._recreate_lock:
                 retired_channels = list(self._retired_channels)
                 self._retired_channels.clear()
@@ -707,6 +788,34 @@ class AsyncTaskHubGrpcClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+
+    def _schedule_recreate(self) -> None:
+        """Schedule a fire-and-forget channel recreate on the event loop.
+
+        Called from the resiliency interceptor when a unary RPC fails with a
+        transport error. Single-flight: if ``_recreate_task`` is still
+        pending, the trigger is dropped — the in-flight recreate will pick up
+        the latest channel state on completion. asyncio is single-threaded
+        so ``done()`` is race-free; no extra lock is required.
+        """
+        try:
+            if self._closing:
+                return
+            existing = self._recreate_task
+            if existing is not None and not existing.done():
+                return
+            self._recreate_done_event.clear()
+            self._recreate_task = asyncio.create_task(self._run_recreate())
+        except Exception:
+            self._logger.exception("Failed to schedule channel recreate")
+
+    async def _run_recreate(self) -> None:
+        try:
+            await self._maybe_recreate_channel()
+        except Exception:
+            self._logger.exception("Channel recreate failed")
+        finally:
+            self._recreate_done_event.set()
 
     async def _maybe_recreate_channel(self) -> None:
         if not self._owns_channel or self._closing:

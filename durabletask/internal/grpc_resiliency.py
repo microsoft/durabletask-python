@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import inspect
 import random
 import threading
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional, Union
+from typing import Callable, Optional
 
 import grpc
 import grpc.aio
@@ -92,6 +91,13 @@ class ClientResiliencyInterceptor(grpc.UnaryUnaryClientInterceptor):
     need to wrap every stub call: any unary RPC sent through the intercepted
     channel automatically participates in failure tracking and channel
     recreation, including future RPCs that are added to the service stub.
+
+    The ``on_recreate`` callback is invoked **fire-and-forget** by the owning
+    client (it schedules the actual recreate on a daemon thread / asyncio
+    task), so this interceptor never blocks the calling thread or event loop
+    on DNS, TLS handshake, or any other channel construction work. The
+    triggering call's original error propagates to the caller without added
+    latency; subsequent calls benefit from the recreated channel.
     """
 
     def __init__(
@@ -121,12 +127,25 @@ class ClientResiliencyInterceptor(grpc.UnaryUnaryClientInterceptor):
 
 
 class AsyncClientResiliencyInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
-    """Async counterpart of :class:`ClientResiliencyInterceptor`."""
+    """Async counterpart of :class:`ClientResiliencyInterceptor`.
+
+    The ``on_recreate`` callback is a *synchronous* function (it schedules an
+    ``asyncio.Task`` for the actual recreate); this keeps the original RPC
+    error free of any extra latency from DNS / TLS handshake / lock waits and
+    guarantees the caller sees its original ``AioRpcError`` rather than an
+    exception that happened during recreate scheduling.
+
+    Non-``AioRpcError`` exceptions reset the failure counter (matching the
+    sync interceptor's policy, where ``.exception()`` returning a non-RpcError
+    falls through to ``record_success``). ``CancelledError`` and other
+    non-``Exception`` ``BaseException`` subclasses propagate without bookkeeping,
+    which is the correct asyncio convention.
+    """
 
     def __init__(
             self,
             failure_tracker: FailureTracker,
-            on_recreate: Callable[[], Union[None, Awaitable[object]]],
+            on_recreate: Callable[[], None],
     ):
         self._failure_tracker = failure_tracker
         self._on_recreate = on_recreate
@@ -134,24 +153,22 @@ class AsyncClientResiliencyInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
     async def intercept_unary_unary(self, continuation, client_call_details, request):
         try:
             response = await continuation(client_call_details, request)
-        except grpc.aio.AioRpcError as rpc_error:
-            await self._record_outcome(client_call_details.method, rpc_error)
+        except Exception as exc:
+            if isinstance(exc, grpc.aio.AioRpcError):
+                self._record_outcome(client_call_details.method, exc)
+            else:
+                self._failure_tracker.record_success()
             raise
-        await self._record_outcome(client_call_details.method, None)
+        self._record_outcome(client_call_details.method, None)
         return response
 
-    async def _record_outcome(self, method: str, error: Optional[BaseException]) -> None:
+    def _record_outcome(self, method: str, error: Optional[BaseException]) -> None:
         if error is None:
             self._failure_tracker.record_success()
             return
         status_code = getattr(error, "code", lambda: None)()
         if status_code is not None and is_client_transport_failure(method, status_code):
             if self._failure_tracker.record_failure():
-                result = self._on_recreate()
-                if inspect.isawaitable(result):
-                    # ``_ =`` signals that we await purely for the side effect
-                    # of running the recreate callback to completion; the
-                    # awaitable's return value is intentionally discarded.
-                    _ = await result
+                self._on_recreate()
         else:
             self._failure_tracker.record_success()
