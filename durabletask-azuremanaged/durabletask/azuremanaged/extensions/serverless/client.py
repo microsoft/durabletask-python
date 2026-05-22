@@ -68,7 +68,6 @@ def build_serverless_activity_declaration(
         repository: Optional[str] = None,
         tag: Optional[str] = None,
         image_digest: Optional[str] = None,
-        public_pull: bool = True,
         cpu: str = DEFAULT_CPU,
         memory: str = DEFAULT_MEMORY,
         environment_variables: Optional[dict[str, str]] = None,
@@ -103,8 +102,7 @@ def build_serverless_activity_declaration(
     declaration = pb.ServerlessActivityDeclaration(
         worker_profile_id=worker_profile_id.strip(),
         image=pb.ServerlessActivityImage(
-            image_ref=image_ref,
-            public_pull=public_pull),
+            image_ref=image_ref),
         resources=pb.ServerlessActivityResources(
             cpu=cpu.strip(),
             memory=memory.strip()),
@@ -200,7 +198,6 @@ class ServerlessActivitiesClient:
             repository: Optional[str] = None,
             tag: Optional[str] = None,
             image_digest: Optional[str] = None,
-            public_pull: bool = True,
             cpu: str = DEFAULT_CPU,
             memory: str = DEFAULT_MEMORY,
             environment_variables: Optional[dict[str, str]] = None,
@@ -215,7 +212,6 @@ class ServerlessActivitiesClient:
             repository=repository,
             tag=tag,
             image_digest=image_digest,
-            public_pull=public_pull,
             cpu=cpu,
             memory=memory,
             environment_variables=environment_variables,

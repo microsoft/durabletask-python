@@ -1,6 +1,3 @@
-import datetime
-
-from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -85,12 +82,10 @@ class ServerlessActivityDeclaration(_message.Message):
     def __init__(self, worker_profile_id: _Optional[str] = ..., activity_names: _Optional[_Iterable[str]] = ..., image: _Optional[_Union[ServerlessActivityImage, _Mapping]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., max_concurrent_activities: _Optional[int] = ..., resources: _Optional[_Union[ServerlessActivityResources, _Mapping]] = ..., entrypoint: _Optional[_Iterable[str]] = ..., cmd: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ServerlessActivityImage(_message.Message):
-    __slots__ = ("image_ref", "public_pull")
+    __slots__ = ("image_ref",)
     IMAGE_REF_FIELD_NUMBER: _ClassVar[int]
-    PUBLIC_PULL_FIELD_NUMBER: _ClassVar[int]
     image_ref: str
-    public_pull: bool
-    def __init__(self, image_ref: _Optional[str] = ..., public_pull: bool = ...) -> None: ...
+    def __init__(self, image_ref: _Optional[str] = ...) -> None: ...
 
 class ServerlessActivityResources(_message.Message):
     __slots__ = ("cpu", "memory")
@@ -113,51 +108,3 @@ class RemoveServerlessActivityDeclarationRequest(_message.Message):
 class RemoveServerlessActivityDeclarationResult(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
-
-class ListServerlessActivitySandboxesRequest(_message.Message):
-    __slots__ = ("worker_profile_id",)
-    WORKER_PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
-    worker_profile_id: str
-    def __init__(self, worker_profile_id: _Optional[str] = ...) -> None: ...
-
-class ListServerlessActivitySandboxesResult(_message.Message):
-    __slots__ = ("sandboxes",)
-    SANDBOXES_FIELD_NUMBER: _ClassVar[int]
-    sandboxes: _containers.RepeatedCompositeFieldContainer[ServerlessActivitySandbox]
-    def __init__(self, sandboxes: _Optional[_Iterable[_Union[ServerlessActivitySandbox, _Mapping]]] = ...) -> None: ...
-
-class ServerlessActivitySandbox(_message.Message):
-    __slots__ = ("dts_sandbox_identifier", "worker_profile_id", "created_at", "state")
-    DTS_SANDBOX_IDENTIFIER_FIELD_NUMBER: _ClassVar[int]
-    WORKER_PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
-    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
-    dts_sandbox_identifier: str
-    worker_profile_id: str
-    created_at: _timestamp_pb2.Timestamp
-    state: str
-    def __init__(self, dts_sandbox_identifier: _Optional[str] = ..., worker_profile_id: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., state: _Optional[str] = ...) -> None: ...
-
-class SandboxLogStreamRequest(_message.Message):
-    __slots__ = ("dts_sandbox_identifier", "tail")
-    DTS_SANDBOX_IDENTIFIER_FIELD_NUMBER: _ClassVar[int]
-    TAIL_FIELD_NUMBER: _ClassVar[int]
-    dts_sandbox_identifier: str
-    tail: int
-    def __init__(self, dts_sandbox_identifier: _Optional[str] = ..., tail: _Optional[int] = ...) -> None: ...
-
-class SandboxLogLine(_message.Message):
-    __slots__ = ("dts_sandbox_identifier", "timestamp", "stream", "tag", "message", "raw_line")
-    DTS_SANDBOX_IDENTIFIER_FIELD_NUMBER: _ClassVar[int]
-    TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
-    STREAM_FIELD_NUMBER: _ClassVar[int]
-    TAG_FIELD_NUMBER: _ClassVar[int]
-    MESSAGE_FIELD_NUMBER: _ClassVar[int]
-    RAW_LINE_FIELD_NUMBER: _ClassVar[int]
-    dts_sandbox_identifier: str
-    timestamp: _timestamp_pb2.Timestamp
-    stream: str
-    tag: str
-    message: str
-    raw_line: str
-    def __init__(self, dts_sandbox_identifier: _Optional[str] = ..., timestamp: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., stream: _Optional[str] = ..., tag: _Optional[str] = ..., message: _Optional[str] = ..., raw_line: _Optional[str] = ...) -> None: ...

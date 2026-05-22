@@ -49,16 +49,6 @@ class ServerlessActivitiesStub(object):
                 request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationRequest.SerializeToString,
                 response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationResult.FromString,
                 _registered_method=True)
-        self.ListServerlessActivitySandboxes = channel.unary_unary(
-                '/microsoft.durabletask.serverless.ServerlessActivities/ListServerlessActivitySandboxes',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ListServerlessActivitySandboxesRequest.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ListServerlessActivitySandboxesResult.FromString,
-                _registered_method=True)
-        self.StreamSandboxLogs = channel.unary_stream(
-                '/microsoft.durabletask.serverless.ServerlessActivities/StreamSandboxLogs',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.SandboxLogStreamRequest.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.SandboxLogLine.FromString,
-                _registered_method=True)
 
 
 class ServerlessActivitiesServicer(object):
@@ -89,20 +79,6 @@ class ServerlessActivitiesServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ListServerlessActivitySandboxes(self, request, context):
-        """Lists DTS-managed sandboxes for a declared worker profile in the current task hub.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def StreamSandboxLogs(self, request, context):
-        """Streams best-effort stdout/stderr log lines from a DTS-managed sandbox.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_ServerlessActivitiesServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -120,16 +96,6 @@ def add_ServerlessActivitiesServicer_to_server(servicer, server):
                     servicer.RemoveServerlessActivityDeclaration,
                     request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationRequest.FromString,
                     response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationResult.SerializeToString,
-            ),
-            'ListServerlessActivitySandboxes': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListServerlessActivitySandboxes,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ListServerlessActivitySandboxesRequest.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ListServerlessActivitySandboxesResult.SerializeToString,
-            ),
-            'StreamSandboxLogs': grpc.unary_stream_rpc_method_handler(
-                    servicer.StreamSandboxLogs,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.SandboxLogStreamRequest.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.SandboxLogLine.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -213,60 +179,6 @@ class ServerlessActivities(object):
             '/microsoft.durabletask.serverless.ServerlessActivities/RemoveServerlessActivityDeclaration',
             durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationRequest.SerializeToString,
             durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationResult.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ListServerlessActivitySandboxes(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/microsoft.durabletask.serverless.ServerlessActivities/ListServerlessActivitySandboxes',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ListServerlessActivitySandboxesRequest.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ListServerlessActivitySandboxesResult.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def StreamSandboxLogs(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/microsoft.durabletask.serverless.ServerlessActivities/StreamSandboxLogs',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.SandboxLogStreamRequest.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.SandboxLogLine.FromString,
             options,
             channel_credentials,
             insecure,

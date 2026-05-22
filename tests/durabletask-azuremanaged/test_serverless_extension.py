@@ -59,7 +59,6 @@ def test_build_serverless_activity_declaration() -> None:
     assert declaration.worker_profile_id == "preview"
     assert list(declaration.activity_names) == ["RemoteHello"]
     assert declaration.image.image_ref == "example.azurecr.io/serverless-worker:v1"
-    assert declaration.image.public_pull is True
     assert declaration.resources.cpu == "500m"
     assert declaration.resources.memory == "1Gi"
     assert declaration.environment_variables["CUSTOM_ENV"] == "custom-value"
@@ -75,16 +74,6 @@ def test_build_serverless_activity_declaration_accepts_single_name() -> None:
         container_image="example.azurecr.io/serverless-worker:v1")
 
     assert list(declaration.activity_names) == ["RemoteHello"]
-
-
-def test_build_serverless_activity_declaration_preserves_public_pull() -> None:
-    declaration = build_serverless_activity_declaration(
-        worker_profile_id="preview",
-        activity_names=["RemoteHello"],
-        container_image="example.azurecr.io/serverless-worker:v1",
-        public_pull=False)
-
-    assert declaration.image.public_pull is False
 
 
 def test_build_serverless_worker_start_and_heartbeat() -> None:
