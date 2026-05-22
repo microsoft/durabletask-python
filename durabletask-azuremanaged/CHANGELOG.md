@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- Added preview `durabletask.azuremanaged.extensions.serverless` APIs for
+  declaring DTS serverless activities and running a sandbox activity worker.
+- Changed serverless activity worker configuration to require explicit SDK
+  parameters instead of reading DTS environment variables inside the SDK.
+- Changed serverless activity image declarations to pass through the
+  `public_pull` option to DTS instead of enforcing it in the SDK.
+
 ## v1.5.0
 
 - Updates base dependency to durabletask v1.5.0
