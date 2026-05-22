@@ -215,7 +215,7 @@ class TaskHubGrpcClient:
         # ``close()`` wait deterministically for an in-flight recreate.
         self._recreate_done_event = threading.Event()
         self._client_failure_tracker = FailureTracker(
-            self._resiliency_options.channel_recreate_failure_threshold
+            threshold=self._resiliency_options.channel_recreate_failure_threshold,
         )
         self._resiliency_interceptor = ClientResiliencyInterceptor(
             self._client_failure_tracker,
@@ -705,7 +705,7 @@ class AsyncTaskHubGrpcClient:
         # ``close()`` await an in-flight recreate deterministically.
         self._recreate_done_event = asyncio.Event()
         self._client_failure_tracker = FailureTracker(
-            self._resiliency_options.channel_recreate_failure_threshold
+            threshold=self._resiliency_options.channel_recreate_failure_threshold,
         )
         self._resiliency_interceptor = AsyncClientResiliencyInterceptor(
             self._client_failure_tracker,

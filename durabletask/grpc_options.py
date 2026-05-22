@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from typing import Any, Optional
+from typing import Any
 
 
-@dataclass
+@dataclass(slots=True, kw_only=True)
 class GrpcRetryPolicyOptions:
     """Configuration for transport-level gRPC retries."""
 
@@ -64,16 +64,16 @@ class GrpcRetryPolicyOptions:
         }
 
 
-@dataclass
+@dataclass(slots=True, kw_only=True)
 class GrpcChannelOptions:
     """Configuration for transport-level gRPC channel behavior."""
 
-    max_receive_message_length: Optional[int] = None
-    max_send_message_length: Optional[int] = None
-    keepalive_time_ms: Optional[int] = None
-    keepalive_timeout_ms: Optional[int] = None
-    keepalive_permit_without_calls: Optional[bool] = None
-    retry_policy: Optional[GrpcRetryPolicyOptions] = None
+    max_receive_message_length: int | None = None
+    max_send_message_length: int | None = None
+    keepalive_time_ms: int | None = None
+    keepalive_timeout_ms: int | None = None
+    keepalive_permit_without_calls: bool | None = None
+    retry_policy: GrpcRetryPolicyOptions | None = None
     raw_options: list[tuple[str, Any]] = field(default_factory=list)
 
     def to_grpc_options(self) -> list[tuple[str, Any]]:
@@ -102,7 +102,7 @@ class GrpcChannelOptions:
         return options
 
 
-@dataclass
+@dataclass(slots=True, kw_only=True)
 class GrpcWorkerResiliencyOptions:
     """Configuration for worker-side gRPC resiliency behavior."""
 
@@ -129,7 +129,7 @@ class GrpcWorkerResiliencyOptions:
             )
 
 
-@dataclass
+@dataclass(slots=True, kw_only=True)
 class GrpcClientResiliencyOptions:
     """Configuration for client-side gRPC resiliency behavior."""
 

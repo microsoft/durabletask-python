@@ -4,7 +4,7 @@
 import random
 import threading
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable
 
 import grpc
 import grpc.aio
@@ -35,7 +35,7 @@ def get_full_jitter_delay_seconds(
     return random.random() * upper_bound
 
 
-@dataclass
+@dataclass(slots=True, kw_only=True)
 class FailureTracker:
     """Counts consecutive transport failures with thread-safe mutation.
 
@@ -114,7 +114,7 @@ class ClientResiliencyInterceptor(grpc.UnaryUnaryClientInterceptor):
         self._record_outcome(client_call_details.method, error)
         return response
 
-    def _record_outcome(self, method: str, error: Optional[BaseException]) -> None:
+    def _record_outcome(self, method: str, error: BaseException | None) -> None:
         if error is None:
             self._failure_tracker.record_success()
             return
@@ -162,7 +162,7 @@ class AsyncClientResiliencyInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
         self._record_outcome(client_call_details.method, None)
         return response
 
-    def _record_outcome(self, method: str, error: Optional[BaseException]) -> None:
+    def _record_outcome(self, method: str, error: BaseException | None) -> None:
         if error is None:
             self._failure_tracker.record_success()
             return

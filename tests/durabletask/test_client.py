@@ -509,8 +509,9 @@ def test_client_stores_resiliency_options_for_recreation():
     resiliency = GrpcClientResiliencyOptions(channel_recreate_failure_threshold=7)
     channel_options = GrpcChannelOptions(max_receive_message_length=1234)
     interceptors = [DefaultClientInterceptorImpl(METADATA)]
-    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()),
     ):
         client = TaskHubGrpcClient(
             host_address="localhost:4001",
@@ -542,12 +543,17 @@ def test_sync_client_recreates_sdk_owned_channel_with_original_transport_inputs(
 
     timer = MagicMock()
 
-    with patch(
+    with (
+        patch(
             "durabletask.client.shared.get_grpc_channel",
             side_effect=[first_channel, second_channel],
-    ) as mock_get_channel, patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
-    ), patch("threading.Timer", return_value=timer) as mock_timer:
+        ) as mock_get_channel,
+        patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub",
+            side_effect=[first_stub, second_stub],
+        ),
+        patch("threading.Timer", return_value=timer) as mock_timer,
+    ):
         client = TaskHubGrpcClient(
             host_address=host_address,
             secure_channel=True,
@@ -596,12 +602,17 @@ def test_sync_client_close_closes_retired_channels_immediately():
     second_stub.GetInstance.return_value = MagicMock(exists=False)
     close_timer = MagicMock(name="close-timer")
 
-    with patch(
+    with (
+        patch(
             "durabletask.client.shared.get_grpc_channel",
             side_effect=[first_channel, second_channel],
-    ), patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
-    ), patch("threading.Timer", return_value=close_timer):
+        ),
+        patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub",
+            side_effect=[first_stub, second_stub],
+        ),
+        patch("threading.Timer", return_value=close_timer),
+    ):
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(
                 channel_recreate_failure_threshold=1,
@@ -632,13 +643,17 @@ def test_sync_client_close_closes_all_retired_sdk_channels_immediately():
     timer1 = MagicMock(name="close-timer-1")
     timer2 = MagicMock(name="close-timer-2")
 
-    with patch(
+    with (
+        patch(
             "durabletask.client.shared.get_grpc_channel",
             side_effect=[first_channel, second_channel, third_channel],
-    ), patch(
+        ),
+        patch(
             "durabletask.client.stubs.TaskHubSidecarServiceStub",
             side_effect=[first_stub, second_stub, third_stub],
-    ), patch("threading.Timer", side_effect=[timer1, timer2]):
+        ),
+        patch("threading.Timer", side_effect=[timer1, timer2]),
+    ):
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(
                 channel_recreate_failure_threshold=1,
@@ -681,8 +696,9 @@ def test_sync_client_resets_failure_tracking_after_long_poll_deadline(
     stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
     getattr(stub, stub_method_name).side_effect = FakeRpcError(grpc.StatusCode.DEADLINE_EXCEEDED)
 
-    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub),
     ):
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
@@ -700,9 +716,13 @@ def test_sync_client_does_not_recreate_caller_owned_channel():
     stub = MagicMock()
     stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
 
-    with patch("durabletask.client.shared.get_grpc_channel") as mock_get_channel, patch(
+    with (
+        patch("durabletask.client.shared.get_grpc_channel") as mock_get_channel,
+        patch(
             "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
-    ) as mock_stub, patch("threading.Timer") as mock_timer:
+        ) as mock_stub,
+        patch("threading.Timer") as mock_timer,
+    ):
         client = TaskHubGrpcClient(
             channel=provided_channel,
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=1),
@@ -739,15 +759,20 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
     timer1 = MagicMock(name="close-timer-1")
     timer2 = MagicMock(name="close-timer-2")
 
-    with patch(
+    with (
+        patch(
             "durabletask.client.shared.get_grpc_channel",
             side_effect=[first_channel, second_channel, third_channel],
-    ) as mock_get_channel, patch(
+        ) as mock_get_channel,
+        patch(
             "durabletask.client.stubs.TaskHubSidecarServiceStub",
             side_effect=[first_stub, second_stub, third_stub],
-    ), patch(
+        ),
+        patch(
             "durabletask.client.time.monotonic", side_effect=[100.0, 101.0, 131.0]
-    ), patch("threading.Timer", side_effect=[timer1, timer2]) as mock_timer:
+        ),
+        patch("threading.Timer", side_effect=[timer1, timer2]) as mock_timer,
+    ):
         client = TaskHubGrpcClient(
             host_address=HOST_ADDRESS,
             resiliency_options=GrpcClientResiliencyOptions(
@@ -811,8 +836,9 @@ def test_sync_client_resets_failure_tracking_after_success():
         MagicMock(exists=False),
     ]
 
-    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub),
     ):
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
@@ -831,8 +857,9 @@ def test_sync_client_resets_failure_tracking_after_application_error():
         FakeRpcError(grpc.StatusCode.INVALID_ARGUMENT),
     ]
 
-    with patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()), patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub),
     ):
         client = TaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
@@ -906,8 +933,9 @@ async def test_async_client_does_not_count_wait_for_orchestration_deadline():
     stub.GetInstance = AsyncMock(side_effect=make_aio_rpc_error(grpc.StatusCode.UNAVAILABLE))
     stub.WaitForInstanceCompletion = AsyncMock(side_effect=make_aio_rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED))
 
-    with patch("durabletask.client.shared.get_async_grpc_channel", return_value=MagicMock()), patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub
+    with (
+        patch("durabletask.client.shared.get_async_grpc_channel", return_value=MagicMock()),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub),
     ):
         client = AsyncTaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(channel_recreate_failure_threshold=2)
@@ -939,15 +967,20 @@ async def test_async_client_close_closes_retired_channels_immediately():
         await release_cleanup.wait()
         await channel.close()
 
-    with patch(
+    with (
+        patch(
             "durabletask.client.shared.get_async_grpc_channel",
             side_effect=[first_channel, second_channel],
-    ), patch(
-            "durabletask.client.stubs.TaskHubSidecarServiceStub", side_effect=[first_stub, second_stub]
-    ), patch.object(
+        ),
+        patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub",
+            side_effect=[first_stub, second_stub],
+        ),
+        patch.object(
             AsyncTaskHubGrpcClient,
             "_close_retired_channel",
             new=blocked_close_retired_channel,
+        ),
     ):
         client = AsyncTaskHubGrpcClient(
             resiliency_options=GrpcClientResiliencyOptions(
