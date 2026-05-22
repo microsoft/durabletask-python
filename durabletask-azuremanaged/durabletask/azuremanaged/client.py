@@ -15,7 +15,10 @@ from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSDefaultClientInterceptorImpl,
 )
 from durabletask.client import AsyncTaskHubGrpcClient, TaskHubGrpcClient
-from durabletask.grpc_options import GrpcChannelOptions
+from durabletask.grpc_options import (
+    GrpcChannelOptions,
+    GrpcClientResiliencyOptions,
+)
 import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
 
@@ -30,6 +33,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  secure_channel: bool = True,
                  interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
                  channel_options: Optional[GrpcChannelOptions] = None,
+                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
@@ -54,6 +58,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
             log_formatter=log_formatter,
             interceptors=resolved_interceptors,
             channel_options=channel_options,
+            resiliency_options=resiliency_options,
             default_version=default_version,
             payload_store=payload_store)
 
@@ -74,6 +79,8 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
             If None, anonymous authentication will be used.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to True.
+        resiliency_options (Optional[GrpcClientResiliencyOptions], optional): Client-side
+            gRPC resiliency settings forwarded to the base async client.
         default_version (Optional[str], optional): Default version string for orchestrations.
         payload_store (Optional[PayloadStore], optional): A payload store for
             externalizing large payloads. If None, payloads are sent inline.
@@ -104,6 +111,7 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
                  secure_channel: bool = True,
                  interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
                  channel_options: Optional[GrpcChannelOptions] = None,
+                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
                  default_version: Optional[str] = None,
                  payload_store: Optional[PayloadStore] = None,
                  log_handler: Optional[logging.Handler] = None,
@@ -128,5 +136,6 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
             log_formatter=log_formatter,
             interceptors=resolved_interceptors,
             channel_options=channel_options,
+            resiliency_options=resiliency_options,
             default_version=default_version,
             payload_store=payload_store)
