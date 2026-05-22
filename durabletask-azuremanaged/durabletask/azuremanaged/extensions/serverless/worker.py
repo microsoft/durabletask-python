@@ -60,10 +60,8 @@ class DurableTaskSchedulerServerlessWorker(DurableTaskSchedulerWorker):
         self._serverless_substrate = os.getenv("DTS_SUBSTRATE")
         self._serverless_dts_sandbox_identifier = os.getenv("DTS_SANDBOX_ID")
         self._serverless_heartbeat_interval_seconds = 2.0
-        self._serverless_wakeup_port = 8080
         self._serverless_registration_stop = threading.Event()
         self._serverless_registration_thread: Optional[threading.Thread] = None
-        self._serverless_wakeup_server: Optional[_ServerlessWakeupServer] = None
         self._serverless_active_activities = 0
         self._serverless_active_activities_lock = threading.Lock()
 
@@ -74,11 +72,9 @@ class DurableTaskSchedulerServerlessWorker(DurableTaskSchedulerWorker):
         self._configure_serverless_activity_filters()
         super().start()
         self._start_serverless_registration()
-        self._start_wakeup_server()
 
     def stop(self) -> None:
         self._stop_serverless_registration()
-        self._stop_wakeup_server()
         super().stop()
 
     def _execute_activity(self, req, stub, completionToken):
@@ -115,15 +111,6 @@ class DurableTaskSchedulerServerlessWorker(DurableTaskSchedulerWorker):
         if self._serverless_registration_thread is not None:
             self._serverless_registration_thread.join(timeout=10)
             self._serverless_registration_thread = None
-
-    def _start_wakeup_server(self) -> None:
-        self._serverless_wakeup_server = _ServerlessWakeupServer(self._serverless_wakeup_port)
-        self._serverless_wakeup_server.start()
-
-    def _stop_wakeup_server(self) -> None:
-        if self._serverless_wakeup_server is not None:
-            self._serverless_wakeup_server.stop()
-            self._serverless_wakeup_server = None
 
     def _run_serverless_registration_loop(self) -> None:
         retry_delay = 1.0
@@ -167,47 +154,6 @@ class DurableTaskSchedulerServerlessWorker(DurableTaskSchedulerWorker):
             with self._serverless_active_activities_lock:
                 active_count = self._serverless_active_activities
             yield build_serverless_worker_heartbeat(active_count)
-
-
-class _ServerlessWakeupServer:
-    def __init__(self, port: int):
-        self._port = port
-        self._server = None
-        self._thread: Optional[threading.Thread] = None
-
-    def start(self) -> None:
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802
-                self._ok()
-
-            def do_POST(self):  # noqa: N802
-                self._ok()
-
-            def log_message(self, format, *args):  # noqa: A002
-                return
-
-            def _ok(self):
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"OK")
-
-        self._server = ThreadingHTTPServer(("", self._port), Handler)
-        self._thread = threading.Thread(
-            target=self._server.serve_forever,
-            name="dts-serverless-wakeup",
-            daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        if self._server is not None:
-            self._server.shutdown()
-            self._server.server_close()
-            self._server = None
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
 
 
 def _resolve_taskhub() -> str:

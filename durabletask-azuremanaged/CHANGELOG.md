@@ -13,6 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   parameters instead of reading DTS environment variables inside the SDK.
 - Changed serverless activity image declarations to pass through the
   `public_pull` option to DTS instead of enforcing it in the SDK.
+- Removed the serverless worker wakeup HTTP listener because ADC sandbox
+  workers use outbound DTS registration and do not require an inbound probe
+  endpoint.
 
 ## v1.5.0
 

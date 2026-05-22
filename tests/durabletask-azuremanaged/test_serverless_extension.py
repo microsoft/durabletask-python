@@ -93,6 +93,16 @@ def test_serverless_worker_constructor_does_not_expose_runtime_contract() -> Non
     assert list(inspect.signature(DurableTaskSchedulerServerlessWorker).parameters) == []
 
 
+def test_serverless_worker_does_not_own_wakeup_server(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+
+    worker = DurableTaskSchedulerServerlessWorker()
+
+    assert not hasattr(worker, "_serverless_wakeup_port")
+    assert not hasattr(worker, "_serverless_wakeup_server")
+
+
 def test_serverless_worker_reads_sandbox_environment_and_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
