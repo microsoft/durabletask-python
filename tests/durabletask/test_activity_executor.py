@@ -3,7 +3,7 @@
 
 import json
 import logging
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from durabletask import task, worker
 
@@ -40,7 +40,7 @@ def test_activity_not_registered():
 
     executor, _ = _get_activity_executor(test_activity)
 
-    caught_exception: Optional[Exception] = None
+    caught_exception: Exception | None = None
     try:
         executor.execute(TEST_INSTANCE_ID, "Bogus", TEST_TASK_ID, None)
     except Exception as ex:
@@ -50,7 +50,7 @@ def test_activity_not_registered():
     assert "Bogus" in str(caught_exception)
 
 
-def _get_activity_executor(fn: task.Activity) -> Tuple[worker._ActivityExecutor, str]:
+def _get_activity_executor(fn: task.Activity) -> tuple[worker._ActivityExecutor, str]:
     registry = worker._Registry()
     name = registry.add_activity(fn)
     executor = worker._ActivityExecutor(registry, TEST_LOGGER)

@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, List, Optional, Sequence, TypeVar, Union
+from typing import Any, Generic, Sequence, TypeVar
 
 import grpc
 import grpc.aio
@@ -75,10 +75,10 @@ class OrchestrationState:
     runtime_status: OrchestrationStatus
     created_at: datetime
     last_updated_at: datetime
-    serialized_input: Optional[str]
-    serialized_output: Optional[str]
-    serialized_custom_status: Optional[str]
-    failure_details: Optional[task.FailureDetails]
+    serialized_input: str | None
+    serialized_output: str | None
+    serialized_custom_status: str | None
+    failure_details: task.FailureDetails | None
 
     def raise_if_failed(self):
         if self.failure_details is not None:
@@ -89,23 +89,23 @@ class OrchestrationState:
 
 @dataclass
 class OrchestrationQuery:
-    created_time_from: Optional[datetime] = None
-    created_time_to: Optional[datetime] = None
-    runtime_status: Optional[List[OrchestrationStatus]] = None
+    created_time_from: datetime | None = None
+    created_time_to: datetime | None = None
+    runtime_status: list[OrchestrationStatus] | None = None
     # Some backends don't respond well with max_instance_count = None, so we use the integer limit for non-paginated
     # results instead.
-    max_instance_count: Optional[int] = (1 << 31) - 1
+    max_instance_count: int | None = (1 << 31) - 1
     fetch_inputs_and_outputs: bool = False
 
 
 @dataclass
 class EntityQuery:
-    instance_id_starts_with: Optional[str] = None
-    last_modified_from: Optional[datetime] = None
-    last_modified_to: Optional[datetime] = None
+    instance_id_starts_with: str | None = None
+    last_modified_from: datetime | None = None
+    last_modified_to: datetime | None = None
     include_state: bool = True
     include_transient: bool = False
-    page_size: Optional[int] = None
+    page_size: int | None = None
 
 
 @dataclass
@@ -116,8 +116,8 @@ class PurgeInstancesResult:
 
 @dataclass
 class Page(Generic[TItem]):
-    items: List[TItem]
-    continuation_token: Optional[str]
+    items: list[TItem]
+    continuation_token: str | None
 
 
 @dataclass
@@ -136,7 +136,7 @@ class OrchestrationFailedError(Exception):
         return self._failure_details
 
 
-def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> Optional[OrchestrationState]:
+def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> OrchestrationState | None:
     if not res.exists:
         return None
 
@@ -175,17 +175,17 @@ _RETIRED_CHANNEL_CLOSE_DELAY_SECONDS = 30.0
 
 class TaskHubGrpcClient:
     def __init__(self, *,
-                 host_address: Optional[str] = None,
-                 metadata: Optional[list[tuple[str, str]]] = None,
-                 log_handler: Optional[logging.Handler] = None,
-                 log_formatter: Optional[logging.Formatter] = None,
-                 channel: Optional[grpc.Channel] = None,
+                 host_address: str | None = None,
+                 metadata: list[tuple[str, str]] | None = None,
+                 log_handler: logging.Handler | None = None,
+                 log_formatter: logging.Formatter | None = None,
+                 channel: grpc.Channel | None = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
-                 channel_options: Optional[GrpcChannelOptions] = None,
-                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
-                 default_version: Optional[str] = None,
-                 payload_store: Optional[PayloadStore] = None):
+                 interceptors: Sequence[shared.ClientInterceptor] | None = None,
+                 channel_options: GrpcChannelOptions | None = None,
+                 resiliency_options: GrpcClientResiliencyOptions | None = None,
+                 default_version: str | None = None,
+                 payload_store: PayloadStore | None = None):
 
         self._owns_channel = channel is None
         self._host_address = (
@@ -208,7 +208,7 @@ class TaskHubGrpcClient:
         self._recreate_lock = threading.Lock()
         self._retired_channels: dict[grpc.Channel, threading.Timer] = {}
         self._recreate_thread_lock = threading.Lock()
-        self._recreate_thread: Optional[threading.Thread] = None
+        self._recreate_thread: threading.Thread | None = None
         # Test seam: set after each fire-and-forget recreate attempt finishes
         # (whether it actually recreated the channel or short-circuited on
         # close / cooldown). Lets tests synchronise without polling and lets
@@ -252,14 +252,14 @@ class TaskHubGrpcClient:
 
     def _compose_interceptors(
             self,
-            user_interceptors: Optional[List[shared.ClientInterceptor]],
-    ) -> List[shared.ClientInterceptor]:
+            user_interceptors: list[shared.ClientInterceptor] | None,
+    ) -> list[shared.ClientInterceptor]:
         """Prepend the resiliency interceptor so user interceptors run after it.
 
         The resiliency interceptor wraps the underlying continuation, so it
         observes every unary call regardless of any user-supplied interceptors.
         """
-        composed: List[shared.ClientInterceptor] = [self._resiliency_interceptor]
+        composed: list[shared.ClientInterceptor] = [self._resiliency_interceptor]
         if user_interceptors:
             composed.extend(user_interceptors)
         return composed
@@ -366,13 +366,13 @@ class TaskHubGrpcClient:
                 retired_channel.close()
             current_channel.close()
 
-    def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
-                                   input: Optional[TInput] = None,
-                                   instance_id: Optional[str] = None,
-                                   start_at: Optional[datetime] = None,
-                                   reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None,
-                                   tags: Optional[dict[str, str]] = None,
-                                   version: Optional[str] = None) -> str:
+    def schedule_new_orchestration(self, orchestrator: task.Orchestrator[TInput, TOutput] | str, *,
+                                   input: TInput | None = None,
+                                   instance_id: str | None = None,
+                                   start_at: datetime | None = None,
+                                   reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
+                                   tags: dict[str, str] | None = None,
+                                   version: str | None = None) -> str:
 
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
@@ -402,7 +402,7 @@ class TaskHubGrpcClient:
             res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
             return res.instanceId
 
-    def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> Optional[OrchestrationState]:
+    def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         res: pb.GetInstanceResponse = self._stub.GetInstance(req)
         # De-externalize any large-payload tokens in the response
@@ -412,8 +412,8 @@ class TaskHubGrpcClient:
 
     def get_orchestration_history(self,
                                   instance_id: str, *,
-                                  execution_id: Optional[str] = None,
-                                  for_work_item_processing: bool = False) -> List[history.HistoryEvent]:
+                                  execution_id: str | None = None,
+                                  for_work_item_processing: bool = False) -> list[history.HistoryEvent]:
         req = pb.StreamInstanceHistoryRequest(
             instanceId=instance_id,
             executionId=helpers.get_string_value(execution_id),
@@ -424,11 +424,11 @@ class TaskHubGrpcClient:
         return history_helpers.collect_history_events(stream, self._payload_store)
 
     def list_instance_ids(self,
-                          runtime_status: Optional[List[OrchestrationStatus]] = None,
-                          completed_time_from: Optional[datetime] = None,
-                          completed_time_to: Optional[datetime] = None,
-                          page_size: Optional[int] = None,
-                          continuation_token: Optional[str] = None) -> Page[str]:
+                          runtime_status: list[OrchestrationStatus] | None = None,
+                          completed_time_from: datetime | None = None,
+                          completed_time_to: datetime | None = None,
+                          page_size: int | None = None,
+                          continuation_token: str | None = None) -> Page[str]:
         req = pb.ListInstanceIdsRequest(
             runtimeStatus=[status.value for status in runtime_status] if runtime_status else [],
             completedTimeFrom=helpers.new_timestamp(completed_time_from) if completed_time_from else None,
@@ -449,8 +449,8 @@ class TaskHubGrpcClient:
         return Page(items=list(resp.instanceIds), continuation_token=next_token)
 
     def get_all_orchestration_states(self,
-                                     orchestration_query: Optional[OrchestrationQuery] = None
-                                     ) -> List[OrchestrationState]:
+                                     orchestration_query: OrchestrationQuery | None = None
+                                     ) -> list[OrchestrationState]:
         if orchestration_query is None:
             orchestration_query = OrchestrationQuery()
         _continuation_token = None
@@ -474,7 +474,7 @@ class TaskHubGrpcClient:
 
     def wait_for_orchestration_start(self, instance_id: str, *,
                                      fetch_payloads: bool = False,
-                                     timeout: float = 60) -> Optional[OrchestrationState]:
+                                     timeout: float = 60) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
@@ -494,7 +494,7 @@ class TaskHubGrpcClient:
 
     def wait_for_orchestration_completion(self, instance_id: str, *,
                                           fetch_payloads: bool = True,
-                                          timeout: float = 60) -> Optional[OrchestrationState]:
+                                          timeout: float = 60) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
@@ -514,7 +514,7 @@ class TaskHubGrpcClient:
                 raise
 
     def raise_orchestration_event(self, instance_id: str, event_name: str, *,
-                                  data: Optional[Any] = None) -> None:
+                                  data: Any | None = None) -> None:
         with tracing.start_raise_event_span(event_name, instance_id):
             req = build_raise_event_req(instance_id, event_name, data)
             self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
@@ -525,7 +525,7 @@ class TaskHubGrpcClient:
             self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self, instance_id: str, *,
-                                output: Optional[Any] = None,
+                                output: Any | None = None,
                                 recursive: bool = True) -> None:
         req = build_terminate_req(instance_id, output, recursive)
 
@@ -573,9 +573,9 @@ class TaskHubGrpcClient:
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
     def purge_orchestrations_by(self,
-                                created_time_from: Optional[datetime] = None,
-                                created_time_to: Optional[datetime] = None,
-                                runtime_status: Optional[List[OrchestrationStatus]] = None,
+                                created_time_from: datetime | None = None,
+                                created_time_to: datetime | None = None,
+                                runtime_status: list[OrchestrationStatus] | None = None,
                                 recursive: bool = False) -> PurgeInstancesResult:
         self._logger.info("Purging orchestrations by filter: "
                           f"created_time_from={created_time_from}, "
@@ -589,7 +589,7 @@ class TaskHubGrpcClient:
     def signal_entity(self,
                       entity_instance_id: EntityInstanceId,
                       operation_name: str,
-                      input: Optional[Any] = None) -> None:
+                      input: Any | None = None) -> None:
         req = build_signal_entity_req(entity_instance_id, operation_name, input)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
         if self._payload_store is not None:
@@ -601,7 +601,7 @@ class TaskHubGrpcClient:
     def get_entity(self,
                    entity_instance_id: EntityInstanceId,
                    include_state: bool = True
-                   ) -> Optional[EntityMetadata]:
+                   ) -> EntityMetadata | None:
         req = pb.GetEntityRequest(instanceId=str(entity_instance_id), includeState=include_state)
         self._logger.info(f"Getting entity '{entity_instance_id}'.")
         res: pb.GetEntityResponse = self._stub.GetEntity(req)
@@ -612,7 +612,7 @@ class TaskHubGrpcClient:
         return EntityMetadata.from_entity_metadata(res.entity, include_state)
 
     def get_all_entities(self,
-                         entity_query: Optional[EntityQuery] = None) -> List[EntityMetadata]:
+                         entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
         if entity_query is None:
             entity_query = EntityQuery()
         _continuation_token = None
@@ -665,17 +665,17 @@ class AsyncTaskHubGrpcClient:
     """Async version of TaskHubGrpcClient using grpc.aio for asyncio-based applications."""
 
     def __init__(self, *,
-                 host_address: Optional[str] = None,
-                 metadata: Optional[list[tuple[str, str]]] = None,
-                 log_handler: Optional[logging.Handler] = None,
-                 log_formatter: Optional[logging.Formatter] = None,
-                 channel: Optional[grpc.aio.Channel] = None,
+                 host_address: str | None = None,
+                 metadata: list[tuple[str, str]] | None = None,
+                 log_handler: logging.Handler | None = None,
+                 log_formatter: logging.Formatter | None = None,
+                 channel: grpc.aio.Channel | None = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
-                 channel_options: Optional[GrpcChannelOptions] = None,
-                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
-                 default_version: Optional[str] = None,
-                 payload_store: Optional[PayloadStore] = None):
+                 interceptors: Sequence[shared.AsyncClientInterceptor] | None = None,
+                 channel_options: GrpcChannelOptions | None = None,
+                 resiliency_options: GrpcClientResiliencyOptions | None = None,
+                 default_version: str | None = None,
+                 payload_store: PayloadStore | None = None):
 
         self._owns_channel = channel is None
         self._host_address = (
@@ -698,7 +698,7 @@ class AsyncTaskHubGrpcClient:
         self._last_recreate_time = 0.0
         self._retired_channels: list[grpc.aio.Channel] = []
         self._retired_channel_close_tasks: set[asyncio.Task[None]] = set()
-        self._recreate_task: Optional[asyncio.Task[None]] = None
+        self._recreate_task: asyncio.Task[None] | None = None
         # Test seam: set after each fire-and-forget recreate attempt finishes
         # (whether it actually recreated the channel or short-circuited on
         # close / cooldown). Lets tests synchronise without polling and lets
@@ -742,10 +742,10 @@ class AsyncTaskHubGrpcClient:
 
     def _compose_interceptors(
             self,
-            user_interceptors: Optional[List[shared.AsyncClientInterceptor]],
-    ) -> List[shared.AsyncClientInterceptor]:
+            user_interceptors: list[shared.AsyncClientInterceptor] | None,
+    ) -> list[shared.AsyncClientInterceptor]:
         """Prepend the resiliency interceptor so user interceptors run after it."""
-        composed: List[shared.AsyncClientInterceptor] = [self._resiliency_interceptor]
+        composed: list[shared.AsyncClientInterceptor] = [self._resiliency_interceptor]
         if user_interceptors:
             composed.extend(user_interceptors)
         return composed
@@ -850,13 +850,13 @@ class AsyncTaskHubGrpcClient:
                 if channel in self._retired_channels:
                     self._retired_channels.remove(channel)
 
-    async def schedule_new_orchestration(self, orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
-                                         input: Optional[TInput] = None,
-                                         instance_id: Optional[str] = None,
-                                         start_at: Optional[datetime] = None,
-                                         reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None,
-                                         tags: Optional[dict[str, str]] = None,
-                                         version: Optional[str] = None) -> str:
+    async def schedule_new_orchestration(self, orchestrator: task.Orchestrator[TInput, TOutput] | str, *,
+                                         input: TInput | None = None,
+                                         instance_id: str | None = None,
+                                         start_at: datetime | None = None,
+                                         reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
+                                         tags: dict[str, str] | None = None,
+                                         version: str | None = None) -> str:
 
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
@@ -884,7 +884,7 @@ class AsyncTaskHubGrpcClient:
             return res.instanceId
 
     async def get_orchestration_state(self, instance_id: str, *,
-                                      fetch_payloads: bool = True) -> Optional[OrchestrationState]:
+                                      fetch_payloads: bool = True) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         res: pb.GetInstanceResponse = await self._stub.GetInstance(req)
         if self._payload_store is not None and res.exists:
@@ -893,8 +893,8 @@ class AsyncTaskHubGrpcClient:
 
     async def get_orchestration_history(self,
                                         instance_id: str, *,
-                                        execution_id: Optional[str] = None,
-                                        for_work_item_processing: bool = False) -> List[history.HistoryEvent]:
+                                        execution_id: str | None = None,
+                                        for_work_item_processing: bool = False) -> list[history.HistoryEvent]:
         req = pb.StreamInstanceHistoryRequest(
             instanceId=instance_id,
             executionId=helpers.get_string_value(execution_id),
@@ -905,11 +905,11 @@ class AsyncTaskHubGrpcClient:
         return await history_helpers.collect_history_events_async(stream, self._payload_store)
 
     async def list_instance_ids(self,
-                                runtime_status: Optional[List[OrchestrationStatus]] = None,
-                                completed_time_from: Optional[datetime] = None,
-                                completed_time_to: Optional[datetime] = None,
-                                page_size: Optional[int] = None,
-                                continuation_token: Optional[str] = None) -> Page[str]:
+                                runtime_status: list[OrchestrationStatus] | None = None,
+                                completed_time_from: datetime | None = None,
+                                completed_time_to: datetime | None = None,
+                                page_size: int | None = None,
+                                continuation_token: str | None = None) -> Page[str]:
         req = pb.ListInstanceIdsRequest(
             runtimeStatus=[status.value for status in runtime_status] if runtime_status else [],
             completedTimeFrom=helpers.new_timestamp(completed_time_from) if completed_time_from else None,
@@ -930,8 +930,8 @@ class AsyncTaskHubGrpcClient:
         return Page(items=list(resp.instanceIds), continuation_token=next_token)
 
     async def get_all_orchestration_states(self,
-                                           orchestration_query: Optional[OrchestrationQuery] = None
-                                           ) -> List[OrchestrationState]:
+                                           orchestration_query: OrchestrationQuery | None = None
+                                           ) -> list[OrchestrationState]:
         if orchestration_query is None:
             orchestration_query = OrchestrationQuery()
         _continuation_token = None
@@ -955,7 +955,7 @@ class AsyncTaskHubGrpcClient:
 
     async def wait_for_orchestration_start(self, instance_id: str, *,
                                            fetch_payloads: bool = False,
-                                           timeout: float = 60) -> Optional[OrchestrationState]:
+                                           timeout: float = 60) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
@@ -974,7 +974,7 @@ class AsyncTaskHubGrpcClient:
 
     async def wait_for_orchestration_completion(self, instance_id: str, *,
                                                 fetch_payloads: bool = True,
-                                                timeout: float = 60) -> Optional[OrchestrationState]:
+                                                timeout: float = 60) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
@@ -994,7 +994,7 @@ class AsyncTaskHubGrpcClient:
                 raise
 
     async def raise_orchestration_event(self, instance_id: str, event_name: str, *,
-                                        data: Optional[Any] = None) -> None:
+                                        data: Any | None = None) -> None:
         with tracing.start_raise_event_span(event_name, instance_id):
             req = build_raise_event_req(instance_id, event_name, data)
             self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
@@ -1005,7 +1005,7 @@ class AsyncTaskHubGrpcClient:
             await self._stub.RaiseEvent(req)
 
     async def terminate_orchestration(self, instance_id: str, *,
-                                      output: Optional[Any] = None,
+                                      output: Any | None = None,
                                       recursive: bool = True) -> None:
         req = build_terminate_req(instance_id, output, recursive)
 
@@ -1053,9 +1053,9 @@ class AsyncTaskHubGrpcClient:
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
     async def purge_orchestrations_by(self,
-                                      created_time_from: Optional[datetime] = None,
-                                      created_time_to: Optional[datetime] = None,
-                                      runtime_status: Optional[List[OrchestrationStatus]] = None,
+                                      created_time_from: datetime | None = None,
+                                      created_time_to: datetime | None = None,
+                                      runtime_status: list[OrchestrationStatus] | None = None,
                                       recursive: bool = False) -> PurgeInstancesResult:
         self._logger.info("Purging orchestrations by filter: "
                           f"created_time_from={created_time_from}, "
@@ -1069,7 +1069,7 @@ class AsyncTaskHubGrpcClient:
     async def signal_entity(self,
                             entity_instance_id: EntityInstanceId,
                             operation_name: str,
-                            input: Optional[Any] = None) -> None:
+                            input: Any | None = None) -> None:
         req = build_signal_entity_req(entity_instance_id, operation_name, input)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
         if self._payload_store is not None:
@@ -1081,7 +1081,7 @@ class AsyncTaskHubGrpcClient:
     async def get_entity(self,
                          entity_instance_id: EntityInstanceId,
                          include_state: bool = True
-                         ) -> Optional[EntityMetadata]:
+                         ) -> EntityMetadata | None:
         req = pb.GetEntityRequest(instanceId=str(entity_instance_id), includeState=include_state)
         self._logger.info(f"Getting entity '{entity_instance_id}'.")
         res: pb.GetEntityResponse = await self._stub.GetEntity(req)
@@ -1092,7 +1092,7 @@ class AsyncTaskHubGrpcClient:
         return EntityMetadata.from_entity_metadata(res.entity, include_state)
 
     async def get_all_entities(self,
-                               entity_query: Optional[EntityQuery] = None) -> List[EntityMetadata]:
+                               entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
         if entity_query is None:
             entity_query = EntityQuery()
         _continuation_token = None

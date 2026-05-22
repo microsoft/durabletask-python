@@ -3,7 +3,6 @@
 
 """Tests for large-payload externalization and de-externalization."""
 
-from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,14 +50,14 @@ class FakePayloadStore(PayloadStore):
     def options(self) -> LargePayloadStorageOptions:
         return self._options
 
-    def upload(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+    def upload(self, data: bytes, *, instance_id: str | None = None) -> str:
         self._counter += 1
         blob_name = f"blob-{self._counter}"
         token = f"{self.TOKEN_PREFIX}{blob_name}"
         self._blobs[token] = data
         return token
 
-    async def upload_async(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+    async def upload_async(self, data: bytes, *, instance_id: str | None = None) -> str:
         return self.upload(data, instance_id=instance_id)
 
     def download(self, token: str) -> bytes:

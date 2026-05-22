@@ -18,7 +18,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Callable
 
 import grpc
 from concurrent import futures
@@ -36,19 +36,19 @@ class OrchestrationInstance:
     instance_id: str
     name: str
     status: pb.OrchestrationStatus
-    version: Optional[str] = None
-    input: Optional[str] = None
-    output: Optional[str] = None
-    custom_status: Optional[str] = None
+    version: str | None = None
+    input: str | None = None
+    output: str | None = None
+    custom_status: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: Optional[datetime] = None
-    failure_details: Optional[pb.TaskFailureDetails] = None
+    completed_at: datetime | None = None
+    failure_details: pb.TaskFailureDetails | None = None
     history: list[pb.HistoryEvent] = field(default_factory=list)
     pending_events: list[pb.HistoryEvent] = field(default_factory=list)
     dispatched_events: list[pb.HistoryEvent] = field(default_factory=list)
     completion_token: int = 0
-    tags: Optional[dict[str, str]] = None
+    tags: dict[str, str] | None = None
 
 
 @dataclass
@@ -57,18 +57,18 @@ class ActivityWorkItem:
     instance_id: str
     name: str
     task_id: int
-    input: Optional[str]
+    input: str | None
     completion_token: int
-    version: Optional[str] = None
+    version: str | None = None
 
 
 @dataclass
 class EntityState:
     """Internal entity state stored by the in-memory backend."""
     instance_id: str
-    serialized_state: Optional[str] = None
+    serialized_state: str | None = None
     last_modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    locked_by: Optional[str] = None
+    locked_by: str | None = None
     pending_operations: list[pb.HistoryEvent] = field(default_factory=list)
     dispatched_operations: list[pb.HistoryEvent] = field(default_factory=list)
     completion_token: int = 0
@@ -86,7 +86,7 @@ class PendingLockRequest:
 class EntityWorkItem:
     """Entity work item that needs to be executed."""
     instance_id: str
-    entity_state: Optional[str]
+    entity_state: str | None
     operations: list[pb.HistoryEvent]
     completion_token: int
 
@@ -96,7 +96,7 @@ class StateWaiter:
     """Promise resolver for waiting on orchestration state changes."""
     predicate: Callable[[OrchestrationInstance], bool]
     event: threading.Event = field(default_factory=threading.Event)
-    result: Optional[OrchestrationInstance] = None
+    result: OrchestrationInstance | None = None
 
 
 _DEFAULT_PAGE_SIZE = 100
@@ -140,7 +140,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._next_completion_token: int = 1
         self._max_history_size = max_history_size
         self._port = port
-        self._server: Optional[grpc.Server] = None
+        self._server: grpc.Server | None = None
         self._logger = logging.getLogger(__name__)
         self._shutdown_event = threading.Event()
         self._work_available = threading.Event()
@@ -160,7 +160,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._logger.info(f"In-memory backend started on port {self._port}")
         return f"localhost:{self._port}"
 
-    def stop(self, grace: Optional[float] = None):
+    def stop(self, grace: float | None = None):
         """
         Stops the gRPC server.
 
@@ -531,8 +531,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         return orch_filter, activity_filter, entity_filter
 
     @staticmethod
-    def _matches_filter(name: str, version: Optional[str],
-                        filt: Optional[dict[str, frozenset[str]]]) -> bool:
+    def _matches_filter(name: str, version: str | None,
+                        filt: dict[str, frozenset[str]] | None) -> bool:
         """Check whether a work item matches the parsed filter.
 
         *filt* is ``None`` when the worker did not opt into filtering
@@ -1216,8 +1216,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         return self._is_terminal_status(instance.status)
 
     def _create_instance_internal(self, instance_id: str, name: str,
-                                  encoded_input: Optional[str] = None,
-                                  version: Optional[str] = None):
+                                  encoded_input: str | None = None,
+                                  version: str | None = None):
         """Creates a new instance directly in internal state (no gRPC context needed)."""
         existing = self._instances.get(instance_id)
         if existing:
@@ -1252,7 +1252,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._enqueue_orchestration(instance_id)
 
     def _raise_event_internal(self, instance_id: str, event_name: str,
-                              event_data: Optional[str] = None):
+                              event_data: str | None = None):
         """Raises an event directly in internal state (no gRPC context needed)."""
         instance = self._instances.get(instance_id)
         if not instance:
@@ -1263,7 +1263,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance.last_updated_at = datetime.now(timezone.utc)
         self._enqueue_orchestration(instance.instance_id)
 
-    def _terminate_instance_internal(self, instance_id: str, output: Optional[str],
+    def _terminate_instance_internal(self, instance_id: str, output: str | None,
                                      recursive: bool = False):
         """Internal method to terminate an instance."""
         if recursive:
@@ -1310,7 +1310,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     def _wait_for_state(self, instance_id: str,
                         predicate: Callable[[OrchestrationInstance], bool],
-                        timeout: Optional[float]) -> Optional[OrchestrationInstance]:
+                        timeout: float | None) -> OrchestrationInstance | None:
         """Waits for an orchestration to reach a state matching the predicate."""
         with self._lock:
             instance = self._instances.get(instance_id)
@@ -1731,7 +1731,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._enqueue_entity(entity_id)
 
     def _signal_entity_internal(self, entity_id: str, operation: str,
-                                input_value: Optional[str] = None):
+                                input_value: str | None = None):
         """Internal method to signal an entity (from entity side-effect actions)."""
         event = pb.HistoryEvent(
             eventId=-1,

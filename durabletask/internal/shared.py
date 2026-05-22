@@ -4,26 +4,27 @@
 import dataclasses
 import json
 import logging
+from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any, Optional, Sequence, Union
+from typing import Any, TypeAlias
 
 import grpc
 import grpc.aio
 from durabletask.grpc_options import GrpcChannelOptions
 
-ClientInterceptor = Union[
-    grpc.UnaryUnaryClientInterceptor,
-    grpc.UnaryStreamClientInterceptor,
-    grpc.StreamUnaryClientInterceptor,
-    grpc.StreamStreamClientInterceptor
-]
+ClientInterceptor: TypeAlias = (
+    grpc.UnaryUnaryClientInterceptor
+    | grpc.UnaryStreamClientInterceptor
+    | grpc.StreamUnaryClientInterceptor
+    | grpc.StreamStreamClientInterceptor
+)
 
-AsyncClientInterceptor = Union[
-    grpc.aio.UnaryUnaryClientInterceptor,
-    grpc.aio.UnaryStreamClientInterceptor,
-    grpc.aio.StreamUnaryClientInterceptor,
-    grpc.aio.StreamStreamClientInterceptor
-]
+AsyncClientInterceptor: TypeAlias = (
+    grpc.aio.UnaryUnaryClientInterceptor
+    | grpc.aio.UnaryStreamClientInterceptor
+    | grpc.aio.StreamUnaryClientInterceptor
+    | grpc.aio.StreamStreamClientInterceptor
+)
 
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
@@ -38,10 +39,10 @@ def get_default_host_address() -> str:
 
 
 def get_grpc_channel(
-        host_address: Optional[str],
+        host_address: str | None,
         secure_channel: bool = False,
-        interceptors: Optional[Sequence[ClientInterceptor]] = None,
-        channel_options: Optional[GrpcChannelOptions] = None) -> grpc.Channel:
+        interceptors: Sequence[ClientInterceptor] | None = None,
+        channel_options: GrpcChannelOptions | None = None) -> grpc.Channel:
 
     if host_address is None:
         host_address = get_default_host_address()
@@ -84,10 +85,10 @@ def get_grpc_channel(
 
 
 def get_async_grpc_channel(
-        host_address: Optional[str],
+        host_address: str | None,
         secure_channel: bool = False,
-        interceptors: Optional[Sequence[AsyncClientInterceptor]] = None,
-        channel_options: Optional[GrpcChannelOptions] = None) -> grpc.aio.Channel:
+        interceptors: Sequence[AsyncClientInterceptor] | None = None,
+        channel_options: GrpcChannelOptions | None = None) -> grpc.aio.Channel:
 
     if host_address is None:
         host_address = get_default_host_address()
@@ -138,8 +139,8 @@ def get_async_grpc_channel(
 
 def get_logger(
         name_suffix: str,
-        log_handler: Optional[logging.Handler] = None,
-        log_formatter: Optional[logging.Formatter] = None) -> logging.Logger:
+        log_handler: logging.Handler | None = None,
+        log_formatter: logging.Formatter | None = None) -> logging.Logger:
     logger = logging.Logger(f"durabletask-{name_suffix}")
 
     # Add a default log handler if none is provided
