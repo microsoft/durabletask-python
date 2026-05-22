@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from durabletask.payload.store import LargePayloadStorageOptions
 
@@ -34,7 +34,7 @@ class BlobPayloadStoreOptions(LargePayloadStorageOptions):
             Azurite compatibility).
     """
     container_name: str = "durabletask-payloads"
-    connection_string: Optional[str] = None
-    account_url: Optional[str] = None
+    connection_string: str | None = None
+    account_url: str | None = None
     credential: Any = field(default=None, repr=False)
-    api_version: Optional[str] = None
+    api_version: str | None = None

@@ -1,7 +1,6 @@
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
 import os
-from typing import Optional
 
 from azure.identity import DefaultAzureCredential
 
@@ -10,7 +9,7 @@ from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
-def counter(ctx: entities.EntityContext, input: int) -> Optional[int]:
+def counter(ctx: entities.EntityContext, input: int) -> int | None:
     if ctx.operation == "set":
         ctx.set_state(input)
     elif ctx.operation == "add":

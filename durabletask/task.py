@@ -8,7 +8,7 @@ import logging
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Generator, Generic, Optional, TypeVar, Union
+from typing import Any, Callable, Generator, Generic, TypeAlias, TypeVar
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
@@ -39,7 +39,7 @@ class OrchestrationContext(ABC):
 
     @property
     @abstractmethod
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the version of the orchestration instance.
 
         This version is set when the orchestration is scheduled and can be used
@@ -47,7 +47,7 @@ class OrchestrationContext(ABC):
 
         Returns
         -------
-        Optional[str]
+        str | None
             The version of the orchestration instance, or None if not set.
         """
         pass
@@ -99,7 +99,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def create_timer(self, fire_at: Union[datetime, timedelta]) -> CancellableTask:
+    def create_timer(self, fire_at: datetime | timedelta) -> CancellableTask:
         """Create a Timer Task to fire after at the specified deadline.
 
         Parameters
@@ -115,21 +115,21 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_activity(self, activity: Union[Activity[TInput, TOutput], str], *,
-                      input: Optional[TInput] = None,
-                      retry_policy: Optional[RetryPolicy] = None,
-                      tags: Optional[dict[str, str]] = None) -> CompletableTask[TOutput]:
+    def call_activity(self, activity: Activity[TInput, TOutput] | str, *,
+                      input: TInput | None = None,
+                      retry_policy: RetryPolicy | None = None,
+                      tags: dict[str, str] | None = None) -> CompletableTask[TOutput]:
         """Schedule an activity for execution.
 
         Parameters
         ----------
-        activity: Union[Activity[TInput, TOutput], str]
+        activity: Activity[TInput, TOutput] | str
             A reference to the activity function to call.
-        input: Optional[TInput]
+        input: TInput | None
             The JSON-serializable input (or None) to pass to the activity.
-        retry_policy: Optional[RetryPolicy]
+        retry_policy: RetryPolicy | None
             The retry policy to use for this activity call.
-        tags: Optional[dict[str, str]]
+        tags: dict[str, str] | None
             Optional tags to associate with the activity invocation.
 
         Returns
@@ -143,7 +143,7 @@ class OrchestrationContext(ABC):
     def call_entity(self,
                     entity: EntityInstanceId,
                     operation: str,
-                    input: Optional[TInput] = None) -> CompletableTask[Any]:
+                    input: TInput | None = None) -> CompletableTask[Any]:
         """Schedule entity function for execution.
 
         Parameters
@@ -152,7 +152,7 @@ class OrchestrationContext(ABC):
             The ID of the entity instance to call.
         operation: str
             The name of the operation to invoke on the entity.
-        input: Optional[TInput]
+        input: TInput | None
             The optional JSON-serializable input to pass to the entity function.
 
         Returns
@@ -167,7 +167,7 @@ class OrchestrationContext(ABC):
             self,
             entity_id: EntityInstanceId,
             operation_name: str,
-            input: Optional[TInput] = None
+            input: TInput | None = None
     ) -> None:
         """Signal an entity function for execution.
 
@@ -177,7 +177,7 @@ class OrchestrationContext(ABC):
             The ID of the entity instance to signal.
         operation_name: str
             The name of the operation to invoke on the entity.
-        input: Optional[TInput]
+        input: TInput | None
             The optional JSON-serializable input to pass to the entity function.
         """
         pass
@@ -203,23 +203,23 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def call_sub_orchestrator(self, orchestrator: Union[Orchestrator[TInput, TOutput], str], *,
-                              input: Optional[TInput] = None,
-                              instance_id: Optional[str] = None,
-                              retry_policy: Optional[RetryPolicy] = None,
-                              version: Optional[str] = None) -> CompletableTask[TOutput]:
+    def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput] | str, *,
+                              input: TInput | None = None,
+                              instance_id: str | None = None,
+                              retry_policy: RetryPolicy | None = None,
+                              version: str | None = None) -> CompletableTask[TOutput]:
         """Schedule sub-orchestrator function for execution.
 
         Parameters
         ----------
         orchestrator: Orchestrator[TInput, TOutput]
             A reference to the orchestrator function to call.
-        input: Optional[TInput]
+        input: TInput | None
             The optional JSON-serializable input to pass to the orchestrator function.
-        instance_id: Optional[str]
+        instance_id: str | None
             A unique ID to use for the sub-orchestration instance. If not specified, a
             random UUID will be used.
-        retry_policy: Optional[RetryPolicy]
+        retry_policy: RetryPolicy | None
             The retry policy to use for this sub-orchestrator call.
 
         Returns
@@ -327,7 +327,7 @@ class ReplaySafeLogger(logging.LoggerAdapter):
 
 
 class FailureDetails:
-    def __init__(self, message: str, error_type: str, stack_trace: Optional[str]):
+    def __init__(self, message: str, error_type: str, stack_trace: str | None):
         self._message = message
         self._error_type = error_type
         self._stack_trace = stack_trace
@@ -341,14 +341,14 @@ class FailureDetails:
         return self._error_type
 
     @property
-    def stack_trace(self) -> Optional[str]:
+    def stack_trace(self) -> str | None:
         return self._stack_trace
 
 
 class TaskFailedError(Exception):
     """Exception type for all orchestration task failures."""
 
-    def __init__(self, message: str, details: Union[pb.TaskFailureDetails, Exception]):
+    def __init__(self, message: str, details: pb.TaskFailureDetails | Exception):
         super().__init__(message)
         if isinstance(details, Exception):
             details = pbh.new_failure_details(details)
@@ -377,8 +377,8 @@ class TaskCancelledError(Exception):
 class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
-    _exception: Optional[TaskFailedError]
-    _parent: Optional[CompositeTask[T]]
+    _exception: TaskFailedError | None
+    _parent: CompositeTask[T] | None
 
     def __init__(self) -> None:
         super().__init__()
@@ -476,7 +476,7 @@ class CompletableTask(Task[T]):
         if self._parent is not None:
             self._parent.on_child_completed(self)
 
-    def fail(self, message: str, details: Union[Exception, pb.TaskFailureDetails]):
+    def fail(self, message: str, details: Exception | pb.TaskFailureDetails):
         if self._is_complete:
             raise ValueError('The task has already completed.')
         self._exception = TaskFailedError(message, details)
@@ -491,7 +491,7 @@ class CancellableTask(CompletableTask[T]):
     def __init__(self) -> None:
         super().__init__()
         self._is_cancelled = False
-        self._cancel_handler: Optional[Callable[[], None]] = None
+        self._cancel_handler: Callable[[], None] | None = None
 
     @property
     def is_cancelled(self) -> bool:
@@ -542,7 +542,7 @@ class RetryableTask(CompletableTask[T]):
     def increment_attempt_count(self) -> None:
         self._attempt_count += 1
 
-    def compute_next_delay(self) -> Optional[timedelta]:
+    def compute_next_delay(self) -> timedelta | None:
         if self._attempt_count >= self._retry_policy.max_number_of_attempts:
             return None
 
@@ -567,8 +567,8 @@ class RetryableTask(CompletableTask[T]):
 
 
 class TimerTask(CancellableTask[None]):
-    def __init__(self, final_fire_at: Optional[datetime] = None,
-                 maximum_timer_interval: Optional[timedelta] = None):
+    def __init__(self, final_fire_at: datetime | None = None,
+                 maximum_timer_interval: timedelta | None = None):
         super().__init__()
         self._final_fire_at = final_fire_at
         self._maximum_timer_interval = maximum_timer_interval
@@ -576,7 +576,7 @@ class TimerTask(CancellableTask[None]):
     def set_retryable_parent(self, retryable_task: RetryableTask):
         self._retryable_parent = retryable_task
 
-    def _handle_timer_fired(self, current_utc_datetime: datetime) -> Optional[datetime]:
+    def _handle_timer_fired(self, current_utc_datetime: datetime) -> datetime | None:
         if (self._final_fire_at is not None
                 and self._maximum_timer_interval is not None
                 and current_utc_datetime < self._final_fire_at):
@@ -647,12 +647,12 @@ class ActivityContext:
 
 
 # Orchestrators are generators that yield tasks, receive any type, and return TOutput
-Orchestrator = Callable[[OrchestrationContext, TInput], Union[Generator[Task[Any], Any, TOutput], TOutput]]
+Orchestrator: TypeAlias = Callable[[OrchestrationContext, TInput], Generator[Task[Any], Any, TOutput] | TOutput]
 
 # Activities are simple functions that can be scheduled by orchestrators
-Activity = Callable[[ActivityContext, TInput], TOutput]
+Activity: TypeAlias = Callable[[ActivityContext, TInput], TOutput]
 
-Entity = Union[Callable[[EntityContext, TInput], TOutput], type[DurableEntity]]
+Entity: TypeAlias = Callable[[EntityContext, TInput], TOutput] | type[DurableEntity]
 
 
 class RetryPolicy:
@@ -661,9 +661,9 @@ class RetryPolicy:
     def __init__(self, *,
                  first_retry_interval: timedelta,
                  max_number_of_attempts: int,
-                 backoff_coefficient: Optional[float] = 1.0,
-                 max_retry_interval: Optional[timedelta] = None,
-                 retry_timeout: Optional[timedelta] = None):
+                 backoff_coefficient: float | None = 1.0,
+                 max_retry_interval: timedelta | None = None,
+                 retry_timeout: timedelta | None = None):
         """Creates a new RetryPolicy instance.
 
         Parameters
@@ -672,11 +672,11 @@ class RetryPolicy:
             The retry interval to use for the first retry attempt.
         max_number_of_attempts : int
             The maximum number of retry attempts.
-        backoff_coefficient : Optional[float]
+        backoff_coefficient : float | None
             The backoff coefficient to use for calculating the next retry interval.
-        max_retry_interval : Optional[timedelta]
+        max_retry_interval : timedelta | None
             The maximum retry interval to use for any retry attempt.
-        retry_timeout : Optional[timedelta]
+        retry_timeout : timedelta | None
             The maximum amount of time to spend retrying the operation.
         """
         # validate inputs
@@ -708,17 +708,17 @@ class RetryPolicy:
         return self._max_number_of_attempts
 
     @property
-    def backoff_coefficient(self) -> Optional[float]:
+    def backoff_coefficient(self) -> float | None:
         """The backoff coefficient to use for calculating the next retry interval."""
         return self._backoff_coefficient
 
     @property
-    def max_retry_interval(self) -> Optional[timedelta]:
+    def max_retry_interval(self) -> timedelta | None:
         """The maximum retry interval to use for any retry attempt."""
         return self._max_retry_interval
 
     @property
-    def retry_timeout(self) -> Optional[timedelta]:
+    def retry_timeout(self) -> timedelta | None:
         """The maximum amount of time to spend retrying the operation."""
         return self._retry_timeout
 

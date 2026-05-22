@@ -2,8 +2,7 @@
 # Licensed under the MIT License.
 
 import logging
-
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import grpc
 import grpc.aio
@@ -28,16 +27,16 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
-                 token_credential: Optional[TokenCredential],
-                 channel: Optional[grpc.Channel] = None,
+                 token_credential: TokenCredential | None,
+                 channel: grpc.Channel | None = None,
                  secure_channel: bool = True,
-                 interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
-                 channel_options: Optional[GrpcChannelOptions] = None,
-                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
-                 default_version: Optional[str] = None,
-                 payload_store: Optional[PayloadStore] = None,
-                 log_handler: Optional[logging.Handler] = None,
-                 log_formatter: Optional[logging.Formatter] = None):
+                 interceptors: Sequence[shared.ClientInterceptor] | None = None,
+                 channel_options: GrpcChannelOptions | None = None,
+                 resiliency_options: GrpcClientResiliencyOptions | None = None,
+                 default_version: str | None = None,
+                 payload_store: PayloadStore | None = None,
+                 log_handler: logging.Handler | None = None,
+                 log_formatter: logging.Formatter | None = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
@@ -75,17 +74,17 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
     Args:
         host_address (str): The gRPC endpoint address of the DTS service.
         taskhub (str): The name of the task hub. Cannot be empty.
-        token_credential (Optional[TokenCredential]): Azure credential for authentication.
+        token_credential (TokenCredential | None): Azure credential for authentication.
             If None, anonymous authentication will be used.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to True.
-        resiliency_options (Optional[GrpcClientResiliencyOptions], optional): Client-side
+        resiliency_options (GrpcClientResiliencyOptions | None, optional): Client-side
             gRPC resiliency settings forwarded to the base async client.
-        default_version (Optional[str], optional): Default version string for orchestrations.
-        payload_store (Optional[PayloadStore], optional): A payload store for
+        default_version (str | None, optional): Default version string for orchestrations.
+        payload_store (PayloadStore | None, optional): A payload store for
             externalizing large payloads. If None, payloads are sent inline.
-        log_handler (Optional[logging.Handler], optional): Custom logging handler for client logs.
-        log_formatter (Optional[logging.Formatter], optional): Custom log formatter for client logs.
+        log_handler (logging.Handler | None, optional): Custom logging handler for client logs.
+        log_formatter (logging.Formatter | None, optional): Custom log formatter for client logs.
 
     Raises:
         ValueError: If taskhub is empty or None.
@@ -106,16 +105,16 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
-                 token_credential: Optional[AsyncTokenCredential],
-                 channel: Optional[grpc.aio.Channel] = None,
+                 token_credential: AsyncTokenCredential | None,
+                 channel: grpc.aio.Channel | None = None,
                  secure_channel: bool = True,
-                 interceptors: Optional[Sequence[shared.AsyncClientInterceptor]] = None,
-                 channel_options: Optional[GrpcChannelOptions] = None,
-                 resiliency_options: Optional[GrpcClientResiliencyOptions] = None,
-                 default_version: Optional[str] = None,
-                 payload_store: Optional[PayloadStore] = None,
-                 log_handler: Optional[logging.Handler] = None,
-                 log_formatter: Optional[logging.Formatter] = None):
+                 interceptors: Sequence[shared.AsyncClientInterceptor] | None = None,
+                 channel_options: GrpcChannelOptions | None = None,
+                 resiliency_options: GrpcClientResiliencyOptions | None = None,
+                 default_version: str | None = None,
+                 payload_store: PayloadStore | None = None,
+                 log_handler: logging.Handler | None = None,
+                 log_formatter: logging.Formatter | None = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")

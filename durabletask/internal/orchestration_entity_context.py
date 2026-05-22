@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Generator, List, Optional, Tuple, Union
+from typing import Generator
 
 from durabletask.internal.helpers import get_string_value
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -25,12 +25,12 @@ class OrchestrationEntityContext:
             for available_lock in self.available_locks:
                 yield available_lock
 
-    def validate_suborchestration_transition(self) -> Tuple[bool, str]:
+    def validate_suborchestration_transition(self) -> tuple[bool, str]:
         if self.is_inside_critical_section:
             return False, "While holding locks, cannot call suborchestrators."
         return True, ""
 
-    def validate_operation_transition(self, target_instance_id: EntityInstanceId, one_way: bool) -> Tuple[bool, str]:
+    def validate_operation_transition(self, target_instance_id: EntityInstanceId, one_way: bool) -> tuple[bool, str]:
         if self.is_inside_critical_section:
             lock_to_use = target_instance_id
             if one_way:
@@ -48,7 +48,7 @@ class OrchestrationEntityContext:
                         return False, "Must not call an entity from a critical section if it is not one of the locked entities."
         return True, ""
 
-    def validate_acquire_transition(self) -> Tuple[bool, str]:
+    def validate_acquire_transition(self) -> tuple[bool, str]:
         if self.is_inside_critical_section:
             return False, "Must not enter another critical section from within a critical section."
         return True, ""
@@ -72,11 +72,15 @@ class OrchestrationEntityContext:
             self.critical_section_id = None
 
     def emit_request_message(self, target, operation_name: str, one_way: bool, operation_id: str,
-                             scheduled_time_utc: datetime, input: Optional[str],
-                             request_time: Optional[datetime] = None, create_trace: bool = False):
+                             scheduled_time_utc: datetime, input: str | None,
+                             request_time: datetime | None = None, create_trace: bool = False):
         raise NotImplementedError()
 
-    def emit_acquire_message(self, critical_section_id: str, entities: List[EntityInstanceId]) -> Union[Tuple[None, None], Tuple[pb.SendEntityMessageAction, pb.OrchestrationInstance]]:
+    def emit_acquire_message(
+        self,
+        critical_section_id: str,
+        entities: list[EntityInstanceId],
+    ) -> tuple[None, None] | tuple[pb.SendEntityMessageAction, pb.OrchestrationInstance]:
         if not entities:
             return None, None
 

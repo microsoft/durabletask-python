@@ -1,5 +1,4 @@
-from typing import Any, TypeVar, Union
-from typing import Optional, Type, overload
+from typing import Any, TypeVar, overload
 
 import durabletask.internal.orchestrator_service_pb2 as pb
 
@@ -14,18 +13,18 @@ class StateShim:
         self._actions_checkpoint_state: int = 0
 
     @overload
-    def get_state(self, intended_type: Type[TState], default: TState) -> TState:
+    def get_state(self, intended_type: type[TState], default: TState) -> TState:
         ...
 
     @overload
-    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+    def get_state(self, intended_type: type[TState]) -> TState | None:
         ...
 
     @overload
     def get_state(self, intended_type: None = None, default: Any = None) -> Any:
         ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Union[None, TState, Any]:
+    def get_state(self, intended_type: type[TState] | None = None, default: TState | None = None) -> TState | Any | None:
         if self._current_state is None and default is not None:
             return default
 

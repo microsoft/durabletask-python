@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -45,7 +44,7 @@ class PayloadStore(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def upload(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+    def upload(self, data: bytes, *, instance_id: str | None = None) -> str:
         """Upload a payload and return a reference token string.
 
         The returned token is a compact string that can be embedded in
@@ -63,7 +62,7 @@ class PayloadStore(abc.ABC):
         ...
 
     @abc.abstractmethod
-    async def upload_async(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+    async def upload_async(self, data: bytes, *, instance_id: str | None = None) -> str:
         """Async version of :meth:`upload`."""
         ...
 

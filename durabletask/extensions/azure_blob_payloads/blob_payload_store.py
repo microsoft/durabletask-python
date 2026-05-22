@@ -8,7 +8,6 @@ from __future__ import annotations
 import gzip
 import logging
 import uuid
-from typing import Optional
 
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient
@@ -115,7 +114,7 @@ class BlobPayloadStore(PayloadStore):
     # Sync operations
     # ------------------------------------------------------------------
 
-    def upload(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+    def upload(self, data: bytes, *, instance_id: str | None = None) -> str:
         self._ensure_container_sync()
 
         if self._options.enable_compression:
@@ -144,7 +143,7 @@ class BlobPayloadStore(PayloadStore):
     # Async operations
     # ------------------------------------------------------------------
 
-    async def upload_async(self, data: bytes, *, instance_id: Optional[str] = None) -> str:
+    async def upload_async(self, data: bytes, *, instance_id: str | None = None) -> str:
         await self._ensure_container_async()
 
         if self._options.enable_compression:
@@ -193,7 +192,7 @@ class BlobPayloadStore(PayloadStore):
         return parts[0], parts[1]
 
     @staticmethod
-    def _make_blob_name(instance_id: Optional[str] = None) -> str:
+    def _make_blob_name(instance_id: str | None = None) -> str:
         """Generate a blob name, optionally scoped under an instance ID folder."""
         unique = uuid.uuid4().hex
         if instance_id:

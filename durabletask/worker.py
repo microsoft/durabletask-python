@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Generator, Optional, Sequence, Tuple, TypeVar, Union, overload
+from typing import Any, Generator, Sequence, TypeVar, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -64,10 +64,10 @@ class ConcurrencyOptions:
 
     def __init__(
             self,
-            maximum_concurrent_activity_work_items: Optional[int] = None,
-            maximum_concurrent_orchestration_work_items: Optional[int] = None,
-            maximum_concurrent_entity_work_items: Optional[int] = None,
-            maximum_thread_pool_workers: Optional[int] = None,
+            maximum_concurrent_activity_work_items: int | None = None,
+            maximum_concurrent_orchestration_work_items: int | None = None,
+            maximum_concurrent_entity_work_items: int | None = None,
+            maximum_thread_pool_workers: int | None = None,
     ):
         """Initialize concurrency options.
 
@@ -207,15 +207,15 @@ class VersioningOptions:
     and activities, including whether to use the default version and how to compare versions.
     """
 
-    version: Optional[str] = None
-    default_version: Optional[str] = None
-    match_strategy: Optional[VersionMatchStrategy] = None
-    failure_strategy: Optional[VersionFailureStrategy] = None
+    version: str | None = None
+    default_version: str | None = None
+    match_strategy: VersionMatchStrategy | None = None
+    failure_strategy: VersionFailureStrategy | None = None
 
-    def __init__(self, version: Optional[str] = None,
-                 default_version: Optional[str] = None,
-                 match_strategy: Optional[VersionMatchStrategy] = None,
-                 failure_strategy: Optional[VersionFailureStrategy] = None
+    def __init__(self, version: str | None = None,
+                 default_version: str | None = None,
+                 match_strategy: VersionMatchStrategy | None = None,
+                 failure_strategy: VersionFailureStrategy | None = None
                  ):
         """Initialize versioning options.
 
@@ -338,7 +338,7 @@ class _Registry:
     orchestrators: dict[str, task.Orchestrator]
     activities: dict[str, task.Activity]
     entities: dict[str, task.Entity]
-    versioning: Optional[VersioningOptions] = None
+    versioning: VersioningOptions | None = None
 
     def __init__(self):
         self.orchestrators = {}
@@ -361,7 +361,7 @@ class _Registry:
 
         self.orchestrators[name] = fn
 
-    def get_orchestrator(self, name: str) -> Optional[task.Orchestrator[Any, Any]]:
+    def get_orchestrator(self, name: str) -> task.Orchestrator[Any, Any] | None:
         return self.orchestrators.get(name)
 
     def add_activity(self, fn: task.Activity[TInput, TOutput]) -> str:
@@ -380,10 +380,10 @@ class _Registry:
 
         self.activities[name] = fn
 
-    def get_activity(self, name: str) -> Optional[task.Activity[Any, Any]]:
+    def get_activity(self, name: str) -> task.Activity[Any, Any] | None:
         return self.activities.get(name)
 
-    def add_entity(self, fn: task.Entity, name: Optional[str] = None) -> str:
+    def add_entity(self, fn: task.Entity, name: str | None = None) -> str:
         if fn is None:
             raise ValueError("An entity function argument is required.")
 
@@ -401,7 +401,7 @@ class _Registry:
 
         self.entities[name] = fn
 
-    def get_entity(self, name: str) -> Optional[task.Entity]:
+    def get_entity(self, name: str) -> task.Entity | None:
         return self.entities.get(name)
 
 
@@ -438,25 +438,25 @@ class TaskHubGrpcWorker:
     - Provides logging and monitoring capabilities
 
     Args:
-        host_address (Optional[str], optional): The gRPC endpoint address of the backend service.
+        host_address (str | None, optional): The gRPC endpoint address of the backend service.
             Defaults to the value from environment variables or localhost.
-        metadata (Optional[list[tuple[str, str]]], optional): gRPC metadata to include with
+        metadata (list[tuple[str, str]] | None, optional): gRPC metadata to include with
             requests. Used for authentication and routing. Defaults to None.
         log_handler (optional[logging.Handler]): Custom logging handler for worker logs. Defaults to None.
-        log_formatter (Optional[logging.Formatter], optional): Custom log formatter.
+        log_formatter (logging.Formatter | None, optional): Custom log formatter.
             Defaults to None.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to False.
-        channel (Optional[grpc.Channel], optional): Pre-configured gRPC channel to use.
+        channel (grpc.Channel | None, optional): Pre-configured gRPC channel to use.
             If set, host address, secure_channel, interceptors, and channel_options
             are ignored when creating connections.
-        interceptors (Optional[Sequence[shared.ClientInterceptor]], optional): Custom gRPC
+        interceptors (Sequence[shared.ClientInterceptor] | None, optional): Custom gRPC
             interceptors to apply to the channel. Defaults to None.
-        channel_options (Optional[GrpcChannelOptions], optional): Extra low-level gRPC
+        channel_options (GrpcChannelOptions | None, optional): Extra low-level gRPC
             channel configuration including retry/service config options.
-        resiliency_options (Optional[GrpcWorkerResiliencyOptions], optional): Worker-side
+        resiliency_options (GrpcWorkerResiliencyOptions | None, optional): Worker-side
             gRPC resiliency settings retained for reconnect handling.
-        concurrency_options (Optional[ConcurrencyOptions], optional): Configuration for
+        concurrency_options (ConcurrencyOptions | None, optional): Configuration for
             controlling worker concurrency limits. If None, default settings are used.
 
     Attributes:
@@ -509,24 +509,24 @@ class TaskHubGrpcWorker:
             activity function.
     """
 
-    _response_stream: Optional[Any] = None
-    _interceptors: Optional[list[shared.ClientInterceptor]] = None
+    _response_stream: Any | None = None
+    _interceptors: list[shared.ClientInterceptor] | None = None
 
     def __init__(
             self,
             *,
-            host_address: Optional[str] = None,
-            metadata: Optional[list[tuple[str, str]]] = None,
-            log_handler: Optional[logging.Handler] = None,
-            log_formatter: Optional[logging.Formatter] = None,
-            channel: Optional[grpc.Channel] = None,
+            host_address: str | None = None,
+            metadata: list[tuple[str, str]] | None = None,
+            log_handler: logging.Handler | None = None,
+            log_formatter: logging.Formatter | None = None,
+            channel: grpc.Channel | None = None,
             secure_channel: bool = False,
-            interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
-            channel_options: Optional[GrpcChannelOptions] = None,
-            resiliency_options: Optional[GrpcWorkerResiliencyOptions] = None,
-            concurrency_options: Optional[ConcurrencyOptions] = None,
-            maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
-            payload_store: Optional[PayloadStore] = None,
+            interceptors: Sequence[shared.ClientInterceptor] | None = None,
+            channel_options: GrpcChannelOptions | None = None,
+            resiliency_options: GrpcWorkerResiliencyOptions | None = None,
+            concurrency_options: ConcurrencyOptions | None = None,
+            maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+            payload_store: PayloadStore | None = None,
     ):
         self._registry = _Registry()
         self._host_address = (
@@ -568,7 +568,7 @@ class TaskHubGrpcWorker:
 
         self._async_worker_manager = _AsyncWorkerManager(self._concurrency_options, self._logger)
         self._maximum_timer_interval = maximum_timer_interval
-        self._work_item_filters: Optional[WorkItemFilters] = None
+        self._work_item_filters: WorkItemFilters | None = None
         self._auto_generate_work_item_filters: bool = False
 
     @property
@@ -577,7 +577,7 @@ class TaskHubGrpcWorker:
         return self._concurrency_options
 
     @property
-    def maximum_timer_interval(self) -> Optional[timedelta]:
+    def maximum_timer_interval(self) -> timedelta | None:
         """Get the configured maximum timer interval for long timer chunking."""
         return self._maximum_timer_interval
 
@@ -621,7 +621,7 @@ class TaskHubGrpcWorker:
             )
         return self._registry.add_activity(fn)
 
-    def add_entity(self, fn: task.Entity, name: Optional[str] = None) -> str:
+    def add_entity(self, fn: task.Entity, name: str | None = None) -> str:
         """Registers an entity function with the worker."""
         if self._is_running:
             raise RuntimeError(
@@ -649,7 +649,7 @@ class TaskHubGrpcWorker:
 
     def use_work_item_filters(
         self,
-        filters: Union[WorkItemFilters, None, object] = _AUTO_GENERATE_FILTERS,
+        filters: WorkItemFilters | None | object = _AUTO_GENERATE_FILTERS,
     ) -> None:
         """Configures work item filters for the worker.
 
@@ -1071,7 +1071,7 @@ class TaskHubGrpcWorker:
     def _execute_orchestrator(
             self,
             req: pb.OrchestratorRequest,
-            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
+            stub: stubs.TaskHubSidecarServiceStub | ProtoTaskHubSidecarServiceStub,
             completionToken,
     ):
         instance_id = req.instanceId
@@ -1202,7 +1202,7 @@ class TaskHubGrpcWorker:
     def _cancel_orchestrator(
             self,
             req: pb.OrchestratorRequest,
-            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
+            stub: stubs.TaskHubSidecarServiceStub | ProtoTaskHubSidecarServiceStub,
             completionToken,
     ):
         stub.AbandonTaskOrchestratorWorkItem(
@@ -1215,7 +1215,7 @@ class TaskHubGrpcWorker:
     def _execute_activity(
             self,
             req: pb.ActivityRequest,
-            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
+            stub: stubs.TaskHubSidecarServiceStub | ProtoTaskHubSidecarServiceStub,
             completionToken,
     ):
         instance_id = req.orchestrationInstance.instanceId
@@ -1272,7 +1272,7 @@ class TaskHubGrpcWorker:
     def _cancel_activity(
             self,
             req: pb.ActivityRequest,
-            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
+            stub: stubs.TaskHubSidecarServiceStub | ProtoTaskHubSidecarServiceStub,
             completionToken,
     ):
         stub.AbandonTaskActivityWorkItem(
@@ -1284,8 +1284,8 @@ class TaskHubGrpcWorker:
 
     def _execute_entity_batch(
             self,
-            req: Union[pb.EntityBatchRequest, pb.EntityRequest],
-            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
+            req: pb.EntityBatchRequest | pb.EntityRequest,
+            stub: stubs.TaskHubSidecarServiceStub | ProtoTaskHubSidecarServiceStub,
             completionToken,
     ):
         operation_infos: list[pb.OperationInfo] = []
@@ -1378,8 +1378,8 @@ class TaskHubGrpcWorker:
 
     def _cancel_entity_batch(
             self,
-            req: Union[pb.EntityBatchRequest, pb.EntityRequest],
-            stub: Union[stubs.TaskHubSidecarServiceStub, ProtoTaskHubSidecarServiceStub],
+            req: pb.EntityBatchRequest | pb.EntityRequest,
+            stub: stubs.TaskHubSidecarServiceStub | ProtoTaskHubSidecarServiceStub,
             completionToken,
     ):
         stub.AbandonTaskEntityWorkItem(
@@ -1391,13 +1391,13 @@ class TaskHubGrpcWorker:
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
-    _generator: Optional[Generator[task.Task, Any, Any]]
-    _previous_task: Optional[task.Task]
+    _generator: Generator[task.Task, Any, Any] | None
+    _previous_task: task.Task | None
 
     def __init__(self,
                  instance_id: str,
                  registry: _Registry,
-                 maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+                 maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
                  ):
         self._generator = None
         self._is_replaying = True
@@ -1416,15 +1416,15 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._instance_id = instance_id
         self._registry = registry
         self._entity_context = OrchestrationEntityContext(instance_id)
-        self._version: Optional[str] = None
-        self._completion_status: Optional[pb.OrchestrationStatus] = None
+        self._version: str | None = None
+        self._completion_status: pb.OrchestrationStatus | None = None
         self._received_events: dict[str, list[Any]] = {}
         self._pending_events: dict[str, list[task.CancellableTask]] = {}
-        self._new_input: Optional[Any] = None
+        self._new_input: Any | None = None
         self._save_events = False
-        self._encoded_custom_status: Optional[str] = None
-        self._parent_trace_context: Optional[pb.TraceContext] = None
-        self._orchestration_trace_context: Optional[pb.TraceContext] = None
+        self._encoded_custom_status: str | None = None
+        self._parent_trace_context: pb.TraceContext | None = None
+        self._orchestration_trace_context: pb.TraceContext | None = None
         self._maximum_timer_interval = maximum_timer_interval
 
     def run(self, generator: Generator[task.Task, Any, Any]):
@@ -1480,7 +1480,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # self._pending_actions.clear()  # Cancel any pending actions
 
         self._result = result
-        result_json: Optional[str] = None
+        result_json: str | None = None
         if result is not None:
             try:
                 result_json = result if is_result_encoded else shared.to_json(result)
@@ -1494,7 +1494,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         )
         self._pending_actions[action.id] = action
 
-    def set_failed(self, ex: Union[Exception, pb.TaskFailureDetails]):
+    def set_failed(self, ex: Exception | pb.TaskFailureDetails):
         if self._is_complete:
             return
 
@@ -1536,7 +1536,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         current_actions = list(self._pending_actions.values())
         if self._completion_status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             # When continuing-as-new, we only return a single completion action.
-            carryover_events: Optional[list[pb.HistoryEvent]] = None
+            carryover_events: list[pb.HistoryEvent] | None = None
             if self._save_events:
                 carryover_events = []
                 # We need to save the current set of pending events so that they can be
@@ -1571,7 +1571,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return self._instance_id
 
     @property
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         return self._version
 
     @property
@@ -1591,13 +1591,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             shared.to_json(custom_status) if custom_status is not None else None
         )
 
-    def create_timer(self, fire_at: Union[datetime, timedelta]) -> task.CancellableTask:
+    def create_timer(self, fire_at: datetime | timedelta) -> task.CancellableTask:
         return self.create_timer_internal(fire_at)
 
     def create_timer_internal(
             self,
-            fire_at: Union[datetime, timedelta],
-            retryable_task: Optional[task.RetryableTask] = None,
+            fire_at: datetime | timedelta,
+            retryable_task: task.RetryableTask | None = None,
     ) -> task.TimerTask:
         id = self.next_sequence_number()
         if isinstance(fire_at, timedelta):
@@ -1632,11 +1632,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_activity(
             self,
-            activity: Union[task.Activity[TInput, TOutput], str],
+            activity: task.Activity[TInput, TOutput] | str,
             *,
-            input: Optional[TInput] = None,
-            retry_policy: Optional[task.RetryPolicy] = None,
-            tags: Optional[dict[str, str]] = None,
+            input: TInput | None = None,
+            retry_policy: task.RetryPolicy | None = None,
+            tags: dict[str, str] | None = None,
     ) -> task.CompletableTask[TOutput]:
         id = self.next_sequence_number()
 
@@ -1649,7 +1649,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self,
             entity: EntityInstanceId,
             operation: str,
-            input: Optional[TInput] = None,
+            input: TInput | None = None,
     ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
 
@@ -1663,7 +1663,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self,
             entity_id: EntityInstanceId,
             operation_name: str,
-            input: Optional[TInput] = None
+            input: TInput | None = None
     ) -> None:
         id = self.next_sequence_number()
 
@@ -1681,12 +1681,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_sub_orchestrator(
             self,
-            orchestrator: Union[task.Orchestrator[TInput, TOutput], str],
+            orchestrator: task.Orchestrator[TInput, TOutput] | str,
             *,
-            input: Optional[TInput] = None,
-            instance_id: Optional[str] = None,
-            retry_policy: Optional[task.RetryPolicy] = None,
-            version: Optional[str] = None,
+            input: TInput | None = None,
+            instance_id: str | None = None,
+            retry_policy: task.RetryPolicy | None = None,
+            version: str | None = None,
     ) -> task.CompletableTask[TOutput]:
         id = self.next_sequence_number()
         if isinstance(orchestrator, str):
@@ -1708,16 +1708,16 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_activity_function_helper(
             self,
-            id: Optional[int],
-            activity_function: Union[task.Activity[TInput, TOutput], str],
+            id: int | None,
+            activity_function: task.Activity[TInput, TOutput] | str,
             *,
-            input: Optional[TInput] = None,
-            retry_policy: Optional[task.RetryPolicy] = None,
-            tags: Optional[dict[str, str]] = None,
+            input: TInput | None = None,
+            retry_policy: task.RetryPolicy | None = None,
+            tags: dict[str, str] | None = None,
             is_sub_orch: bool = False,
-            instance_id: Optional[str] = None,
-            fn_task: Optional[task.CompletableTask[TOutput]] = None,
-            version: Optional[str] = None,
+            instance_id: str | None = None,
+            fn_task: task.CompletableTask[TOutput] | None = None,
+            version: str | None = None,
     ):
         if id is None:
             id = self.next_sequence_number()
@@ -1783,11 +1783,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def call_entity_function_helper(
             self,
-            id: Optional[int],
+            id: int | None,
             entity_id: EntityInstanceId,
             operation: str,
             *,
-            input: Optional[TInput] = None,
+            input: TInput | None = None,
     ):
         if id is None:
             id = self.next_sequence_number()
@@ -1805,10 +1805,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def signal_entity_function_helper(
             self,
-            id: Optional[int],
+            id: int | None,
             entity_id: EntityInstanceId,
             operation: str,
-            input: Optional[TInput]
+            input: TInput | None
     ) -> None:
         if id is None:
             id = self.next_sequence_number()
@@ -1910,12 +1910,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
 class ExecutionResults:
     actions: list[pb.OrchestratorAction]
-    encoded_custom_status: Optional[str]
-    _orchestration_trace_context: Optional[pb.TraceContext]
+    encoded_custom_status: str | None
+    _orchestration_trace_context: pb.TraceContext | None
 
     def __init__(
-            self, actions: list[pb.OrchestratorAction], encoded_custom_status: Optional[str],
-            orchestration_trace_context: Optional[pb.TraceContext] = None,
+            self, actions: list[pb.OrchestratorAction], encoded_custom_status: str | None,
+            orchestration_trace_context: pb.TraceContext | None = None,
     ):
         self.actions = actions
         self.encoded_custom_status = encoded_custom_status
@@ -1923,14 +1923,14 @@ class ExecutionResults:
 
 
 class _OrchestrationExecutor:
-    _generator: Optional[task.Orchestrator] = None
+    _generator: task.Orchestrator | None = None
 
     def __init__(
         self,
         registry: _Registry,
         logger: logging.Logger,
-        persisted_orch_span_id: Optional[str] = None,
-        maximum_timer_interval: Optional[timedelta] = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+        persisted_orch_span_id: str | None = None,
+        maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
     ):
         self._registry = registry
         self._logger = logger
@@ -1939,12 +1939,12 @@ class _OrchestrationExecutor:
         self._suspended_events: list[pb.HistoryEvent] = []
         self._persisted_orch_span_id = persisted_orch_span_id
         # Maps timer_id -> (fire_at, created_time_ns)
-        self._timer_fire_at: dict[int, tuple[datetime, Optional[int]]] = {}
+        self._timer_fire_at: dict[int, tuple[datetime, int | None]] = {}
         # Maps task_id -> (task_type, name, instance_id, scheduled_ns,
         #                  client_trace_ctx, version)
         # Used to reconstruct CLIENT spans with proper timestamps.
         self._task_scheduled_info: dict[
-            int, tuple[str, str, str, Optional[int], pb.TraceContext, Optional[str]]
+            int, tuple[str, str, str, int | None, pb.TraceContext, str | None]
         ] = {}
 
     def execute(
@@ -2407,7 +2407,7 @@ class _OrchestrationExecutor:
                     if not ctx.is_replaying:
                         self._logger.info(f"{ctx.instance_id} Event raised: {event_name}")
                     task_list = ctx._pending_events.get(event_name, None)
-                    decoded_result: Optional[Any] = None
+                    decoded_result: Any | None = None
                     if task_list:
                         event_task = task_list.pop(0)
                         if not ph.is_empty(event.eventRaised.input):
@@ -2600,7 +2600,7 @@ class _OrchestrationExecutor:
             # The orchestrator generator function completed
             ctx.set_complete(generatorStopped.value, pb.ORCHESTRATION_STATUS_COMPLETED)
 
-    def _parse_entity_event_sent_input(self, event: pb.HistoryEvent) -> Tuple[EntityInstanceId, str]:
+    def _parse_entity_event_sent_input(self, event: pb.HistoryEvent) -> tuple[EntityInstanceId, str]:
         try:
             entity_id = EntityInstanceId.parse(event.eventSent.instanceId)
         except ValueError:
@@ -2614,8 +2614,8 @@ class _OrchestrationExecutor:
     def _handle_entity_event_raised(self,
                                     ctx: _RuntimeOrchestrationContext,
                                     event: pb.HistoryEvent,
-                                    entity_id: Optional[EntityInstanceId],
-                                    task_id: Optional[int],
+                                    entity_id: EntityInstanceId | None,
+                                    task_id: int | None,
                                     is_lock_event: bool):
         # This eventRaised represents the result of an entity operation after being translated to the old
         # entity protocol by the Durable WebJobs extension
@@ -2638,7 +2638,7 @@ class _OrchestrationExecutor:
             entity_task.complete(result)
         ctx.resume()
 
-    def evaluate_orchestration_versioning(self, versioning: Optional[VersioningOptions], orchestration_version: Optional[str]) -> Optional[pb.TaskFailureDetails]:
+    def evaluate_orchestration_versioning(self, versioning: VersioningOptions | None, orchestration_version: str | None) -> pb.TaskFailureDetails | None:
         if versioning is None:
             return None
         version_comparison = self.compare_versions(orchestration_version, versioning.version)
@@ -2666,7 +2666,7 @@ class _OrchestrationExecutor:
                 isNonRetriable=True,
             )
 
-    def compare_versions(self, source_version: Optional[str], default_version: Optional[str]) -> int:
+    def compare_versions(self, source_version: str | None, default_version: str | None) -> int:
         if not source_version and not default_version:
             return 0
         if not source_version:
@@ -2691,8 +2691,8 @@ class _ActivityExecutor:
             orchestration_id: str,
             name: str,
             task_id: int,
-            encoded_input: Optional[str],
-    ) -> Optional[str]:
+            encoded_input: str | None,
+    ) -> str | None:
         """Executes an activity function and returns the serialized result, if any."""
         self._logger.debug(
             f"{orchestration_id}/{task_id}: Executing activity '{name}'..."
@@ -2731,8 +2731,8 @@ class _EntityExecutor:
             entity_id: EntityInstanceId,
             operation: str,
             state: StateShim,
-            encoded_input: Optional[str],
-    ) -> Optional[str]:
+            encoded_input: str | None,
+    ) -> str | None:
         """Executes an entity function and returns the serialized result, if any."""
         self._logger.debug(
             f"{orchestration_id}: Executing entity '{entity_id}'..."
@@ -2822,16 +2822,17 @@ def _get_wrong_action_name_error(
 
 def _get_method_name_for_action(action: pb.OrchestratorAction) -> str:
     action_type = action.WhichOneof("orchestratorActionType")
-    if action_type == "scheduleTask":
-        return task.get_name(task.OrchestrationContext.call_activity)
-    elif action_type == "createTimer":
-        return task.get_name(task.OrchestrationContext.create_timer)
-    elif action_type == "createSubOrchestration":
-        return task.get_name(task.OrchestrationContext.call_sub_orchestrator)
-    # elif action_type == "sendEvent":
-    #    return task.get_name(task.OrchestrationContext.send_event)
-    else:
-        raise NotImplementedError(f"Action type '{action_type}' not supported!")
+    match action_type:
+        case "scheduleTask":
+            return task.get_name(task.OrchestrationContext.call_activity)
+        case "createTimer":
+            return task.get_name(task.OrchestrationContext.create_timer)
+        case "createSubOrchestration":
+            return task.get_name(task.OrchestrationContext.call_sub_orchestrator)
+        # case "sendEvent":
+        #    return task.get_name(task.OrchestrationContext.send_event)
+        case _:
+            raise NotImplementedError(f"Action type '{action_type}' not supported!")
 
 
 def _get_new_event_summary(new_events: Sequence[pb.HistoryEvent]) -> str:
@@ -2879,10 +2880,10 @@ class _AsyncWorkerManager:
         self.orchestration_semaphore = None
         self.entity_semaphore = None
         # Don't create queues here - defer until we have an event loop
-        self.activity_queue: Optional[asyncio.Queue] = None
-        self.orchestration_queue: Optional[asyncio.Queue] = None
-        self.entity_batch_queue: Optional[asyncio.Queue] = None
-        self._queue_event_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.activity_queue: asyncio.Queue | None = None
+        self.orchestration_queue: asyncio.Queue | None = None
+        self.entity_batch_queue: asyncio.Queue | None = None
+        self._queue_event_loop: asyncio.AbstractEventLoop | None = None
         # Store work items when no event loop is available
         self._pending_activity_work: list = []
         self._pending_orchestration_work: list = []

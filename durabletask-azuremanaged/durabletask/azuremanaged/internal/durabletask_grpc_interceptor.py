@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 from importlib.metadata import version
-from typing import Optional
 
 import grpc
 from azure.core.credentials import TokenCredential
@@ -27,9 +26,9 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
 
     def __init__(
             self,
-            token_credential: Optional[TokenCredential],
+            token_credential: TokenCredential | None,
             taskhub_name: str,
-            worker_id: Optional[str] = None):
+            worker_id: str | None = None):
         try:
             # Get the version of the azuremanaged package
             sdk_version = version('durabletask-azuremanaged')
@@ -83,7 +82,7 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
     This class implements async gRPC interceptors to add DTS-specific headers
     (task hub name, user agent, and authentication token) to all async calls."""
 
-    def __init__(self, token_credential: Optional[AsyncTokenCredential], taskhub_name: str):
+    def __init__(self, token_credential: AsyncTokenCredential | None, taskhub_name: str):
         try:
             # Get the version of the azuremanaged package
             sdk_version = version('durabletask-azuremanaged')

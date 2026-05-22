@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterable, Iterable, Optional
+from typing import AsyncIterable, Iterable
 
 import durabletask.history as history
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -13,7 +13,7 @@ from durabletask.payload.store import PayloadStore
 
 def collect_history_events(
     chunks: Iterable[pb.HistoryChunk],
-    payload_store: Optional[PayloadStore] = None,
+    payload_store: PayloadStore | None = None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     for chunk in chunks:
@@ -23,7 +23,7 @@ def collect_history_events(
 
 async def collect_history_events_async(
     chunks: AsyncIterable[pb.HistoryChunk],
-    payload_store: Optional[PayloadStore] = None,
+    payload_store: PayloadStore | None = None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     async for chunk in chunks:
@@ -37,7 +37,7 @@ def history_event_to_dict(event: history.HistoryEvent) -> dict:
 
 def _clone_and_convert_events(
     source_events: Iterable[pb.HistoryEvent],
-    payload_store: Optional[PayloadStore],
+    payload_store: PayloadStore | None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     for source_event in source_events:
@@ -54,7 +54,7 @@ def _clone_and_convert_events(
 
 async def _clone_and_convert_events_async(
     source_events: Iterable[pb.HistoryEvent],
-    payload_store: Optional[PayloadStore],
+    payload_store: PayloadStore | None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     for source_event in source_events:

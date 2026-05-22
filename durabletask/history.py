@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from google.protobuf import json_format
 from google.protobuf.message import Message
@@ -17,22 +17,22 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 @dataclass(slots=True)
 class OrchestrationInstance:
     instance_id: str
-    execution_id: Optional[str] = None
+    execution_id: str | None = None
 
 
 @dataclass(slots=True)
 class ParentInstanceInfo:
     task_scheduled_id: int
-    name: Optional[str] = None
-    version: Optional[str] = None
-    orchestration_instance: Optional[OrchestrationInstance] = None
+    name: str | None = None
+    version: str | None = None
+    orchestration_instance: OrchestrationInstance | None = None
 
 
 @dataclass(slots=True)
 class TraceContext:
     trace_parent: str
     span_id: str
-    trace_state: Optional[str] = None
+    trace_state: str | None = None
 
 
 @dataclass(slots=True)
@@ -47,70 +47,70 @@ class HistoryEvent:
 @dataclass(slots=True)
 class ExecutionStartedEvent(HistoryEvent):
     name: str
-    version: Optional[str] = None
-    input: Optional[str] = None
-    orchestration_instance: Optional[OrchestrationInstance] = None
-    parent_instance: Optional[ParentInstanceInfo] = None
-    scheduled_start_timestamp: Optional[datetime] = None
-    parent_trace_context: Optional[TraceContext] = None
-    orchestration_span_id: Optional[str] = None
-    tags: Optional[dict[str, str]] = None
+    version: str | None = None
+    input: str | None = None
+    orchestration_instance: OrchestrationInstance | None = None
+    parent_instance: ParentInstanceInfo | None = None
+    scheduled_start_timestamp: datetime | None = None
+    parent_trace_context: TraceContext | None = None
+    orchestration_span_id: str | None = None
+    tags: dict[str, str] | None = None
 
 
 @dataclass(slots=True)
 class ExecutionCompletedEvent(HistoryEvent):
     orchestration_status: int
-    result: Optional[str] = None
-    failure_details: Optional[task.FailureDetails] = None
+    result: str | None = None
+    failure_details: task.FailureDetails | None = None
 
 
 @dataclass(slots=True)
 class ExecutionTerminatedEvent(HistoryEvent):
-    input: Optional[str] = None
+    input: str | None = None
     recurse: bool = False
 
 
 @dataclass(slots=True)
 class TaskScheduledEvent(HistoryEvent):
     name: str
-    version: Optional[str] = None
-    input: Optional[str] = None
-    parent_trace_context: Optional[TraceContext] = None
-    tags: Optional[dict[str, str]] = None
+    version: str | None = None
+    input: str | None = None
+    parent_trace_context: TraceContext | None = None
+    tags: dict[str, str] | None = None
 
 
 @dataclass(slots=True)
 class TaskCompletedEvent(HistoryEvent):
     task_scheduled_id: int
-    result: Optional[str] = None
+    result: str | None = None
 
 
 @dataclass(slots=True)
 class TaskFailedEvent(HistoryEvent):
     task_scheduled_id: int
-    failure_details: Optional[task.FailureDetails] = None
+    failure_details: task.FailureDetails | None = None
 
 
 @dataclass(slots=True)
 class SubOrchestrationInstanceCreatedEvent(HistoryEvent):
     instance_id: str
     name: str
-    version: Optional[str] = None
-    input: Optional[str] = None
-    parent_trace_context: Optional[TraceContext] = None
-    tags: Optional[dict[str, str]] = None
+    version: str | None = None
+    input: str | None = None
+    parent_trace_context: TraceContext | None = None
+    tags: dict[str, str] | None = None
 
 
 @dataclass(slots=True)
 class SubOrchestrationInstanceCompletedEvent(HistoryEvent):
     task_scheduled_id: int
-    result: Optional[str] = None
+    result: str | None = None
 
 
 @dataclass(slots=True)
 class SubOrchestrationInstanceFailedEvent(HistoryEvent):
     task_scheduled_id: int
-    failure_details: Optional[task.FailureDetails] = None
+    failure_details: task.FailureDetails | None = None
 
 
 @dataclass(slots=True)
@@ -138,18 +138,18 @@ class OrchestratorCompletedEvent(HistoryEvent):
 class EventSentEvent(HistoryEvent):
     instance_id: str
     name: str
-    input: Optional[str] = None
+    input: str | None = None
 
 
 @dataclass(slots=True)
 class EventRaisedEvent(HistoryEvent):
     name: str
-    input: Optional[str] = None
+    input: str | None = None
 
 
 @dataclass(slots=True)
 class GenericEvent(HistoryEvent):
-    data: Optional[str] = None
+    data: str | None = None
 
 
 @dataclass(slots=True)
@@ -159,49 +159,49 @@ class HistoryStateEvent(HistoryEvent):
 
 @dataclass(slots=True)
 class ContinueAsNewEvent(HistoryEvent):
-    input: Optional[str] = None
+    input: str | None = None
 
 
 @dataclass(slots=True)
 class ExecutionSuspendedEvent(HistoryEvent):
-    input: Optional[str] = None
+    input: str | None = None
 
 
 @dataclass(slots=True)
 class ExecutionResumedEvent(HistoryEvent):
-    input: Optional[str] = None
+    input: str | None = None
 
 
 @dataclass(slots=True)
 class EntityOperationSignaledEvent(HistoryEvent):
     request_id: str
     operation: str
-    scheduled_time: Optional[datetime] = None
-    input: Optional[str] = None
-    target_instance_id: Optional[str] = None
+    scheduled_time: datetime | None = None
+    input: str | None = None
+    target_instance_id: str | None = None
 
 
 @dataclass(slots=True)
 class EntityOperationCalledEvent(HistoryEvent):
     request_id: str
     operation: str
-    scheduled_time: Optional[datetime] = None
-    input: Optional[str] = None
-    parent_instance_id: Optional[str] = None
-    parent_execution_id: Optional[str] = None
-    target_instance_id: Optional[str] = None
+    scheduled_time: datetime | None = None
+    input: str | None = None
+    parent_instance_id: str | None = None
+    parent_execution_id: str | None = None
+    target_instance_id: str | None = None
 
 
 @dataclass(slots=True)
 class EntityOperationCompletedEvent(HistoryEvent):
     request_id: str
-    output: Optional[str] = None
+    output: str | None = None
 
 
 @dataclass(slots=True)
 class EntityOperationFailedEvent(HistoryEvent):
     request_id: str
-    failure_details: Optional[task.FailureDetails] = None
+    failure_details: task.FailureDetails | None = None
 
 
 @dataclass(slots=True)
@@ -209,7 +209,7 @@ class EntityLockRequestedEvent(HistoryEvent):
     critical_section_id: str
     lock_set: list[str]
     position: int
-    parent_instance_id: Optional[str] = None
+    parent_instance_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -220,21 +220,21 @@ class EntityLockGrantedEvent(HistoryEvent):
 @dataclass(slots=True)
 class EntityUnlockSentEvent(HistoryEvent):
     critical_section_id: str
-    parent_instance_id: Optional[str] = None
-    target_instance_id: Optional[str] = None
+    parent_instance_id: str | None = None
+    target_instance_id: str | None = None
 
 
 @dataclass(slots=True)
 class ExecutionRewoundEvent(HistoryEvent):
-    reason: Optional[str] = None
-    parent_execution_id: Optional[str] = None
-    instance_id: Optional[str] = None
-    parent_trace_context: Optional[TraceContext] = None
-    name: Optional[str] = None
-    version: Optional[str] = None
-    input: Optional[str] = None
-    parent_instance: Optional[ParentInstanceInfo] = None
-    tags: Optional[dict[str, str]] = None
+    reason: str | None = None
+    parent_execution_id: str | None = None
+    instance_id: str | None = None
+    parent_trace_context: TraceContext | None = None
+    name: str | None = None
+    version: str | None = None
+    input: str | None = None
+    parent_instance: ParentInstanceInfo | None = None
+    tags: dict[str, str] | None = None
 
 
 def _from_protobuf(event: pb.HistoryEvent) -> HistoryEvent:
@@ -258,19 +258,19 @@ def _base_kwargs(event: pb.HistoryEvent) -> dict[str, Any]:
     }
 
 
-def _string_value(msg: Message, field_name: str) -> Optional[str]:
+def _string_value(msg: Message, field_name: str) -> str | None:
     if msg.HasField(field_name):
         return getattr(msg, field_name).value
     return None
 
 
-def _timestamp_value(msg: Message, field_name: str) -> Optional[datetime]:
+def _timestamp_value(msg: Message, field_name: str) -> datetime | None:
     if msg.HasField(field_name):
         return getattr(msg, field_name).ToDatetime(timezone.utc)
     return None
 
 
-def _failure_details(msg: Message, field_name: str) -> Optional[task.FailureDetails]:
+def _failure_details(msg: Message, field_name: str) -> task.FailureDetails | None:
     if not msg.HasField(field_name):
         return None
     details = getattr(msg, field_name)
@@ -281,7 +281,7 @@ def _failure_details(msg: Message, field_name: str) -> Optional[task.FailureDeta
     )
 
 
-def _trace_context(msg: Message, field_name: str) -> Optional[TraceContext]:
+def _trace_context(msg: Message, field_name: str) -> TraceContext | None:
     if not msg.HasField(field_name):
         return None
     value = getattr(msg, field_name)
@@ -292,7 +292,7 @@ def _trace_context(msg: Message, field_name: str) -> Optional[TraceContext]:
     )
 
 
-def _orchestration_instance(msg: Message, field_name: str) -> Optional[OrchestrationInstance]:
+def _orchestration_instance(msg: Message, field_name: str) -> OrchestrationInstance | None:
     if not msg.HasField(field_name):
         return None
     value = getattr(msg, field_name)
@@ -302,7 +302,7 @@ def _orchestration_instance(msg: Message, field_name: str) -> Optional[Orchestra
     )
 
 
-def _parent_instance(msg: Message, field_name: str) -> Optional[ParentInstanceInfo]:
+def _parent_instance(msg: Message, field_name: str) -> ParentInstanceInfo | None:
     if not msg.HasField(field_name):
         return None
     value = getattr(msg, field_name)

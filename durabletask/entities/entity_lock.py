@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 
@@ -7,7 +9,7 @@ if TYPE_CHECKING:
 
 class EntityLock:
     # Note: This should
-    def __init__(self, context: 'OrchestrationContext'):
+    def __init__(self, context: OrchestrationContext):
         self._context = context
 
     def __enter__(self):

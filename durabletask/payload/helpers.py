@@ -12,7 +12,7 @@ matches a known payload-store token (de-externalize).  The actual upload
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from google.protobuf import message as proto_message
 from google.protobuf import wrappers_pb2
@@ -32,7 +32,7 @@ def externalize_payloads(
     msg: proto_message.Message,
     store: PayloadStore,
     *,
-    instance_id: Optional[str] = None,
+    instance_id: str | None = None,
 ) -> None:
     """Walk *msg* in-place, uploading large ``StringValue`` fields to *store*.
 
@@ -64,7 +64,7 @@ async def externalize_payloads_async(
     msg: proto_message.Message,
     store: PayloadStore,
     *,
-    instance_id: Optional[str] = None,
+    instance_id: str | None = None,
 ) -> None:
     """Async version of :func:`externalize_payloads`."""
     threshold = store.options.threshold_bytes
@@ -95,7 +95,7 @@ def _walk_and_externalize(
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: Optional[str],
+    instance_id: str | None,
 ) -> None:
     for fd in msg.DESCRIPTOR.fields:
         if fd.message_type is None:
@@ -150,7 +150,7 @@ def _try_externalize_field(
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: Optional[str],
+    instance_id: str | None,
 ) -> None:
     val = sv.value
     if not val:
@@ -228,7 +228,7 @@ async def _walk_and_externalize_async(
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: Optional[str],
+    instance_id: str | None,
 ) -> None:
     for fd in msg.DESCRIPTOR.fields:
         if fd.message_type is None:
@@ -280,7 +280,7 @@ async def _try_externalize_field_async(
     store: PayloadStore,
     threshold: int,
     max_bytes: int,
-    instance_id: Optional[str],
+    instance_id: str | None,
 ) -> None:
     val = sv.value
     if not val:
