@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import inspect
 import random
 import threading
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional, Union
 
 import grpc
 import grpc.aio
@@ -125,7 +126,7 @@ class AsyncClientResiliencyInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
     def __init__(
             self,
             failure_tracker: FailureTracker,
-            on_recreate: Callable[[], "Optional[object]"],
+            on_recreate: Callable[[], Union[None, Awaitable[object]]],
     ):
         self._failure_tracker = failure_tracker
         self._on_recreate = on_recreate
@@ -147,7 +148,7 @@ class AsyncClientResiliencyInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
         if status_code is not None and is_client_transport_failure(method, status_code):
             if self._failure_tracker.record_failure():
                 result = self._on_recreate()
-                if hasattr(result, "__await__"):
+                if inspect.isawaitable(result):
                     await result
         else:
             self._failure_tracker.record_success()
