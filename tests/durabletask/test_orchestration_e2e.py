@@ -299,7 +299,7 @@ def test_suspend_and_resume():
             # Raise an event to the orchestration and confirm that it does NOT complete
             task_hub_client.raise_orchestration_event(id, "my_event", data=42)
             try:
-                state = task_hub_client.wait_for_orchestration_completion(id, timeout=3)
+                task_hub_client.wait_for_orchestration_completion(id, timeout=3)
                 assert False, "Orchestration should not have completed"
             except TimeoutError:
                 pass

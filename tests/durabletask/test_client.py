@@ -791,9 +791,14 @@ def test_sync_client_context_manager_propagates_exception_and_calls_close():
         patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()),
     ):
         client = TaskHubGrpcClient(host_address=HOST_ADDRESS)
-        with pytest.raises(RuntimeError, match="boom"):
+        raised = False
+        try:
             with client:
                 raise RuntimeError("boom")
+        except RuntimeError as exc:
+            raised = True
+            assert str(exc) == "boom"
+        assert raised, "RuntimeError raised inside the with block must propagate"
 
     assert client._closing is True
     channel.close.assert_called_once_with()
