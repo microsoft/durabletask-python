@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- Improved type coverage benefits Azure Managed users: `create_timer` now
+  returns the specific `TimerTask` type and `when_any` is generic so the
+  completing child task is type-checked through `DurableTaskSchedulerClient`,
+  `AsyncDurableTaskSchedulerClient`, and `DurableTaskSchedulerWorker` derived
+  orchestrations.
+
 ## v1.5.0
 
 - Updates base dependency to durabletask v1.5.0

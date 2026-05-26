@@ -14,8 +14,6 @@ from durabletask.azuremanaged.internal.access_token_manager import (
 from durabletask.internal.grpc_interceptor import (
     DefaultAsyncClientInterceptorImpl,
     DefaultClientInterceptorImpl,
-    _AsyncClientCallDetails,
-    _ClientCallDetails,
 )
 
 
@@ -62,7 +60,7 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
             self._metadata.append(("authorization", f"Bearer {token}"))
 
     def _intercept_call(
-            self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
+            self, client_call_details: grpc.ClientCallDetails) -> grpc.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
             call details."""
         # Refresh the auth token if a credential was provided. The call to
@@ -114,7 +112,7 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
             self._metadata.append(("authorization", f"Bearer {token}"))
 
     async def _intercept_call(
-            self, client_call_details: _AsyncClientCallDetails) -> grpc.aio.ClientCallDetails:
+            self, client_call_details: grpc.aio.ClientCallDetails) -> grpc.aio.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
             call details."""
         # Refresh the auth token if a credential was provided. The call to

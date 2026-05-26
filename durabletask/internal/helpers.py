@@ -316,7 +316,7 @@ def new_create_sub_orchestration_action(
     ))
 
 
-def is_empty(v: wrappers_pb2.StringValue):
+def is_empty(v: wrappers_pb2.StringValue | None) -> bool:
     return v is None or v.value == ''
 
 

@@ -10,8 +10,11 @@ import logging
 import uuid
 
 from azure.core.exceptions import ResourceExistsError
-from azure.storage.blob import BlobServiceClient
-from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
+from azure.storage.blob import BlobServiceClient, ContainerClient
+from azure.storage.blob.aio import (
+    BlobServiceClient as AsyncBlobServiceClient,
+    ContainerClient as AsyncContainerClient,
+)
 
 from durabletask.extensions.azure_blob_payloads.options import BlobPayloadStoreOptions
 from durabletask.payload.store import PayloadStore
@@ -40,47 +43,68 @@ class BlobPayloadStore(PayloadStore):
         options: A :class:`BlobPayloadStoreOptions` with all settings.
     """
 
-    def __init__(self, options: BlobPayloadStoreOptions):
+    def __init__(self, options: BlobPayloadStoreOptions) -> None:
         if not options.connection_string and not options.account_url:
             raise ValueError(
                 "Either 'connection_string' or 'account_url' (with 'credential') must be provided."
             )
 
-        self._options = options
-        self._container_name = options.container_name
-
-        # Optional kwargs shared by both sync and async clients.
-        extra_kwargs: dict = {}
-        if options.api_version:
-            extra_kwargs["api_version"] = options.api_version
+        self._options: BlobPayloadStoreOptions = options
+        self._container_name: str = options.container_name
+        self._blob_service_client: BlobServiceClient
+        self._async_blob_service_client: AsyncBlobServiceClient
 
         # Build sync client
         if options.connection_string:
-            self._blob_service_client = BlobServiceClient.from_connection_string(
-                options.connection_string, **extra_kwargs,
-            )
+            if options.api_version:
+                self._blob_service_client = BlobServiceClient.from_connection_string(
+                    options.connection_string,
+                    api_version=options.api_version,
+                )
+            else:
+                self._blob_service_client = BlobServiceClient.from_connection_string(
+                    options.connection_string,
+                )
         else:
             assert options.account_url is not None  # guaranteed by validation above
-            self._blob_service_client = BlobServiceClient(
-                account_url=options.account_url,
-                credential=options.credential,
-                **extra_kwargs,
-            )
+            if options.api_version:
+                self._blob_service_client = BlobServiceClient(
+                    account_url=options.account_url,
+                    credential=options.credential,
+                    api_version=options.api_version,
+                )
+            else:
+                self._blob_service_client = BlobServiceClient(
+                    account_url=options.account_url,
+                    credential=options.credential,
+                )
 
         # Build async client
         if options.connection_string:
-            self._async_blob_service_client = AsyncBlobServiceClient.from_connection_string(
-                options.connection_string, **extra_kwargs,
-            )
+            if options.api_version:
+                self._async_blob_service_client = AsyncBlobServiceClient.from_connection_string(
+                    options.connection_string,
+                    api_version=options.api_version,
+                )
+            else:
+                self._async_blob_service_client = AsyncBlobServiceClient.from_connection_string(
+                    options.connection_string,
+                )
         else:
             assert options.account_url is not None  # guaranteed by validation above
-            self._async_blob_service_client = AsyncBlobServiceClient(
-                account_url=options.account_url,
-                credential=options.credential,
-                **extra_kwargs,
-            )
+            if options.api_version:
+                self._async_blob_service_client = AsyncBlobServiceClient(
+                    account_url=options.account_url,
+                    credential=options.credential,
+                    api_version=options.api_version,
+                )
+            else:
+                self._async_blob_service_client = AsyncBlobServiceClient(
+                    account_url=options.account_url,
+                    credential=options.credential,
+                )
 
-        self._ensure_container_created = False
+        self._ensure_container_created: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle / resource management
@@ -121,7 +145,9 @@ class BlobPayloadStore(PayloadStore):
             data = gzip.compress(data)
 
         blob_name = self._make_blob_name(instance_id)
-        container_client = self._blob_service_client.get_container_client(self._container_name)
+        container_client: ContainerClient = self._blob_service_client.get_container_client(
+            self._container_name
+        )
         container_client.upload_blob(name=blob_name, data=data, overwrite=True)
 
         token = f"{_TOKEN_PREFIX}{self._container_name}:{blob_name}"
@@ -130,7 +156,7 @@ class BlobPayloadStore(PayloadStore):
 
     def download(self, token: str) -> bytes:
         container, blob_name = self._parse_token(token)
-        container_client = self._blob_service_client.get_container_client(container)
+        container_client: ContainerClient = self._blob_service_client.get_container_client(container)
         blob_data = container_client.download_blob(blob_name).readall()
 
         if self._options.enable_compression:
@@ -150,7 +176,9 @@ class BlobPayloadStore(PayloadStore):
             data = gzip.compress(data)
 
         blob_name = self._make_blob_name(instance_id)
-        container_client = self._async_blob_service_client.get_container_client(self._container_name)
+        container_client: AsyncContainerClient = self._async_blob_service_client.get_container_client(
+            self._container_name
+        )
         await container_client.upload_blob(name=blob_name, data=data, overwrite=True)
 
         token = f"{_TOKEN_PREFIX}{self._container_name}:{blob_name}"
@@ -159,7 +187,9 @@ class BlobPayloadStore(PayloadStore):
 
     async def download_async(self, token: str) -> bytes:
         container, blob_name = self._parse_token(token)
-        container_client = self._async_blob_service_client.get_container_client(container)
+        container_client: AsyncContainerClient = self._async_blob_service_client.get_container_client(
+            container
+        )
         stream = await container_client.download_blob(blob_name)
         blob_data = await stream.readall()
 
@@ -206,7 +236,9 @@ class BlobPayloadStore(PayloadStore):
     def _ensure_container_sync(self) -> None:
         if self._ensure_container_created:
             return
-        container_client = self._blob_service_client.get_container_client(self._container_name)
+        container_client: ContainerClient = self._blob_service_client.get_container_client(
+            self._container_name
+        )
         try:
             container_client.create_container()
         except ResourceExistsError:
@@ -216,7 +248,9 @@ class BlobPayloadStore(PayloadStore):
     async def _ensure_container_async(self) -> None:
         if self._ensure_container_created:
             return
-        container_client = self._async_blob_service_client.get_container_client(self._container_name)
+        container_client: AsyncContainerClient = self._async_blob_service_client.get_container_client(
+            self._container_name
+        )
         try:
             await container_client.create_container()
         except ResourceExistsError:

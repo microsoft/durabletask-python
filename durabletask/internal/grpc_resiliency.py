@@ -4,7 +4,7 @@
 import random
 import threading
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 import grpc
 import grpc.aio
@@ -108,7 +108,11 @@ class ClientResiliencyInterceptor(grpc.UnaryUnaryClientInterceptor):
         self._failure_tracker = failure_tracker
         self._on_recreate = on_recreate
 
-    def intercept_unary_unary(self, continuation, client_call_details, request):
+    def intercept_unary_unary(
+            self,
+            continuation: Callable[[grpc.ClientCallDetails, Any], Any],
+            client_call_details: grpc.ClientCallDetails,
+            request: Any) -> Any:
         response = continuation(client_call_details, request)
         error = response.exception()
         self._record_outcome(client_call_details.method, error)
@@ -150,7 +154,11 @@ class AsyncClientResiliencyInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
         self._failure_tracker = failure_tracker
         self._on_recreate = on_recreate
 
-    async def intercept_unary_unary(self, continuation, client_call_details, request):
+    async def intercept_unary_unary(
+            self,
+            continuation: Callable[[grpc.aio.ClientCallDetails, Any], Any],
+            client_call_details: grpc.aio.ClientCallDetails,
+            request: Any) -> Any:
         try:
             response = await continuation(client_call_details, request)
         except Exception as exc:

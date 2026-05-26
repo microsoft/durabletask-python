@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from google.protobuf import json_format
 from google.protobuf.message import Message
@@ -237,7 +238,7 @@ class ExecutionRewoundEvent(HistoryEvent):
     tags: dict[str, str] | None = None
 
 
-def _from_protobuf(event: pb.HistoryEvent) -> HistoryEvent:
+def _from_protobuf(event: pb.HistoryEvent) -> HistoryEvent:  # pyright: ignore[reportUnusedFunction]
     event_type = event.WhichOneof('eventType')
     if event_type is None:
         raise ValueError('History event does not have an eventType set')
@@ -329,13 +330,16 @@ def _to_serializable(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, list):
-        return [_to_serializable(item) for item in value]
+        return [_to_serializable(item) for item in cast(list[Any], value)]
     if isinstance(value, dict):
-        return {key: _to_serializable(item) for key, item in value.items()}
+        return {
+            key: _to_serializable(item)
+            for key, item in cast(dict[Any, Any], value).items()
+        }
     return value
 
 
-_EVENT_CONVERTERS: dict[str, Any] = {
+_EVENT_CONVERTERS: dict[str, Callable[[pb.HistoryEvent], HistoryEvent]] = {
     'executionStarted': lambda event: ExecutionStartedEvent(
         **_base_kwargs(event),
         name=event.executionStarted.name,

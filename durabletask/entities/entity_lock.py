@@ -16,4 +16,4 @@ class EntityLock:
         return self
 
     def __exit__(self, *args: object) -> None:
-        self._context._exit_critical_section()
+        self._context._exit_critical_section()  # pyright: ignore[reportPrivateUsage]

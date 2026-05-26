@@ -6,7 +6,7 @@ TState = TypeVar("TState")
 
 
 class StateShim:
-    def __init__(self, start_state):
+    def __init__(self, start_state: Any):
         self._current_state: Any = start_state
         self._checkpoint_state: Any = start_state
         self._operation_actions: list[pb.OperationAction] = []
@@ -41,24 +41,24 @@ class StateShim:
                 f"Could not convert state of type '{type(self._current_state).__name__}' to '{intended_type.__name__}'"
             ) from ex
 
-    def set_state(self, state):
+    def set_state(self, state: Any) -> None:
         self._current_state = state
 
-    def add_operation_action(self, action: pb.OperationAction):
+    def add_operation_action(self, action: pb.OperationAction) -> None:
         self._operation_actions.append(action)
 
     def get_operation_actions(self) -> list[pb.OperationAction]:
         return self._operation_actions[:self._actions_checkpoint_state]
 
-    def commit(self):
+    def commit(self) -> None:
         self._checkpoint_state = self._current_state
         self._actions_checkpoint_state = len(self._operation_actions)
 
-    def rollback(self):
+    def rollback(self) -> None:
         self._current_state = self._checkpoint_state
         self._operation_actions = self._operation_actions[:self._actions_checkpoint_state]
 
-    def reset(self):
+    def reset(self) -> None:
         self._current_state = None
         self._checkpoint_state = None
         self._operation_actions = []

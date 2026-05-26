@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Generator
+from typing import Any, Generator
 
 from durabletask.internal.helpers import get_string_value
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -12,7 +12,7 @@ class OrchestrationEntityContext:
 
         self.lock_acquisition_pending = False
 
-        self.critical_section_id = None
+        self.critical_section_id: str | None = None
         self.critical_section_locks: list[EntityInstanceId] = []
         self.available_locks: list[EntityInstanceId] = []
 
@@ -57,7 +57,7 @@ class OrchestrationEntityContext:
         if self.is_inside_critical_section:
             self.available_locks.append(target_instance_id)
 
-    def emit_lock_release_messages(self):
+    def emit_lock_release_messages(self) -> Generator[pb.SendEntityMessageAction, None, None]:
         if self.is_inside_critical_section:
             for entity_id in self.critical_section_locks:
                 unlock_event = pb.SendEntityMessageAction(entityUnlockSent=pb.EntityUnlockSentEvent(
@@ -71,9 +71,9 @@ class OrchestrationEntityContext:
             self.available_locks = []
             self.critical_section_id = None
 
-    def emit_request_message(self, target, operation_name: str, one_way: bool, operation_id: str,
+    def emit_request_message(self, target: Any, operation_name: str, one_way: bool, operation_id: str,
                              scheduled_time_utc: datetime, input: str | None,
-                             request_time: datetime | None = None, create_trace: bool = False):
+                             request_time: datetime | None = None, create_trace: bool = False) -> Any:
         raise NotImplementedError()
 
     def emit_acquire_message(
@@ -87,7 +87,7 @@ class OrchestrationEntityContext:
         # Acquire the locks in a globally fixed order to avoid deadlocks
         # Also remove duplicates - this can be optimized for perf if necessary
         entity_ids = sorted(entities)
-        entity_ids_dedup = []
+        entity_ids_dedup: list[EntityInstanceId] = []
         for i, entity_id in enumerate(entity_ids):
             if entity_id != entity_ids[i - 1] if i > 0 else True:
                 entity_ids_dedup.append(entity_id)
@@ -106,14 +106,14 @@ class OrchestrationEntityContext:
 
         return request, target
 
-    def complete_acquire(self, critical_section_id):
+    def complete_acquire(self, critical_section_id: str) -> None:
         if self.critical_section_id != critical_section_id:
             raise RuntimeError(f"Unexpected lock acquire for critical section ID '{critical_section_id}' (expected '{self.critical_section_id}')")
         self.available_locks = self.critical_section_locks
         self.lock_acquisition_pending = False
 
-    def adjust_outgoing_message(self, instance_id: str, request_message, capped_time: datetime) -> str:
+    def adjust_outgoing_message(self, instance_id: str, request_message: Any, capped_time: datetime) -> str:
         raise NotImplementedError()
 
-    def deserialize_entity_response_event(self, event_content: str):
+    def deserialize_entity_response_event(self, event_content: str) -> Any:
         raise NotImplementedError()

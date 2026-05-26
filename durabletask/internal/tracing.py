@@ -19,7 +19,7 @@ import random
 import time
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -30,34 +30,55 @@ logger = logging.getLogger("durabletask-tracing")
 # ---------------------------------------------------------------------------
 # Lazy / optional OpenTelemetry imports
 # ---------------------------------------------------------------------------
-try:
+# Declare the optional symbols for the type checker so the rest of the
+# module can be statically type-checked even when opentelemetry is absent.
+# At runtime, ``_OTEL_AVAILABLE`` gates every real use.
+if TYPE_CHECKING:
     from opentelemetry import context as otel_context
     from opentelemetry import trace
-    from opentelemetry.trace import (
-        SpanKind,  # type: ignore[no-redef]
-        StatusCode,  # type: ignore[no-redef]
-    )
+    from opentelemetry.trace import SpanKind, StatusCode
     from opentelemetry.trace.propagation.tracecontext import (
         TraceContextTextMapPropagator,
     )
 
-    _OTEL_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _OTEL_AVAILABLE = False
-    # Provide stub for SpanKind so callers can reference tracing.SpanKind
-    # without guarding every reference with OTEL_AVAILABLE checks.
+try:
+    from opentelemetry import context as _otel_context  # noqa: F401
+    from opentelemetry import trace as _trace  # noqa: F401
+    from opentelemetry.trace import SpanKind as _SpanKind  # noqa: F401
+    from opentelemetry.trace import StatusCode as _StatusCode  # noqa: F401
+    from opentelemetry.trace.propagation.tracecontext import (  # noqa: F401
+        TraceContextTextMapPropagator as _TraceContextTextMapPropagator,
+    )
 
-    class SpanKind:  # type: ignore[no-redef]
+    _OTEL_AVAILABLE: bool = True
+    # Re-bind for runtime usage so the module exposes the real classes.
+    otel_context = _otel_context  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    trace = _trace  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    SpanKind = _SpanKind  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    StatusCode = _StatusCode  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    TraceContextTextMapPropagator = _TraceContextTextMapPropagator  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+except ImportError:  # pragma: no cover
+    _OTEL_AVAILABLE = False  # pyright: ignore[reportConstantRedefinition]
+
+    # Inject runtime stubs via globals so pyright (which only sees the
+    # TYPE_CHECKING block) doesn't flag these as incompatible reassignments.
+    class _SpanKindStub:
         INTERNAL: Any = None
         CLIENT: Any = None
         SERVER: Any = None
         PRODUCER: Any = None
         CONSUMER: Any = None
 
-    class StatusCode:  # type: ignore[no-redef]
+    class _StatusCodeStub:
         OK: Any = None
         ERROR: Any = None
         UNSET: Any = None
+
+    globals()["SpanKind"] = _SpanKindStub
+    globals()["StatusCode"] = _StatusCodeStub
+    globals()["otel_context"] = None
+    globals()["trace"] = None
+    globals()["TraceContextTextMapPropagator"] = None
 
 # Re-export so callers can check without importing opentelemetry themselves.
 OTEL_AVAILABLE = _OTEL_AVAILABLE
@@ -479,7 +500,7 @@ def _is_deferred_span_capable() -> bool:
     for downstream SERVER spans instead.
     """
     try:
-        from opentelemetry.sdk.trace import ReadableSpan  # noqa: F401
+        from opentelemetry.sdk.trace import ReadableSpan  # noqa: F401  # pyright: ignore[reportUnusedImport]
         from opentelemetry.sdk.trace import TracerProvider as SdkTracerProvider
     except (ImportError, AttributeError):
         return False

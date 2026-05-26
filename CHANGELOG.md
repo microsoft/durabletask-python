@@ -17,6 +17,17 @@ ADDED
   resiliency-aware teardown introduced in v1.5.0 (in-flight recreate
   thread join, retired-channel timer cancellation, and SDK-owned channel
   cleanup) runs unchanged through the new `with` path.
+- Added a pyright type-check CI workflow that runs on pull requests and pushes
+  to `main`, using strict mode against the lowest supported Python version
+  (3.10) across both `durabletask` and `durabletask-azuremanaged` packages.
+- Improved type coverage across the public API. `OrchestrationContext.create_timer`
+  now returns the specific `TimerTask` type (previously `CancellableTask`)
+  ([#93](https://github.com/microsoft/durabletask-python/issues/93)), and
+  `WhenAnyTask` is now generic with `when_any(tasks: Sequence[Task[T]]) -> WhenAnyTask[T]`
+  for better static type inference of the completing child task
+  ([#94](https://github.com/microsoft/durabletask-python/issues/94)).
+  These changes also broadly improve generic type-safety hints throughout the
+  SDK ([#92](https://github.com/microsoft/durabletask-python/issues/92)).
 
 ## v1.5.0
 
