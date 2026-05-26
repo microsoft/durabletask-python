@@ -79,31 +79,31 @@ if __name__ == "__main__":
             w.add_activity(place_order)
             w.start()
 
-            c = client.TaskHubGrpcClient()
+            with client.TaskHubGrpcClient() as c:
 
-            # Start a purchase order workflow using the user input
-            order = Order(args.cost, "MyProduct", 1)
-            instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
+                # Start a purchase order workflow using the user input
+                order = Order(args.cost, "MyProduct", 1)
+                instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
 
-            def prompt_for_approval():
-                input("Press [ENTER] to approve the order...\n")
-                approval_event = namedtuple("Approval", ["approver"])(args.approver)
-                c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
+                def prompt_for_approval():
+                    input("Press [ENTER] to approve the order...\n")
+                    approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                    c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
-            # Prompt the user for approval on a background thread
-            threading.Thread(target=prompt_for_approval, daemon=True).start()
+                # Prompt the user for approval on a background thread
+                threading.Thread(target=prompt_for_approval, daemon=True).start()
 
-            # Wait for the orchestration to complete
-            try:
-                state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
-                if not state:
-                    print("Workflow not found!")  # not expected
-                elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
-                    print(f'Orchestration completed! Result: {state.serialized_output}')
-                else:
-                    state.raise_if_failed()  # raises an exception
-            except TimeoutError:
-                print("*** Orchestration timed out!")
+                # Wait for the orchestration to complete
+                try:
+                    state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
+                    if not state:
+                        print("Workflow not found!")  # not expected
+                    elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
+                        print(f'Orchestration completed! Result: {state.serialized_output}')
+                    else:
+                        state.raise_if_failed()  # raises an exception
+                except TimeoutError:
+                    print("*** Orchestration timed out!")
     else:
         # Use DurableTaskScheduler
         # Use environment variables if provided, otherwise use default emulator values

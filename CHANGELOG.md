@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added context-manager support (`__enter__` / `__exit__`) to
+  `TaskHubGrpcClient` so it can be used with `with` statements, mirroring the
+  existing `AsyncTaskHubGrpcClient` async-context-manager support and the
+  `TaskHubGrpcWorker` pattern. `DurableTaskSchedulerClient` inherits this
+  behavior automatically. `__exit__` delegates to `close()`, so the
+  resiliency-aware teardown introduced in v1.5.0 (in-flight recreate
+  thread join, retired-channel timer cancellation, and SDK-owned channel
+  cleanup) runs unchanged through the new `with` path.
+
 ## v1.5.0
 
 ADDED

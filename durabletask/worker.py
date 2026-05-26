@@ -581,10 +581,10 @@ class TaskHubGrpcWorker:
         """Get the configured maximum timer interval for long timer chunking."""
         return self._maximum_timer_interval
 
-    def __enter__(self):
+    def __enter__(self) -> "TaskHubGrpcWorker":
         return self
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, *args: object) -> None:
         self.stop()
 
     def _classify_stream_outcome(
