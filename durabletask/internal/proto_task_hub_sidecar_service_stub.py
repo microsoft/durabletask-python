@@ -1,4 +1,5 @@
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 
 class ProtoTaskHubSidecarServiceStub(Protocol):

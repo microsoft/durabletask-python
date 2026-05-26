@@ -7,8 +7,9 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Callable, Generator, Generic, Sequence, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh

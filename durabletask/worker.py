@@ -7,13 +7,14 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Callable, Generator, Sequence, TypeVar, cast, overload
+from typing import Any, TypeVar, cast, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 

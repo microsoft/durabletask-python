@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from collections.abc import Iterable, Sequence
-from typing import Any, Callable, NamedTuple, cast
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, NamedTuple, cast
 
 import grpc
 import grpc.aio

@@ -3,8 +3,9 @@
 
 import random
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import grpc
 import grpc.aio

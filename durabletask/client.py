@@ -6,11 +6,11 @@ import logging
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterable, Iterable
+from collections.abc import AsyncIterable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, Protocol, Sequence, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 import grpc
 import grpc.aio

@@ -16,9 +16,10 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Iterable, Iterator, TypeAlias, cast
+from typing import TypeAlias, cast
 
 import grpc
 from concurrent import futures
