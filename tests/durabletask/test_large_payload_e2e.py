@@ -138,9 +138,9 @@ class TestLargeInputOutput:
             w.add_orchestrator(echo)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store)
-            inst_id = c.schedule_new_orchestration(echo, input=large_input)
-            state = c.wait_for_orchestration_completion(inst_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store) as c:
+                inst_id = c.schedule_new_orchestration(echo, input=large_input)
+                state = c.wait_for_orchestration_completion(inst_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -161,9 +161,9 @@ class TestLargeInputOutput:
             w.add_activity(produce_large)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store)
-            inst_id = c.schedule_new_orchestration(orchestrator, input=10)  # 10 KB
-            state = c.wait_for_orchestration_completion(inst_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store) as c:
+                inst_id = c.schedule_new_orchestration(orchestrator, input=10)  # 10 KB
+                state = c.wait_for_orchestration_completion(inst_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -182,9 +182,9 @@ class TestLargeInputOutput:
             w.add_orchestrator(transform)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store)
-            inst_id = c.schedule_new_orchestration(transform, input=large_input)
-            state = c.wait_for_orchestration_completion(inst_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store) as c:
+                inst_id = c.schedule_new_orchestration(transform, input=large_input)
+                state = c.wait_for_orchestration_completion(inst_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -208,12 +208,12 @@ class TestLargeEvents:
             w.add_orchestrator(wait_for_event)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store)
-            inst_id = c.schedule_new_orchestration(wait_for_event)
-            c.wait_for_orchestration_start(inst_id, timeout=10)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store) as c:
+                inst_id = c.schedule_new_orchestration(wait_for_event)
+                c.wait_for_orchestration_start(inst_id, timeout=10)
 
-            c.raise_orchestration_event(inst_id, "big_event", data=large_event)
-            state = c.wait_for_orchestration_completion(inst_id, timeout=30)
+                c.raise_orchestration_event(inst_id, "big_event", data=large_event)
+                state = c.wait_for_orchestration_completion(inst_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -235,12 +235,12 @@ class TestLargeTerminate:
             w.add_orchestrator(long_running)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store)
-            inst_id = c.schedule_new_orchestration(long_running)
-            c.wait_for_orchestration_start(inst_id, timeout=10)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store) as c:
+                inst_id = c.schedule_new_orchestration(long_running)
+                c.wait_for_orchestration_start(inst_id, timeout=10)
 
-            c.terminate_orchestration(inst_id, output=large_output)
-            state = c.wait_for_orchestration_completion(inst_id, timeout=30)
+                c.terminate_orchestration(inst_id, output=large_output)
+                state = c.wait_for_orchestration_completion(inst_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.TERMINATED
@@ -264,9 +264,9 @@ class TestMultipleActivitiesLargePayloads:
             w.add_activity(make_large)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store)
-            inst_id = c.schedule_new_orchestration(fan_out, input=5)
-            state = c.wait_for_orchestration_completion(inst_id, timeout=60)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store) as c:
+                inst_id = c.schedule_new_orchestration(fan_out, input=5)
+                state = c.wait_for_orchestration_completion(inst_id, timeout=60)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -291,9 +291,9 @@ class TestBlobStorageVerification:
             w.add_orchestrator(echo)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store)
-            inst_id = c.schedule_new_orchestration(echo, input=large_input)
-            c.wait_for_orchestration_completion(inst_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=payload_store) as c:
+                inst_id = c.schedule_new_orchestration(echo, input=large_input)
+                c.wait_for_orchestration_completion(inst_id, timeout=30)
 
         # Verify blobs were actually created in the Azurite container
         svc = azure_blob.BlobServiceClient.from_connection_string(
@@ -333,9 +333,9 @@ class TestSmallPayloadNotExternalized:
             w.add_orchestrator(echo)
             w.start()
 
-            c = client.TaskHubGrpcClient(host_address=HOST, payload_store=store)
-            inst_id = c.schedule_new_orchestration(echo, input=small_input)
-            state = c.wait_for_orchestration_completion(inst_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST, payload_store=store) as c:
+                inst_id = c.schedule_new_orchestration(echo, input=small_input)
+                state = c.wait_for_orchestration_completion(inst_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED

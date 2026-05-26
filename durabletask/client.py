@@ -366,6 +366,12 @@ class TaskHubGrpcClient:
                 retired_channel.close()
             current_channel.close()
 
+    def __enter__(self) -> "TaskHubGrpcClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
     def schedule_new_orchestration(self, orchestrator: task.Orchestrator[TInput, TOutput] | str, *,
                                    input: TInput | None = None,
                                    instance_id: str | None = None,

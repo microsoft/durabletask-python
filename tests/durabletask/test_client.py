@@ -744,6 +744,125 @@ def test_sync_client_does_not_recreate_caller_owned_channel():
     provided_channel.close.assert_not_called()
 
 
+def test_sync_client_context_manager_returns_self_and_calls_close():
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()),
+    ):
+        client = TaskHubGrpcClient(host_address=HOST_ADDRESS)
+        with patch.object(client, "close", wraps=client.close) as spy_close:
+            with client as entered:
+                assert entered is client
+            spy_close.assert_called_once_with()
+
+
+def test_sync_client_context_manager_closes_sdk_owned_channel():
+    channel = MagicMock(name="sdk-owned-channel")
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=channel),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()),
+    ):
+        with TaskHubGrpcClient(host_address=HOST_ADDRESS) as client:
+            assert client._closing is False
+            assert client._owns_channel is True
+
+    assert client._closing is True
+    channel.close.assert_called_once_with()
+
+
+def test_sync_client_context_manager_preserves_caller_owned_channel():
+    provided_channel = MagicMock(name="caller-owned-channel")
+    with patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()):
+        with TaskHubGrpcClient(
+                channel=provided_channel, host_address=HOST_ADDRESS) as client:
+            assert client._channel is provided_channel
+            assert client._owns_channel is False
+
+    # close() is a no-op for caller-owned channels: the caller retains
+    # ownership and is responsible for closing the channel themselves.
+    provided_channel.close.assert_not_called()
+    assert client._closing is False
+
+
+def test_sync_client_context_manager_propagates_exception_and_calls_close():
+    channel = MagicMock(name="sdk-owned-channel")
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=channel),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()),
+    ):
+        client = TaskHubGrpcClient(host_address=HOST_ADDRESS)
+        with pytest.raises(RuntimeError, match="boom"):
+            with client:
+                raise RuntimeError("boom")
+
+    assert client._closing is True
+    channel.close.assert_called_once_with()
+
+
+def test_sync_client_context_manager_cleans_up_resiliency_state():
+    """Regression: exiting the ``with`` block tears down resiliency state
+    introduced by PR #135 (retired channels + recreate thread).
+    """
+    first_channel = MagicMock(name="first-channel")
+    second_channel = MagicMock(name="second-channel")
+    first_stub = MagicMock()
+    first_stub.GetInstance.side_effect = FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+    second_stub = MagicMock()
+    second_stub.GetInstance.return_value = MagicMock(exists=False)
+    close_timer = MagicMock(name="close-timer")
+
+    with (
+        patch(
+            "durabletask.client.shared.get_grpc_channel",
+            side_effect=[first_channel, second_channel],
+        ),
+        patch(
+            "durabletask.client.stubs.TaskHubSidecarServiceStub",
+            side_effect=[first_stub, second_stub],
+        ),
+        patch("threading.Timer", return_value=close_timer),
+    ):
+        with TaskHubGrpcClient(
+                resiliency_options=GrpcClientResiliencyOptions(
+                    channel_recreate_failure_threshold=1,
+                    min_recreate_interval_seconds=0.0,
+                )) as client:
+            install_resilient_test_stubs(client)
+            with pytest.raises(FakeRpcError):
+                client.get_orchestration_state("abc")
+            # Wait for the fire-and-forget recreate to finish so the retired
+            # channel + timer are registered before the context manager exits.
+            assert client._recreate_done_event.wait(timeout=5.0)
+
+    assert client._closing is True
+    close_timer.cancel.assert_called_once_with()
+    first_channel.close.assert_called_once_with()
+    second_channel.close.assert_called_once_with()
+    assert client._retired_channels == {}
+    # The recreate thread (if any) must have been joined during __exit__.
+    recreate_thread = client._recreate_thread
+    if recreate_thread is not None:
+        assert not recreate_thread.is_alive()
+
+
+def test_sync_client_supports_context_manager_reentry_after_use():
+    """``with`` is idempotent against repeated ``close()`` calls."""
+    channel = MagicMock(name="sdk-owned-channel")
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=channel),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=MagicMock()),
+    ):
+        client = TaskHubGrpcClient(host_address=HOST_ADDRESS)
+        with client:
+            pass
+        # Calling close() again after the context manager has already torn
+        # down the channel must not raise (mirrors how ``AsyncTaskHubGrpcClient``
+        # tolerates explicit close-after-aexit during shutdown sequences).
+        client.close()
+
+    assert channel.close.call_count >= 1
+
+
 def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
     first_channel = MagicMock(name="first-channel")
     second_channel = MagicMock(name="second-channel")
