@@ -12,8 +12,8 @@ class EntityLock:
     def __init__(self, context: OrchestrationContext):
         self._context = context
 
-    def __enter__(self):
+    def __enter__(self) -> EntityLock:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, *args: object) -> None:
         self._context._exit_critical_section()

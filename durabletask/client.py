@@ -789,10 +789,10 @@ class AsyncTaskHubGrpcClient:
                 await retired_channel.close()
             await self._channel.close()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "AsyncTaskHubGrpcClient":
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, *args: object) -> None:
         await self.close()
 
     def _schedule_recreate(self) -> None:
