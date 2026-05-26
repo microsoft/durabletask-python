@@ -369,7 +369,7 @@ class TaskHubGrpcClient:
     def __enter__(self) -> "TaskHubGrpcClient":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, *args: object) -> None:
         self.close()
 
     def schedule_new_orchestration(self, orchestrator: task.Orchestrator[TInput, TOutput] | str, *,
