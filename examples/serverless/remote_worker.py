@@ -6,15 +6,21 @@ import time
 from durabletask import task
 from durabletask.azuremanaged.extensions.serverless import ServerlessWorker
 
+from activity_names import REMOTE_HELLO
 
-def remote_hello(ctx: task.ActivityContext, name: str) -> str:
+
+def _remote_hello(ctx: task.ActivityContext, name: str) -> str:
     """Activity function that runs inside the serverless worker container."""
     sandbox_id = os.getenv("DTS_SANDBOX_ID", "unknown-sandbox")
-    return f"Hello {name} from Python serverless worker {sandbox_id}!"
+    marker = os.getenv("SERVERLESS_SAMPLE_MARKER", "<missing>")
+    return f"Hello {name} from Python serverless worker {sandbox_id}! SERVERLESS_SAMPLE_MARKER={marker}"
+
+
+_remote_hello.__name__ = REMOTE_HELLO
 
 
 with ServerlessWorker() as worker:
-    worker.add_activity(remote_hello)
+    worker.add_activity(_remote_hello)
     worker.start()
     print("Python serverless remote worker is running. Press Ctrl+C to stop.")
     try:

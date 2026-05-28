@@ -7,29 +7,40 @@ from azure.identity import DefaultAzureCredential
 from durabletask import client, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.extensions.serverless import ServerlessActivitiesClient
+from durabletask.azuremanaged.extensions.serverless import ServerlessWorkerProfile
+from durabletask.azuremanaged.extensions.serverless import serverless_worker_profile
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
-
-REMOTE_ACTIVITY_NAME = "remote_hello"
+from activity_names import REMOTE_HELLO
 
 
 def hello_orchestrator(ctx: task.OrchestrationContext, name: str):
     """Orchestrator that calls an activity executed by the remote worker image."""
-    return (yield ctx.call_activity(REMOTE_ACTIVITY_NAME, input=name))
+    return (yield ctx.call_activity(REMOTE_HELLO, input=name))
 
 
 taskhub_name = os.getenv("DTS_TASK_HUB") or "ServerlessPocHub"
 endpoint = os.getenv("DTS_ENDPOINT", "http://localhost:8080")
 worker_profile_id = os.getenv("DTS_WORKER_PROFILE_ID", "default")
-serverless_image = os.getenv("DTS_SERVERLESS_ACTIVITY_IMAGE", "serverless-remote-worker:local")
-serverless_cpu = os.getenv("DTS_SERVERLESS_CPU", "1000m")
-serverless_memory = os.getenv("DTS_SERVERLESS_MEMORY", "2048Mi")
-serverless_max_activities = int(os.getenv("DTS_SERVERLESS_MAX_ACTIVITIES", "1"))
 sample_input = os.getenv("DTS_SAMPLE_HELLO_INPUT", "serverless Python")
+
+
+@serverless_worker_profile(worker_profile_id)
+class RemoteWorkerProfile(ServerlessWorkerProfile):
+    """Serverless worker profile used by the sample remote activity."""
+
+    def configure(self, options) -> None:
+        options.container_image = "serverless-remote-worker:local"
+        options.cpu = "1000m"
+        options.memory = "2048Mi"
+        options.max_concurrent_activities = 1
+        options.environment_variables["SERVERLESS_SAMPLE_MARKER"] = "serverless-python-sample-marker"
+        options.add_activity(REMOTE_HELLO)
+
 
 print(f"Using taskhub: {taskhub_name}")
 print(f"Using endpoint: {endpoint}")
-print(f"Declaring serverless activity image: {serverless_image}")
+print("Declaring serverless activity image: serverless-remote-worker:local")
 
 secure_channel = endpoint.startswith("https://") or endpoint.startswith("grpcs://")
 credential = DefaultAzureCredential() if secure_channel else None
@@ -39,13 +50,7 @@ serverless_client = ServerlessActivitiesClient(
     secure_channel=secure_channel,
     taskhub=taskhub_name,
     token_credential=credential)
-serverless_client.declare_serverless_activities(
-    activity_names=REMOTE_ACTIVITY_NAME,
-    worker_profile_id=worker_profile_id,
-    container_image=serverless_image,
-    cpu=serverless_cpu,
-    memory=serverless_memory,
-    max_concurrent_activities=serverless_max_activities)
+serverless_client.enable_serverless_activities()
 
 with DurableTaskSchedulerWorker(
         host_address=endpoint,

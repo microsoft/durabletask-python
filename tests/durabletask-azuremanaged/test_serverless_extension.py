@@ -4,9 +4,14 @@
 import inspect
 
 import durabletask.azuremanaged.extensions.serverless as serverless
+import durabletask.azuremanaged.extensions.serverless.client as serverless_client
 from durabletask.azuremanaged.extensions.serverless import ServerlessWorker
+from durabletask.azuremanaged.extensions.serverless import ServerlessWorkerProfile
+from durabletask.azuremanaged.extensions.serverless import ServerlessWorkerProfileOptions
+from durabletask.azuremanaged.extensions.serverless import serverless_worker_profile
 from durabletask.azuremanaged.extensions.serverless.client import (
     build_image_ref,
+    build_profile_serverless_activity_declarations,
     build_serverless_activity_declaration,
     build_serverless_worker_heartbeat,
     build_serverless_worker_start,
@@ -25,9 +30,96 @@ def test_resolve_activity_names_trims_and_deduplicates() -> None:
 def test_public_serverless_package_exports_customer_entrypoints_only() -> None:
     assert serverless.__all__ == [
         "ServerlessWorker",
+        "ServerlessWorkerProfile",
+        "ServerlessWorkerProfileOptions",
         "ServerlessActivitiesClient",
+        "serverless_worker_profile",
     ]
     assert serverless.ServerlessWorker is ServerlessWorker
+    assert serverless.ServerlessWorkerProfile is ServerlessWorkerProfile
+    assert serverless.ServerlessWorkerProfileOptions is ServerlessWorkerProfileOptions
+    assert not hasattr(serverless, "serverless_activity")
+
+
+def test_build_profile_serverless_activity_declarations(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_SERVERLESS_ACTIVITY_IMAGE", "example.azurecr.io/not-used:v1")
+    monkeypatch.setenv("DTS_SERVERLESS_CPU", "2000m")
+    monkeypatch.setenv("DTS_SERVERLESS_MEMORY", "4096Mi")
+    monkeypatch.setenv("DTS_SERVERLESS_MAX_ACTIVITIES", "99")
+
+    @serverless_worker_profile("pytest-profile-a")
+    class PytestProfileA(ServerlessWorkerProfile):
+        def configure(self, options) -> None:
+            options.container_image = "example.azurecr.io/python-worker:v1"
+            options.cpu = "500m"
+            options.memory = "1Gi"
+            options.max_concurrent_activities = 3
+            options.environment_variables["SERVERLESS_SAMPLE_MARKER"] = "custom-value"
+            options.add_activity("PytestRemoteHello")
+
+    declarations = [
+        declaration for declaration in build_profile_serverless_activity_declarations()
+        if declaration.worker_profile_id == "pytest-profile-a"
+    ]
+
+    declaration = declarations[0]
+    assert list(declaration.activity_names) == ["PytestRemoteHello"]
+    assert declaration.image.image_ref == "example.azurecr.io/python-worker:v1"
+    assert declaration.resources.cpu == "500m"
+    assert declaration.resources.memory == "1Gi"
+    assert declaration.max_concurrent_activities == 3
+    assert declaration.environment_variables["SERVERLESS_SAMPLE_MARKER"] == "custom-value"
+    assert list(declaration.entrypoint) == []
+    assert list(declaration.cmd) == []
+
+
+def test_build_profile_serverless_activity_declarations_rejects_activity_overlap() -> None:
+    @serverless_worker_profile("pytest-overlap-profile-a")
+    class PytestOverlapProfileA(ServerlessWorkerProfile):
+        def configure(self, options: ServerlessWorkerProfileOptions) -> None:
+            options.container_image = "example.azurecr.io/python-worker-a:v1"
+            options.add_activity("PytestOverlapRemoteHello")
+
+    @serverless_worker_profile("pytest-overlap-profile-b")
+    class PytestOverlapProfileB(ServerlessWorkerProfile):
+        def configure(self, options: ServerlessWorkerProfileOptions) -> None:
+            options.container_image = "example.azurecr.io/python-worker-b:v1"
+            options.add_activity("PytestOverlapRemoteHello")
+
+    try:
+        try:
+            build_profile_serverless_activity_declarations()
+        except ValueError as ex:
+            assert "PytestOverlapRemoteHello" in str(ex)
+            assert "pytest-overlap-profile-a" in str(ex)
+            assert "pytest-overlap-profile-b" in str(ex)
+        else:
+            raise AssertionError("Expected overlapping serverless activity ownership to fail.")
+    finally:
+        serverless_client._worker_profiles.pop("pytest-overlap-profile-a", None)
+        serverless_client._worker_profiles.pop("pytest-overlap-profile-b", None)
+
+
+def test_profile_options_add_activity_accepts_callable() -> None:
+    def pytest_callable_remote_hello(_ctx, value):
+        return value
+
+    @serverless_worker_profile("pytest-callable-profile")
+    class PytestCallableProfile(ServerlessWorkerProfile):
+        def configure(self, options: ServerlessWorkerProfileOptions) -> None:
+            options.container_image = "example.azurecr.io/python-worker:v1"
+            options.add_activity(pytest_callable_remote_hello)
+
+    try:
+        declarations = [
+            declaration for declaration in build_profile_serverless_activity_declarations()
+            if declaration.worker_profile_id == "pytest-callable-profile"
+        ]
+
+        declaration = declarations[0]
+        assert list(declaration.activity_names) == ["pytest_callable_remote_hello"]
+    finally:
+        serverless_client._worker_profiles.pop("pytest-callable-profile", None)
 
 
 def test_build_image_ref_matches_dotnet_options() -> None:

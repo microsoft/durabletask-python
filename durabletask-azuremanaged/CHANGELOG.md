@@ -9,6 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added preview `durabletask.azuremanaged.extensions.serverless` APIs for
   declaring DTS serverless activities and running a sandbox activity worker.
+- Added profile-based DTS serverless declarations with
+  `@serverless_worker_profile`, `ServerlessWorkerProfile.configure()`,
+  `ServerlessWorkerProfileOptions.add_activity(...)`, and
+  `ServerlessActivitiesClient.enable_serverless_activities()`.
+- Changed serverless worker profile declarations so the decorator names the
+  profile and the profile class configures image, resources, concurrency, and
+  customer environment variables explicitly.
 - Changed serverless activity worker configuration to require explicit SDK
   parameters instead of reading DTS environment variables inside the SDK.
 - Removed the serverless worker wakeup HTTP listener because ADC sandbox

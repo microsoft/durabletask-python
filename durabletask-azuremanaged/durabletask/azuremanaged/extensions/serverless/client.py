@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing import Iterable, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Callable, Iterable, Optional, Sequence
 
 import grpc
 from azure.core.credentials import TokenCredential
 
+from durabletask import task
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSDefaultClientInterceptorImpl,
 )
@@ -19,6 +21,65 @@ DEFAULT_WORKER_PROFILE_ID = "default"
 DEFAULT_CPU = "1000m"
 DEFAULT_MEMORY = "2048Mi"
 DEFAULT_MAX_CONCURRENT_ACTIVITIES = 100
+
+
+@dataclass
+class ServerlessWorkerProfileOptions:
+    """Options for a decorated serverless worker profile."""
+
+    worker_profile_id: str
+    container_image: Optional[str] = None
+    registry_server: Optional[str] = None
+    repository: Optional[str] = None
+    tag: Optional[str] = None
+    image_digest: Optional[str] = None
+    cpu: str = DEFAULT_CPU
+    memory: str = DEFAULT_MEMORY
+    environment_variables: dict[str, str] = field(default_factory=dict)
+    max_concurrent_activities: int = DEFAULT_MAX_CONCURRENT_ACTIVITIES
+    entrypoint: list[str] = field(default_factory=list)
+    cmd: list[str] = field(default_factory=list)
+    activity_names: list[str] = field(default_factory=list)
+
+    def add_activity(self, activity: str | Callable) -> None:
+        """Add an activity to the serverless worker profile declaration."""
+        activity_name = task.get_name(activity) if callable(activity) else activity
+        self.activity_names.append(
+            _normalize_required(activity_name, "Serverless activity name is required."))
+
+
+class ServerlessWorkerProfile:
+    """Base class for configuring a decorated serverless worker profile."""
+
+    def configure(self, options: ServerlessWorkerProfileOptions) -> None:
+        """Configure the serverless worker profile declaration options."""
+
+
+_worker_profiles: dict[str, ServerlessWorkerProfileOptions] = {}
+
+
+def serverless_worker_profile(worker_profile_id: str) -> Callable[[type], type]:
+    """Declare a serverless worker profile using a decorated marker class."""
+    normalized_profile = _normalize_required(worker_profile_id, "Serverless worker profile ID is required.")
+
+    def decorator(cls: type) -> type:
+        if normalized_profile in _worker_profiles:
+            raise ValueError(f"Serverless worker profile '{normalized_profile}' is declared more than once.")
+
+        options = ServerlessWorkerProfileOptions(worker_profile_id=normalized_profile)
+        try:
+            profile = cls()
+        except TypeError as ex:
+            raise TypeError("Serverless worker profile classes must have a parameterless constructor.") from ex
+
+        configure = getattr(profile, "configure", None)
+        if callable(configure):
+            configure(options)
+
+        _worker_profiles[normalized_profile] = options
+        return cls
+
+    return decorator
 
 
 def resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
@@ -114,6 +175,41 @@ def build_serverless_activity_declaration(
     return declaration
 
 
+def build_profile_serverless_activity_declarations() -> list[pb.ServerlessActivityDeclaration]:
+    """Build serverless declarations from worker profile configuration."""
+    declarations: list[pb.ServerlessActivityDeclaration] = []
+    activity_owners: dict[str, str] = {}
+    for profile in _worker_profiles.values():
+        activity_names = resolve_activity_names(profile.activity_names)
+        if not activity_names:
+            continue
+
+        for activity_name in activity_names:
+            existing_profile = activity_owners.get(activity_name)
+            if existing_profile and existing_profile != profile.worker_profile_id:
+                raise ValueError(
+                    f"Serverless activity '{activity_name}' is assigned to both worker profile "
+                    f"'{existing_profile}' and '{profile.worker_profile_id}'.")
+            activity_owners[activity_name] = profile.worker_profile_id
+
+        declarations.append(build_serverless_activity_declaration(
+            activity_names=activity_names,
+            worker_profile_id=profile.worker_profile_id,
+            container_image=profile.container_image,
+            registry_server=profile.registry_server,
+            repository=profile.repository,
+            tag=profile.tag,
+            image_digest=profile.image_digest,
+            cpu=profile.cpu,
+            memory=profile.memory,
+            environment_variables=profile.environment_variables,
+            max_concurrent_activities=profile.max_concurrent_activities,
+            entrypoint=profile.entrypoint,
+            cmd=profile.cmd))
+
+    return declarations
+
+
 def build_serverless_worker_start(
         *,
         taskhub: str,
@@ -188,37 +284,14 @@ class ServerlessActivitiesClient:
         if self._owns_channel:
             self._channel.close()
 
-    def declare_serverless_activities(
-            self,
-            *,
-            activity_names: str | Iterable[str],
-            worker_profile_id: str = DEFAULT_WORKER_PROFILE_ID,
-            container_image: Optional[str] = None,
-            registry_server: Optional[str] = None,
-            repository: Optional[str] = None,
-            tag: Optional[str] = None,
-            image_digest: Optional[str] = None,
-            cpu: str = DEFAULT_CPU,
-            memory: str = DEFAULT_MEMORY,
-            environment_variables: Optional[dict[str, str]] = None,
-            max_concurrent_activities: int = DEFAULT_MAX_CONCURRENT_ACTIVITIES,
-            entrypoint: Optional[Iterable[str]] = None,
-            cmd: Optional[Iterable[str]] = None) -> None:
-        declaration = build_serverless_activity_declaration(
-            activity_names=activity_names,
-            worker_profile_id=worker_profile_id,
-            container_image=container_image,
-            registry_server=registry_server,
-            repository=repository,
-            tag=tag,
-            image_digest=image_digest,
-            cpu=cpu,
-            memory=memory,
-            environment_variables=environment_variables,
-            max_concurrent_activities=max_concurrent_activities,
-            entrypoint=entrypoint,
-            cmd=cmd)
-        self._stub.DeclareServerlessActivities(declaration)
+    def enable_serverless_activities(self) -> None:
+        """Declare all configured serverless worker profiles with DTS."""
+        declarations = build_profile_serverless_activity_declarations()
+        if not declarations:
+            raise ValueError("No configured serverless activities were found.")
+
+        for declaration in declarations:
+            self._stub.DeclareServerlessActivities(declaration)
 
     def remove_serverless_activity_declaration(self, worker_profile_id: str) -> None:
         worker_profile_id = _normalize_required(worker_profile_id, "Worker profile ID is required.")

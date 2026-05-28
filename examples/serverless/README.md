@@ -6,6 +6,8 @@ This sample mirrors the .NET serverless sample with two customer-owned pieces:
    serverlessly, starts the orchestration, and waits for the result.
 2. A **remote worker image** (`remote_worker.py` plus `Containerfile`) that
    DTS starts in a sandbox to execute the declared activity.
+3. A tiny shared module (`activity_names.py`) that keeps the declarer and remote
+   worker on the same activity name constants.
 
 Reference .NET template:
 <https://github.com/microsoft/durabletask-dotnet/compare/wangbill/serverless-private-preview>
@@ -24,11 +26,13 @@ Set these before running the declarer app:
 $env:DTS_ENDPOINT = "<scheduler endpoint>"
 $env:DTS_TASK_HUB = "<task hub name>"
 $env:DTS_WORKER_PROFILE_ID = "default"
-$env:DTS_SERVERLESS_ACTIVITY_IMAGE = "<public container image reference>"
-$env:DTS_SERVERLESS_CPU = "1000m"
-$env:DTS_SERVERLESS_MEMORY = "2048Mi"
-$env:DTS_SERVERLESS_MAX_ACTIVITIES = "1"
 ```
+
+After pushing the remote worker image, set `options.container_image` in
+`RemoteWorkerProfile.configure()` to the pushed image reference. That method is
+also where the sample declares CPU, memory, max concurrency, customer
+environment variables, and serverless activity names with `options.add_activity(...)`.
+The declarer and remote worker both use `activity_names.py` so they stay in sync.
 
 The remote worker code cannot pass DTS runtime settings to the SDK. In a
 sandbox, `ServerlessWorker()` reads `DTS_ENDPOINT`,
@@ -67,3 +71,6 @@ python examples\serverless\main_app.py
 
 The declarer app registers the serverless activity metadata, starts
 `hello_orchestrator`, and the remote worker sandbox executes `remote_hello`.
+The result includes `SERVERLESS_SAMPLE_MARKER=serverless-python-sample-marker`,
+proving the customer environment variable declared on the worker profile reached
+the sandbox.

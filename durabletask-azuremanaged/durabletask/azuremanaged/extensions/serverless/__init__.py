@@ -16,9 +16,15 @@ Usage::
 """
 
 from durabletask.azuremanaged.extensions.serverless.client import ServerlessActivitiesClient
+from durabletask.azuremanaged.extensions.serverless.client import ServerlessWorkerProfile
+from durabletask.azuremanaged.extensions.serverless.client import ServerlessWorkerProfileOptions
+from durabletask.azuremanaged.extensions.serverless.client import serverless_worker_profile
 from durabletask.azuremanaged.extensions.serverless.worker import ServerlessWorker
 
 __all__ = [
     "ServerlessWorker",
+    "ServerlessWorkerProfile",
+    "ServerlessWorkerProfileOptions",
     "ServerlessActivitiesClient",
+    "serverless_worker_profile",
 ]
