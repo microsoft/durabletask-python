@@ -12,7 +12,7 @@ matches a known payload-store token (de-externalize).  The actual upload
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from google.protobuf import message as proto_message
 from google.protobuf import wrappers_pb2
@@ -84,7 +84,7 @@ async def deexternalize_payloads_async(
 # Internal recursive walkers – sync
 # ------------------------------------------------------------------
 
-def _is_map_field(fd) -> bool:
+def _is_map_field(fd: Any) -> bool:
     """Return True if the field descriptor represents a protobuf map field."""
     mt = fd.message_type
     return mt is not None and fd.is_repeated and mt.GetOptions().map_entry

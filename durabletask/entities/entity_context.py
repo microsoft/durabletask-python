@@ -71,7 +71,7 @@ class EntityContext:
         """
         return self._state.get_state(intended_type, default)
 
-    def set_state(self, new_state: Any):
+    def set_state(self, new_state: Any) -> None:
         """Set the state of the entity to a new value.
 
         Parameters
@@ -93,7 +93,7 @@ class EntityContext:
         input : Any, optional
             The input to provide to the entity for the operation.
         """
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = shared.to_json(input) if input is not None else None
         self._state.add_operation_action(
             pb.OperationAction(
                 sendSignal=pb.SendSignalAction(
@@ -124,7 +124,7 @@ class EntityContext:
         str
             The instance ID of the scheduled orchestration.
         """
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = shared.to_json(input) if input is not None else None
         if not instance_id:
             instance_id = uuid.uuid4().hex
         self._state.add_operation_action(

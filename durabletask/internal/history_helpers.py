@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterable, Iterable
+from collections.abc import AsyncIterable, Iterable
+from typing import Any
 
 import durabletask.history as history
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -31,7 +32,7 @@ async def collect_history_events_async(
     return events
 
 
-def history_event_to_dict(event: history.HistoryEvent) -> dict:
+def history_event_to_dict(event: history.HistoryEvent) -> dict[str, Any]:
     return history.to_dict(event)
 
 
@@ -48,7 +49,7 @@ def _clone_and_convert_events(
             event = pb.HistoryEvent()
             event.CopyFrom(source_event)
             payload_helpers.deexternalize_payloads(event, payload_store)
-        events.append(history._from_protobuf(event))
+        events.append(history._from_protobuf(event))  # pyright: ignore[reportPrivateUsage]
     return events
 
 
@@ -64,5 +65,5 @@ async def _clone_and_convert_events_async(
             event = pb.HistoryEvent()
             event.CopyFrom(source_event)
             await payload_helpers.deexternalize_payloads_async(event, payload_store)
-        events.append(history._from_protobuf(event))
+        events.append(history._from_protobuf(event))  # pyright: ignore[reportPrivateUsage]
     return events

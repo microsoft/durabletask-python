@@ -7,8 +7,9 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Generator, Generic, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
@@ -99,7 +100,7 @@ class OrchestrationContext(ABC):
         pass
 
     @abstractmethod
-    def create_timer(self, fire_at: datetime | timedelta) -> CancellableTask:
+    def create_timer(self, fire_at: datetime | timedelta) -> TimerTask:
         """Create a Timer Task to fire after at the specified deadline.
 
         Parameters
@@ -109,7 +110,7 @@ class OrchestrationContext(ABC):
 
         Returns
         -------
-        Task
+        TimerTask
             A Durable Timer Task that schedules the timer to wake up the orchestrator
         """
         pass
@@ -143,7 +144,7 @@ class OrchestrationContext(ABC):
     def call_entity(self,
                     entity: EntityInstanceId,
                     operation: str,
-                    input: TInput | None = None) -> CompletableTask[Any]:
+                    input: Any = None) -> CompletableTask[Any]:
         """Schedule entity function for execution.
 
         Parameters
@@ -167,7 +168,7 @@ class OrchestrationContext(ABC):
             self,
             entity_id: EntityInstanceId,
             operation_name: str,
-            input: TInput | None = None
+            input: Any = None
     ) -> None:
         """Signal an entity function for execution.
 
@@ -232,7 +233,7 @@ class OrchestrationContext(ABC):
     # TOOD: Add a timeout parameter, which allows the task to be cancelled if the event is
     # not received within the specified timeout. This requires support for task cancellation.
     @abstractmethod
-    def wait_for_external_event(self, name: str) -> CancellableTask:
+    def wait_for_external_event(self, name: str) -> CancellableTask[Any]:
         """Wait asynchronously for an event to be raised with the name `name`.
 
         Parameters
@@ -242,7 +243,7 @@ class OrchestrationContext(ABC):
 
         Returns
         -------
-        Task[TOutput]
+        CancellableTask[Any]
             A Durable Task that completes when the event is received.
         """
         pass
@@ -300,7 +301,16 @@ class OrchestrationContext(ABC):
         return ReplaySafeLogger(logger, lambda: self.is_replaying)
 
 
-class ReplaySafeLogger(logging.LoggerAdapter):
+if TYPE_CHECKING:
+    # logging.LoggerAdapter is generic in stubs but is not subscriptable
+    # at runtime before Python 3.11. Use a TYPE_CHECKING alias so the
+    # base class evaluates correctly at runtime.
+    _LoggerAdapterBase = logging.LoggerAdapter[logging.Logger]
+else:
+    _LoggerAdapterBase = logging.LoggerAdapter
+
+
+class ReplaySafeLogger(_LoggerAdapterBase):
     """A logger adapter that suppresses log messages during orchestration replay.
 
     This class extends :class:`logging.LoggerAdapter` and only emits log
@@ -378,7 +388,7 @@ class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
     _exception: TaskFailedError | None
-    _parent: CompositeTask[T] | None
+    _parent: CompositeTask[Any] | None
 
     def __init__(self) -> None:
         super().__init__()
@@ -413,9 +423,9 @@ class Task(ABC, Generic[T]):
 
 class CompositeTask(Task[T]):
     """A task that is composed of other tasks."""
-    _tasks: list[Task]
+    _tasks: list[Task[Any]]
 
-    def __init__(self, tasks: list[Task]):
+    def __init__(self, tasks: list[Task[Any]]):
         super().__init__()
         self._tasks = tasks
         self._completed_tasks = 0
@@ -425,11 +435,11 @@ class CompositeTask(Task[T]):
             if task.is_complete:
                 self.on_child_completed(task)
 
-    def get_tasks(self) -> list[Task]:
+    def get_tasks(self) -> list[Task[Any]]:
         return self._tasks
 
     @abstractmethod
-    def on_child_completed(self, task: Task[T]):
+    def on_child_completed(self, task: Task[Any]) -> None:
         pass
 
 
@@ -437,7 +447,7 @@ class WhenAllTask(CompositeTask[list[T]]):
     """A task that completes when all of its child tasks complete."""
 
     def __init__(self, tasks: list[Task[T]]):
-        super().__init__(tasks)
+        super().__init__(cast(list[Task[Any]], tasks))
         self._completed_tasks = 0
         self._failed_tasks = 0
 
@@ -446,7 +456,7 @@ class WhenAllTask(CompositeTask[list[T]]):
         """Returns the number of tasks that have not yet completed."""
         return len(self._tasks) - self._completed_tasks
 
-    def on_child_completed(self, task: Task[T]):
+    def on_child_completed(self, task: Task[Any]) -> None:
         if self.is_complete:
             raise ValueError('The task has already completed.')
         self._completed_tasks += 1
@@ -455,7 +465,7 @@ class WhenAllTask(CompositeTask[list[T]]):
             self._is_complete = True
         if self._completed_tasks == len(self._tasks):
             # The order of the result MUST match the order of the tasks provided to the constructor.
-            self._result = [task.get_result() for task in self._tasks]
+            self._result = [child.get_result() for child in self._tasks]
             self._is_complete = True
 
     def get_completed_tasks(self) -> int:
@@ -464,9 +474,9 @@ class WhenAllTask(CompositeTask[list[T]]):
 
 class CompletableTask(Task[T]):
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self._retryable_parent = None
+        self._retryable_parent: RetryableTask[Any] | None = None
 
     def complete(self, result: T):
         if self._is_complete:
@@ -573,7 +583,7 @@ class TimerTask(CancellableTask[None]):
         self._final_fire_at = final_fire_at
         self._maximum_timer_interval = maximum_timer_interval
 
-    def set_retryable_parent(self, retryable_task: RetryableTask):
+    def set_retryable_parent(self, retryable_task: RetryableTask[Any]) -> None:
         self._retryable_parent = retryable_task
 
     def _handle_timer_fired(self, current_utc_datetime: datetime) -> datetime | None:
@@ -585,22 +595,25 @@ class TimerTask(CancellableTask[None]):
         return None
 
     def _get_next_fire_at(self, current_utc_datetime: datetime) -> datetime:
+        # _handle_timer_fired guards both attributes before calling this method.
+        assert self._final_fire_at is not None
+        assert self._maximum_timer_interval is not None
         if current_utc_datetime + self._maximum_timer_interval < self._final_fire_at:
             return current_utc_datetime + self._maximum_timer_interval
         return self._final_fire_at
 
 
-class WhenAnyTask(CompositeTask[Task]):
+class WhenAnyTask(CompositeTask[Task[T]], Generic[T]):
     """A task that completes when any of its child tasks complete."""
 
-    def __init__(self, tasks: list[Task]):
-        super().__init__(tasks)
+    def __init__(self, tasks: list[Task[T]]):
+        super().__init__(cast(list[Task[Any]], tasks))
 
-    def on_child_completed(self, task: Task):
+    def on_child_completed(self, task: Task[Any]) -> None:
         # The first task to complete is the result of the WhenAnyTask.
         if not self.is_complete:
             self._is_complete = True
-            self._result = task
+            self._result = cast(Task[T], task)
 
 
 def when_all(tasks: list[Task[T]]) -> WhenAllTask[T]:
@@ -608,9 +621,9 @@ def when_all(tasks: list[Task[T]]) -> WhenAllTask[T]:
     return WhenAllTask(tasks)
 
 
-def when_any(tasks: list[Task]) -> WhenAnyTask:
+def when_any(tasks: Sequence[Task[T]]) -> WhenAnyTask[T]:
     """Returns a task that completes when any of the provided tasks complete or fail."""
-    return WhenAnyTask(tasks)
+    return WhenAnyTask(list(tasks))
 
 
 class ActivityContext:
@@ -723,15 +736,15 @@ class RetryPolicy:
         return self._retry_timeout
 
 
-def get_entity_name(fn: Entity) -> str:
+def get_entity_name(fn: Entity[Any, Any]) -> str:
     if hasattr(fn, "__durable_entity_name__"):
         return getattr(fn, "__durable_entity_name__")
     if isinstance(fn, type) and issubclass(fn, DurableEntity):
         return fn.__name__
-    return get_name(fn)
+    return get_name(cast(Callable[..., Any], fn))
 
 
-def get_name(fn: Callable) -> str:
+def get_name(fn: Callable[..., Any]) -> str:
     """Returns the name of the provided function"""
     name = fn.__name__
     if name == '<lambda>':

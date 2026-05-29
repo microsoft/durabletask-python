@@ -1,17 +1,28 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from collections import namedtuple
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, NamedTuple, cast
 
 import grpc
 import grpc.aio
 
+_MetadataValue = str | bytes
+_MetadataEntry = tuple[str, _MetadataValue]
+_Metadata = Sequence[_MetadataEntry]
+_MetadataLike = _Metadata | grpc.aio.Metadata
 
-class _ClientCallDetails(
-        namedtuple(
-            '_ClientCallDetails',
-            ['method', 'timeout', 'metadata', 'credentials', 'wait_for_ready', 'compression']),
-        grpc.ClientCallDetails):
+
+class _ClientCallDetailsBase(NamedTuple):
+    method: Any
+    timeout: Any
+    metadata: Any
+    credentials: Any
+    wait_for_ready: Any
+    compression: Any
+
+
+class _ClientCallDetails(_ClientCallDetailsBase, grpc.ClientCallDetails):
     """This is an implementation of the ClientCallDetails interface needed for interceptors.
     This class takes six named values and inherits the ClientCallDetails from grpc package.
     This class encloses the values that describe a RPC to be invoked.
@@ -19,11 +30,15 @@ class _ClientCallDetails(
     pass
 
 
-class _AsyncClientCallDetails(
-        namedtuple(
-            '_AsyncClientCallDetails',
-            ['method', 'timeout', 'metadata', 'credentials', 'wait_for_ready']),
-        grpc.aio.ClientCallDetails):
+class _AsyncClientCallDetailsBase(NamedTuple):
+    method: Any
+    timeout: Any
+    metadata: Any
+    credentials: Any
+    wait_for_ready: Any
+
+
+class _AsyncClientCallDetails(_AsyncClientCallDetailsBase, grpc.aio.ClientCallDetails):
     """This is an implementation of the aio ClientCallDetails interface needed for async interceptors.
     This class takes five named values and inherits the ClientCallDetails from grpc.aio package.
     This class encloses the values that describe a RPC to be invoked.
@@ -31,15 +46,18 @@ class _AsyncClientCallDetails(
     pass
 
 
-def _apply_metadata(client_call_details, metadata):
+def _apply_metadata(
+        client_call_details: grpc.ClientCallDetails | grpc.aio.ClientCallDetails,
+        metadata: _Metadata | None) -> _MetadataLike | None:
     """Shared logic for applying metadata to call details. Returns the updated metadata list."""
+    existing_metadata = cast(_MetadataLike | None, client_call_details.metadata)
     if metadata is None:
-        return client_call_details.metadata
+        return existing_metadata
 
-    if client_call_details.metadata is not None:
-        new_metadata = list(client_call_details.metadata)
+    if existing_metadata is not None:
+        new_metadata = list(cast(Iterable[_MetadataEntry], existing_metadata))
     else:
-        new_metadata = []
+        new_metadata: list[_MetadataEntry] = []
 
     new_metadata.extend(metadata)
     return new_metadata
@@ -68,21 +86,37 @@ class DefaultClientInterceptorImpl (
             client_call_details.method, client_call_details.timeout, new_metadata,
             client_call_details.credentials, client_call_details.wait_for_ready, client_call_details.compression)
 
-    def intercept_unary_unary(self, continuation, client_call_details, request):
+    def intercept_unary_unary(
+            self,
+            continuation: Callable[[grpc.ClientCallDetails, Any], Any],
+            client_call_details: grpc.ClientCallDetails,
+            request: Any) -> Any:
         new_client_call_details = self._intercept_call(client_call_details)
         return continuation(new_client_call_details, request)
 
-    def intercept_unary_stream(self, continuation, client_call_details, request):
+    def intercept_unary_stream(
+            self,
+            continuation: Callable[[grpc.ClientCallDetails, Any], Any],
+            client_call_details: grpc.ClientCallDetails,
+            request: Any) -> Any:
         new_client_call_details = self._intercept_call(client_call_details)
         return continuation(new_client_call_details, request)
 
-    def intercept_stream_unary(self, continuation, client_call_details, request):
+    def intercept_stream_unary(
+            self,
+            continuation: Callable[[grpc.ClientCallDetails, Any], Any],
+            client_call_details: grpc.ClientCallDetails,
+            request_iterator: Any) -> Any:
         new_client_call_details = self._intercept_call(client_call_details)
-        return continuation(new_client_call_details, request)
+        return continuation(new_client_call_details, request_iterator)
 
-    def intercept_stream_stream(self, continuation, client_call_details, request):
+    def intercept_stream_stream(
+            self,
+            continuation: Callable[[grpc.ClientCallDetails, Any], Any],
+            client_call_details: grpc.ClientCallDetails,
+            request_iterator: Any) -> Any:
         new_client_call_details = self._intercept_call(client_call_details)
-        return continuation(new_client_call_details, request)
+        return continuation(new_client_call_details, request_iterator)
 
 
 class DefaultAsyncClientInterceptorImpl(
@@ -110,18 +144,34 @@ class DefaultAsyncClientInterceptorImpl(
             client_call_details.wait_for_ready,
         )
 
-    async def intercept_unary_unary(self, continuation, client_call_details, request):
+    async def intercept_unary_unary(
+            self,
+            continuation: Callable[[grpc.aio.ClientCallDetails, Any], Any],
+            client_call_details: grpc.aio.ClientCallDetails,
+            request: Any) -> Any:
         new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request)
 
-    async def intercept_unary_stream(self, continuation, client_call_details, request):
+    async def intercept_unary_stream(
+            self,
+            continuation: Callable[[grpc.aio.ClientCallDetails, Any], Any],
+            client_call_details: grpc.aio.ClientCallDetails,
+            request: Any) -> Any:
         new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request)
 
-    async def intercept_stream_unary(self, continuation, client_call_details, request_iterator):
+    async def intercept_stream_unary(
+            self,
+            continuation: Callable[[grpc.aio.ClientCallDetails, Any], Any],
+            client_call_details: grpc.aio.ClientCallDetails,
+            request_iterator: Any) -> Any:
         new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request_iterator)
 
-    async def intercept_stream_stream(self, continuation, client_call_details, request_iterator):
+    async def intercept_stream_stream(
+            self,
+            continuation: Callable[[grpc.aio.ClientCallDetails, Any], Any],
+            client_call_details: grpc.aio.ClientCallDetails,
+            request_iterator: Any) -> Any:
         new_client_call_details = await self._intercept_call(client_call_details)
         return await continuation(new_client_call_details, request_iterator)

@@ -8,14 +8,14 @@ class EntityInstanceId:
     def __str__(self) -> str:
         return f"@{self.entity}@{self.key}"
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, EntityInstanceId):
             return False
         return self.entity == other.entity and self.key == other.key
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, EntityInstanceId):
-            return self < other
+            return NotImplemented
         return str(self) < str(other)
 
     @staticmethod

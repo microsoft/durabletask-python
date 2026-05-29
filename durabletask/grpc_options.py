@@ -74,7 +74,7 @@ class GrpcChannelOptions:
     keepalive_timeout_ms: int | None = None
     keepalive_permit_without_calls: bool | None = None
     retry_policy: GrpcRetryPolicyOptions | None = None
-    raw_options: list[tuple[str, Any]] = field(default_factory=list)
+    raw_options: list[tuple[str, Any]] = field(default_factory=lambda: [])
 
     def to_grpc_options(self) -> list[tuple[str, Any]]:
         options = list(self.raw_options)

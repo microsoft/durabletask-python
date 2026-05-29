@@ -6,13 +6,15 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import AsyncIterable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, Sequence, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 import grpc
 import grpc.aio
+from google.protobuf import wrappers_pb2
 
 import durabletask.history as history
 from durabletask.entities import EntityInstanceId
@@ -64,8 +66,8 @@ class OrchestrationStatus(Enum):
     PENDING = pb.ORCHESTRATION_STATUS_PENDING
     SUSPENDED = pb.ORCHESTRATION_STATUS_SUSPENDED
 
-    def __str__(self):
-        return helpers.get_orchestration_status_str(self.value)
+    def __str__(self) -> str:
+        return cast(str, helpers.get_orchestration_status_str(self.value))
 
 
 @dataclass
@@ -173,6 +175,128 @@ def parse_orchestration_state(state: pb.OrchestrationState) -> OrchestrationStat
 _RETIRED_CHANNEL_CLOSE_DELAY_SECONDS = 30.0
 
 
+class _SyncTaskHubSidecarServiceStub(Protocol):
+    def StartInstance(self, request: pb.CreateInstanceRequest) -> pb.CreateInstanceResponse:
+        ...
+
+    def GetInstance(self, request: pb.GetInstanceRequest) -> pb.GetInstanceResponse:
+        ...
+
+    def StreamInstanceHistory(self, request: pb.StreamInstanceHistoryRequest) -> Iterable[pb.HistoryChunk]:
+        ...
+
+    def ListInstanceIds(self, request: pb.ListInstanceIdsRequest) -> pb.ListInstanceIdsResponse:
+        ...
+
+    def QueryInstances(self, request: pb.QueryInstancesRequest) -> pb.QueryInstancesResponse:
+        ...
+
+    def WaitForInstanceStart(
+            self,
+            request: pb.GetInstanceRequest,
+            *,
+            timeout: float | None = None) -> pb.GetInstanceResponse:
+        ...
+
+    def WaitForInstanceCompletion(
+            self,
+            request: pb.GetInstanceRequest,
+            *,
+            timeout: float | None = None) -> pb.GetInstanceResponse:
+        ...
+
+    def RaiseEvent(self, request: pb.RaiseEventRequest) -> pb.RaiseEventResponse:
+        ...
+
+    def TerminateInstance(self, request: pb.TerminateRequest) -> pb.TerminateResponse:
+        ...
+
+    def SuspendInstance(self, request: pb.SuspendRequest) -> pb.SuspendResponse:
+        ...
+
+    def ResumeInstance(self, request: pb.ResumeRequest) -> pb.ResumeResponse:
+        ...
+
+    def RestartInstance(self, request: pb.RestartInstanceRequest) -> pb.RestartInstanceResponse:
+        ...
+
+    def PurgeInstances(self, request: pb.PurgeInstancesRequest) -> pb.PurgeInstancesResponse:
+        ...
+
+    def SignalEntity(self, request: pb.SignalEntityRequest) -> pb.SignalEntityResponse:
+        ...
+
+    def GetEntity(self, request: pb.GetEntityRequest) -> pb.GetEntityResponse:
+        ...
+
+    def QueryEntities(self, request: pb.QueryEntitiesRequest) -> pb.QueryEntitiesResponse:
+        ...
+
+    def CleanEntityStorage(self, request: pb.CleanEntityStorageRequest) -> pb.CleanEntityStorageResponse:
+        ...
+
+
+class _AsyncTaskHubSidecarServiceStub(Protocol):
+    async def StartInstance(self, request: pb.CreateInstanceRequest) -> pb.CreateInstanceResponse:
+        ...
+
+    async def GetInstance(self, request: pb.GetInstanceRequest) -> pb.GetInstanceResponse:
+        ...
+
+    def StreamInstanceHistory(self, request: pb.StreamInstanceHistoryRequest) -> AsyncIterable[pb.HistoryChunk]:
+        ...
+
+    async def ListInstanceIds(self, request: pb.ListInstanceIdsRequest) -> pb.ListInstanceIdsResponse:
+        ...
+
+    async def QueryInstances(self, request: pb.QueryInstancesRequest) -> pb.QueryInstancesResponse:
+        ...
+
+    async def WaitForInstanceStart(
+            self,
+            request: pb.GetInstanceRequest,
+            *,
+            timeout: float | None = None) -> pb.GetInstanceResponse:
+        ...
+
+    async def WaitForInstanceCompletion(
+            self,
+            request: pb.GetInstanceRequest,
+            *,
+            timeout: float | None = None) -> pb.GetInstanceResponse:
+        ...
+
+    async def RaiseEvent(self, request: pb.RaiseEventRequest) -> pb.RaiseEventResponse:
+        ...
+
+    async def TerminateInstance(self, request: pb.TerminateRequest) -> pb.TerminateResponse:
+        ...
+
+    async def SuspendInstance(self, request: pb.SuspendRequest) -> pb.SuspendResponse:
+        ...
+
+    async def ResumeInstance(self, request: pb.ResumeRequest) -> pb.ResumeResponse:
+        ...
+
+    async def RestartInstance(self, request: pb.RestartInstanceRequest) -> pb.RestartInstanceResponse:
+        ...
+
+    async def PurgeInstances(self, request: pb.PurgeInstancesRequest) -> pb.PurgeInstancesResponse:
+        ...
+
+    async def SignalEntity(self, request: pb.SignalEntityRequest) -> pb.SignalEntityResponse:
+        ...
+
+    async def GetEntity(self, request: pb.GetEntityRequest) -> pb.GetEntityResponse:
+        ...
+
+    async def QueryEntities(self, request: pb.QueryEntitiesRequest) -> pb.QueryEntitiesResponse:
+        ...
+
+    async def CleanEntityStorage(self, request: pb.CleanEntityStorageRequest) -> pb.CleanEntityStorageResponse:
+        ...
+
+
 class TaskHubGrpcClient:
     def __init__(self, *,
                  host_address: str | None = None,
@@ -245,7 +369,7 @@ class TaskHubGrpcClient:
         # observable effect. Callers wanting resiliency on a custom channel
         # can prepend the interceptor themselves via grpc.intercept_channel.
         self._channel = channel
-        self._stub = stubs.TaskHubSidecarServiceStub(channel)
+        self._stub = cast(_SyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(channel))
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
@@ -322,7 +446,7 @@ class TaskHubGrpcClient:
                 interceptors=self._interceptors,
                 channel_options=self._channel_options,
             )
-            self._stub = stubs.TaskHubSidecarServiceStub(self._channel)
+            self._stub = cast(_SyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(self._channel))
             self._last_recreate_time = now
             self._client_failure_tracker.record_success()
             close_timer = threading.Timer(
@@ -459,11 +583,11 @@ class TaskHubGrpcClient:
                                      ) -> list[OrchestrationState]:
         if orchestration_query is None:
             orchestration_query = OrchestrationQuery()
-        _continuation_token = None
+        _continuation_token: wrappers_pb2.StringValue | None = None
 
         self._logger.info(f"Querying orchestration instances with query: {orchestration_query}")
 
-        states = []
+        states: list[OrchestrationState] = []
 
         while True:
             req = build_query_instances_req(orchestration_query, _continuation_token)
@@ -621,11 +745,11 @@ class TaskHubGrpcClient:
                          entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
         if entity_query is None:
             entity_query = EntityQuery()
-        _continuation_token = None
+        _continuation_token: wrappers_pb2.StringValue | None = None
 
         self._logger.info(f"Retrieving entities by filter: {entity_query}")
 
-        entities = []
+        entities: list[EntityMetadata] = []
 
         while True:
             query_request = build_query_entities_req(entity_query, _continuation_token)
@@ -647,7 +771,7 @@ class TaskHubGrpcClient:
 
         empty_entities_removed = 0
         orphaned_locks_released = 0
-        _continuation_token = None
+        _continuation_token: wrappers_pb2.StringValue | None = None
 
         while True:
             req = pb.CleanEntityStorageRequest(
@@ -741,7 +865,7 @@ class AsyncTaskHubGrpcClient:
         # leave the failure-tracking opt-out implicit: callers wanting full
         # resiliency should let us create the channel.
         self._channel = channel
-        self._stub = stubs.TaskHubSidecarServiceStub(channel)
+        self._stub = cast(_AsyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(channel))
         self._logger = shared.get_logger("async_client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
@@ -839,7 +963,7 @@ class AsyncTaskHubGrpcClient:
                 interceptors=self._interceptors,
                 channel_options=self._channel_options,
             )
-            self._stub = stubs.TaskHubSidecarServiceStub(self._channel)
+            self._stub = cast(_AsyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(self._channel))
             self._last_recreate_time = now
             self._client_failure_tracker.record_success()
             self._retired_channels.append(old_channel)
@@ -940,11 +1064,11 @@ class AsyncTaskHubGrpcClient:
                                            ) -> list[OrchestrationState]:
         if orchestration_query is None:
             orchestration_query = OrchestrationQuery()
-        _continuation_token = None
+        _continuation_token: wrappers_pb2.StringValue | None = None
 
         self._logger.info(f"Querying orchestration instances with query: {orchestration_query}")
 
-        states = []
+        states: list[OrchestrationState] = []
 
         while True:
             req = build_query_instances_req(orchestration_query, _continuation_token)
@@ -1101,11 +1225,11 @@ class AsyncTaskHubGrpcClient:
                                entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
         if entity_query is None:
             entity_query = EntityQuery()
-        _continuation_token = None
+        _continuation_token: wrappers_pb2.StringValue | None = None
 
         self._logger.info(f"Retrieving entities by filter: {entity_query}")
 
-        entities = []
+        entities: list[EntityMetadata] = []
 
         while True:
             query_request = build_query_entities_req(entity_query, _continuation_token)
@@ -1127,7 +1251,7 @@ class AsyncTaskHubGrpcClient:
 
         empty_entities_removed = 0
         orphaned_locks_released = 0
-        _continuation_token = None
+        _continuation_token: wrappers_pb2.StringValue | None = None
 
         while True:
             req = pb.CleanEntityStorageRequest(

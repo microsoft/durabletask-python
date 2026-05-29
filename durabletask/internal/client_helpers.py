@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from google.protobuf import wrappers_pb2
 
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -83,7 +86,7 @@ def build_schedule_new_orchestration_req(
 
 def build_query_instances_req(
         orchestration_query: OrchestrationQuery,
-        continuation_token) -> pb.QueryInstancesRequest:
+        continuation_token: wrappers_pb2.StringValue | None) -> pb.QueryInstancesRequest:
     """Build a QueryInstancesRequest from an OrchestrationQuery."""
     return pb.QueryInstancesRequest(
         query=pb.InstanceQuery(
@@ -115,7 +118,7 @@ def build_purge_by_filter_req(
 
 def build_query_entities_req(
         entity_query: EntityQuery,
-        continuation_token) -> pb.QueryEntitiesRequest:
+        continuation_token: wrappers_pb2.StringValue | None) -> pb.QueryEntitiesRequest:
     """Build a QueryEntitiesRequest from an EntityQuery."""
     return pb.QueryEntitiesRequest(
         query=pb.EntityQuery(
@@ -130,7 +133,10 @@ def build_query_entities_req(
     )
 
 
-def check_continuation_token(resp_token, prev_token, logger: logging.Logger) -> bool:
+def check_continuation_token(
+        resp_token: wrappers_pb2.StringValue | None,
+        prev_token: wrappers_pb2.StringValue | None,
+        logger: logging.Logger) -> bool:
     """Check if a continuation token indicates more pages. Returns True to continue, False to stop."""
     if resp_token and resp_token.value and resp_token.value != "0":
         logger.info(f"Received continuation token with value {resp_token.value}, fetching next page...")
@@ -144,7 +150,7 @@ def check_continuation_token(resp_token, prev_token, logger: logging.Logger) -> 
 def log_completion_state(
         logger: logging.Logger,
         instance_id: str,
-        state: OrchestrationState | None):
+        state: OrchestrationState | None) -> None:
     """Log the final state of a completed orchestration."""
     if not state:
         return
