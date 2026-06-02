@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Removed the serverless worker wakeup HTTP listener because ADC sandbox
   workers use outbound DTS registration and do not require an inbound probe
   endpoint.
+- Changed serverless worker registration to rely on gRPC status instead of an
+  accepted response flag.
 
 ## v1.5.0
 

@@ -46,12 +46,10 @@ class OnDemandSandboxActivityWorkerHeartbeat(_message.Message):
     def __init__(self, active_activities_count: _Optional[int] = ...) -> None: ...
 
 class OnDemandSandboxActivityWorkerSessionResult(_message.Message):
-    __slots__ = ("accepted", "message")
-    ACCEPTED_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("message",)
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
-    accepted: bool
     message: str
-    def __init__(self, accepted: bool = ..., message: _Optional[str] = ...) -> None: ...
+    def __init__(self, message: _Optional[str] = ...) -> None: ...
 
 class OnDemandSandboxActivityDeclaration(_message.Message):
     __slots__ = ("worker_profile_id", "activity_names", "image", "environment_variables", "max_concurrent_activities", "resources", "entrypoint", "cmd")

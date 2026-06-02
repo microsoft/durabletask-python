@@ -119,11 +119,7 @@ class ServerlessWorker(DurableTaskSchedulerWorker):
                     secure_channel=self._secure_channel,
                     channel_options=self._channel_options)
                 try:
-                    result = client.connect_serverless_activity_worker(self._registration_messages())
-                    if not result.accepted:
-                        self._logger.warning(
-                            "Serverless activity worker registration was rejected: %s",
-                            result.message)
+                    client.connect_serverless_activity_worker(self._registration_messages())
                     retry_delay = 1.0
                 finally:
                     client.close()
