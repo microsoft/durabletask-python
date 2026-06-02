@@ -18,6 +18,7 @@ from durabletask.azuremanaged.extensions.serverless.client import (
     resolve_activity_names,
 )
 from durabletask.azuremanaged.internal import serverless_activities_service_pb2 as pb
+from durabletask.azuremanaged.internal import serverless_activities_service_pb2_grpc as stubs
 
 
 def test_resolve_activity_names_trims_and_deduplicates() -> None:
@@ -159,6 +160,45 @@ def test_build_serverless_activity_declaration() -> None:
     assert list(declaration.cmd) == ["/app/remote_worker.py"]
 
 
+def test_build_serverless_activity_declaration_accepts_adc_resource_quantities() -> None:
+    for cpu, memory in [
+        ("500m", "1024Mi"),
+        ("0.5", "1Gi"),
+        ("2", "2048"),
+    ]:
+        declaration = build_serverless_activity_declaration(
+            worker_profile_id="preview",
+            activity_names=["RemoteHello"],
+            container_image="example.azurecr.io/serverless-worker:v1",
+            cpu=cpu,
+            memory=memory)
+
+        assert declaration.resources.cpu == cpu
+        assert declaration.resources.memory == memory
+
+
+def test_build_serverless_activity_declaration_rejects_invalid_adc_resource_quantities() -> None:
+    for cpu, memory, expected_message in [
+        ("0", "1024Mi", "CPU"),
+        ("0m", "1024Mi", "CPU"),
+        ("500Mi", "1024Mi", "CPU"),
+        ("500m", "0", "memory"),
+        ("500m", "0Mi", "memory"),
+        ("500m", "500m", "memory"),
+    ]:
+        try:
+            build_serverless_activity_declaration(
+                worker_profile_id="preview",
+                activity_names=["RemoteHello"],
+                container_image="example.azurecr.io/serverless-worker:v1",
+                cpu=cpu,
+                memory=memory)
+        except ValueError as ex:
+            assert expected_message in str(ex)
+        else:
+            raise AssertionError("Expected invalid resource quantity to fail.")
+
+
 def test_build_serverless_activity_declaration_accepts_single_name() -> None:
     declaration = build_serverless_activity_declaration(
         worker_profile_id="preview",
@@ -186,6 +226,18 @@ def test_build_serverless_worker_start_and_heartbeat() -> None:
 
     heartbeat = build_serverless_worker_heartbeat(1)
     assert heartbeat.heartbeat.active_activities_count == 1
+
+
+def test_generated_stub_uses_on_demand_sandbox_rpc_paths() -> None:
+    channel = _RecordingChannel()
+    stub = stubs.OnDemandSandboxActivitiesStub(channel)
+
+    assert stub is not None
+    assert channel.methods == [
+        "/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/ConnectOnDemandSandboxActivityWorker",
+        "/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/DeclareOnDemandSandboxActivities",
+        "/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/RemoveOnDemandSandboxActivityDeclaration",
+    ]
 
 
 def test_serverless_worker_constructor_does_not_expose_runtime_contract() -> None:
@@ -217,6 +269,7 @@ def test_serverless_worker_reads_sandbox_environment_and_registered_activities(m
     start = next(worker._registration_messages())
 
     assert worker._host_address == "http://localhost:8080"
+    assert worker._serverless_token_credential is None
     assert worker._serverless_taskhub == "env-hub"
     assert worker._serverless_worker_profile_id == "env-profile"
     assert worker._concurrency_options.maximum_concurrent_activity_work_items == 7
@@ -233,6 +286,16 @@ def test_serverless_worker_reads_sandbox_environment_and_registered_activities(m
     assert list(start.start.activity_names) == ["EnvActivity", "OtherActivity"]
 
 
+def test_serverless_worker_uses_scheduler_channel_without_credential(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+
+    worker = ServerlessWorker()
+
+    assert worker._secure_channel is True
+    assert worker._serverless_token_credential is None
+
+
 def test_serverless_worker_requires_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
@@ -245,3 +308,16 @@ def test_serverless_worker_requires_registered_activities(monkeypatch) -> None:
         assert "registered activity" in str(ex)
     else:
         raise AssertionError("Expected missing registered activity names to fail.")
+
+
+class _RecordingChannel:
+    def __init__(self) -> None:
+        self.methods: list[str] = []
+
+    def stream_unary(self, method, *args, **kwargs):
+        self.methods.append(method)
+        return object()
+
+    def unary_unary(self, method, *args, **kwargs):
+        self.methods.append(method)
+        return object()

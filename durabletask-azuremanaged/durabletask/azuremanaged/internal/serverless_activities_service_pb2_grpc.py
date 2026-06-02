@@ -5,8 +5,10 @@ import warnings
 
 from durabletask.azuremanaged.internal import serverless_activities_service_pb2 as durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.65.4'
 GRPC_VERSION = grpc.__version__
+EXPECTED_ERROR_RELEASE = '1.66.0'
+SCHEDULED_RELEASE_DATE = 'August 6, 2024'
 _version_not_supported = False
 
 try:
@@ -16,16 +18,19 @@ except ImportError:
     _version_not_supported = True
 
 if _version_not_supported:
-    raise RuntimeError(
+    warnings.warn(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in durabletask/azuremanaged/internal/serverless_activities_service_pb2_grpc.py depends on'
+        + f' but the generated code in durabletask/azuremanaged/internal/serverless_activities_service_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
+        + f' This warning will become an error in {EXPECTED_ERROR_RELEASE},'
+        + f' scheduled for release on {SCHEDULED_RELEASE_DATE}.',
+        RuntimeWarning
     )
 
 
-class ServerlessActivitiesStub(object):
+class OnDemandSandboxActivitiesStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -34,82 +39,84 @@ class ServerlessActivitiesStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.ConnectServerlessActivityWorker = channel.stream_unary(
-                '/microsoft.durabletask.serverless.ServerlessActivities/ConnectServerlessActivityWorker',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityWorkerMessage.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityWorkerSessionResult.FromString,
+        self.ConnectOnDemandSandboxActivityWorker = channel.stream_unary(
+                '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/ConnectOnDemandSandboxActivityWorker',
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.FromString,
                 _registered_method=True)
-        self.DeclareServerlessActivities = channel.unary_unary(
-                '/microsoft.durabletask.serverless.ServerlessActivities/DeclareServerlessActivities',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityDeclaration.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityDeclarationResult.FromString,
+        self.DeclareOnDemandSandboxActivities = channel.unary_unary(
+                '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/DeclareOnDemandSandboxActivities',
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclaration.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.FromString,
                 _registered_method=True)
-        self.RemoveServerlessActivityDeclaration = channel.unary_unary(
-                '/microsoft.durabletask.serverless.ServerlessActivities/RemoveServerlessActivityDeclaration',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationRequest.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationResult.FromString,
+        self.RemoveOnDemandSandboxActivityDeclaration = channel.unary_unary(
+                '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/RemoveOnDemandSandboxActivityDeclaration',
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.FromString,
                 _registered_method=True)
 
 
-class ServerlessActivitiesServicer(object):
+class OnDemandSandboxActivitiesServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def ConnectServerlessActivityWorker(self, request_iterator, context):
-        """Opens a live serverless activity worker session. The first message must be a
-        start message with static worker metadata. Heartbeats carry dynamic state
-        only. Closing the stream deregisters the worker.
+    def ConnectOnDemandSandboxActivityWorker(self, request_iterator, context):
+        """Opens a live on-demand sandbox activity worker session. The first message
+        must be a start message with static worker metadata. Heartbeats carry
+        dynamic state only. Closing the stream deregisters the worker.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def DeclareServerlessActivities(self, request, context):
-        """Declares serverless activities before any live worker stream exists. This is a
-        configuration contract and does not advertise active worker capacity.
+    def DeclareOnDemandSandboxActivities(self, request, context):
+        """Declares on-demand sandbox activities before any live worker stream exists.
+        This is a configuration contract and does not advertise active worker
+        capacity.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def RemoveServerlessActivityDeclaration(self, request, context):
-        """Removes a serverless activity declaration so the backend stops waking new workers
-        for the specified worker profile. Existing workers are not terminated by this RPC.
+    def RemoveOnDemandSandboxActivityDeclaration(self, request, context):
+        """Removes an on-demand sandbox activity declaration so the backend stops
+        waking new sandbox workers for the specified worker profile. Existing
+        workers are not terminated by this RPC.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_ServerlessActivitiesServicer_to_server(servicer, server):
+def add_OnDemandSandboxActivitiesServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'ConnectServerlessActivityWorker': grpc.stream_unary_rpc_method_handler(
-                    servicer.ConnectServerlessActivityWorker,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityWorkerMessage.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityWorkerSessionResult.SerializeToString,
+            'ConnectOnDemandSandboxActivityWorker': grpc.stream_unary_rpc_method_handler(
+                    servicer.ConnectOnDemandSandboxActivityWorker,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.SerializeToString,
             ),
-            'DeclareServerlessActivities': grpc.unary_unary_rpc_method_handler(
-                    servicer.DeclareServerlessActivities,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityDeclaration.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityDeclarationResult.SerializeToString,
+            'DeclareOnDemandSandboxActivities': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeclareOnDemandSandboxActivities,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclaration.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.SerializeToString,
             ),
-            'RemoveServerlessActivityDeclaration': grpc.unary_unary_rpc_method_handler(
-                    servicer.RemoveServerlessActivityDeclaration,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationRequest.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationResult.SerializeToString,
+            'RemoveOnDemandSandboxActivityDeclaration': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemoveOnDemandSandboxActivityDeclaration,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'microsoft.durabletask.serverless.ServerlessActivities', rpc_method_handlers)
+            'microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('microsoft.durabletask.serverless.ServerlessActivities', rpc_method_handlers)
+    server.add_registered_method_handlers('microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class ServerlessActivities(object):
+class OnDemandSandboxActivities(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def ConnectServerlessActivityWorker(request_iterator,
+    def ConnectOnDemandSandboxActivityWorker(request_iterator,
             target,
             options=(),
             channel_credentials=None,
@@ -122,9 +129,9 @@ class ServerlessActivities(object):
         return grpc.experimental.stream_unary(
             request_iterator,
             target,
-            '/microsoft.durabletask.serverless.ServerlessActivities/ConnectServerlessActivityWorker',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityWorkerMessage.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityWorkerSessionResult.FromString,
+            '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/ConnectOnDemandSandboxActivityWorker',
+            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.FromString,
             options,
             channel_credentials,
             insecure,
@@ -136,7 +143,7 @@ class ServerlessActivities(object):
             _registered_method=True)
 
     @staticmethod
-    def DeclareServerlessActivities(request,
+    def DeclareOnDemandSandboxActivities(request,
             target,
             options=(),
             channel_credentials=None,
@@ -149,9 +156,9 @@ class ServerlessActivities(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/microsoft.durabletask.serverless.ServerlessActivities/DeclareServerlessActivities',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityDeclaration.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.ServerlessActivityDeclarationResult.FromString,
+            '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/DeclareOnDemandSandboxActivities',
+            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclaration.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.FromString,
             options,
             channel_credentials,
             insecure,
@@ -163,7 +170,7 @@ class ServerlessActivities(object):
             _registered_method=True)
 
     @staticmethod
-    def RemoveServerlessActivityDeclaration(request,
+    def RemoveOnDemandSandboxActivityDeclaration(request,
             target,
             options=(),
             channel_credentials=None,
@@ -176,9 +183,9 @@ class ServerlessActivities(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/microsoft.durabletask.serverless.ServerlessActivities/RemoveServerlessActivityDeclaration',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationRequest.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveServerlessActivityDeclarationResult.FromString,
+            '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/RemoveOnDemandSandboxActivityDeclaration',
+            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.FromString,
             options,
             channel_credentials,
             insecure,

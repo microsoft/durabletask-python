@@ -26,13 +26,14 @@ Set these before running the declarer app:
 $env:DTS_ENDPOINT = "<scheduler endpoint>"
 $env:DTS_TASK_HUB = "<task hub name>"
 $env:DTS_WORKER_PROFILE_ID = "default"
+$env:DTS_SERVERLESS_CONTAINER_IMAGE = "<public container image reference>"
 ```
 
-After pushing the remote worker image, set `options.container_image` in
-`RemoteWorkerProfile.configure()` to the pushed image reference. That method is
-also where the sample declares CPU, memory, max concurrency, customer
-environment variables, and serverless activity names with `options.add_activity(...)`.
-The declarer and remote worker both use `activity_names.py` so they stay in sync.
+After pushing the remote worker image, set `DTS_SERVERLESS_CONTAINER_IMAGE` to
+the pushed image reference. `RemoteWorkerProfile.configure()` declares CPU,
+memory, max concurrency, customer environment variables, and serverless activity
+names with `options.add_activity(...)`. The declarer and remote worker both use
+`activity_names.py` so they stay in sync.
 
 The remote worker code cannot pass DTS runtime settings to the SDK. In a
 sandbox, `ServerlessWorker()` reads `DTS_ENDPOINT`,

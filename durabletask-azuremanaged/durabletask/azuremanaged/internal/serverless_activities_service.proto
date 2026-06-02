@@ -3,34 +3,36 @@
 
 syntax = "proto3";
 
-package microsoft.durabletask.serverless;
+package microsoft.durabletask.ondemandsandbox;
 
-option csharp_namespace = "Microsoft.DurableTask.Protobuf.Serverless";
+option csharp_namespace = "Microsoft.DurableTask.Protobuf.OnDemandSandbox";
 
-service ServerlessActivities {
-  // Opens a live serverless activity worker session. The first message must be a
-  // start message with static worker metadata. Heartbeats carry dynamic state
-  // only. Closing the stream deregisters the worker.
-  rpc ConnectServerlessActivityWorker(stream ServerlessActivityWorkerMessage) returns (ServerlessActivityWorkerSessionResult);
+service OnDemandSandboxActivities {
+  // Opens a live on-demand sandbox activity worker session. The first message
+  // must be a start message with static worker metadata. Heartbeats carry
+  // dynamic state only. Closing the stream deregisters the worker.
+  rpc ConnectOnDemandSandboxActivityWorker(stream OnDemandSandboxActivityWorkerMessage) returns (OnDemandSandboxActivityWorkerSessionResult);
 
-  // Declares serverless activities before any live worker stream exists. This is a
-  // configuration contract and does not advertise active worker capacity.
-  rpc DeclareServerlessActivities(ServerlessActivityDeclaration) returns (ServerlessActivityDeclarationResult);
+  // Declares on-demand sandbox activities before any live worker stream exists.
+  // This is a configuration contract and does not advertise active worker
+  // capacity.
+  rpc DeclareOnDemandSandboxActivities(OnDemandSandboxActivityDeclaration) returns (OnDemandSandboxActivityDeclarationResult);
 
-  // Removes a serverless activity declaration so the backend stops waking new workers
-  // for the specified worker profile. Existing workers are not terminated by this RPC.
-  rpc RemoveServerlessActivityDeclaration(RemoveServerlessActivityDeclarationRequest) returns (RemoveServerlessActivityDeclarationResult);
+  // Removes an on-demand sandbox activity declaration so the backend stops
+  // waking new sandbox workers for the specified worker profile. Existing
+  // workers are not terminated by this RPC.
+  rpc RemoveOnDemandSandboxActivityDeclaration(RemoveOnDemandSandboxActivityDeclarationRequest) returns (RemoveOnDemandSandboxActivityDeclarationResult);
 
 }
 
-message ServerlessActivityWorkerMessage {
+message OnDemandSandboxActivityWorkerMessage {
   oneof message {
-    ServerlessActivityWorkerStart start = 1;
-    ServerlessActivityWorkerHeartbeat heartbeat = 2;
+    OnDemandSandboxActivityWorkerStart start = 1;
+    OnDemandSandboxActivityWorkerHeartbeat heartbeat = 2;
   }
 }
 
-message ServerlessActivityWorkerStart {
+message OnDemandSandboxActivityWorkerStart {
   reserved 2;
   reserved "worker_instance_id";
 
@@ -47,43 +49,43 @@ message ServerlessActivityWorkerStart {
   repeated string activity_names = 7;
 }
 
-message ServerlessActivityWorkerHeartbeat {
+message OnDemandSandboxActivityWorkerHeartbeat {
   int32 active_activities_count = 1;
 }
 
-message ServerlessActivityWorkerSessionResult {
+message OnDemandSandboxActivityWorkerSessionResult {
   bool accepted = 1;
   string message = 2;
 }
 
-message ServerlessActivityDeclaration {
+message OnDemandSandboxActivityDeclaration {
   string worker_profile_id = 2;
   repeated string activity_names = 3;
-  ServerlessActivityImage image = 4;
+  OnDemandSandboxActivityImage image = 4;
   map<string, string> environment_variables = 5;
   int32 max_concurrent_activities = 6;
-  ServerlessActivityResources resources = 7;
+  OnDemandSandboxActivityResources resources = 7;
   repeated string entrypoint = 8;
   repeated string cmd = 9;
 }
 
-message ServerlessActivityImage {
+message OnDemandSandboxActivityImage {
   string image_ref = 1;
 }
 
-message ServerlessActivityResources {
+message OnDemandSandboxActivityResources {
   string cpu = 1;
   string memory = 2;
 }
 
-message ServerlessActivityDeclarationResult {
+message OnDemandSandboxActivityDeclarationResult {
 }
 
-message RemoveServerlessActivityDeclarationRequest {
+message RemoveOnDemandSandboxActivityDeclarationRequest {
   string worker_profile_id = 1;
 }
 
-message RemoveServerlessActivityDeclarationResult {
+message RemoveOnDemandSandboxActivityDeclarationResult {
 }
 
 // Compute substrate executing the activity worker.

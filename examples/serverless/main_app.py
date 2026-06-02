@@ -22,6 +22,7 @@ def hello_orchestrator(ctx: task.OrchestrationContext, name: str):
 taskhub_name = os.getenv("DTS_TASK_HUB") or "ServerlessPocHub"
 endpoint = os.getenv("DTS_ENDPOINT", "http://localhost:8080")
 worker_profile_id = os.getenv("DTS_WORKER_PROFILE_ID", "default")
+container_image = os.getenv("DTS_SERVERLESS_CONTAINER_IMAGE", "serverless-remote-worker:local")
 sample_input = os.getenv("DTS_SAMPLE_HELLO_INPUT", "serverless Python")
 
 
@@ -30,7 +31,7 @@ class RemoteWorkerProfile(ServerlessWorkerProfile):
     """Serverless worker profile used by the sample remote activity."""
 
     def configure(self, options) -> None:
-        options.container_image = "serverless-remote-worker:local"
+        options.container_image = container_image
         options.cpu = "1000m"
         options.memory = "2048Mi"
         options.max_concurrent_activities = 1
@@ -40,7 +41,7 @@ class RemoteWorkerProfile(ServerlessWorkerProfile):
 
 print(f"Using taskhub: {taskhub_name}")
 print(f"Using endpoint: {endpoint}")
-print("Declaring serverless activity image: serverless-remote-worker:local")
+print(f"Declaring serverless activity image: {container_image}")
 
 secure_channel = endpoint.startswith("https://") or endpoint.startswith("grpcs://")
 credential = DefaultAzureCredential() if secure_channel else None

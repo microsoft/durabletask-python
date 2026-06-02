@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Callable, Iterable, Optional, Sequence
 
 import grpc
@@ -134,7 +135,7 @@ def build_serverless_activity_declaration(
         environment_variables: Optional[dict[str, str]] = None,
         max_concurrent_activities: int = DEFAULT_MAX_CONCURRENT_ACTIVITIES,
         entrypoint: Optional[Iterable[str]] = None,
-        cmd: Optional[Iterable[str]] = None) -> pb.ServerlessActivityDeclaration:
+        cmd: Optional[Iterable[str]] = None) -> pb.OnDemandSandboxActivityDeclaration:
     resolved_activity_names = resolve_activity_names(activity_names)
     if not resolved_activity_names:
         raise ValueError("Serverless activity declaration requires at least one activity name.")
@@ -154,19 +155,16 @@ def build_serverless_activity_declaration(
     if not image_ref:
         raise ValueError("Serverless activity image metadata requires a container image reference.")
 
-    if not cpu or not cpu.strip():
-        raise ValueError("Serverless activity declaration requires CPU resources.")
+    resolved_cpu = _normalize_cpu(cpu)
+    resolved_memory = _normalize_memory(memory)
 
-    if not memory or not memory.strip():
-        raise ValueError("Serverless activity declaration requires memory resources.")
-
-    declaration = pb.ServerlessActivityDeclaration(
+    declaration = pb.OnDemandSandboxActivityDeclaration(
         worker_profile_id=worker_profile_id.strip(),
-        image=pb.ServerlessActivityImage(
+        image=pb.OnDemandSandboxActivityImage(
             image_ref=image_ref),
-        resources=pb.ServerlessActivityResources(
-            cpu=cpu.strip(),
-            memory=memory.strip()),
+        resources=pb.OnDemandSandboxActivityResources(
+            cpu=resolved_cpu,
+            memory=resolved_memory),
         max_concurrent_activities=max_concurrent_activities)
     declaration.activity_names.extend(resolved_activity_names)
     declaration.environment_variables.update(environment_variables or {})
@@ -175,9 +173,9 @@ def build_serverless_activity_declaration(
     return declaration
 
 
-def build_profile_serverless_activity_declarations() -> list[pb.ServerlessActivityDeclaration]:
+def build_profile_serverless_activity_declarations() -> list[pb.OnDemandSandboxActivityDeclaration]:
     """Build serverless declarations from worker profile configuration."""
-    declarations: list[pb.ServerlessActivityDeclaration] = []
+    declarations: list[pb.OnDemandSandboxActivityDeclaration] = []
     activity_owners: dict[str, str] = {}
     for profile in _worker_profiles.values():
         activity_names = resolve_activity_names(profile.activity_names)
@@ -217,7 +215,7 @@ def build_serverless_worker_start(
         max_activities_count: int,
         activity_names: Iterable[str],
         substrate: Optional[str] = None,
-        dts_sandbox_identifier: Optional[str] = None) -> pb.ServerlessActivityWorkerMessage:
+        dts_sandbox_identifier: Optional[str] = None) -> pb.OnDemandSandboxActivityWorkerMessage:
     if not taskhub or not taskhub.strip():
         raise ValueError("Serverless activity worker registration requires a task hub name.")
 
@@ -231,8 +229,8 @@ def build_serverless_worker_start(
     if not resolved_activity_names:
         raise ValueError("Serverless activity worker registration requires at least one registered activity.")
 
-    message = pb.ServerlessActivityWorkerMessage(
-        start=pb.ServerlessActivityWorkerStart(
+    message = pb.OnDemandSandboxActivityWorkerMessage(
+        start=pb.OnDemandSandboxActivityWorkerStart(
             task_hub=taskhub.strip(),
             worker_profile_id=worker_profile_id.strip(),
             max_activities_count=max_activities_count,
@@ -242,12 +240,12 @@ def build_serverless_worker_start(
     return message
 
 
-def build_serverless_worker_heartbeat(active_activities_count: int) -> pb.ServerlessActivityWorkerMessage:
+def build_serverless_worker_heartbeat(active_activities_count: int) -> pb.OnDemandSandboxActivityWorkerMessage:
     if active_activities_count < 0:
         raise ValueError("Serverless activity worker active activity count cannot be negative.")
 
-    return pb.ServerlessActivityWorkerMessage(
-        heartbeat=pb.ServerlessActivityWorkerHeartbeat(
+    return pb.OnDemandSandboxActivityWorkerMessage(
+        heartbeat=pb.OnDemandSandboxActivityWorkerHeartbeat(
             active_activities_count=active_activities_count))
 
 
@@ -278,7 +276,7 @@ class ServerlessActivitiesClient:
                 interceptors=resolved_interceptors,
                 channel_options=channel_options)
         self._channel = channel
-        self._stub = stubs.ServerlessActivitiesStub(channel)
+        self._stub = stubs.OnDemandSandboxActivitiesStub(channel)
 
     def close(self) -> None:
         if self._owns_channel:
@@ -291,17 +289,18 @@ class ServerlessActivitiesClient:
             raise ValueError("No configured serverless activities were found.")
 
         for declaration in declarations:
-            self._stub.DeclareServerlessActivities(declaration)
+            self._stub.DeclareOnDemandSandboxActivities(declaration)
 
     def remove_serverless_activity_declaration(self, worker_profile_id: str) -> None:
         worker_profile_id = _normalize_required(worker_profile_id, "Worker profile ID is required.")
-        self._stub.RemoveServerlessActivityDeclaration(
-            pb.RemoveServerlessActivityDeclarationRequest(worker_profile_id=worker_profile_id))
+        self._stub.RemoveOnDemandSandboxActivityDeclaration(
+            pb.RemoveOnDemandSandboxActivityDeclarationRequest(worker_profile_id=worker_profile_id))
 
     def connect_serverless_activity_worker(
             self,
-            messages: Iterable[pb.ServerlessActivityWorkerMessage]) -> pb.ServerlessActivityWorkerSessionResult:
-        return self._stub.ConnectServerlessActivityWorker(messages)
+            messages: Iterable[pb.OnDemandSandboxActivityWorkerMessage]
+    ) -> pb.OnDemandSandboxActivityWorkerSessionResult:
+        return self._stub.ConnectOnDemandSandboxActivityWorker(messages)
 
 
 def _normalize_optional_strings(values: Iterable[str]) -> list[str]:
@@ -312,6 +311,46 @@ def _normalize_required(value: str, message: str) -> str:
     if not value or not value.strip():
         raise ValueError(message)
     return value.strip()
+
+
+def _normalize_cpu(value: str) -> str:
+    normalized = _normalize_required(value, "Serverless activity declaration requires CPU resources.")
+    milli_cpu = _try_parse_cpu_millicores(normalized)
+    if milli_cpu is None or milli_cpu <= 0:
+        raise ValueError(
+            "Serverless activity CPU resources must be a positive Kubernetes-style CPU quantity. "
+            "Use formats like '500m', '2', or '0.5'.")
+    return normalized
+
+
+def _normalize_memory(value: str) -> str:
+    normalized = _normalize_required(value, "Serverless activity declaration requires memory resources.")
+    memory_mib = _try_parse_memory_mib(normalized)
+    if memory_mib is None or memory_mib <= 0:
+        raise ValueError(
+            "Serverless activity memory resources must be a positive Kubernetes-style memory quantity. "
+            "Use formats like '256Mi', '1Gi', or '2048'.")
+    return normalized
+
+
+def _try_parse_cpu_millicores(value: str) -> Optional[int]:
+    try:
+        if value[-1:].lower() == "m":
+            return int(Decimal(value[:-1]))
+        return int(Decimal(value) * 1000)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _try_parse_memory_mib(value: str) -> Optional[int]:
+    try:
+        if value[-2:].lower() == "gi":
+            return int(Decimal(value[:-2]) * 1024)
+        if value[-2:].lower() == "mi":
+            return int(Decimal(value[:-2]))
+        return int(Decimal(value))
+    except (InvalidOperation, ValueError):
+        return None
 
 
 def _parse_substrate(substrate: Optional[str]) -> "pb.SubstrateKind":

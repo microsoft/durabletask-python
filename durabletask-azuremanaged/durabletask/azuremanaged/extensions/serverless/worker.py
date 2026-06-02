@@ -7,8 +7,6 @@ import threading
 
 from typing import Iterator, Optional
 
-from azure.identity import DefaultAzureCredential
-
 from durabletask.azuremanaged.extensions.serverless.client import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     DEFAULT_WORKER_PROFILE_ID,
@@ -36,10 +34,7 @@ class ServerlessWorker(DurableTaskSchedulerWorker):
         resolved_host_address = _resolve_host_address()
         resolved_taskhub = _resolve_taskhub()
         resolved_secure_channel = _resolve_secure_channel(resolved_host_address)
-        resolved_token_credential = (
-            DefaultAzureCredential()
-            if resolved_secure_channel
-            else None)
+        resolved_token_credential = None
         resolved_max_concurrent_activities = _resolve_max_concurrent_activities()
         concurrency_options = ConcurrencyOptions(
             maximum_concurrent_activity_work_items=resolved_max_concurrent_activities)

@@ -1,4 +1,9 @@
 {
+    "extensions": {
+        "front-matter": {
+            "enabled": true
+        }
+    },
     "plugins": {
         "md013": {
             "line_length": 100
