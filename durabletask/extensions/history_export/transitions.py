@@ -28,14 +28,12 @@ from durabletask.extensions.history_export.models import ExportJobStatus
 # Maps (operation_name, current_status_or_None) -> {valid target statuses}.
 TRANSITIONS: Mapping[tuple[str, ExportJobStatus | None], frozenset[ExportJobStatus]] = {
     # ``create`` initialises a fresh job and revives terminal jobs.
-    ("create", None): frozenset({ExportJobStatus.PENDING}),
-    ("create", ExportJobStatus.FAILED): frozenset({ExportJobStatus.PENDING}),
-    ("create", ExportJobStatus.COMPLETED): frozenset({ExportJobStatus.PENDING}),
-
-    # ``run`` flips the job from PENDING to ACTIVE.  Idempotent so the
-    # client may signal it more than once without crashing the entity.
-    ("run", ExportJobStatus.PENDING): frozenset({ExportJobStatus.ACTIVE}),
-    ("run", ExportJobStatus.ACTIVE): frozenset({ExportJobStatus.ACTIVE}),
+    # The entity schedules the driving orchestrator inline, so the job
+    # goes straight to ACTIVE without a separate ``run`` signal.
+    # Matches the .NET ``ExportJob.Create`` flow.
+    ("create", None): frozenset({ExportJobStatus.ACTIVE}),
+    ("create", ExportJobStatus.FAILED): frozenset({ExportJobStatus.ACTIVE}),
+    ("create", ExportJobStatus.COMPLETED): frozenset({ExportJobStatus.ACTIVE}),
 
     # ``commit_checkpoint`` is a no-op transition during normal runs.
     # When the orchestrator signals ``mark_failed_on_batch`` the entity
@@ -47,9 +45,6 @@ TRANSITIONS: Mapping[tuple[str, ExportJobStatus | None], frozenset[ExportJobStat
 
     ("mark_completed", ExportJobStatus.ACTIVE): frozenset({ExportJobStatus.COMPLETED}),
 
-    # ``mark_failed`` from PENDING covers the rare case of a failure
-    # happening between create and run.
-    ("mark_failed", ExportJobStatus.PENDING): frozenset({ExportJobStatus.FAILED}),
     ("mark_failed", ExportJobStatus.ACTIVE): frozenset({ExportJobStatus.FAILED}),
 }
 

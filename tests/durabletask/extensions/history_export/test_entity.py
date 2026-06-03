@@ -41,7 +41,7 @@ _WINDOW_END = datetime(2025, 1, 2, tzinfo=timezone.utc)
 
 
 def _no_op_orchestrator(ctx: task.OrchestrationContext, _input):
-    # The entity's run() op schedules an orchestrator named
+    # The entity's ``create`` op schedules an orchestrator named
     # ``export_job_orchestrator``.  These tests focus on entity
     # behaviour, so register a no-op stub under that canonical name.
     return None
@@ -139,31 +139,23 @@ def _wait_for_status(
 # ---------------------------------------------------------------------
 
 
-def test_create_persists_pending_status(c) -> None:
+def test_create_persists_active_status_and_schedules_orchestrator(c) -> None:
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-1")
     c.signal_entity(entity_id, "create", input=_create_payload())
 
-    state = _wait_for_status(c, entity_id, ExportJobStatus.PENDING)
-    assert state["schema_version"] == "1.1"
-    assert state["status"] == ExportJobStatus.PENDING.value
-    assert state["orchestrator_instance_id"] is None
+    state = _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
+    assert state["schema_version"] == "1.0"
+    assert state["status"] == ExportJobStatus.ACTIVE.value
+    # ``create`` schedules the driving orchestrator inline and records
+    # its deterministic instance ID.
+    assert state["orchestrator_instance_id"] == orchestrator_instance_id_for("job-1")
     assert state["config"]["destination"]["container"] == "exports"
     assert state["failures"] == []
-
-
-def test_run_transitions_to_active_and_records_orchestrator_instance_id(c) -> None:
-    entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-1b")
-    c.signal_entity(entity_id, "create", input=_create_payload())
-    c.signal_entity(entity_id, "run")
-
-    state = _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
-    assert state["orchestrator_instance_id"] == orchestrator_instance_id_for("job-1b")
 
 
 def test_create_on_active_job_is_rejected_and_state_unchanged(c) -> None:
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-1c")
     c.signal_entity(entity_id, "create", input=_create_payload())
-    c.signal_entity(entity_id, "run")
     _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
 
     c.signal_entity(entity_id, "commit_checkpoint", input={"scanned_delta": 7})
@@ -188,16 +180,16 @@ def test_create_on_active_job_is_rejected_and_state_unchanged(c) -> None:
     assert state["scanned_instances"] == 7
 
 
-def test_create_after_failure_resets_to_pending(c) -> None:
+def test_create_after_failure_revives_to_active(c) -> None:
     """Reviving a terminal job rewinds every progress field.
 
     Matches the .NET ``ExportJob.Create`` revive semantics: counters,
     checkpoint, ``last_checkpoint_time``, ``last_error``, and the
-    accumulated ``failures`` list are all reset to a clean slate.
+    accumulated ``failures`` list are all reset to a clean slate, and
+    the orchestrator is re-scheduled inline.
     """
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-1d")
     c.signal_entity(entity_id, "create", input=_create_payload())
-    c.signal_entity(entity_id, "run")
     _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
 
     # Apply enough progress and a failure so revival has something to
@@ -233,9 +225,17 @@ def test_create_after_failure_resets_to_pending(c) -> None:
     failed = _wait_for_status(c, entity_id, ExportJobStatus.FAILED)
     assert failed["last_error"] == "boom"
 
-    # Revive: every progress field should reset.
+    # Revive: every progress field should reset and orchestrator
+    # instance ID should be re-derived.
     c.signal_entity(entity_id, "create", input=_create_payload())
-    revived = _wait_for_status(c, entity_id, ExportJobStatus.PENDING)
+    revived = _wait_for_state(
+        c, entity_id,
+        lambda s: (
+            s.get("status") == ExportJobStatus.ACTIVE.value
+            and s.get("scanned_instances") == 0
+        ),
+        description="revived state to land",
+    )
     assert revived["scanned_instances"] == 0
     assert revived["exported_instances"] == 0
     assert revived["failed_instances"] == 0
@@ -243,15 +243,14 @@ def test_create_after_failure_resets_to_pending(c) -> None:
     assert revived["last_checkpoint_time"] is None
     assert revived["last_error"] is None
     assert revived["failures"] == []
-    # The orchestrator instance ID is also re-derived by ``run``;
-    # ``create`` itself does not pre-populate it.
-    assert revived["orchestrator_instance_id"] is None
+    assert revived["orchestrator_instance_id"] == orchestrator_instance_id_for(
+        "job-1d"
+    )
 
 
 def test_commit_checkpoint_requires_active_status(c) -> None:
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-2")
     c.signal_entity(entity_id, "create", input=_create_payload())
-    c.signal_entity(entity_id, "run")
     _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
 
     c.signal_entity(
@@ -285,7 +284,6 @@ def test_commit_checkpoint_requires_active_status(c) -> None:
 def test_commit_checkpoint_records_failures_and_marks_failed(c) -> None:
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-2b")
     c.signal_entity(entity_id, "create", input=_create_payload())
-    c.signal_entity(entity_id, "run")
     _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
 
     c.signal_entity(
@@ -322,15 +320,15 @@ def test_commit_checkpoint_records_failures_and_marks_failed(c) -> None:
 def test_mark_completed_sets_status(c) -> None:
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-3")
     c.signal_entity(entity_id, "create", input=_create_payload())
-    c.signal_entity(entity_id, "run")
     c.signal_entity(entity_id, "mark_completed")
     state = _wait_for_status(c, entity_id, ExportJobStatus.COMPLETED)
     assert state["last_error"] is None
 
 
-def test_mark_failed_records_reason_from_pending(c) -> None:
+def test_mark_failed_records_reason(c) -> None:
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-4")
     c.signal_entity(entity_id, "create", input=_create_payload())
+    _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
     c.signal_entity(entity_id, "mark_failed", input={"reason": "boom"})
     state = _wait_for_status(c, entity_id, ExportJobStatus.FAILED)
     assert state["last_error"] == "boom"

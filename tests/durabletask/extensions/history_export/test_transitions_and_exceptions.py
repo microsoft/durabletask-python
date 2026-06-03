@@ -21,30 +21,22 @@ from durabletask.extensions.history_export.transitions import (
 
 
 class TestTransitionsMatrix:
-    def test_create_from_none_is_pending(self) -> None:
-        assert is_valid_transition("create", None, ExportJobStatus.PENDING)
+    def test_create_from_none_is_active(self) -> None:
+        # ``create`` schedules the orchestrator inline, so the job
+        # goes straight to ACTIVE.  Mirrors the .NET flow.
+        assert is_valid_transition("create", None, ExportJobStatus.ACTIVE)
 
     def test_create_from_active_is_rejected(self) -> None:
         assert not is_valid_transition(
-            "create", ExportJobStatus.ACTIVE, ExportJobStatus.PENDING
+            "create", ExportJobStatus.ACTIVE, ExportJobStatus.ACTIVE
         )
 
     def test_create_from_terminal_revives_job(self) -> None:
         assert is_valid_transition(
-            "create", ExportJobStatus.COMPLETED, ExportJobStatus.PENDING
+            "create", ExportJobStatus.COMPLETED, ExportJobStatus.ACTIVE
         )
         assert is_valid_transition(
-            "create", ExportJobStatus.FAILED, ExportJobStatus.PENDING
-        )
-
-    def test_run_is_idempotent_on_active(self) -> None:
-        assert is_valid_transition(
-            "run", ExportJobStatus.ACTIVE, ExportJobStatus.ACTIVE
-        )
-
-    def test_run_from_pending_activates(self) -> None:
-        assert is_valid_transition(
-            "run", ExportJobStatus.PENDING, ExportJobStatus.ACTIVE
+            "create", ExportJobStatus.FAILED, ExportJobStatus.ACTIVE
         )
 
     def test_commit_checkpoint_can_fail_active_job(self) -> None:
@@ -62,13 +54,10 @@ class TestTransitionsMatrix:
             "mark_completed", ExportJobStatus.ACTIVE, ExportJobStatus.COMPLETED,
         )
         assert not is_valid_transition(
-            "mark_completed", ExportJobStatus.PENDING, ExportJobStatus.COMPLETED,
+            "mark_completed", ExportJobStatus.FAILED, ExportJobStatus.COMPLETED,
         )
 
-    def test_mark_failed_allowed_from_pending_or_active(self) -> None:
-        assert is_valid_transition(
-            "mark_failed", ExportJobStatus.PENDING, ExportJobStatus.FAILED,
-        )
+    def test_mark_failed_allowed_from_active(self) -> None:
         assert is_valid_transition(
             "mark_failed", ExportJobStatus.ACTIVE, ExportJobStatus.FAILED,
         )
@@ -82,20 +71,20 @@ class TestTransitionsMatrix:
         with pytest.raises(ExportJobInvalidTransitionError) as excinfo:
             assert_valid_transition(
                 "mark_completed",
-                ExportJobStatus.PENDING,
+                ExportJobStatus.FAILED,
                 ExportJobStatus.COMPLETED,
                 job_id="job-x",
             )
         ex = excinfo.value
         assert ex.operation == "mark_completed"
-        assert ex.from_status == ExportJobStatus.PENDING.value
+        assert ex.from_status == ExportJobStatus.FAILED.value
         assert ex.to_status == ExportJobStatus.COMPLETED.value
         assert ex.job_id == "job-x"
 
     def test_assert_valid_no_op_when_allowed(self) -> None:
         # Should not raise.
         assert_valid_transition(
-            "run", ExportJobStatus.PENDING, ExportJobStatus.ACTIVE,
+            "create", None, ExportJobStatus.ACTIVE,
         )
 
     def test_matrix_is_self_consistent(self) -> None:
@@ -109,16 +98,15 @@ class TestTransitionsMatrix:
 class TestExceptions:
     def test_invalid_transition_is_value_error(self) -> None:
         err = ExportJobInvalidTransitionError(
-            operation="run",
+            operation="create",
             from_status="Active",
-            to_status="Pending",
+            to_status="Active",
             job_id="j",
         )
         assert isinstance(err, ValueError)
         assert isinstance(err, ExportJobError)
         assert "Active" in str(err)
-        assert "Pending" in str(err)
-        assert "run" in str(err)
+        assert "create" in str(err)
         assert err.job_id == "j"
 
     def test_not_found_is_lookup_error(self) -> None:

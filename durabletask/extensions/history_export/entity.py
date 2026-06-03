@@ -14,17 +14,16 @@ plus an explicit ``schema_version``.
 Operations
 ----------
 ``create``
-    Initialise a fresh export job, or reset a terminal job back to
-    :attr:`ExportJobStatus.PENDING`.  Refuses to overwrite an active
-    job (raises :class:`ExportJobInvalidTransitionError`).
+    Initialise a fresh export job, or revive a terminal job, by
+    persisting :attr:`ExportJobStatus.ACTIVE` and scheduling the
+    driving orchestrator inline (with a deterministic instance ID
+    derived from the job ID).  Refuses to overwrite an active job
+    (raises :class:`ExportJobInvalidTransitionError`).  Mirrors the
+    .NET ``ExportJob.Create`` flow, so a single signal is enough to
+    launch a job.
 ``get``
     Returns the persisted state dict, or ``None`` if the entity has
     not been created (or has been deleted).
-``run``
-    Schedules the driving orchestrator (with a deterministic instance
-    ID derived from the job ID) and transitions the job to
-    :attr:`ExportJobStatus.ACTIVE`.  Idempotent so the client may
-    safely signal it more than once.
 ``commit_checkpoint``
     Applies an incremental update after a single export page.  When
     ``mark_failed_on_batch`` is true *and* ``failures`` is non-empty,
@@ -101,7 +100,6 @@ class ExportJobEntity(entities.DurableEntity):
 
     OP_CREATE = "create"
     OP_GET = "get"
-    OP_RUN = "run"
     OP_COMMIT_CHECKPOINT = "commit_checkpoint"
     OP_MARK_COMPLETED = "mark_completed"
     OP_MARK_FAILED = "mark_failed"
@@ -138,7 +136,7 @@ class ExportJobEntity(entities.DurableEntity):
         job_id = self._job_id()
         current = self._current_status()
         assert_valid_transition(
-            self.OP_CREATE, current, ExportJobStatus.PENDING, job_id=job_id,
+            self.OP_CREATE, current, ExportJobStatus.ACTIVE, job_id=job_id,
         )
 
         config_dict = payload.get("config")
@@ -165,68 +163,50 @@ class ExportJobEntity(entities.DurableEntity):
         # Matches the .NET ``ExportJob.Create`` revive semantics so a
         # re-created job starts from a clean slate.
         state = ExportJobState(
-            status=ExportJobStatus.PENDING,
+            status=ExportJobStatus.ACTIVE,
             config=config,
             created_at=created_at,
             last_modified_at=created_at,
         )
-        logger.info(
-            "Created export job %r in status %s", job_id, state.status.value,
-            extra={"job_id": job_id, "operation": "create"},
-        )
+
+        # The entity itself schedules the driving orchestrator inline,
+        # so a single ``create`` signal is enough to launch a job.
+        # Mirrors the .NET ``ExportJob.Create`` -> ``StartExportOrchestration``
+        # flow and avoids the client having to send a second ``run``
+        # signal (and the failure modes that come with it).
+        instance_id = orchestrator_instance_id_for(job_id)
+        try:
+            self.entity_context.schedule_new_orchestration(
+                ORCHESTRATOR_NAME,
+                input={"job_id": job_id, "config": state.config.to_dict()},
+                instance_id=instance_id,
+            )
+            state.orchestrator_instance_id = instance_id
+            logger.info(
+                "Created export job %r and scheduled orchestrator %s with "
+                "instance ID %s",
+                job_id, ORCHESTRATOR_NAME, instance_id,
+                extra={"job_id": job_id, "operation": "create"},
+            )
+        except Exception as ex:  # noqa: BLE001
+            # Mirror the .NET pattern: record the failure on persisted
+            # state and return, rather than re-raising.  Re-raising
+            # inside an entity operation can cause some entity
+            # backends to discard the in-flight state mutations,
+            # leaving the job with no error recorded.
+            state.status = ExportJobStatus.FAILED
+            state.last_error = (
+                f"Failed to schedule orchestrator: {type(ex).__name__}: {ex}"
+            )
+            logger.exception(
+                "Failed to schedule orchestrator for export job %r", job_id,
+                extra={"job_id": job_id, "operation": "create"},
+            )
         return self._save(state)
 
     def get(self, _: Any = None) -> dict[str, Any] | None:
         state = self._load()
         return state.to_dict() if state is not None else None
-
-    def run(self, _: Any = None) -> dict[str, Any] | None:
-        state = self._load()
-        if state is None:
-            raise ValueError("Cannot run uninitialized export job")
-        job_id = self._job_id()
-        assert_valid_transition(
-            self.OP_RUN, state.status, ExportJobStatus.ACTIVE, job_id=job_id,
-        )
-
-        # The entity itself schedules the driving orchestrator.  The
-        # client is therefore decoupled from the orchestrator's name
-        # and input shape.
-        if state.status is ExportJobStatus.PENDING:
-            instance_id = orchestrator_instance_id_for(job_id)
-            try:
-                self.entity_context.schedule_new_orchestration(
-                    ORCHESTRATOR_NAME,
-                    input={"job_id": job_id, "config": state.config.to_dict()},
-                    instance_id=instance_id,
-                )
-                state.orchestrator_instance_id = instance_id
-                logger.info(
-                    "Scheduled orchestrator %s for job %r with instance ID %s",
-                    ORCHESTRATOR_NAME, job_id, instance_id,
-                    extra={"job_id": job_id, "operation": "run"},
-                )
-            except Exception as ex:  # noqa: BLE001
-                # Mirror the .NET ExportJob.StartExportOrchestration pattern:
-                # record the failure on persisted state and return, rather
-                # than re-raising.  Re-raising inside an entity operation
-                # can cause some entity backends to discard the in-flight
-                # state mutations, leaving the job stuck in PENDING with no
-                # error recorded.  Returning ensures FAILED + last_error
-                # actually persist.
-                state.status = ExportJobStatus.FAILED
-                state.last_error = (
-                    f"Failed to schedule orchestrator: {type(ex).__name__}: {ex}"
-                )
-                logger.exception(
-                    "Failed to schedule orchestrator for export job %r", job_id,
-                    extra={"job_id": job_id, "operation": "run"},
-                )
-                return self._save(state)
-
-        state.status = ExportJobStatus.ACTIVE
-        state.last_error = None
-        return self._save(state)
 
     def commit_checkpoint(self, payload: Mapping[str, Any]) -> dict[str, Any] | None:
         state = self._load()

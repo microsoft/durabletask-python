@@ -27,7 +27,7 @@ ADDED
   history, and re-fetches entity state at the top of every page loop so
   external delete or mark-failed signals stop the orchestrator cleanly.
   Job state lives in a durable entity with an explicit state-transition
-  matrix (PENDING / ACTIVE / COMPLETED / FAILED); invalid transitions raise
+  matrix (ACTIVE / COMPLETED / FAILED); invalid transitions raise
   `ExportJobInvalidTransitionError`. Persisted entity state uses a
   versioned, schema-stable JSON shape (`STATE_SCHEMA_VERSION`) with no
   embedded Python type metadata. Each export job's driving orchestrator

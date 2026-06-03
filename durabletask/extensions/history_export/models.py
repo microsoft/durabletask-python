@@ -63,16 +63,13 @@ class ExportJobStatus(Enum):
 
     Status meanings
     ---------------
-    ``PENDING``
-        The job has been created and persisted but the entity has not
-        yet kicked off its driving orchestrator.  Jobs sit in this
-        state briefly between the ``create`` and ``run`` signals
-        (the public client sends both in immediate succession), or
-        for longer if ``run`` is never invoked or if a caller revives
-        a previously terminal job via ``create``.
     ``ACTIVE``
-        The job is running and the driving orchestrator is making
-        progress through pages of terminal instances.
+        The job has been created and the driving orchestrator is
+        making progress through pages of terminal instances.  This is
+        the initial status after :meth:`ExportHistoryClient.create_job`
+        because the entity schedules the orchestrator inline as part
+        of its ``create`` operation (mirroring the .NET
+        ``ExportJob.Create`` flow).
     ``COMPLETED``
         The orchestrator finished a batch successfully.
     ``FAILED``
@@ -80,7 +77,6 @@ class ExportJobStatus(Enum):
         retries.
     """
 
-    PENDING = "Pending"
     ACTIVE = "Active"
     COMPLETED = "Completed"
     FAILED = "Failed"
@@ -434,22 +430,11 @@ class ExportJobCreationOptions:
 # replaced with a registry keyed by ``(entity_name, schema_version)`` without
 # changing the on-disk shape.
 
-STATE_SCHEMA_VERSION = "1.1"
+STATE_SCHEMA_VERSION = "1.0"
 """The schema version emitted by :meth:`ExportJobState.to_dict`.
 
 Increment this when the persisted shape changes in a non-backward-compatible
 way and add a new branch in :meth:`ExportJobState.from_dict`.
-
-Version history:
-
-``"1.0"``
-    Initial shape.  ``runtime_status`` filter values were persisted as
-    enum *names* (e.g. ``"COMPLETED"``), which broke if the core SDK
-    renamed an enum constant.  Read support retained.
-``"1.1"``
-    ``runtime_status`` filter values are persisted as the protobuf
-    enum *integer* (e.g. ``2`` for ``COMPLETED``).  Reads still accept
-    the legacy 1.0 string form for backward compatibility.
 """
 
 
@@ -502,10 +487,10 @@ class ExportJobState:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ExportJobState":
         version = data.get("schema_version", "1.0")
-        if version not in {"1.0", "1.1"}:
+        if version != STATE_SCHEMA_VERSION:
             raise ValueError(
                 f"Unsupported export job state schema_version={version!r}; "
-                f"expected one of: '1.0', '1.1' (current: {STATE_SCHEMA_VERSION!r})"
+                f"expected {STATE_SCHEMA_VERSION!r}"
             )
 
         config_data = data.get("config")

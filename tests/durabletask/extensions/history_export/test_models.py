@@ -302,10 +302,12 @@ class TestExportJobStateRoundTrip:
             OrchestrationStatus.FAILED,
         ]
 
-    def test_legacy_1_0_runtime_status_names_still_load(self) -> None:
-        # A persisted state created by schema 1.0 carries enum names
-        # in ``runtime_status``.  The current loader must accept both
-        # the legacy string form and the current int form.
+    def test_runtime_status_parser_accepts_name_form_defensively(self) -> None:
+        # The persisted shape is the protobuf integer (.value), but the
+        # internal parser also accepts the enum name as a defensive
+        # measure against hand-edited / older / mis-shaped state.  This
+        # is a property of the parser, not a documented compatibility
+        # promise across schema versions.
         cfg = ExportJobConfiguration(
             mode=ExportMode.BATCH,
             filter=ExportFilter(
@@ -316,13 +318,13 @@ class TestExportJobStateRoundTrip:
             destination=_basic_destination(),
         )
         state = ExportJobState.new(cfg, created_at=_WINDOW_END)
-        legacy = state.to_dict()
-        legacy["schema_version"] = "1.0"
-        # Simulate the 1.0 wire shape for runtime_status.
-        legacy["config"]["filter"]["runtime_status"] = [
+        d = state.to_dict()
+        # Substitute the enum-name string form into an otherwise-current
+        # 1.0 payload.
+        d["config"]["filter"]["runtime_status"] = [
             OrchestrationStatus.COMPLETED.name
         ]
-        restored = ExportJobState.from_dict(legacy)
+        restored = ExportJobState.from_dict(d)
         assert restored.config.filter.runtime_status == [
             OrchestrationStatus.COMPLETED
         ]

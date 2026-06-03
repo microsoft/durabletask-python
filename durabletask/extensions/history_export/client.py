@@ -136,11 +136,11 @@ class ExportHistoryClient:
     ) -> ExportJobDescription:
         """Create a new export job and start its driving orchestrator.
 
-        The entity is created in :attr:`ExportJobStatus.PENDING` and
-        immediately signalled with ``run``, which schedules the
+        The entity processes ``create`` by validating the transition,
+        persisting :attr:`ExportJobStatus.ACTIVE`, and scheduling the
         driving orchestrator from inside the entity using a
         deterministic instance ID (``export-job-{job_id}``).  This
-        matches the .NET ``ExportJob.Run`` pattern: callers can
+        matches the .NET ``ExportJob.Create`` pattern: callers can
         correlate a job with its orchestrator by ID alone and may
         safely re-create a previously-terminated job.
         """
@@ -150,10 +150,10 @@ class ExportHistoryClient:
         created_at = datetime.now(timezone.utc)
         config_dict = config.to_dict()
 
-        # Signal create first; the entity will validate the transition
-        # and persist PENDING.  Then signal run; the entity will
-        # schedule the orchestrator and transition to ACTIVE.  Both
-        # signals are processed in FIFO order by the entity dispatcher.
+        # A single ``create`` signal is enough: the entity validates
+        # the transition, persists ACTIVE, and schedules the
+        # orchestrator inline.  Mirrors the .NET ``ExportJob.Create``
+        # flow.
         self._client.signal_entity(
             entity_id,
             ExportJobEntity.OP_CREATE,
@@ -162,14 +162,13 @@ class ExportHistoryClient:
                 "created_at": created_at.isoformat(),
             },
         )
-        self._client.signal_entity(entity_id, ExportJobEntity.OP_RUN)
         logger.info(
             "Submitted export job %r; orchestrator instance ID will be %s",
             resolved_job_id, orchestrator_instance_id_for(resolved_job_id),
         )
         return ExportJobDescription(
             job_id=resolved_job_id,
-            status=ExportJobStatus.PENDING,
+            status=ExportJobStatus.ACTIVE,
             created_at=created_at,
             last_modified_at=created_at,
             config=config,
@@ -285,7 +284,7 @@ class ExportHistoryClient:
         """Poll until the job reaches a terminal status or *timeout* elapses.
 
         Raises:
-            TimeoutError: If the job is still pending/active after
+            TimeoutError: If the job is still active after
                 *timeout* seconds.
             ExportJobNotFoundError: If the job cannot be found at all.
         """

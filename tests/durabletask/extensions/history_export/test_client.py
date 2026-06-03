@@ -127,7 +127,7 @@ def test_create_get_and_wait_for_job_end_to_end(
     )
 
     assert desc.job_id
-    assert desc.status == ExportJobStatus.PENDING
+    assert desc.status == ExportJobStatus.ACTIVE
     assert desc.config is not None
     assert desc.orchestrator_instance_id == f"export-job-{desc.job_id}"
 
