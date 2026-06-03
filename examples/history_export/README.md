@@ -35,4 +35,5 @@ The script:
 
 > [!TIP]
 > Set `STORAGE_CONNECTION_STRING` to point at a real Azure Storage
-> account instead of Azurite.
+> account instead of Azurite. Set `EXPORT_CONTAINER` to override the
+> default destination container name (`history-export-sample`).

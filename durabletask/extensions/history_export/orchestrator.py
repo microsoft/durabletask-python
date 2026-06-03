@@ -47,6 +47,7 @@ from durabletask.extensions.history_export.activities import (
     LIST_TERMINAL_INSTANCES_ACTIVITY,
     build_list_activity_input,
 )
+from durabletask.extensions.history_export.entity import ExportJobEntity
 from durabletask.extensions.history_export.models import (
     ExportJobConfiguration,
     ExportJobStatus,
@@ -162,7 +163,7 @@ def export_job_orchestrator(
             # lets external state changes (delete, mark_failed) cancel
             # the orchestrator without us having to drain a backlog.
             current_state: dict[str, Any] | None = (
-                yield ctx.call_entity(entity_id, "get")
+                yield ctx.call_entity(entity_id, ExportJobEntity.OP_GET)
             )
             if current_state is None:
                 logger.info(
@@ -200,57 +201,95 @@ def export_job_orchestrator(
             failed_delta = 0
             batch_failures: list[dict[str, Any]] = []
 
-            if instance_ids:
-                batch_succeeded = False
-                results: list[_ExportActivityResult] = []
-                for attempt in range(1, MAX_BATCH_RETRY_ATTEMPTS + 1):
-                    results = yield from _run_page(
-                        ctx,
-                        instance_ids=instance_ids,
-                        config=config,
-                        max_parallel=config.max_parallel_exports,
+            # Empty page handling matches the .NET ExportJobOrchestrator:
+            # CONTINUOUS sleeps and re-polls, BATCH exits cleanly even
+            # if the backend returned a non-null continuation token.
+            # This guards against backends that legally return an empty
+            # page with a token (the orchestrator would otherwise spin
+            # forever in BATCH mode emitting no-op commit_checkpoints).
+            if not instance_ids:
+                if config.mode is ExportMode.CONTINUOUS:
+                    yield ctx.create_timer(
+                        ctx.current_utc_datetime + _continuous_idle_delay()
                     )
-                    failed_results = [r for r in results if not r.get("success")]
-                    if not failed_results:
-                        batch_succeeded = True
-                        break
-                    if attempt < MAX_BATCH_RETRY_ATTEMPTS:
-                        delay = _batch_retry_delay(attempt)
-                        yield ctx.create_timer(ctx.current_utc_datetime + delay)
-
-                exported_delta = sum(1 for r in results if r.get("success"))
-                failed_delta = sum(1 for r in results if not r.get("success"))
-                batch_failures = [
+                    continuation_token = None
+                    continue
+                ctx.signal_entity(
+                    entity_id,
+                    ExportJobEntity.OP_COMMIT_CHECKPOINT,
                     {
-                        "instance_id": r["instance_id"],
-                        "reason": r.get("error") or "Unknown error",
-                        "attempt_count": MAX_BATCH_RETRY_ATTEMPTS,
-                        "last_attempt": ctx.current_utc_datetime.isoformat(),
-                    }
-                    for r in results
-                    if not r.get("success")
-                ]
+                        "scanned_delta": 0,
+                        "exported_delta": 0,
+                        "failed_delta": 0,
+                        "last_instance_key": None,
+                    },
+                )
+                break
 
-                if not batch_succeeded:
-                    ctx.signal_entity(
-                        entity_id,
-                        "commit_checkpoint",
-                        {
-                            "scanned_delta": 0,
-                            "exported_delta": 0,
-                            "failed_delta": failed_delta,
-                            "failures": batch_failures,
-                            "mark_failed_on_batch": True,
-                        },
-                    )
-                    totals["scanned"] += scanned_delta
-                    totals["exported"] += exported_delta
-                    totals["failed"] += failed_delta
-                    raise RuntimeError(
-                        f"Export job '{job_id}' batch failed after "
-                        f"{MAX_BATCH_RETRY_ATTEMPTS} attempts; "
-                        f"{failed_delta} instances could not be exported."
-                    )
+            # The page has at least one instance: fan out exports.
+            batch_succeeded = False
+            results: list[_ExportActivityResult] = []
+            for attempt in range(1, MAX_BATCH_RETRY_ATTEMPTS + 1):
+                results = yield from _run_page(
+                    ctx,
+                    instance_ids=instance_ids,
+                    config=config,
+                    max_parallel=config.max_parallel_exports,
+                )
+                failed_results = [r for r in results if not r.get("success")]
+                if not failed_results:
+                    batch_succeeded = True
+                    break
+                if attempt < MAX_BATCH_RETRY_ATTEMPTS:
+                    delay = _batch_retry_delay(attempt)
+                    yield ctx.create_timer(ctx.current_utc_datetime + delay)
+
+            exported_delta = sum(1 for r in results if r.get("success"))
+            failed_delta = sum(1 for r in results if not r.get("success"))
+            batch_failures = [
+                {
+                    "instance_id": r["instance_id"],
+                    "reason": r.get("error") or "Unknown error",
+                    "attempt_count": MAX_BATCH_RETRY_ATTEMPTS,
+                    "last_attempt": ctx.current_utc_datetime.isoformat(),
+                }
+                for r in results
+                if not r.get("success")
+            ]
+
+            if not batch_succeeded:
+                ctx.signal_entity(
+                    entity_id,
+                    ExportJobEntity.OP_COMMIT_CHECKPOINT,
+                    {
+                        "scanned_delta": 0,
+                        "exported_delta": 0,
+                        "failed_delta": failed_delta,
+                        "failures": batch_failures,
+                        "mark_failed_on_batch": True,
+                    },
+                )
+                totals["scanned"] += scanned_delta
+                totals["exported"] += exported_delta
+                totals["failed"] += failed_delta
+                # The entity already transitioned to FAILED via
+                # the commit_checkpoint signal above; returning
+                # cleanly avoids the outer ``except`` issuing a
+                # second mark_failed signal which the transitions
+                # matrix would reject (the entity is no longer
+                # ACTIVE).  Surfacing the cause is the caller's
+                # responsibility via :meth:`ExportHistoryClient.get_job`,
+                # whose ``last_error`` carries the failure summary.
+                logger.warning(
+                    "Export job %r marked FAILED after %d batch attempts; "
+                    "%d instances failed to export",
+                    job_id, MAX_BATCH_RETRY_ATTEMPTS, failed_delta,
+                )
+                return {
+                    "job_id": job_id,
+                    "status": ExportJobStatus.FAILED.value,
+                    "totals": totals,
+                }
 
             next_token_raw = page.get("continuation_token")
             next_token: str | None = (
@@ -258,7 +297,7 @@ def export_job_orchestrator(
             )
             ctx.signal_entity(
                 entity_id,
-                "commit_checkpoint",
+                ExportJobEntity.OP_COMMIT_CHECKPOINT,
                 {
                     "scanned_delta": scanned_delta,
                     "exported_delta": exported_delta,
@@ -284,13 +323,13 @@ def export_job_orchestrator(
             continuation_token = next_token
 
         # Reaching here means BATCH mode finished its window cleanly.
-        ctx.signal_entity(entity_id, "mark_completed")
+        ctx.signal_entity(entity_id, ExportJobEntity.OP_MARK_COMPLETED)
         return {"job_id": job_id, "status": "Completed", "totals": totals}
 
     except Exception as ex:  # noqa: BLE001 - reported back via mark_failed
         ctx.signal_entity(
             entity_id,
-            "mark_failed",
+            ExportJobEntity.OP_MARK_FAILED,
             {"reason": f"{type(ex).__name__}: {ex}"},
         )
         raise

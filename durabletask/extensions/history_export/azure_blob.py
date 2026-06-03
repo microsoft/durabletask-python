@@ -53,6 +53,11 @@ class AzureBlobHistoryExportWriterOptions:
             (useful for Azurite compatibility).
         create_container_if_not_exists: When ``True`` (the default),
             ensure the container exists on the first write.
+        overwrite: When ``True`` (the default), each blob upload
+            replaces any existing blob of the same name.  Set to
+            ``False`` for compliance setups that require
+            write-once / immutable exports; in that mode the writer
+            raises if a blob already exists at the target path.
     """
 
     container_name: str
@@ -61,6 +66,7 @@ class AzureBlobHistoryExportWriterOptions:
     credential: Any = field(default=None, repr=False)
     api_version: str | None = None
     create_container_if_not_exists: bool = True
+    overwrite: bool = True
 
     def __post_init__(self) -> None:
         if not self.container_name:
@@ -155,7 +161,7 @@ class AzureBlobHistoryExportWriter:
         container_client.upload_blob(
             name=blob_name,
             data=payload,
-            overwrite=True,
+            overwrite=self._options.overwrite,
             content_settings=content_settings,
         )
 

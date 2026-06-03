@@ -224,3 +224,81 @@ def test_orchestrator_records_failure_when_no_context_bound(
                 client=dt_client, writer=export_client.writer,
             )
         )
+
+
+class _AlwaysFailingWriter:
+    """Writer that raises on every call — used to force batch retries to exhaust."""
+
+    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding):
+        raise RuntimeError("simulated permanent write failure")
+
+
+def test_batch_failure_marks_job_failed_without_invalid_transition(
+    dt_client, export_client, seeded_ids, caplog,
+):
+    """Exhausting batch retries marks the job FAILED via commit_checkpoint.
+
+    Regression guard for the bug where the orchestrator used to issue
+    a second ``mark_failed`` signal after ``commit_checkpoint`` had
+    already driven the entity to FAILED, which the transitions matrix
+    would reject and log as an invalid-transition error.
+    """
+    from durabletask.extensions.history_export.activities import (
+        HistoryExportContext,
+        bind_context,
+    )
+    # Swap in a permanently-failing writer for this test only; restore
+    # the original writer in the finally block so the shared module
+    # fixtures stay consistent.
+    original_writer = export_client.writer
+    bind_context(HistoryExportContext(client=dt_client, writer=_AlwaysFailingWriter()))
+    try:
+        with caplog.at_level("WARNING", logger="durabletask.extensions.history_export"):
+            now = datetime.now(timezone.utc)
+            desc = export_client.create_job(
+                ExportJobCreationOptions(
+                    mode=ExportMode.BATCH,
+                    completed_time_from=now - timedelta(hours=1),
+                    completed_time_to=now + timedelta(hours=1),
+                    destination=ExportDestination(
+                        container="exports", prefix="batch-fail-test",
+                    ),
+                    format=ExportFormat(kind=ExportFormatKind.JSON),
+                    max_instances_per_batch=10,
+                )
+            )
+            # Generous timeout because the orchestrator does 3 batch x
+            # 3 activity retries against the (overridden, fast) backoff.
+            final = export_client.wait_for_job(desc.job_id, timeout=60, poll_interval=0.1)
+
+        assert final.status == ExportJobStatus.FAILED
+        assert final.last_error is not None
+        # last_error summary mentions the writer's failure reason.
+        assert "simulated permanent write failure" in (final.last_error or "")
+        # The failures list is populated and at least one entry
+        # carries the reason text propagated up from the writer.
+        # (Each failure's ``instance_id`` is whatever terminal
+        # orchestration was in the export window — which may include
+        # prior tests' export orchestrators, not just the seeded
+        # sample workload.  Reasons can also vary if prior writers
+        # left blobs behind, etc.)
+        assert len(final.failures) >= 1
+        assert any(
+            "simulated permanent write failure" in f.reason
+            for f in final.failures
+        )
+
+        # Critical regression check: the orchestrator must not have
+        # issued a second ``mark_failed`` signal after
+        # ``commit_checkpoint`` already transitioned the entity to
+        # FAILED.  If it had, the entity would have raised
+        # ExportJobInvalidTransitionError; the SDK logs that into
+        # caplog at WARNING/ERROR severity.
+        for record in caplog.records:
+            assert "ExportJobInvalidTransitionError" not in record.getMessage(), (
+                f"Found invalid-transition log: {record.getMessage()!r}"
+            )
+    finally:
+        bind_context(
+            HistoryExportContext(client=dt_client, writer=original_writer)
+        )

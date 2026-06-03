@@ -27,6 +27,7 @@ from durabletask.extensions.history_export.client import (
     ExportHistoryClient,
     ExportHistoryJobClient,
 )
+from durabletask.extensions.history_export.entity import ExportJobEntity
 from durabletask.extensions.history_export.exceptions import (
     ExportJobError,
     ExportJobInvalidTransitionError,
@@ -65,6 +66,7 @@ __all__ = [
     "ExportJobConfiguration",
     "ExportJobCreationOptions",
     "ExportJobDescription",
+    "ExportJobEntity",
     "ExportJobError",
     "ExportJobInvalidTransitionError",
     "ExportJobNotFoundError",
@@ -76,5 +78,3 @@ __all__ = [
     "HistoryWriter",
     "orchestrator_instance_id_for",
 ]
-
-PACKAGE_NAME = "durabletask.extensions.history_export"

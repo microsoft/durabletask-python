@@ -92,6 +92,74 @@ class TestConfigurationValidation:
                 max_parallel_exports=0,
             )
 
+    def test_batch_size_must_be_within_bounds(self) -> None:
+        # Lower bound: zero is rejected.
+        with pytest.raises(ValueError, match="max_instances_per_batch"):
+            ExportJobConfiguration(
+                mode=ExportMode.BATCH,
+                filter=ExportFilter(
+                    completed_time_from=_WINDOW_START,
+                    completed_time_to=_WINDOW_END,
+                ),
+                destination=_basic_destination(),
+                max_instances_per_batch=0,
+            )
+        # Upper bound: 1001 is rejected (matches .NET cap).
+        with pytest.raises(ValueError, match="max_instances_per_batch"):
+            ExportJobConfiguration(
+                mode=ExportMode.BATCH,
+                filter=ExportFilter(
+                    completed_time_from=_WINDOW_START,
+                    completed_time_to=_WINDOW_END,
+                ),
+                destination=_basic_destination(),
+                max_instances_per_batch=1001,
+            )
+
+    def test_continuous_mode_rejects_completed_time_to(self) -> None:
+        with pytest.raises(ValueError, match="continuous mode"):
+            ExportJobConfiguration(
+                mode=ExportMode.CONTINUOUS,
+                filter=ExportFilter(
+                    completed_time_from=_WINDOW_START,
+                    completed_time_to=_WINDOW_END,
+                ),
+                destination=_basic_destination(),
+            )
+
+    def test_window_must_be_strictly_increasing(self) -> None:
+        with pytest.raises(ValueError, match="strictly greater"):
+            ExportJobConfiguration(
+                mode=ExportMode.BATCH,
+                filter=ExportFilter(
+                    completed_time_from=_WINDOW_END,
+                    completed_time_to=_WINDOW_START,
+                ),
+                destination=_basic_destination(),
+            )
+        # Equal times are also rejected.
+        with pytest.raises(ValueError, match="strictly greater"):
+            ExportJobConfiguration(
+                mode=ExportMode.BATCH,
+                filter=ExportFilter(
+                    completed_time_from=_WINDOW_START,
+                    completed_time_to=_WINDOW_START,
+                ),
+                destination=_basic_destination(),
+            )
+
+    def test_runtime_status_rejects_non_terminal(self) -> None:
+        with pytest.raises(ValueError, match="terminal statuses"):
+            ExportJobConfiguration(
+                mode=ExportMode.BATCH,
+                filter=ExportFilter(
+                    completed_time_from=_WINDOW_START,
+                    completed_time_to=_WINDOW_END,
+                    runtime_status=[OrchestrationStatus.RUNNING],
+                ),
+                destination=_basic_destination(),
+            )
+
 
 class TestFilterDefaults:
     def test_default_runtime_statuses(self) -> None:
@@ -207,3 +275,54 @@ class TestExportJobStateRoundTrip:
         state.failures.append(f)
         restored = ExportJobState.from_dict(state.to_dict())
         assert restored.failures == [f]
+
+    def test_runtime_status_persisted_as_protobuf_int(self) -> None:
+        cfg = ExportJobConfiguration(
+            mode=ExportMode.BATCH,
+            filter=ExportFilter(
+                completed_time_from=_WINDOW_START,
+                completed_time_to=_WINDOW_END,
+                runtime_status=[
+                    OrchestrationStatus.COMPLETED,
+                    OrchestrationStatus.FAILED,
+                ],
+            ),
+            destination=_basic_destination(),
+        )
+        d = cfg.to_dict()
+        # The on-disk shape carries the wire-stable enum integers
+        # (.value), not the SDK-internal enum names (.name).
+        assert d["filter"]["runtime_status"] == [
+            OrchestrationStatus.COMPLETED.value,
+            OrchestrationStatus.FAILED.value,
+        ]
+        restored = ExportJobConfiguration.from_dict(d)
+        assert restored.filter.runtime_status == [
+            OrchestrationStatus.COMPLETED,
+            OrchestrationStatus.FAILED,
+        ]
+
+    def test_legacy_1_0_runtime_status_names_still_load(self) -> None:
+        # A persisted state created by schema 1.0 carries enum names
+        # in ``runtime_status``.  The current loader must accept both
+        # the legacy string form and the current int form.
+        cfg = ExportJobConfiguration(
+            mode=ExportMode.BATCH,
+            filter=ExportFilter(
+                completed_time_from=_WINDOW_START,
+                completed_time_to=_WINDOW_END,
+                runtime_status=[OrchestrationStatus.COMPLETED],
+            ),
+            destination=_basic_destination(),
+        )
+        state = ExportJobState.new(cfg, created_at=_WINDOW_END)
+        legacy = state.to_dict()
+        legacy["schema_version"] = "1.0"
+        # Simulate the 1.0 wire shape for runtime_status.
+        legacy["config"]["filter"]["runtime_status"] = [
+            OrchestrationStatus.COMPLETED.name
+        ]
+        restored = ExportJobState.from_dict(legacy)
+        assert restored.config.filter.runtime_status == [
+            OrchestrationStatus.COMPLETED
+        ]

@@ -145,7 +145,7 @@ class ExportHistoryClient:
         safely re-create a previously-terminated job.
         """
         config = options.to_configuration()
-        resolved_job_id = job_id or options.job_id or uuid.uuid4().hex
+        resolved_job_id = job_id or uuid.uuid4().hex
         entity_id = entities.EntityInstanceId(ENTITY_NAME, resolved_job_id)
         created_at = datetime.now(timezone.utc)
         config_dict = config.to_dict()
@@ -156,14 +156,13 @@ class ExportHistoryClient:
         # signals are processed in FIFO order by the entity dispatcher.
         self._client.signal_entity(
             entity_id,
-            "create",
+            ExportJobEntity.OP_CREATE,
             input={
                 "config": config_dict,
                 "created_at": created_at.isoformat(),
             },
         )
-        self._client.signal_entity(entity_id, "run")
-
+        self._client.signal_entity(entity_id, ExportJobEntity.OP_RUN)
         logger.info(
             "Submitted export job %r; orchestrator instance ID will be %s",
             resolved_job_id, orchestrator_instance_id_for(resolved_job_id),
@@ -184,7 +183,14 @@ class ExportHistoryClient:
         )
 
     def get_job(self, job_id: str) -> ExportJobDescription | None:
-        """Look up an export job by ID.  Returns ``None`` if not found."""
+        """Look up an export job by ID.  Returns ``None`` if not found.
+
+        Note that the lookup-miss contract differs from
+        :meth:`wait_for_job`: ``get_job`` is a passive read that
+        returns ``None`` when the entity does not exist, while
+        ``wait_for_job`` raises :class:`ExportJobNotFoundError` after
+        its timeout if the entity never appears.
+        """
         entity_id = entities.EntityInstanceId(ENTITY_NAME, job_id)
         meta = self._client.get_entity(entity_id, include_state=True)
         if meta is None:
@@ -235,18 +241,35 @@ class ExportHistoryClient:
                 continue
             raw = meta.get_state(str)
             if not raw:
+                logger.warning(
+                    "list_jobs: skipping export-job entity %r with no "
+                    "persisted state", meta.id.key,
+                )
                 continue
             try:
                 state = json.loads(raw)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as ex:
+                logger.warning(
+                    "list_jobs: skipping export-job entity %r; failed to "
+                    "parse state JSON (%s)", meta.id.key, ex,
+                )
                 continue
             if not isinstance(state, dict):
+                logger.warning(
+                    "list_jobs: skipping export-job entity %r; persisted "
+                    "state is not a JSON object (got %s)",
+                    meta.id.key, type(state).__name__,
+                )
                 continue
             try:
                 desc = ExportJobDescription.from_state_dict(
                     meta.id.key, cast("dict[str, Any]", state),
                 )
-            except (KeyError, ValueError):
+            except (KeyError, ValueError) as ex:
+                logger.warning(
+                    "list_jobs: skipping export-job entity %r; state did "
+                    "not match the current schema (%s)", meta.id.key, ex,
+                )
                 continue
             if status_filter is not None and desc.status not in status_filter:
                 continue
@@ -289,7 +312,13 @@ class ExportHistoryClient:
             time.sleep(poll_interval)
 
     def delete_job(self, job_id: str) -> None:
-        """Delete the export-job entity, clearing its state.
+        """Request deletion of the export-job entity, clearing its state.
+
+        This call is **best-effort and fire-and-forget**: it enqueues a
+        ``delete`` signal on the entity but does not wait for the
+        entity dispatcher to process it.  Callers that need
+        confirmation should poll :meth:`get_job` and wait for it to
+        return ``None``.
 
         The driving orchestrator will detect the deletion at its next
         loop iteration (via :meth:`OrchestrationContext.call_entity`)
@@ -298,7 +327,17 @@ class ExportHistoryClient:
         This does NOT delete blobs already written to the destination.
         """
         entity_id = entities.EntityInstanceId(ENTITY_NAME, job_id)
-        self._client.signal_entity(entity_id, "delete")
+        self._client.signal_entity(entity_id, ExportJobEntity.OP_DELETE)
+
+    def cancel_job(self, job_id: str) -> None:
+        """Alias for :meth:`delete_job`.
+
+        ``CONTINUOUS`` mode has no natural completion, so users
+        looking to stop a tailing export are likely to look for
+        ``cancel_job`` rather than ``delete_job``.  Provided as a thin
+        alias to make either name discoverable.
+        """
+        self.delete_job(job_id)
 
     # ------------------------------------------------------------------
     # Convenience

@@ -94,6 +94,29 @@ _DEFAULT_TERMINAL_STATUSES: list[OrchestrationStatus] = [
 ]
 
 
+def _parse_runtime_status(value: Any) -> OrchestrationStatus:
+    """Parse a runtime status from its persisted representation.
+
+    Accepts both the current wire format (``.value`` — the protobuf
+    integer) and the legacy schema-1.0 format (``.name`` — the enum
+    constant name).  Renaming an enum constant in the core SDK is
+    therefore non-breaking for persisted state.
+    """
+    if isinstance(value, OrchestrationStatus):
+        return value
+    if isinstance(value, int):
+        return OrchestrationStatus(value)
+    if isinstance(value, str):
+        # Try integer-as-string first, then fall back to enum name.
+        try:
+            return OrchestrationStatus(int(value))
+        except (TypeError, ValueError):
+            return OrchestrationStatus[value]
+    raise TypeError(
+        f"Cannot parse runtime status from value of type {type(value).__name__!r}"
+    )
+
+
 # ----------------------------------------------------------------------
 # Configuration dataclasses
 # ----------------------------------------------------------------------
@@ -174,8 +197,11 @@ class ExportFilter:
         return {
             "completed_time_from": dt_to_iso(self.completed_time_from),
             "completed_time_to": dt_to_iso(self.completed_time_to),
+            # Persist by ``.value`` (the protobuf integer) rather than
+            # ``.name`` so renaming an enum constant in the core SDK
+            # does not break previously-persisted job state.
             "runtime_status": (
-                [s.name for s in self.runtime_status]
+                [s.value for s in self.runtime_status]
                 if self.runtime_status is not None
                 else None
             ),
@@ -191,7 +217,7 @@ class ExportFilter:
             completed_time_from=completed_from,
             completed_time_to=dt_from_iso(data.get("completed_time_to")),
             runtime_status=(
-                [OrchestrationStatus[name] for name in statuses]
+                [_parse_runtime_status(s) for s in statuses]
                 if statuses is not None
                 else None
             ),
@@ -259,14 +285,51 @@ class ExportJobConfiguration:
     max_parallel_exports: int = 32
 
     def __post_init__(self) -> None:
-        if self.max_instances_per_batch <= 0:
-            raise ValueError("max_instances_per_batch must be positive")
+        # Bounds on batch sizing.  Upper bound matches the .NET
+        # ``ExportJobCreationOptions`` cap to avoid runaway page sizes.
+        if not 1 <= self.max_instances_per_batch <= 1000:
+            raise ValueError(
+                "max_instances_per_batch must be in [1, 1000]; got "
+                f"{self.max_instances_per_batch}"
+            )
         if self.max_parallel_exports <= 0:
             raise ValueError("max_parallel_exports must be positive")
-        if self.mode == ExportMode.BATCH and self.filter.completed_time_to is None:
+
+        # Mode-specific filter validation.
+        if self.mode is ExportMode.BATCH and self.filter.completed_time_to is None:
             raise ValueError(
                 "completed_time_to is required for batch mode exports"
             )
+        if self.mode is ExportMode.CONTINUOUS and self.filter.completed_time_to is not None:
+            raise ValueError(
+                "completed_time_to is not allowed for continuous mode "
+                "exports; the tail has no upper bound"
+            )
+
+        # Window must be a strictly-increasing range when both ends
+        # are set.  Catches upside-down windows early.
+        if (
+            self.filter.completed_time_to is not None
+            and self.filter.completed_time_to <= self.filter.completed_time_from
+        ):
+            raise ValueError(
+                "completed_time_to must be strictly greater than "
+                "completed_time_from"
+            )
+
+        # Only terminal statuses make sense for export.  Match the .NET
+        # validation set.
+        if self.filter.runtime_status is not None:
+            disallowed = [
+                s for s in self.filter.runtime_status
+                if s not in _DEFAULT_TERMINAL_STATUSES
+            ]
+            if disallowed:
+                names = ", ".join(sorted(s.name for s in disallowed))
+                raise ValueError(
+                    f"runtime_status may only contain terminal statuses "
+                    f"({{COMPLETED, FAILED, TERMINATED}}); got {names}"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -280,11 +343,18 @@ class ExportJobConfiguration:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ExportJobConfiguration":
+        # Use an explicit ``None`` check (rather than ``or``) so that an
+        # empty ``format`` dict still goes through ``from_dict`` and
+        # raises a clear KeyError, instead of silently being replaced
+        # by the default.
+        format_data = data.get("format")
+        if format_data is None:
+            format_data = {"kind": ExportFormatKind.JSONL_GZIP.value}
         return cls(
             mode=ExportMode(data["mode"]),
             filter=ExportFilter.from_dict(data["filter"]),
             destination=ExportDestination.from_dict(data["destination"]),
-            format=ExportFormat.from_dict(data.get("format") or {"kind": ExportFormatKind.JSONL_GZIP.value}),
+            format=ExportFormat.from_dict(format_data),
             max_instances_per_batch=int(data.get("max_instances_per_batch", 100)),
             max_parallel_exports=int(data.get("max_parallel_exports", 32)),
         )
@@ -313,7 +383,15 @@ class ExportJobQuery:
 
 @dataclass
 class ExportJobCreationOptions:
-    """User-supplied options for creating a new export job."""
+    """User-supplied options for creating a new export job.
+
+    The job ID is **not** an attribute here; pass it explicitly to
+    :meth:`ExportHistoryClient.create_job` via the ``job_id`` kwarg,
+    or let the client auto-generate one.  Keeping the ID separate from
+    the configuration avoids the .NET API's awkward duplication where
+    both ``options.JobId`` and a constructor argument could specify
+    the same field.
+    """
 
     mode: ExportMode
     completed_time_from: datetime
@@ -321,7 +399,6 @@ class ExportJobCreationOptions:
     completed_time_to: datetime | None = None
     runtime_status: list[OrchestrationStatus] | None = None
     format: ExportFormat = field(default_factory=ExportFormat)
-    job_id: str | None = None
     max_instances_per_batch: int = 100
     max_parallel_exports: int = 32
 
@@ -357,11 +434,22 @@ class ExportJobCreationOptions:
 # replaced with a registry keyed by ``(entity_name, schema_version)`` without
 # changing the on-disk shape.
 
-STATE_SCHEMA_VERSION = "1.0"
+STATE_SCHEMA_VERSION = "1.1"
 """The schema version emitted by :meth:`ExportJobState.to_dict`.
 
 Increment this when the persisted shape changes in a non-backward-compatible
 way and add a new branch in :meth:`ExportJobState.from_dict`.
+
+Version history:
+
+``"1.0"``
+    Initial shape.  ``runtime_status`` filter values were persisted as
+    enum *names* (e.g. ``"COMPLETED"``), which broke if the core SDK
+    renamed an enum constant.  Read support retained.
+``"1.1"``
+    ``runtime_status`` filter values are persisted as the protobuf
+    enum *integer* (e.g. ``2`` for ``COMPLETED``).  Reads still accept
+    the legacy 1.0 string form for backward compatibility.
 """
 
 
@@ -414,10 +502,10 @@ class ExportJobState:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ExportJobState":
         version = data.get("schema_version", "1.0")
-        if version != STATE_SCHEMA_VERSION:
+        if version not in {"1.0", "1.1"}:
             raise ValueError(
                 f"Unsupported export job state schema_version={version!r}; "
-                f"expected {STATE_SCHEMA_VERSION!r}"
+                f"expected one of: '1.0', '1.1' (current: {STATE_SCHEMA_VERSION!r})"
             )
 
         config_data = data.get("config")

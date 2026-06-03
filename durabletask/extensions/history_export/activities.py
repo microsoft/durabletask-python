@@ -68,8 +68,25 @@ _context: HistoryExportContext | None = None
 
 
 def bind_context(context: HistoryExportContext) -> None:
-    """Install the runtime dependencies for the history-export activities."""
+    """Install the runtime dependencies for the history-export activities.
+
+    The bound context is process-wide.  Calling this more than once in
+    the same process — for example by constructing two
+    :class:`ExportHistoryClient` instances with different writers —
+    silently replaces the previously-bound writer for *all* in-flight
+    activities.  Such a rebind emits a logger warning so the
+    misconfiguration is visible at runtime.
+    """
     global _context
+    if _context is not None and _context is not context:
+        from durabletask.extensions.history_export._logging import logger
+        logger.warning(
+            "history_export.bind_context() replacing an existing bound "
+            "context (writer=%r); only one writer can be active per process. "
+            "Run a separate worker process per writer if you need multiple "
+            "destinations.",
+            type(context.writer).__name__,
+        )
     _context = context
 
 

@@ -75,52 +75,52 @@ def main() -> None:
                 api_version="2024-08-04",
             )
         )
+        try:
+            dt_client = client.TaskHubGrpcClient(host_address=HOST)
+            export_client = ExportHistoryClient(dt_client, writer)
 
-        dt_client = client.TaskHubGrpcClient(host_address=HOST)
-        export_client = ExportHistoryClient(dt_client, writer)
+            with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+                # Register the workload orchestrator and activity.
+                w.add_orchestrator(sample_orchestrator)
+                w.add_activity(square)
 
-        with worker.TaskHubGrpcWorker(host_address=HOST) as w:
-            # Register the workload orchestrator and activity.
-            w.add_orchestrator(sample_orchestrator)
-            w.add_activity(square)
+                # Register the export-job entity, activities, and orchestrator.
+                export_client.register_worker(w)
+                w.start()
 
-            # Register the export-job entity, activities, and orchestrator.
-            export_client.register_worker(w)
-            w.start()
+                # Seed some terminal instances to export.
+                print("\nSeeding sample orchestrations...")
+                for n in range(1, 6):
+                    sid = dt_client.schedule_new_orchestration(sample_orchestrator, input=n)
+                    state = dt_client.wait_for_orchestration_completion(sid, timeout=30)
+                    assert state and state.runtime_status == client.OrchestrationStatus.COMPLETED
+                time.sleep(0.5)
 
-            # Seed some terminal instances to export.
-            print("\nSeeding sample orchestrations...")
-            for n in range(1, 6):
-                sid = dt_client.schedule_new_orchestration(sample_orchestrator, input=n)
-                state = dt_client.wait_for_orchestration_completion(sid, timeout=30)
-                assert state and state.runtime_status == client.OrchestrationStatus.COMPLETED
-            time.sleep(0.5)
-
-            # Create an export job for the seeded window.
-            now = datetime.now(timezone.utc)
-            print("\nCreating export job...")
-            desc = export_client.create_job(
-                ExportJobCreationOptions(
-                    mode=ExportMode.BATCH,
-                    completed_time_from=now - timedelta(hours=1),
-                    completed_time_to=now + timedelta(hours=1),
-                    destination=ExportDestination(container=CONTAINER_NAME, prefix="sample-run"),
-                    format=ExportFormat(kind=ExportFormatKind.JSONL_GZIP),
-                    max_instances_per_batch=10,
+                # Create an export job for the seeded window.
+                now = datetime.now(timezone.utc)
+                print("\nCreating export job...")
+                desc = export_client.create_job(
+                    ExportJobCreationOptions(
+                        mode=ExportMode.BATCH,
+                        completed_time_from=now - timedelta(hours=1),
+                        completed_time_to=now + timedelta(hours=1),
+                        destination=ExportDestination(container=CONTAINER_NAME, prefix="sample-run"),
+                        format=ExportFormat(kind=ExportFormatKind.JSONL_GZIP),
+                        max_instances_per_batch=10,
+                    )
                 )
-            )
-            print(f"  job_id: {desc.job_id}")
-            print(f"  orchestrator_instance_id: {desc.orchestrator_instance_id}")
+                print(f"  job_id: {desc.job_id}")
+                print(f"  orchestrator_instance_id: {desc.orchestrator_instance_id}")
 
-            final = export_client.wait_for_job(desc.job_id, timeout=120, poll_interval=0.5)
-            print("\nFinal job status:")
-            print(f"  status:              {final.status.value}")
-            print(f"  scanned_instances:   {final.scanned_instances}")
-            print(f"  exported_instances:  {final.exported_instances}")
-            print(f"  failed_instances:    {final.failed_instances}")
-            if final.last_error:
-                print(f"  last_error:          {final.last_error}")
-
+                final = export_client.wait_for_job(desc.job_id, timeout=120, poll_interval=0.5)
+                print("\nFinal job status:")
+                print(f"  status:              {final.status.value}")
+                print(f"  scanned_instances:   {final.scanned_instances}")
+                print(f"  exported_instances:  {final.exported_instances}")
+                print(f"  failed_instances:    {final.failed_instances}")
+                if final.last_error:
+                    print(f"  last_error:          {final.last_error}")
+        finally:
             writer.close()
     finally:
         backend.stop()

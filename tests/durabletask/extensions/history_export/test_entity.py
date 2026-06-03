@@ -144,7 +144,7 @@ def test_create_persists_pending_status(c) -> None:
     c.signal_entity(entity_id, "create", input=_create_payload())
 
     state = _wait_for_status(c, entity_id, ExportJobStatus.PENDING)
-    assert state["schema_version"] == "1.0"
+    assert state["schema_version"] == "1.1"
     assert state["status"] == ExportJobStatus.PENDING.value
     assert state["orchestrator_instance_id"] is None
     assert state["config"]["destination"]["container"] == "exports"
@@ -189,16 +189,63 @@ def test_create_on_active_job_is_rejected_and_state_unchanged(c) -> None:
 
 
 def test_create_after_failure_resets_to_pending(c) -> None:
+    """Reviving a terminal job rewinds every progress field.
+
+    Matches the .NET ``ExportJob.Create`` revive semantics: counters,
+    checkpoint, ``last_checkpoint_time``, ``last_error``, and the
+    accumulated ``failures`` list are all reset to a clean slate.
+    """
     entity_id = entities.EntityInstanceId(ENTITY_NAME, "job-1d")
     c.signal_entity(entity_id, "create", input=_create_payload())
     c.signal_entity(entity_id, "run")
     _wait_for_status(c, entity_id, ExportJobStatus.ACTIVE)
 
-    c.signal_entity(entity_id, "mark_failed", input={"reason": "boom"})
-    _wait_for_status(c, entity_id, ExportJobStatus.FAILED)
+    # Apply enough progress and a failure so revival has something to
+    # actually reset.
+    c.signal_entity(
+        entity_id,
+        "commit_checkpoint",
+        input={
+            "scanned_delta": 12,
+            "exported_delta": 9,
+            "failed_delta": 3,
+            "last_instance_key": "ts|inst-12",
+            "failures": [
+                {
+                    "instance_id": "inst-z",
+                    "reason": "timeout",
+                    "attempt_count": 3,
+                    "last_attempt": "2026-01-01T00:00:00+00:00",
+                },
+            ],
+        },
+    )
+    pre_revive = _wait_for_state(
+        c, entity_id,
+        lambda s: s.get("scanned_instances") == 12,
+        description="progress to land before revival",
+    )
+    assert pre_revive["checkpoint"]["last_instance_key"] == "ts|inst-12"
+    assert pre_revive["last_checkpoint_time"] is not None
+    assert len(pre_revive["failures"]) == 1
 
+    c.signal_entity(entity_id, "mark_failed", input={"reason": "boom"})
+    failed = _wait_for_status(c, entity_id, ExportJobStatus.FAILED)
+    assert failed["last_error"] == "boom"
+
+    # Revive: every progress field should reset.
     c.signal_entity(entity_id, "create", input=_create_payload())
-    _wait_for_status(c, entity_id, ExportJobStatus.PENDING)
+    revived = _wait_for_status(c, entity_id, ExportJobStatus.PENDING)
+    assert revived["scanned_instances"] == 0
+    assert revived["exported_instances"] == 0
+    assert revived["failed_instances"] == 0
+    assert revived["checkpoint"]["last_instance_key"] is None
+    assert revived["last_checkpoint_time"] is None
+    assert revived["last_error"] is None
+    assert revived["failures"] == []
+    # The orchestrator instance ID is also re-derived by ``run``;
+    # ``create`` itself does not pre-populate it.
+    assert revived["orchestrator_instance_id"] is None
 
 
 def test_commit_checkpoint_requires_active_status(c) -> None:
