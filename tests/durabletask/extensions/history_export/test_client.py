@@ -34,7 +34,7 @@ from durabletask.extensions.history_export import (
 from durabletask.extensions.history_export.activities import clear_context
 from durabletask.testing import create_test_backend
 
-from tests.durabletask.extensions.history_export._test_helpers import wait_until
+from ._test_helpers import wait_until
 
 
 PORT = 50263
