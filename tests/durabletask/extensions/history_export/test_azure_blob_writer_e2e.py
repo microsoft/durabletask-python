@@ -93,6 +93,7 @@ def test_write_json_blob(writer):
     blob_name = f"json/{uuid.uuid4().hex}.json"
     writer.write(
         instance_id="inst-json",
+        container=TEST_CONTAINER,
         blob_name=blob_name,
         payload=payload,
         content_type=content_type_for(fmt),
@@ -118,6 +119,7 @@ def test_write_jsonl_gzip_blob(writer):
     blob_name = f"gz/{uuid.uuid4().hex}.jsonl.gz"
     writer.write(
         instance_id="inst-gz",
+        container=TEST_CONTAINER,
         blob_name=blob_name,
         payload=payload,
         content_type=content_type_for(fmt),

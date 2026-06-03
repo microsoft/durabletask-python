@@ -59,7 +59,12 @@ def sample_orchestrator(ctx: task.OrchestrationContext, n: int):
 
 def main() -> None:
     print(f"Using container: {CONTAINER_NAME}")
-    print(f"Using storage connection: {AZURITE_CONN_STR}")
+    # Avoid printing the raw connection string — a real Azure Storage
+    # connection string contains the account key.
+    if AZURITE_CONN_STR == "UseDevelopmentStorage=true":
+        print("Using storage connection: Azurite (UseDevelopmentStorage=true)")
+    else:
+        print("Using storage connection: (redacted)")
 
     backend = create_test_backend(port=50300)
     try:

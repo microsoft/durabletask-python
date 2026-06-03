@@ -219,7 +219,10 @@ class ExportHistoryClient:
             instance_id_starts_with=_ENTITY_ID_PREFIX,
             last_modified_from=query.last_modified_from,
             last_modified_to=query.last_modified_to,
-            include_state=query.include_state,
+            # list_jobs always needs the persisted state to populate
+            # ExportJobDescription; an entity-only view doesn't carry
+            # status or progress and would always be filtered out.
+            include_state=True,
             page_size=query.page_size,
         )
         status_filter = set(query.status) if query.status else None
@@ -230,7 +233,7 @@ class ExportHistoryClient:
             # explicit entity-name check.
             if meta.id.entity != ENTITY_NAME.lower():
                 continue
-            raw = meta.get_state(str) if meta.includes_state else None
+            raw = meta.get_state(str)
             if not raw:
                 continue
             try:

@@ -529,8 +529,6 @@ inheritance required — it's a `typing.Protocol`) to send exports to
 any destination (S3, GCS, SFTP, local filesystem, a database, etc.):
 
 ```python
-from typing import Optional
-
 from durabletask.extensions.history_export import HistoryWriter
 
 
@@ -542,13 +540,18 @@ class LocalFileSystemHistoryWriter:
         self,
         *,
         instance_id: str,
+        container: str,
         blob_name: str,
         payload: bytes,
         content_type: str,
-        content_encoding: Optional[str],
+        content_encoding: str | None,
     ) -> None:
         import os
-        path = os.path.join(self._root, blob_name)
+        # ``container`` is the destination's logical container name
+        # (an ExportDestination.container).  Per-job routing writers
+        # combine it with ``blob_name``; writers that pin to a fixed
+        # location at construction time may ignore it.
+        path = os.path.join(self._root, container, blob_name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as fp:
             fp.write(payload)

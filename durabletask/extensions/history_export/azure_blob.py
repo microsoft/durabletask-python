@@ -65,10 +65,18 @@ class AzureBlobHistoryExportWriterOptions:
     def __post_init__(self) -> None:
         if not self.container_name:
             raise ValueError("container_name is required")
+        if self.connection_string and self.account_url:
+            raise ValueError(
+                "'connection_string' and 'account_url' are mutually exclusive"
+            )
         if not self.connection_string and not self.account_url:
             raise ValueError(
                 "Either 'connection_string' or 'account_url' (with 'credential') "
                 "must be provided"
+            )
+        if self.account_url and self.credential is None:
+            raise ValueError(
+                "'credential' is required when 'account_url' is provided"
             )
 
 
@@ -116,19 +124,33 @@ class AzureBlobHistoryExportWriter:
         self,
         *,
         instance_id: str,
+        container: str,
         blob_name: str,
         payload: bytes,
         content_type: str,
         content_encoding: str | None,
     ) -> None:
         del instance_id  # included by the protocol but not needed here
+        # This writer pins to the container configured at construction
+        # time and ignores the per-call ``container`` argument; the
+        # configured value is authoritative for any given writer
+        # instance.  Run a separate writer per destination container
+        # if you need per-job routing.
+        del container
         self._ensure_container()
         container_client = self._service.get_container_client(
             self._options.container_name
         )
-        content_settings = ContentSettings(
-            content_type=content_type,
-            content_encoding=content_encoding or "",
+        # Only set Content-Encoding if the format actually compresses
+        # the payload; an empty header value would be persisted on
+        # the blob and confuse downstream clients.
+        content_settings = (
+            ContentSettings(
+                content_type=content_type,
+                content_encoding=content_encoding,
+            )
+            if content_encoding
+            else ContentSettings(content_type=content_type)
         )
         container_client.upload_blob(
             name=blob_name,

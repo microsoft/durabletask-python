@@ -149,6 +149,10 @@ def export_instance_history(
         raise TypeError("format must be a mapping")
     fmt = ExportFormat.from_dict(cast("Mapping[str, Any]", fmt_input))
     destination_raw: Mapping[str, Any] = input.get("destination") or {}
+    container_raw: Any = destination_raw.get("container")
+    if not container_raw:
+        raise ValueError("destination.container is required")
+    container: str = str(container_raw)
     prefix_raw: Any = destination_raw.get("prefix")
     prefix: str | None = str(prefix_raw) if prefix_raw is not None else None
 
@@ -169,6 +173,7 @@ def export_instance_history(
         blob_name = _blob_name_for(instance_id=instance_id, prefix=prefix, fmt=fmt)
         ctx.writer.write(
             instance_id=instance_id,
+            container=container,
             blob_name=blob_name,
             payload=payload,
             content_type=content_type_for(fmt),

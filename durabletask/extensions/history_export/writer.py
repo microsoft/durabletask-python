@@ -26,13 +26,18 @@ Example custom writer::
             self,
             *,
             instance_id: str,
+            container: str,
             blob_name: str,
             payload: bytes,
             content_type: str,
             content_encoding: str | None,
         ) -> None:
             import os
-            path = os.path.join(self._root, blob_name)
+            # The ``container`` value comes from the export job's
+            # ExportDestination.container and is the logical
+            # bucket / subdirectory the caller asked the job to
+            # write into.
+            path = os.path.join(self._root, container, blob_name)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "wb") as fp:
                 fp.write(payload)
@@ -63,6 +68,7 @@ class HistoryWriter(Protocol):
         self,
         *,
         instance_id: str,
+        container: str,
         blob_name: str,
         payload: bytes,
         content_type: str,
@@ -74,8 +80,17 @@ class HistoryWriter(Protocol):
             instance_id: The orchestration instance whose history this
                 payload represents.  Provided so destinations may use
                 it as a key, metadata, or sharding hint.
+            container: The destination container / bucket name the
+                job's :class:`ExportDestination` declared.  Writers
+                that want to honour per-job container routing should
+                use this value; writers that pin to a fixed container
+                at construction time (such as the bundled Azure Blob
+                writer) may ignore it.
             blob_name: Destination-relative path / key, including any
                 configured destination prefix and file extension.
+                Does NOT include the ``container`` component — a
+                writer that routes per-container is expected to
+                combine the two.
             payload: The serialized history bytes.  Already compressed
                 if the configured format calls for it.
             content_type: The HTTP-style content type appropriate for

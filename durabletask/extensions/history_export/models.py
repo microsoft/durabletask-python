@@ -64,14 +64,12 @@ class ExportJobStatus(Enum):
     Status meanings
     ---------------
     ``PENDING``
-        The job has been created but the entity has not yet processed
-        the ``create`` signal, *or* the entity has accepted the
-        configuration but has not yet kicked off its driving
-        orchestrator.  The value is reserved for the forthcoming
-        ``run`` operation (see the .NET ``ExportJob.Run`` pattern);
-        the current implementation transitions directly from creation
-        to :attr:`ACTIVE`, so jobs are not persisted in ``Pending``
-        today.
+        The job has been created and persisted but the entity has not
+        yet kicked off its driving orchestrator.  Jobs sit in this
+        state briefly between the ``create`` and ``run`` signals
+        (the public client sends both in immediate succession), or
+        for longer if ``run`` is never invoked or if a caller revives
+        a previously terminal job via ``create``.
     ``ACTIVE``
         The job is running and the driving orchestrator is making
         progress through pages of terminal instances.
@@ -305,15 +303,12 @@ class ExportJobQuery:
             this timestamp are returned.
         page_size: Backend page size used to enumerate the underlying
             entities.
-        include_state: Whether to fetch full job state (set ``False``
-            to retrieve job IDs and metadata only).
     """
 
     status: list[ExportJobStatus] | None = None
     last_modified_from: datetime | None = None
     last_modified_to: datetime | None = None
     page_size: int | None = None
-    include_state: bool = True
 
 
 @dataclass

@@ -44,7 +44,7 @@ class _InMemoryWriter:
         self._lock = threading.Lock()
         self.blobs: dict[str, dict] = {}
 
-    def write(self, *, instance_id, blob_name, payload, content_type, content_encoding):
+    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding):
         with self._lock:
             self.blobs[blob_name] = {
                 "instance_id": instance_id,
