@@ -3,7 +3,6 @@
 
 import traceback
 from datetime import datetime
-from typing import Optional
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -13,7 +12,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 # TODO: The new_xxx_event methods are only used by test code and should be moved elsewhere
 
 
-def new_orchestrator_started_event(timestamp: Optional[datetime] = None) -> pb.HistoryEvent:
+def new_orchestrator_started_event(timestamp: datetime | None = None) -> pb.HistoryEvent:
     ts = timestamp_pb2.Timestamp()
     if timestamp is not None:
         ts.FromDatetime(timestamp)
@@ -25,10 +24,10 @@ def new_orchestrator_completed_event() -> pb.HistoryEvent:
                            orchestratorCompleted=pb.OrchestratorCompletedEvent())
 
 
-def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None,
-                                tags: Optional[dict[str, str]] = None,
-                                version: Optional[str] = None,
-                                parent_trace_context: Optional[pb.TraceContext] = None) -> pb.HistoryEvent:
+def new_execution_started_event(name: str, instance_id: str, encoded_input: str | None = None,
+                                tags: dict[str, str] | None = None,
+                                version: str | None = None,
+                                parent_trace_context: pb.TraceContext | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -61,7 +60,7 @@ def new_timer_fired_event(timer_id: int, fire_at: datetime) -> pb.HistoryEvent:
     )
 
 
-def new_task_scheduled_event(event_id: int, name: str, encoded_input: Optional[str] = None) -> pb.HistoryEvent:
+def new_task_scheduled_event(event_id: int, name: str, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
@@ -69,7 +68,7 @@ def new_task_scheduled_event(event_id: int, name: str, encoded_input: Optional[s
     )
 
 
-def new_task_completed_event(event_id: int, encoded_output: Optional[str] = None) -> pb.HistoryEvent:
+def new_task_completed_event(event_id: int, encoded_output: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -89,8 +88,8 @@ def new_sub_orchestration_created_event(
         event_id: int,
         name: str,
         instance_id: str,
-        encoded_input: Optional[str] = None,
-        version: Optional[str] = None) -> pb.HistoryEvent:
+        encoded_input: str | None = None,
+        version: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
@@ -102,7 +101,7 @@ def new_sub_orchestration_created_event(
     )
 
 
-def new_sub_orchestration_completed_event(event_id: int, encoded_output: Optional[str] = None) -> pb.HistoryEvent:
+def new_sub_orchestration_completed_event(event_id: int, encoded_output: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -122,11 +121,11 @@ def new_sub_orchestration_failed_event(event_id: int, ex: Exception) -> pb.Histo
     )
 
 
-def new_failure_details(ex: Exception, _visited: Optional[set[int]] = None) -> pb.TaskFailureDetails:
+def new_failure_details(ex: Exception, _visited: set[int] | None = None) -> pb.TaskFailureDetails:
     if _visited is None:
         _visited = set()
     _visited.add(id(ex))
-    inner: Optional[BaseException] = ex.__cause__ or ex.__context__
+    inner: BaseException | None = ex.__cause__ or ex.__context__
     if len(_visited) > 10 or (inner and id(inner) in _visited) or not isinstance(inner, Exception):
         inner = None
     return pb.TaskFailureDetails(
@@ -149,7 +148,7 @@ def new_event_sent_event(event_id: int, instance_id: str, input: str):
     )
 
 
-def new_event_raised_event(name: str, encoded_input: Optional[str] = None) -> pb.HistoryEvent:
+def new_event_raised_event(name: str, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -173,7 +172,7 @@ def new_resume_event() -> pb.HistoryEvent:
     )
 
 
-def new_terminated_event(*, encoded_output: Optional[str] = None) -> pb.HistoryEvent:
+def new_terminated_event(*, encoded_output: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -183,21 +182,21 @@ def new_terminated_event(*, encoded_output: Optional[str] = None) -> pb.HistoryE
     )
 
 
-def get_string_value(val: Optional[str]) -> Optional[wrappers_pb2.StringValue]:
+def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
     if val is None:
         return None
     else:
         return wrappers_pb2.StringValue(value=val)
 
 
-def get_int_value(val: Optional[int]) -> Optional[wrappers_pb2.Int32Value]:
+def get_int_value(val: int | None) -> wrappers_pb2.Int32Value | None:
     if val is None:
         return None
     else:
         return wrappers_pb2.Int32Value(value=val)
 
 
-def get_string_value_or_empty(val: Optional[str]) -> wrappers_pb2.StringValue:
+def get_string_value_or_empty(val: str | None) -> wrappers_pb2.StringValue:
     if val is None:
         return wrappers_pb2.StringValue(value="")
     return wrappers_pb2.StringValue(value=val)
@@ -206,9 +205,9 @@ def get_string_value_or_empty(val: Optional[str]) -> wrappers_pb2.StringValue:
 def new_complete_orchestration_action(
         id: int,
         status: pb.OrchestrationStatus,
-        result: Optional[str] = None,
-        failure_details: Optional[pb.TaskFailureDetails] = None,
-        carryover_events: Optional[list[pb.HistoryEvent]] = None) -> pb.OrchestratorAction:
+        result: str | None = None,
+        failure_details: pb.TaskFailureDetails | None = None,
+        carryover_events: list[pb.HistoryEvent] | None = None) -> pb.OrchestratorAction:
     completeOrchestrationAction = pb.CompleteOrchestrationAction(
         orchestrationStatus=status,
         result=get_string_value(result),
@@ -224,9 +223,9 @@ def new_create_timer_action(id: int, fire_at: datetime) -> pb.OrchestratorAction
     return pb.OrchestratorAction(id=id, createTimer=pb.CreateTimerAction(fireAt=timestamp))
 
 
-def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
-                             tags: Optional[dict[str, str]],
-                             parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
+def new_schedule_task_action(id: int, name: str, encoded_input: str | None,
+                             tags: dict[str, str] | None,
+                             parent_trace_context: pb.TraceContext | None = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, scheduleTask=pb.ScheduleTaskAction(
         name=name,
         input=get_string_value(encoded_input),
@@ -239,7 +238,7 @@ def new_call_entity_action(id: int,
                            parent_instance_id: str,
                            entity_id: EntityInstanceId,
                            operation: str,
-                           encoded_input: Optional[str],
+                           encoded_input: str | None,
                            request_id: str) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
         requestId=request_id,
@@ -255,7 +254,7 @@ def new_call_entity_action(id: int,
 def new_signal_entity_action(id: int,
                              entity_id: EntityInstanceId,
                              operation: str,
-                             encoded_input: Optional[str],
+                             encoded_input: str | None,
                              request_id: str) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
         requestId=request_id,
@@ -304,10 +303,10 @@ def new_timestamp(dt: datetime) -> timestamp_pb2.Timestamp:
 def new_create_sub_orchestration_action(
         id: int,
         name: str,
-        instance_id: Optional[str],
-        encoded_input: Optional[str],
-        version: Optional[str],
-        parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
+        instance_id: str | None,
+        encoded_input: str | None,
+        version: str | None,
+        parent_trace_context: pb.TraceContext | None = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, createSubOrchestration=pb.CreateSubOrchestrationAction(
         name=name,
         instanceId=instance_id,
@@ -317,7 +316,7 @@ def new_create_sub_orchestration_action(
     ))
 
 
-def is_empty(v: wrappers_pb2.StringValue):
+def is_empty(v: wrappers_pb2.StringValue | None) -> bool:
     return v is None or v.value == ''
 
 

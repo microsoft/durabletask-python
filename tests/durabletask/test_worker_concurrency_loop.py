@@ -73,6 +73,7 @@ def test_worker_concurrency_loop_sync():
 
     async def run_test():
         # Start the worker manager's run loop in the background
+        worker._async_worker_manager.prepare_for_run()
         worker_task = asyncio.create_task(worker._async_worker_manager.run())
         for req in orchestrator_requests:
             worker._async_worker_manager.submit_orchestration(dummy_orchestrator, cancel_dummy_orchestrator, req, stub, DummyCompletionToken())
@@ -133,6 +134,7 @@ def test_worker_concurrency_sync():
 
     # Run the manager loop in a thread (sync context)
     def run_manager():
+        manager.prepare_for_run()
         asyncio.run(manager.run())
 
     t = threading.Thread(target=run_manager)

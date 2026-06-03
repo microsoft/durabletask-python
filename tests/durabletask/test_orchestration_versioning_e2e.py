@@ -36,11 +36,11 @@ def test_version_flows_through_to_orchestration_context():
         ))
         w.start()
 
-        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
-        id = task_hub_client.schedule_new_orchestration(
-            return_version, version="2.5.0")
-        state = task_hub_client.wait_for_orchestration_completion(
-            id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            id = task_hub_client.schedule_new_orchestration(
+                return_version, version="2.5.0")
+            state = task_hub_client.wait_for_orchestration_completion(
+                id, timeout=30)
 
     assert state is not None
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -64,11 +64,11 @@ def test_strict_version_mismatch_fails():
         ))
         w.start()
 
-        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
-        id = task_hub_client.schedule_new_orchestration(
-            simple, version="2.0.0")
-        state = task_hub_client.wait_for_orchestration_completion(
-            id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            id = task_hub_client.schedule_new_orchestration(
+                simple, version="2.0.0")
+            state = task_hub_client.wait_for_orchestration_completion(
+                id, timeout=30)
 
     assert state is not None
     assert state.runtime_status == client.OrchestrationStatus.FAILED
@@ -92,11 +92,11 @@ def test_newer_orchestration_version_fails_current_or_older():
         ))
         w.start()
 
-        task_hub_client = client.TaskHubGrpcClient(host_address=HOST)
-        id = task_hub_client.schedule_new_orchestration(
-            simple, version="1.1.0")
-        state = task_hub_client.wait_for_orchestration_completion(
-            id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            id = task_hub_client.schedule_new_orchestration(
+                simple, version="1.1.0")
+            state = task_hub_client.wait_for_orchestration_completion(
+                id, timeout=30)
 
     assert state is not None
     assert state.runtime_status == client.OrchestrationStatus.FAILED

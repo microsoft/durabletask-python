@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 from datetime import datetime, timedelta, timezone
 from threading import Lock
-from typing import Optional
 
 from azure.core.credentials import AccessToken, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -13,9 +12,9 @@ import durabletask.internal.shared as shared
 # By default, when there's 10minutes left before the token expires, refresh the token
 class AccessTokenManager:
 
-    _token: Optional[AccessToken]
+    _token: AccessToken | None
 
-    def __init__(self, token_credential: Optional[TokenCredential], refresh_interval_seconds: int = 600):
+    def __init__(self, token_credential: TokenCredential | None, refresh_interval_seconds: int = 600):
         self._scope = "https://durabletask.io/.default"
         self._refresh_interval_seconds = refresh_interval_seconds
         self._logger = shared.get_logger("token_manager")
@@ -30,7 +29,7 @@ class AccessTokenManager:
             self._token = None
             self.expiry_time = None
 
-    def get_access_token(self) -> Optional[AccessToken]:
+    def get_access_token(self) -> AccessToken | None:
         if self._token is None or self.is_token_expired():
             with self._refresh_lock:
                 if self._token is None or self.is_token_expired():
@@ -59,9 +58,9 @@ class AsyncAccessTokenManager:
 
     This avoids blocking the event loop when acquiring or refreshing tokens."""
 
-    _token: Optional[AccessToken]
+    _token: AccessToken | None
 
-    def __init__(self, token_credential: Optional[AsyncTokenCredential],
+    def __init__(self, token_credential: AsyncTokenCredential | None,
                  refresh_interval_seconds: int = 600):
         self._scope = "https://durabletask.io/.default"
         self._refresh_interval_seconds = refresh_interval_seconds
@@ -71,7 +70,7 @@ class AsyncAccessTokenManager:
         self._token = None
         self.expiry_time = None
 
-    async def get_access_token(self) -> Optional[AccessToken]:
+    async def get_access_token(self) -> AccessToken | None:
         if self._token is None or self.is_token_expired():
             await self.refresh_token()
         return self._token
