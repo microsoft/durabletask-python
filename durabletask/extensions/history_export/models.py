@@ -5,19 +5,25 @@
 
 These dataclasses describe export jobs at the public API surface.  All
 JSON-primitive conversions (for entity state, orchestrator inputs, and
-activity inputs) are implemented as ``_to_dict`` / ``_from_dict`` pairs
+activity inputs) are implemented as ``to_dict`` / ``from_dict`` pairs
 in this module so the rest of the extension can stay free of ad-hoc
 serialization logic.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
-from typing import Any, List, Mapping, Optional
+from typing import Any
 
 from durabletask.client import OrchestrationStatus
+
+from durabletask.extensions.history_export._internal import (
+    dt_from_iso,
+    dt_to_iso,
+)
 
 
 class ExportMode(Enum):
@@ -83,34 +89,11 @@ class ExportJobStatus(Enum):
 
 
 # Default set of runtime statuses considered "terminal" for export.
-_DEFAULT_TERMINAL_STATUSES: List[OrchestrationStatus] = [
+_DEFAULT_TERMINAL_STATUSES: list[OrchestrationStatus] = [
     OrchestrationStatus.COMPLETED,
     OrchestrationStatus.FAILED,
     OrchestrationStatus.TERMINATED,
 ]
-
-
-# ----------------------------------------------------------------------
-# Datetime helpers
-# ----------------------------------------------------------------------
-
-def _dt_to_iso(value: Optional[datetime]) -> Optional[str]:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    else:
-        value = value.astimezone(timezone.utc)
-    return value.isoformat()
-
-
-def _dt_from_iso(value: Optional[str]) -> Optional[datetime]:
-    if value is None:
-        return None
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 # ----------------------------------------------------------------------
@@ -124,11 +107,11 @@ class ExportFormat:
     kind: ExportFormatKind = ExportFormatKind.JSONL_GZIP
     schema_version: str = "1.0"
 
-    def _to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"kind": self.kind.value, "schema_version": self.schema_version}
 
     @classmethod
-    def _from_dict(cls, data: Mapping[str, Any]) -> "ExportFormat":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExportFormat":
         return cls(
             kind=ExportFormatKind(data["kind"]),
             schema_version=data.get("schema_version", "1.0"),
@@ -151,17 +134,17 @@ class ExportDestination:
     """
 
     container: str
-    prefix: Optional[str] = None
+    prefix: str | None = None
 
     def __post_init__(self) -> None:
         if not self.container:
             raise ValueError("destination.container must be a non-empty string")
 
-    def _to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"container": self.container, "prefix": self.prefix}
 
     @classmethod
-    def _from_dict(cls, data: Mapping[str, Any]) -> "ExportDestination":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExportDestination":
         return cls(container=data["container"], prefix=data.get("prefix"))
 
 
@@ -180,19 +163,19 @@ class ExportFilter:
     """
 
     completed_time_from: datetime
-    completed_time_to: Optional[datetime] = None
-    runtime_status: Optional[List[OrchestrationStatus]] = None
+    completed_time_to: datetime | None = None
+    runtime_status: list[OrchestrationStatus] | None = None
 
-    def effective_runtime_status(self) -> List[OrchestrationStatus]:
+    def effective_runtime_status(self) -> list[OrchestrationStatus]:
         """Return the runtime statuses to use, applying the default."""
         if self.runtime_status is None:
             return list(_DEFAULT_TERMINAL_STATUSES)
         return list(self.runtime_status)
 
-    def _to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
-            "completed_time_from": _dt_to_iso(self.completed_time_from),
-            "completed_time_to": _dt_to_iso(self.completed_time_to),
+            "completed_time_from": dt_to_iso(self.completed_time_from),
+            "completed_time_to": dt_to_iso(self.completed_time_to),
             "runtime_status": (
                 [s.name for s in self.runtime_status]
                 if self.runtime_status is not None
@@ -201,14 +184,14 @@ class ExportFilter:
         }
 
     @classmethod
-    def _from_dict(cls, data: Mapping[str, Any]) -> "ExportFilter":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExportFilter":
         statuses = data.get("runtime_status")
-        completed_from = _dt_from_iso(data.get("completed_time_from"))
+        completed_from = dt_from_iso(data.get("completed_time_from"))
         if completed_from is None:
             raise ValueError("completed_time_from is required")
         return cls(
             completed_time_from=completed_from,
-            completed_time_to=_dt_from_iso(data.get("completed_time_to")),
+            completed_time_to=dt_from_iso(data.get("completed_time_to")),
             runtime_status=(
                 [OrchestrationStatus[name] for name in statuses]
                 if statuses is not None
@@ -227,13 +210,13 @@ class ExportCheckpoint:
             export has not started or has completed.
     """
 
-    last_instance_key: Optional[str] = None
+    last_instance_key: str | None = None
 
-    def _to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"last_instance_key": self.last_instance_key}
 
     @classmethod
-    def _from_dict(cls, data: Mapping[str, Any]) -> "ExportCheckpoint":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExportCheckpoint":
         return cls(last_instance_key=data.get("last_instance_key"))
 
 
@@ -246,17 +229,17 @@ class ExportFailure:
     attempt_count: int
     last_attempt: datetime
 
-    def _to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "instance_id": self.instance_id,
             "reason": self.reason,
             "attempt_count": self.attempt_count,
-            "last_attempt": _dt_to_iso(self.last_attempt),
+            "last_attempt": dt_to_iso(self.last_attempt),
         }
 
     @classmethod
-    def _from_dict(cls, data: Mapping[str, Any]) -> "ExportFailure":
-        last_attempt = _dt_from_iso(data["last_attempt"])
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExportFailure":
+        last_attempt = dt_from_iso(data["last_attempt"])
         assert last_attempt is not None
         return cls(
             instance_id=data["instance_id"],
@@ -287,23 +270,23 @@ class ExportJobConfiguration:
                 "completed_time_to is required for batch mode exports"
             )
 
-    def _to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode.value,
-            "filter": self.filter._to_dict(),
-            "destination": self.destination._to_dict(),
-            "format": self.format._to_dict(),
+            "filter": self.filter.to_dict(),
+            "destination": self.destination.to_dict(),
+            "format": self.format.to_dict(),
             "max_instances_per_batch": self.max_instances_per_batch,
             "max_parallel_exports": self.max_parallel_exports,
         }
 
     @classmethod
-    def _from_dict(cls, data: Mapping[str, Any]) -> "ExportJobConfiguration":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExportJobConfiguration":
         return cls(
             mode=ExportMode(data["mode"]),
-            filter=ExportFilter._from_dict(data["filter"]),
-            destination=ExportDestination._from_dict(data["destination"]),
-            format=ExportFormat._from_dict(data.get("format") or {"kind": ExportFormatKind.JSONL_GZIP.value}),
+            filter=ExportFilter.from_dict(data["filter"]),
+            destination=ExportDestination.from_dict(data["destination"]),
+            format=ExportFormat.from_dict(data.get("format") or {"kind": ExportFormatKind.JSONL_GZIP.value}),
             max_instances_per_batch=int(data.get("max_instances_per_batch", 100)),
             max_parallel_exports=int(data.get("max_parallel_exports", 32)),
         )
@@ -326,10 +309,10 @@ class ExportJobQuery:
             to retrieve job IDs and metadata only).
     """
 
-    status: Optional[List["ExportJobStatus"]] = None
-    last_modified_from: Optional[datetime] = None
-    last_modified_to: Optional[datetime] = None
-    page_size: Optional[int] = None
+    status: list[ExportJobStatus] | None = None
+    last_modified_from: datetime | None = None
+    last_modified_to: datetime | None = None
+    page_size: int | None = None
     include_state: bool = True
 
 
@@ -340,10 +323,10 @@ class ExportJobCreationOptions:
     mode: ExportMode
     completed_time_from: datetime
     destination: ExportDestination
-    completed_time_to: Optional[datetime] = None
-    runtime_status: Optional[List[OrchestrationStatus]] = None
+    completed_time_to: datetime | None = None
+    runtime_status: list[OrchestrationStatus] | None = None
     format: ExportFormat = field(default_factory=ExportFormat)
-    job_id: Optional[str] = None
+    job_id: str | None = None
     max_instances_per_batch: int = 100
     max_parallel_exports: int = 32
 
@@ -380,10 +363,10 @@ class ExportJobCreationOptions:
 # changing the on-disk shape.
 
 STATE_SCHEMA_VERSION = "1.0"
-"""The schema version emitted by :meth:`ExportJobState._to_dict`.
+"""The schema version emitted by :meth:`ExportJobState.to_dict`.
 
 Increment this when the persisted shape changes in a non-backward-compatible
-way and add a new branch in :meth:`ExportJobState._from_dict`.
+way and add a new branch in :meth:`ExportJobState.from_dict`.
 """
 
 
@@ -392,9 +375,9 @@ class ExportJobState:
     """Typed, schema-versioned mirror of the entity's persisted state.
 
     This dataclass is the single source of truth for the on-disk schema.
-    All persistence flows through :meth:`_to_dict` (write) and
-    :meth:`_from_dict` (read); the dict contains only JSON primitives plus
-    nested dicts produced by the model ``_to_dict`` methods.  No Python
+    All persistence flows through :meth:`to_dict` (write) and
+    :meth:`from_dict` (read); the dict contains only JSON primitives plus
+    nested dicts produced by the model ``to_dict`` methods.  No Python
     class names, module paths, or other type metadata appear in the
     serialized form.
     """
@@ -403,38 +386,38 @@ class ExportJobState:
     config: ExportJobConfiguration
     created_at: datetime
     last_modified_at: datetime
-    orchestrator_instance_id: Optional[str] = None
+    orchestrator_instance_id: str | None = None
     checkpoint: ExportCheckpoint = field(default_factory=ExportCheckpoint)
-    last_checkpoint_time: Optional[datetime] = None
-    last_error: Optional[str] = None
+    last_checkpoint_time: datetime | None = None
+    last_error: str | None = None
     scanned_instances: int = 0
     exported_instances: int = 0
     failed_instances: int = 0
-    failures: List[ExportFailure] = field(default_factory=list)
+    failures: list[ExportFailure] = field(default_factory=list[ExportFailure])
 
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 
-    def _to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": STATE_SCHEMA_VERSION,
             "status": self.status.value,
-            "config": self.config._to_dict(),
-            "checkpoint": self.checkpoint._to_dict(),
-            "created_at": _dt_to_iso(self.created_at),
-            "last_modified_at": _dt_to_iso(self.last_modified_at),
-            "last_checkpoint_time": _dt_to_iso(self.last_checkpoint_time),
+            "config": self.config.to_dict(),
+            "checkpoint": self.checkpoint.to_dict(),
+            "created_at": dt_to_iso(self.created_at),
+            "last_modified_at": dt_to_iso(self.last_modified_at),
+            "last_checkpoint_time": dt_to_iso(self.last_checkpoint_time),
             "last_error": self.last_error,
             "scanned_instances": self.scanned_instances,
             "exported_instances": self.exported_instances,
             "failed_instances": self.failed_instances,
             "orchestrator_instance_id": self.orchestrator_instance_id,
-            "failures": [f._to_dict() for f in self.failures],
+            "failures": [f.to_dict() for f in self.failures],
         }
 
     @classmethod
-    def _from_dict(cls, data: Mapping[str, Any]) -> "ExportJobState":
+    def from_dict(cls, data: Mapping[str, Any]) -> "ExportJobState":
         version = data.get("schema_version", "1.0")
         if version != STATE_SCHEMA_VERSION:
             raise ValueError(
@@ -445,32 +428,32 @@ class ExportJobState:
         config_data = data.get("config")
         if not config_data:
             raise ValueError("persisted state is missing 'config'")
-        created_at = _dt_from_iso(data.get("created_at"))
-        last_modified_at = _dt_from_iso(data.get("last_modified_at"))
+        created_at = dt_from_iso(data.get("created_at"))
+        last_modified_at = dt_from_iso(data.get("last_modified_at"))
         if created_at is None or last_modified_at is None:
             raise ValueError(
                 "persisted state must include 'created_at' and 'last_modified_at'"
             )
         checkpoint_data = data.get("checkpoint")
-        failures_data = data.get("failures") or []
+        failures_data: list[Mapping[str, Any]] = list(data.get("failures") or [])
 
         return cls(
             status=ExportJobStatus(data["status"]),
-            config=ExportJobConfiguration._from_dict(config_data),
+            config=ExportJobConfiguration.from_dict(config_data),
             created_at=created_at,
             last_modified_at=last_modified_at,
             orchestrator_instance_id=data.get("orchestrator_instance_id"),
             checkpoint=(
-                ExportCheckpoint._from_dict(checkpoint_data)
+                ExportCheckpoint.from_dict(checkpoint_data)
                 if checkpoint_data is not None
                 else ExportCheckpoint()
             ),
-            last_checkpoint_time=_dt_from_iso(data.get("last_checkpoint_time")),
+            last_checkpoint_time=dt_from_iso(data.get("last_checkpoint_time")),
             last_error=data.get("last_error"),
             scanned_instances=int(data.get("scanned_instances", 0)),
             exported_instances=int(data.get("exported_instances", 0)),
             failed_instances=int(data.get("failed_instances", 0)),
-            failures=[ExportFailure._from_dict(f) for f in failures_data],
+            failures=[ExportFailure.from_dict(f) for f in failures_data],
         )
 
     # ------------------------------------------------------------------
@@ -483,7 +466,7 @@ class ExportJobState:
         config: ExportJobConfiguration,
         *,
         created_at: datetime,
-        orchestrator_instance_id: Optional[str] = None,
+        orchestrator_instance_id: str | None = None,
     ) -> "ExportJobState":
         """Construct a fresh state for a newly-created job."""
         return cls(
@@ -505,20 +488,20 @@ class ExportJobDescription:
 
     job_id: str
     status: ExportJobStatus
-    created_at: Optional[datetime]
-    last_modified_at: Optional[datetime]
-    config: Optional[ExportJobConfiguration]
-    orchestrator_instance_id: Optional[str]
+    created_at: datetime | None
+    last_modified_at: datetime | None
+    config: ExportJobConfiguration | None
+    orchestrator_instance_id: str | None
     scanned_instances: int
     exported_instances: int
     failed_instances: int
-    last_error: Optional[str]
-    checkpoint: Optional[ExportCheckpoint]
-    last_checkpoint_time: Optional[datetime]
-    failures: List[ExportFailure] = field(default_factory=list)
+    last_error: str | None
+    checkpoint: ExportCheckpoint | None
+    last_checkpoint_time: datetime | None
+    failures: list[ExportFailure] = field(default_factory=list[ExportFailure])
 
     @classmethod
-    def _from_state(cls, job_id: str, state: "ExportJobState") -> "ExportJobDescription":
+    def from_state(cls, job_id: str, state: "ExportJobState") -> "ExportJobDescription":
         return cls(
             job_id=job_id,
             status=state.status,
@@ -536,8 +519,8 @@ class ExportJobDescription:
         )
 
     @classmethod
-    def _from_state_dict(
+    def from_state_dict(
         cls, job_id: str, state: Mapping[str, Any]
     ) -> "ExportJobDescription":
         """Build a description from a persisted entity-state dict."""
-        return cls._from_state(job_id, ExportJobState._from_dict(state))
+        return cls.from_state(job_id, ExportJobState.from_dict(state))

@@ -7,7 +7,7 @@ The entity persists its state through the SDK's default JSON encoder.
 To avoid embedding Python type metadata in the persisted payload (a
 known deserialization-attack vector), the on-disk shape is owned by
 :class:`~durabletask.extensions.history_export.models.ExportJobState`,
-a versioned dataclass whose ``_to_dict`` / ``_from_dict`` methods
+a versioned dataclass whose ``to_dict`` / ``from_dict`` methods
 produce and consume pure JSON primitives keyed by literal field names
 plus an explicit ``schema_version``.
 
@@ -41,10 +41,12 @@ Operations
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any, List, Mapping, Optional
+from typing import Any, cast
 
 from durabletask import entities
+from durabletask import worker as worker_module
 
 from durabletask.extensions.history_export._constants import (
     ENTITY_NAME,
@@ -52,13 +54,13 @@ from durabletask.extensions.history_export._constants import (
     ORCHESTRATOR_NAME,
     orchestrator_instance_id_for,
 )
+from durabletask.extensions.history_export._internal import dt_from_iso
 from durabletask.extensions.history_export._logging import logger
 from durabletask.extensions.history_export.models import (
     ExportFailure,
     ExportJobConfiguration,
     ExportJobState,
     ExportJobStatus,
-    _dt_from_iso,
 )
 from durabletask.extensions.history_export.transitions import (
     assert_valid_transition,
@@ -78,7 +80,7 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _summarize_failures(failures: List[ExportFailure], *, limit: int = 10) -> str:
+def _summarize_failures(failures: list[ExportFailure], *, limit: int = 10) -> str:
     if not failures:
         return ""
     head = "; ".join(f"{f.instance_id}: {f.reason}" for f in failures[:limit])
@@ -92,7 +94,7 @@ class ExportJobEntity(entities.DurableEntity):
 
     # ----- state helpers --------------------------------------------
 
-    def _load(self) -> Optional[ExportJobState]:
+    def _load(self) -> ExportJobState | None:
         raw = self.get_state()
         if raw is None:
             return None
@@ -100,15 +102,15 @@ class ExportJobEntity(entities.DurableEntity):
             raise TypeError(
                 f"Unexpected entity state type {type(raw).__name__!r}; expected dict"
             )
-        return ExportJobState._from_dict(raw)
+        return ExportJobState.from_dict(cast("dict[str, Any]", raw))
 
     def _save(self, state: ExportJobState) -> dict[str, Any]:
         state.last_modified_at = _utcnow()
-        persisted = state._to_dict()
+        persisted = state.to_dict()
         self.set_state(persisted)
         return persisted
 
-    def _current_status(self) -> Optional[ExportJobStatus]:
+    def _current_status(self) -> ExportJobStatus | None:
         state = self._load()
         return state.status if state is not None else None
 
@@ -127,10 +129,10 @@ class ExportJobEntity(entities.DurableEntity):
         config_dict = payload.get("config")
         if not config_dict:
             raise ValueError("create payload requires 'config'")
-        config = ExportJobConfiguration._from_dict(config_dict)
+        config = ExportJobConfiguration.from_dict(config_dict)
 
         created_at_raw = payload.get("created_at")
-        created_at = _dt_from_iso(created_at_raw) if created_at_raw else _utcnow()
+        created_at = dt_from_iso(created_at_raw) if created_at_raw else _utcnow()
         assert created_at is not None
 
         state = ExportJobState(
@@ -144,11 +146,11 @@ class ExportJobEntity(entities.DurableEntity):
         )
         return self._save(state)
 
-    def get(self, _: Any = None) -> Optional[dict[str, Any]]:
+    def get(self, _: Any = None) -> dict[str, Any] | None:
         state = self._load()
-        return state._to_dict() if state is not None else None
+        return state.to_dict() if state is not None else None
 
-    def run(self, _: Any = None) -> Optional[dict[str, Any]]:
+    def run(self, _: Any = None) -> dict[str, Any] | None:
         state = self._load()
         if state is None:
             raise ValueError("Cannot run uninitialized export job")
@@ -165,7 +167,7 @@ class ExportJobEntity(entities.DurableEntity):
             try:
                 self.entity_context.schedule_new_orchestration(
                     ORCHESTRATOR_NAME,
-                    input={"job_id": job_id, "config": state.config._to_dict()},
+                    input={"job_id": job_id, "config": state.config.to_dict()},
                     instance_id=instance_id,
                 )
                 state.orchestrator_instance_id = instance_id
@@ -188,7 +190,7 @@ class ExportJobEntity(entities.DurableEntity):
         state.last_error = None
         return self._save(state)
 
-    def commit_checkpoint(self, payload: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    def commit_checkpoint(self, payload: Mapping[str, Any]) -> dict[str, Any] | None:
         state = self._load()
         if state is None:
             raise ValueError("Cannot commit_checkpoint on uninitialized export job")
@@ -203,8 +205,8 @@ class ExportJobEntity(entities.DurableEntity):
         if scanned_delta < 0 or exported_delta < 0 or failed_delta < 0:
             raise ValueError("checkpoint deltas must be non-negative")
 
-        failures_data = payload.get("failures") or []
-        new_failures = [ExportFailure._from_dict(f) for f in failures_data]
+        failures_data: list[Mapping[str, Any]] = list(payload.get("failures") or [])
+        new_failures = [ExportFailure.from_dict(f) for f in failures_data]
         will_fail = bool(payload.get("mark_failed_on_batch")) and bool(new_failures)
         target = ExportJobStatus.FAILED if will_fail else ExportJobStatus.ACTIVE
         assert_valid_transition(
@@ -220,7 +222,7 @@ class ExportJobEntity(entities.DurableEntity):
 
         checkpoint_time_raw = payload.get("checkpoint_time")
         checkpoint_time = (
-            _dt_from_iso(checkpoint_time_raw) if checkpoint_time_raw else _utcnow()
+            dt_from_iso(checkpoint_time_raw) if checkpoint_time_raw else _utcnow()
         )
         state.last_checkpoint_time = checkpoint_time
 
@@ -242,7 +244,7 @@ class ExportJobEntity(entities.DurableEntity):
 
         return self._save(state)
 
-    def mark_completed(self, _: Any = None) -> Optional[dict[str, Any]]:
+    def mark_completed(self, _: Any = None) -> dict[str, Any] | None:
         state = self._load()
         if state is None:
             raise ValueError("Cannot mark_completed on uninitialized export job")
@@ -257,8 +259,8 @@ class ExportJobEntity(entities.DurableEntity):
         return self._save(state)
 
     def mark_failed(
-        self, payload: Optional[Mapping[str, Any]] = None
-    ) -> Optional[dict[str, Any]]:
+        self, payload: Mapping[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         state = self._load()
         if state is None:
             raise ValueError("Cannot mark_failed on uninitialized export job")
@@ -282,6 +284,8 @@ class ExportJobEntity(entities.DurableEntity):
         super().delete()
 
 
-def register(worker_instance, *, name: str = ENTITY_NAME) -> None:
+def register(
+    worker_instance: worker_module.TaskHubGrpcWorker, *, name: str = ENTITY_NAME,
+) -> None:
     """Convenience helper to register :class:`ExportJobEntity` on *worker*."""
     worker_instance.add_entity(ExportJobEntity, name=name)

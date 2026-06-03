@@ -140,8 +140,8 @@ def test_activities_list_and_export_to_in_memory_writer(c, seeded_ids):
             "page_size": 50,
             "continuation_token": None,
         },
-        "format": fmt._to_dict(),
-        "destination": dest._to_dict(),
+        "format": fmt.to_dict(),
+        "destination": dest.to_dict(),
     }
     run_id = c.schedule_new_orchestration(_list_then_export, input=orch_input)
     state = c.wait_for_orchestration_completion(
@@ -189,8 +189,8 @@ def test_export_activity_reports_failure_when_writer_raises(c, seeded_ids):
             "page_size": 50,
             "continuation_token": None,
         },
-        "format": fmt._to_dict(),
-        "destination": dest._to_dict(),
+        "format": fmt.to_dict(),
+        "destination": dest.to_dict(),
     }
     run_id = c.schedule_new_orchestration(_list_then_export, input=orch_input)
     state = c.wait_for_orchestration_completion(
@@ -218,8 +218,8 @@ def test_activities_require_bound_context(c):
             "page_size": 50,
             "continuation_token": None,
         },
-        "format": fmt._to_dict(),
-        "destination": dest._to_dict(),
+        "format": fmt.to_dict(),
+        "destination": dest.to_dict(),
     }
     run_id = c.schedule_new_orchestration(_list_then_export, input=orch_input)
     state = c.wait_for_orchestration_completion(

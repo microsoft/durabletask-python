@@ -18,9 +18,6 @@ desired.
 
 Example custom writer::
 
-    from typing import Optional
-
-
     class LocalFileSystemHistoryWriter:
         def __init__(self, root_dir: str) -> None:
             self._root = root_dir
@@ -32,7 +29,7 @@ Example custom writer::
             blob_name: str,
             payload: bytes,
             content_type: str,
-            content_encoding: Optional[str],
+            content_encoding: str | None,
         ) -> None:
             import os
             path = os.path.join(self._root, blob_name)
@@ -51,7 +48,7 @@ orchestration identity available.
 
 from __future__ import annotations
 
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -69,7 +66,7 @@ class HistoryWriter(Protocol):
         blob_name: str,
         payload: bytes,
         content_type: str,
-        content_encoding: Optional[str],
+        content_encoding: str | None,
     ) -> None:
         """Persist one exported blob.
 

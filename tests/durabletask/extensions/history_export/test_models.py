@@ -124,12 +124,12 @@ class TestRoundTrip:
             format=ExportFormat(kind=ExportFormatKind.JSON, schema_version="1.0"),
             max_instances_per_batch=25,
         )
-        restored = ExportJobConfiguration._from_dict(cfg._to_dict())
+        restored = ExportJobConfiguration.from_dict(cfg.to_dict())
         assert restored == cfg
 
     def test_checkpoint_round_trip(self) -> None:
         cp = ExportCheckpoint(last_instance_key="abc|xyz")
-        assert ExportCheckpoint._from_dict(cp._to_dict()) == cp
+        assert ExportCheckpoint.from_dict(cp.to_dict()) == cp
 
     def test_failure_round_trip(self) -> None:
         f = ExportFailure(
@@ -138,13 +138,13 @@ class TestRoundTrip:
             attempt_count=3,
             last_attempt=_WINDOW_END,
         )
-        assert ExportFailure._from_dict(f._to_dict()) == f
+        assert ExportFailure.from_dict(f.to_dict()) == f
 
     def test_naive_datetimes_are_treated_as_utc(self) -> None:
         naive = datetime(2025, 1, 1, 12, 0, 0)
         f = ExportFilter(completed_time_from=naive, completed_time_to=_WINDOW_END)
-        d = f._to_dict()
-        restored = ExportFilter._from_dict(d)
+        d = f.to_dict()
+        restored = ExportFilter.from_dict(d)
         assert restored.completed_time_from == naive.replace(tzinfo=timezone.utc)
 
 
@@ -157,7 +157,7 @@ class TestDescriptionFromState:
             created_at=created,
             orchestrator_instance_id="orch-1",
         )
-        desc = ExportJobDescription._from_state_dict("job-1", state._to_dict())
+        desc = ExportJobDescription.from_state_dict("job-1", state.to_dict())
 
         assert desc.job_id == "job-1"
         assert desc.status is ExportJobStatus.ACTIVE
@@ -180,20 +180,20 @@ class TestExportJobStateRoundTrip:
         cfg = _basic_options().to_configuration()
         created = _WINDOW_END
         state = ExportJobState.new(cfg, created_at=created)
-        d = state._to_dict()
+        d = state.to_dict()
         assert d["schema_version"] == STATE_SCHEMA_VERSION
         assert "__class__" not in d  # no Python type metadata
         assert "__type__" not in d
-        restored = ExportJobState._from_dict(d)
+        restored = ExportJobState.from_dict(d)
         assert restored == state
 
     def test_unknown_schema_version_is_rejected(self) -> None:
         cfg = _basic_options().to_configuration()
         state = ExportJobState.new(cfg, created_at=_WINDOW_END)
-        bad = state._to_dict()
+        bad = state.to_dict()
         bad["schema_version"] = "99.0"
         with pytest.raises(ValueError, match="schema_version"):
-            ExportJobState._from_dict(bad)
+            ExportJobState.from_dict(bad)
 
     def test_state_carries_failures(self) -> None:
         cfg = _basic_options().to_configuration()
@@ -205,5 +205,5 @@ class TestExportJobStateRoundTrip:
         )
         state = ExportJobState.new(cfg, created_at=_WINDOW_END)
         state.failures.append(f)
-        restored = ExportJobState._from_dict(state._to_dict())
+        restored = ExportJobState.from_dict(state.to_dict())
         assert restored.failures == [f]

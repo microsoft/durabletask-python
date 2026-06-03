@@ -25,27 +25,28 @@ from __future__ import annotations
 
 import gzip
 import json
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from durabletask import client as client_module
 from durabletask import history
 from durabletask import task
 
+from durabletask.extensions.history_export._internal import dt_to_iso
 from durabletask.extensions.history_export.models import (
     ExportFormat,
     ExportFormatKind,
-    _dt_to_iso,
 )
 
 
-def event_to_dict(event: history.HistoryEvent) -> dict:
+def event_to_dict(event: history.HistoryEvent) -> dict[str, Any]:
     """Convert a :class:`history.HistoryEvent` into a JSON-safe dict.
 
     A discriminator field ``event_type`` is added so downstream
     consumers can distinguish event subclasses without inspecting
     their fields.
     """
-    payload = event.to_dict()
+    payload: dict[str, Any] = event.to_dict()
     # Insert the discriminator first so the resulting dict orders it
     # near the front of the JSON object even before any sorting.
     return {"event_type": type(event).__name__, **payload}
@@ -60,7 +61,7 @@ def orchestration_state_to_dict(
     class names or module paths appear in the resulting dict.
     """
     failure = state.failure_details
-    failure_dict: Optional[dict[str, Any]] = None
+    failure_dict: dict[str, Any] | None = None
     if failure is not None:
         failure_dict = {
             "message": failure.message,
@@ -78,8 +79,8 @@ def orchestration_state_to_dict(
         "instance_id": state.instance_id,
         "name": state.name,
         "runtime_status": state.runtime_status.name,
-        "created_at": _dt_to_iso(state.created_at),
-        "last_updated_at": _dt_to_iso(state.last_updated_at),
+        "created_at": dt_to_iso(state.created_at),
+        "last_updated_at": dt_to_iso(state.last_updated_at),
         "serialized_input": state.serialized_input,
         "serialized_output": state.serialized_output,
         "serialized_custom_status": state.serialized_custom_status,
@@ -87,7 +88,7 @@ def orchestration_state_to_dict(
     }
 
 
-def _dump_json(value) -> str:
+def _dump_json(value: Any) -> str:
     return json.dumps(
         value,
         sort_keys=True,
@@ -101,7 +102,7 @@ def serialize_history(
     *,
     instance_id: str,
     fmt: ExportFormat,
-    metadata: Optional[Mapping[str, Any]] = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> bytes:
     """Serialize a list of history events for a single instance.
 
@@ -138,7 +139,7 @@ def _gzip_jsonl(
     *,
     instance_id: str,
     fmt: ExportFormat,
-    metadata: Optional[Mapping[str, Any]] = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> bytes:
     # Build the uncompressed JSONL document first so the test surface
     # can decode the bytes deterministically.

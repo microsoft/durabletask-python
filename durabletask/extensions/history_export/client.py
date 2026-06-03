@@ -55,11 +55,13 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timezone
-from typing import Iterator, Optional
+from typing import Any, cast
 
 from durabletask import client as client_module
 from durabletask import entities
+from durabletask import worker as worker_module
 
 from durabletask.extensions.history_export._constants import (
     ENTITY_NAME,
@@ -110,7 +112,7 @@ class ExportHistoryClient:
     # Worker wiring
     # ------------------------------------------------------------------
 
-    def register_worker(self, worker_instance) -> None:
+    def register_worker(self, worker_instance: worker_module.TaskHubGrpcWorker) -> None:
         """Register the entity, activities, and orchestrator on *worker*.
 
         Also binds the activity execution context so the activities
@@ -130,7 +132,7 @@ class ExportHistoryClient:
         self,
         options: ExportJobCreationOptions,
         *,
-        job_id: Optional[str] = None,
+        job_id: str | None = None,
     ) -> ExportJobDescription:
         """Create a new export job and start its driving orchestrator.
 
@@ -146,7 +148,7 @@ class ExportHistoryClient:
         resolved_job_id = job_id or options.job_id or uuid.uuid4().hex
         entity_id = entities.EntityInstanceId(ENTITY_NAME, resolved_job_id)
         created_at = datetime.now(timezone.utc)
-        config_dict = config._to_dict()
+        config_dict = config.to_dict()
 
         # Signal create first; the entity will validate the transition
         # and persist PENDING.  Then signal run; the entity will
@@ -181,7 +183,7 @@ class ExportHistoryClient:
             last_checkpoint_time=None,
         )
 
-    def get_job(self, job_id: str) -> Optional[ExportJobDescription]:
+    def get_job(self, job_id: str) -> ExportJobDescription | None:
         """Look up an export job by ID.  Returns ``None`` if not found."""
         entity_id = entities.EntityInstanceId(ENTITY_NAME, job_id)
         meta = self._client.get_entity(entity_id, include_state=True)
@@ -196,11 +198,13 @@ class ExportHistoryClient:
             return None
         if not isinstance(state, dict):
             return None
-        return ExportJobDescription._from_state_dict(job_id, state)
+        return ExportJobDescription.from_state_dict(
+            job_id, cast("dict[str, Any]", state),
+        )
 
     def list_jobs(
         self,
-        query: Optional[ExportJobQuery] = None,
+        query: ExportJobQuery | None = None,
     ) -> Iterator[ExportJobDescription]:
         """Enumerate export jobs.
 
@@ -236,7 +240,9 @@ class ExportHistoryClient:
             if not isinstance(state, dict):
                 continue
             try:
-                desc = ExportJobDescription._from_state_dict(meta.id.key, state)
+                desc = ExportJobDescription.from_state_dict(
+                    meta.id.key, cast("dict[str, Any]", state),
+                )
             except (KeyError, ValueError):
                 continue
             if status_filter is not None and desc.status not in status_filter:
@@ -263,7 +269,7 @@ class ExportHistoryClient:
             raise ValueError("poll_interval must be positive")
 
         deadline = time.monotonic() + timeout
-        last: Optional[ExportJobDescription] = None
+        last: ExportJobDescription | None = None
         while True:
             desc = self.get_job(job_id)
             if desc is not None:
@@ -343,7 +349,7 @@ class ExportHistoryJobClient:
     def orchestrator_instance_id(self) -> str:
         return orchestrator_instance_id_for(self._job_id)
 
-    def describe(self) -> Optional[ExportJobDescription]:
+    def describe(self) -> ExportJobDescription | None:
         """Fetch the latest description, or ``None`` if the job is missing."""
         return self._parent.get_job(self._job_id)
 

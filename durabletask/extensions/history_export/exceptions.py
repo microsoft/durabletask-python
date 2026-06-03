@@ -11,13 +11,11 @@ are an additive refinement, not a breaking rename.
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class ExportJobError(Exception):
     """Base class for all export-job specific errors."""
 
-    def __init__(self, message: str, *, job_id: Optional[str] = None) -> None:
+    def __init__(self, message: str, *, job_id: str | None = None) -> None:
         super().__init__(message)
         self.job_id = job_id
 
@@ -28,10 +26,10 @@ class ExportJobInvalidTransitionError(ExportJobError, ValueError):
     def __init__(
         self,
         operation: str,
-        from_status: Optional[str],
-        to_status: Optional[str],
+        from_status: str | None,
+        to_status: str | None,
         *,
-        job_id: Optional[str] = None,
+        job_id: str | None = None,
     ) -> None:
         message = (
             f"Operation {operation!r} cannot transition export job "

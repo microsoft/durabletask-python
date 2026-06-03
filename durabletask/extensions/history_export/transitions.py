@@ -17,7 +17,7 @@ before any status-changing operation.
 
 from __future__ import annotations
 
-from typing import Mapping, Optional
+from collections.abc import Mapping
 
 from durabletask.extensions.history_export.exceptions import (
     ExportJobInvalidTransitionError,
@@ -26,7 +26,7 @@ from durabletask.extensions.history_export.models import ExportJobStatus
 
 
 # Maps (operation_name, current_status_or_None) -> {valid target statuses}.
-TRANSITIONS: Mapping[tuple[str, Optional[ExportJobStatus]], frozenset[ExportJobStatus]] = {
+TRANSITIONS: Mapping[tuple[str, ExportJobStatus | None], frozenset[ExportJobStatus]] = {
     # ``create`` initialises a fresh job and revives terminal jobs.
     ("create", None): frozenset({ExportJobStatus.PENDING}),
     ("create", ExportJobStatus.FAILED): frozenset({ExportJobStatus.PENDING}),
@@ -56,7 +56,7 @@ TRANSITIONS: Mapping[tuple[str, Optional[ExportJobStatus]], frozenset[ExportJobS
 
 def is_valid_transition(
     operation: str,
-    from_status: Optional[ExportJobStatus],
+    from_status: ExportJobStatus | None,
     to_status: ExportJobStatus,
 ) -> bool:
     """Return whether *to_status* is reachable from *from_status* via *operation*."""
@@ -66,10 +66,10 @@ def is_valid_transition(
 
 def assert_valid_transition(
     operation: str,
-    from_status: Optional[ExportJobStatus],
+    from_status: ExportJobStatus | None,
     to_status: ExportJobStatus,
     *,
-    job_id: Optional[str] = None,
+    job_id: str | None = None,
 ) -> None:
     """Raise :class:`ExportJobInvalidTransitionError` for invalid transitions."""
     if not is_valid_transition(operation, from_status, to_status):

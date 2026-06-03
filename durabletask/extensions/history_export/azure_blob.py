@@ -18,7 +18,7 @@ model used by the rest of the extension.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 try:
     from azure.core.exceptions import ResourceExistsError
@@ -56,10 +56,10 @@ class AzureBlobHistoryExportWriterOptions:
     """
 
     container_name: str
-    connection_string: Optional[str] = None
-    account_url: Optional[str] = None
+    connection_string: str | None = None
+    account_url: str | None = None
     credential: Any = field(default=None, repr=False)
-    api_version: Optional[str] = None
+    api_version: str | None = None
     create_container_if_not_exists: bool = True
 
     def __post_init__(self) -> None:
@@ -77,7 +77,7 @@ class AzureBlobHistoryExportWriter:
 
     def __init__(self, options: AzureBlobHistoryExportWriterOptions) -> None:
         self._options = options
-        extra: dict = {}
+        extra: dict[str, Any] = {}
         if options.api_version:
             extra["api_version"] = options.api_version
 
@@ -119,7 +119,7 @@ class AzureBlobHistoryExportWriter:
         blob_name: str,
         payload: bytes,
         content_type: str,
-        content_encoding: Optional[str],
+        content_encoding: str | None,
     ) -> None:
         del instance_id  # included by the protocol but not needed here
         self._ensure_container()
@@ -146,7 +146,12 @@ class AzureBlobHistoryExportWriter:
             self._container_ready = True
             return
         try:
-            self._service.create_container(self._options.container_name)
+            # The azure-storage-blob stubs leave create_container's return
+            # type partially unknown; we don't use it, so it's safe to
+            # suppress the strict-mode warning.
+            self._service.create_container(  # pyright: ignore[reportUnknownMemberType]
+                self._options.container_name,
+            )
         except ResourceExistsError:
             pass
         self._container_ready = True

@@ -5,38 +5,37 @@
 
 Mirrors the .NET ``ExportJobOrchestrator`` design:
 
-1.  Re-fetch the export-job entity state at the top of every loop
-    iteration via :meth:`OrchestrationContext.call_entity`.  If the
-    job no longer exists (deleted) or is no longer ACTIVE (externally
-    marked failed/completed), the orchestrator exits cleanly without
-    issuing any further signals.
-2.  Ask ``list_terminal_instances`` for one page.
-3.  Fan out ``export_instance_history`` across the page, respecting
-    the configured ``max_parallel_exports`` cap, with a per-activity
-    retry policy.
-4.  If any individual export still failed after its retries, retry
-    the *whole page* up to ``MAX_BATCH_RETRY_ATTEMPTS`` times with
-    exponential backoff.
-5.  Signal the entity with ``commit_checkpoint`` carrying the page
-    totals.  On persistent batch failure, the signal also carries the
-    failure list and ``mark_failed_on_batch=True``.
-6.  In :attr:`ExportMode.BATCH`, break out of the loop when there is
-    no next page.  In :attr:`ExportMode.CONTINUOUS`, sleep for
-    ``CONTINUOUS_IDLE_DELAY`` on empty pages and continue tailing
-    forever (until an external stop is observed via step 1).
-7.  Continue-as-new every ``CONTINUE_AS_NEW_FREQUENCY`` pages to
-    keep the orchestrator history bounded.
-8.  In BATCH mode only: on a clean exit, signal ``mark_completed``.
-    In CONTINUOUS mode, the orchestrator does not mark the job
-    completed — the job lifecycle is owned by the caller.
+1.  Resolve the job configuration from the orchestrator input.
+2.  Loop over pages of terminal instance IDs:
+    a.  Ask ``list_terminal_instances`` for one page.
+    b.  Fan out ``export_instance_history`` across the page,
+        respecting the configured ``max_parallel_exports`` cap, with
+        a per-activity retry policy.
+    c.  If any individual export still failed after its retries,
+        retry the *whole page* once after a backoff timer.
+    d.  Signal the entity with ``commit_checkpoint`` carrying the
+        page totals.  On persistent batch failure, the signal also
+        carries the failure list and ``mark_failed_on_batch=True``.
+3.  Continue-as-new every ``CONTINUE_AS_NEW_FREQUENCY`` pages to keep
+    the orchestrator history bounded.
+4.  Signal ``mark_completed`` (or ``mark_failed`` on any uncaught
+    exception) and return a summary.
+
+The orchestrator never reads the entity's state back during normal
+operation — except for the lightweight ``call_entity("get")`` at the
+top of every loop iteration which lets external delete / mark_failed
+signals cancel the orchestrator cleanly.  This keeps the orchestrator
+history small and avoids round-trip latency.
 """
 
 from __future__ import annotations
 
+from collections.abc import Generator, Mapping
 from datetime import timedelta
-from typing import Any, List, Mapping, Optional
+from typing import Any, TypedDict, cast
 
 from durabletask import task
+from durabletask import worker as worker_module
 
 from durabletask.extensions.history_export._constants import (
     ENTITY_NAME,
@@ -92,8 +91,16 @@ _DEFAULT_BATCH_RETRY_FIRST = timedelta(seconds=60)
 _DEFAULT_BATCH_RETRY_MAX = timedelta(seconds=300)
 
 # Test seams: monkey-patch to small values to keep test runs fast.
-_BATCH_RETRY_BACKOFF_OVERRIDE: Optional[timedelta] = None
-_CONTINUOUS_IDLE_DELAY_OVERRIDE: Optional[timedelta] = None
+_BATCH_RETRY_BACKOFF_OVERRIDE: timedelta | None = None
+_CONTINUOUS_IDLE_DELAY_OVERRIDE: timedelta | None = None
+
+
+class _ExportActivityResult(TypedDict):
+    """Shape of the dict returned by ``export_instance_history``."""
+
+    instance_id: str
+    success: bool
+    error: str | None
 
 
 def _batch_retry_delay(attempt: int) -> timedelta:
@@ -110,28 +117,34 @@ def _continuous_idle_delay() -> timedelta:
     return _CONTINUOUS_IDLE_DELAY_OVERRIDE or CONTINUOUS_IDLE_DELAY
 
 
-def export_job_orchestrator(ctx: task.OrchestrationContext, input: Mapping[str, Any]):
+def export_job_orchestrator(
+    ctx: task.OrchestrationContext, input: Mapping[str, Any],
+) -> Generator[Any, Any, Any]:
     """Drive a single export job through the page → fan-out → checkpoint loop.
 
     Input schema::
 
         {
             "job_id":           str,
-            "config":           ExportJobConfiguration._to_dict(),
-            "checkpoint":       ExportCheckpoint._to_dict() (optional),
+            "config":           ExportJobConfiguration.to_dict(),
+            "checkpoint":       ExportCheckpoint.to_dict() (optional),
             "processed_cycles": int (optional, used for continue-as-new),
         }
     """
-    job_id = input["job_id"]
-    config = ExportJobConfiguration._from_dict(input["config"])
+    job_id = str(input["job_id"])
+    config_input = input["config"]
+    if not isinstance(config_input, Mapping):
+        raise TypeError("config input must be a mapping")
+    config_mapping = cast("Mapping[str, Any]", config_input)
+    config = ExportJobConfiguration.from_dict(config_mapping)
     initial_checkpoint = input.get("checkpoint") or {"last_instance_key": None}
     processed_cycles = int(input.get("processed_cycles", 0))
 
     entity_id = task.EntityInstanceId(ENTITY_NAME, job_id)
     runtime_status_names = [s.name for s in config.filter.effective_runtime_status()]
-    continuation_token = initial_checkpoint.get("last_instance_key")
+    continuation_token: str | None = initial_checkpoint.get("last_instance_key")
 
-    totals = {"scanned": 0, "exported": 0, "failed": 0}
+    totals: dict[str, int] = {"scanned": 0, "exported": 0, "failed": 0}
 
     try:
         while True:
@@ -139,7 +152,7 @@ def export_job_orchestrator(ctx: task.OrchestrationContext, input: Mapping[str, 
             if processed_cycles > CONTINUE_AS_NEW_FREQUENCY:
                 ctx.continue_as_new({
                     "job_id": job_id,
-                    "config": input["config"],
+                    "config": dict(config_mapping),
                     "checkpoint": {"last_instance_key": continuation_token},
                     "processed_cycles": 0,
                 })
@@ -148,21 +161,24 @@ def export_job_orchestrator(ctx: task.OrchestrationContext, input: Mapping[str, 
             # Step 1: re-check the entity's view of the world.  This
             # lets external state changes (delete, mark_failed) cancel
             # the orchestrator without us having to drain a backlog.
-            current_state = yield ctx.call_entity(entity_id, "get")
+            current_state: dict[str, Any] | None = (
+                yield ctx.call_entity(entity_id, "get")
+            )
             if current_state is None:
                 logger.info(
                     "Export job %r entity has been deleted; exiting orchestrator",
                     job_id,
                 )
                 return {"job_id": job_id, "status": "Cancelled", "totals": totals}
-            if current_state.get("status") != ExportJobStatus.ACTIVE.value:
+            current_status = current_state.get("status")
+            if current_status != ExportJobStatus.ACTIVE.value:
                 logger.info(
                     "Export job %r entity status is %s; exiting orchestrator",
-                    job_id, current_state.get("status"),
+                    job_id, current_status,
                 )
                 return {
                     "job_id": job_id,
-                    "status": current_state.get("status"),
+                    "status": current_status,
                     "totals": totals,
                 }
 
@@ -173,19 +189,20 @@ def export_job_orchestrator(ctx: task.OrchestrationContext, input: Mapping[str, 
                 page_size=config.max_instances_per_batch,
                 continuation_token=continuation_token,
             )
-            page = yield ctx.call_activity(
+            page: dict[str, Any] = yield ctx.call_activity(
                 LIST_TERMINAL_INSTANCES_ACTIVITY, input=list_input
             )
 
-            instance_ids = page.get("instance_ids") or []
+            raw_ids: list[Any] = list(page.get("instance_ids") or [])
+            instance_ids: list[str] = [str(x) for x in raw_ids]
             scanned_delta = len(instance_ids)
             exported_delta = 0
             failed_delta = 0
-            batch_failures: List[dict] = []
+            batch_failures: list[dict[str, Any]] = []
 
             if instance_ids:
                 batch_succeeded = False
-                results: List[dict] = []
+                results: list[_ExportActivityResult] = []
                 for attempt in range(1, MAX_BATCH_RETRY_ATTEMPTS + 1):
                     results = yield from _run_page(
                         ctx,
@@ -235,7 +252,10 @@ def export_job_orchestrator(ctx: task.OrchestrationContext, input: Mapping[str, 
                         f"{failed_delta} instances could not be exported."
                     )
 
-            next_token = page.get("continuation_token")
+            next_token_raw = page.get("continuation_token")
+            next_token: str | None = (
+                str(next_token_raw) if next_token_raw is not None else None
+            )
             ctx.signal_entity(
                 entity_id,
                 "commit_checkpoint",
@@ -276,31 +296,40 @@ def export_job_orchestrator(ctx: task.OrchestrationContext, input: Mapping[str, 
         raise
 
 
-def _run_page(ctx, *, instance_ids, config, max_parallel):
+def _run_page(
+    ctx: task.OrchestrationContext,
+    *,
+    instance_ids: list[str],
+    config: ExportJobConfiguration,
+    max_parallel: int,
+) -> Generator[Any, Any, list[_ExportActivityResult]]:
     """Fan out export activities for a single page, bounded by *max_parallel*."""
-    destination = config.destination._to_dict()
-    fmt = config.format._to_dict()
+    destination = config.destination.to_dict()
+    fmt = config.format.to_dict()
 
-    results: List[dict] = []
+    results: list[_ExportActivityResult] = []
     for start in range(0, len(instance_ids), max_parallel):
         chunk = instance_ids[start:start + max_parallel]
-        chunk_tasks = [
-            ctx.call_activity(
-                EXPORT_INSTANCE_HISTORY_ACTIVITY,
-                input={
-                    "instance_id": instance_id,
-                    "format": fmt,
-                    "destination": destination,
-                },
-                retry_policy=EXPORT_ACTIVITY_RETRY_POLICY,
+        chunk_tasks: list[task.Task[_ExportActivityResult]] = [
+            cast(
+                "task.Task[_ExportActivityResult]",
+                ctx.call_activity(
+                    EXPORT_INSTANCE_HISTORY_ACTIVITY,
+                    input={
+                        "instance_id": instance_id,
+                        "format": fmt,
+                        "destination": destination,
+                    },
+                    retry_policy=EXPORT_ACTIVITY_RETRY_POLICY,
+                ),
             )
             for instance_id in chunk
         ]
-        chunk_results = yield task.when_all(chunk_tasks)
+        chunk_results: list[_ExportActivityResult] = yield task.when_all(chunk_tasks)
         results.extend(chunk_results)
     return results
 
 
-def register(worker_instance) -> None:
+def register(worker_instance: worker_module.TaskHubGrpcWorker) -> None:
     """Convenience helper to register the orchestrator on *worker*."""
     worker_instance.add_orchestrator(export_job_orchestrator)

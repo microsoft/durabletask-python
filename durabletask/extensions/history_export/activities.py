@@ -24,17 +24,19 @@ within the worker that registered them.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, List, Mapping, Optional
+from typing import Any, cast
 
 from durabletask import client as client_module
 from durabletask import task
+from durabletask import worker as worker_module
 
+from durabletask.extensions.history_export._internal import dt_from_iso
 from durabletask.extensions.history_export.models import (
     ExportFormat,
     ExportFormatKind,
-    _dt_from_iso,
 )
 from durabletask.extensions.history_export.serialization import (
     content_encoding_for,
@@ -62,7 +64,7 @@ class HistoryExportContext:
     writer: HistoryWriter
 
 
-_context: Optional[HistoryExportContext] = None
+_context: HistoryExportContext | None = None
 
 
 def bind_context(context: HistoryExportContext) -> None:
@@ -90,20 +92,29 @@ def _require_context() -> HistoryExportContext:
 # Activity bodies
 # ----------------------------------------------------------------------
 
-def list_terminal_instances(_: task.ActivityContext, input: Mapping[str, Any]) -> dict:
+def list_terminal_instances(
+    _: task.ActivityContext, input: Mapping[str, Any],
+) -> dict[str, Any]:
     """Activity: fetch one page of terminal instance IDs."""
     ctx = _require_context()
 
-    runtime_status_names: Optional[List[str]] = input.get("runtime_status")
-    completed_time_from = _dt_from_iso(input.get("completed_time_from"))
-    completed_time_to = _dt_from_iso(input.get("completed_time_to"))
-    page_size = input.get("page_size")
-    continuation_token = input.get("continuation_token")
+    raw_statuses = input.get("runtime_status")
+    runtime_status_names: list[str] | None = (
+        list(raw_statuses) if raw_statuses is not None else None
+    )
+    completed_time_from = dt_from_iso(input.get("completed_time_from"))
+    completed_time_to = dt_from_iso(input.get("completed_time_to"))
+    page_size_raw = input.get("page_size")
+    page_size: int | None = int(page_size_raw) if page_size_raw is not None else None
+    continuation_token_raw = input.get("continuation_token")
+    continuation_token: str | None = (
+        str(continuation_token_raw) if continuation_token_raw is not None else None
+    )
 
     if completed_time_from is None:
         raise ValueError("list_terminal_instances requires 'completed_time_from'")
 
-    runtime_status: Optional[List[client_module.OrchestrationStatus]] = None
+    runtime_status: list[client_module.OrchestrationStatus] | None = None
     if runtime_status_names is not None:
         runtime_status = [
             client_module.OrchestrationStatus[name] for name in runtime_status_names
@@ -123,17 +134,23 @@ def list_terminal_instances(_: task.ActivityContext, input: Mapping[str, Any]) -
     }
 
 
-def export_instance_history(_: task.ActivityContext, input: Mapping[str, Any]) -> dict:
+def export_instance_history(
+    _: task.ActivityContext, input: Mapping[str, Any],
+) -> dict[str, Any]:
     """Activity: serialize and write one instance's history."""
     ctx = _require_context()
 
-    instance_id = input["instance_id"]
-    fmt = ExportFormat._from_dict(input.get("format") or {
+    instance_id = str(input["instance_id"])
+    fmt_input = input.get("format") or {
         "kind": ExportFormatKind.JSONL_GZIP.value,
         "schema_version": "1.0",
-    })
-    destination = input.get("destination") or {}
-    prefix = destination.get("prefix")
+    }
+    if not isinstance(fmt_input, Mapping):
+        raise TypeError("format must be a mapping")
+    fmt = ExportFormat.from_dict(cast("Mapping[str, Any]", fmt_input))
+    destination_raw: Mapping[str, Any] = input.get("destination") or {}
+    prefix_raw: Any = destination_raw.get("prefix")
+    prefix: str | None = str(prefix_raw) if prefix_raw is not None else None
 
     try:
         events = ctx.client.get_orchestration_history(instance_id)
@@ -171,7 +188,7 @@ def export_instance_history(_: task.ActivityContext, input: Mapping[str, Any]) -
 # Helpers
 # ----------------------------------------------------------------------
 
-def _blob_name_for(*, instance_id: str, prefix: Optional[str], fmt: ExportFormat) -> str:
+def _blob_name_for(*, instance_id: str, prefix: str | None, fmt: ExportFormat) -> str:
     ext = file_extension_for(fmt)
     safe_id = instance_id.replace("/", "_")
     if prefix:
@@ -179,7 +196,7 @@ def _blob_name_for(*, instance_id: str, prefix: Optional[str], fmt: ExportFormat
     return f"{safe_id}{ext}"
 
 
-def register(worker_instance) -> None:
+def register(worker_instance: worker_module.TaskHubGrpcWorker) -> None:
     """Convenience helper to register both activities on *worker*."""
     worker_instance.add_activity(list_terminal_instances)
     worker_instance.add_activity(export_instance_history)
@@ -189,12 +206,12 @@ def register(worker_instance) -> None:
 # resolved job configuration without leaking model objects.
 def build_list_activity_input(
     *,
-    runtime_status_names: Optional[List[str]],
+    runtime_status_names: list[str] | None,
     completed_time_from: datetime,
-    completed_time_to: Optional[datetime],
+    completed_time_to: datetime | None,
     page_size: int,
-    continuation_token: Optional[str],
-) -> dict:
+    continuation_token: str | None,
+) -> dict[str, Any]:
     return {
         "runtime_status": runtime_status_names,
         "completed_time_from": completed_time_from.isoformat(),

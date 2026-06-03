@@ -84,7 +84,7 @@ def _create_payload() -> dict:
         completed_time_to=_WINDOW_END,
         destination=ExportDestination(container="exports", prefix="run-1"),
     ).to_configuration()
-    return {"config": cfg._to_dict()}
+    return {"config": cfg.to_dict()}
 
 
 def _state_dict(metadata) -> dict:
