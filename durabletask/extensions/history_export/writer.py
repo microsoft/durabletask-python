@@ -31,6 +31,7 @@ Example custom writer::
             payload: bytes,
             content_type: str,
             content_encoding: str | None,
+            metadata: Mapping[str, str] | None = None,
         ) -> None:
             import os
             # The ``container`` value comes from the export job's
@@ -41,6 +42,10 @@ Example custom writer::
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "wb") as fp:
                 fp.write(payload)
+            # ``metadata`` is an optional dict of small string-valued
+            # key/value pairs the destination may persist alongside
+            # the blob (Azure Blob Storage and S3 both support this).
+            # Destinations that cannot represent it may ignore it.
 
     writer = LocalFileSystemHistoryWriter("/var/exports")
     export_client = ExportHistoryClient(dt_client, writer)
@@ -53,6 +58,7 @@ orchestration identity available.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 
@@ -73,6 +79,7 @@ class HistoryWriter(Protocol):
         payload: bytes,
         content_type: str,
         content_encoding: str | None,
+        metadata: Mapping[str, str] | None = None,
     ) -> None:
         """Persist one exported blob.
 
@@ -100,6 +107,14 @@ class HistoryWriter(Protocol):
                 model HTTP-style headers (such as Azure Blob Storage)
                 should persist this on the blob; destinations that
                 cannot represent it may ignore it.
+            metadata: Optional small string-valued key/value pairs the
+                activity asks the destination to persist alongside the
+                blob.  Azure Blob Storage and S3 expose this natively
+                as blob metadata / object tags; destinations that
+                cannot represent it may ignore it.  The activity
+                currently populates ``{"instance_id": instance_id}``
+                so downstream consumers can scan a container without
+                parsing each blob body.
         """
         ...
 

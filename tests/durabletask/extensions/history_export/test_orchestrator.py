@@ -44,7 +44,7 @@ class _InMemoryWriter:
         self._lock = threading.Lock()
         self.blobs: dict[str, dict] = {}
 
-    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding):
+    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding, metadata=None):
         with self._lock:
             self.blobs[blob_name] = {
                 "instance_id": instance_id,
@@ -157,7 +157,16 @@ def test_orchestrator_exports_all_terminal_instances_and_marks_completed(
 def test_orchestrator_exits_when_entity_is_deleted_mid_run(
     dt_client, export_client,
 ):
-    """Continuous-mode jobs stop when the entity is deleted externally."""
+    """Continuous-mode jobs stop when the entity is deleted externally.
+
+    With the .NET-aligned :meth:`ExportHistoryClient.delete_job` flow,
+    deletion actively terminates and purges the driving orchestrator
+    (rather than relying on the orchestrator's next mid-loop entity
+    poll to self-exit).  The post-condition tested here is therefore
+    "the entity state is gone and the orchestration is no longer
+    running" rather than the old "orchestration completes with status
+    Cancelled".
+    """
     now = datetime.now(timezone.utc)
     desc = export_client.create_job(
         ExportJobCreationOptions(
@@ -177,17 +186,33 @@ def test_orchestrator_exits_when_entity_is_deleted_mid_run(
         timeout=5.0,
     )
 
-    # External delete: the orchestrator's next mid-loop entity get
-    # observes None and exits gracefully.
+    # External delete: terminates + waits + purges the driving
+    # orchestrator and clears the entity's persisted state.
     export_client.delete_job(desc.job_id)
 
-    run_state = dt_client.wait_for_orchestration_completion(
-        desc.orchestrator_instance_id, timeout=10, fetch_payloads=True,
+    # Entity state should be gone.
+    assert export_client.get_job(desc.job_id) is None
+
+    # The orchestration should no longer be running (purged or in a
+    # terminal state).  We poll briefly since ``delete_job`` is
+    # synchronous on termination but the in-memory backend can take a
+    # moment to settle the post-purge state.
+    def _orchestration_is_done() -> bool:
+        state = dt_client.get_orchestration_state(
+            desc.orchestrator_instance_id, fetch_payloads=False,
+        )
+        if state is None:
+            return True  # purged
+        return state.runtime_status in {
+            client.OrchestrationStatus.TERMINATED,
+            client.OrchestrationStatus.COMPLETED,
+            client.OrchestrationStatus.FAILED,
+        }
+    wait_until(
+        _orchestration_is_done,
+        description="orchestration to be terminated or purged",
+        timeout=10.0,
     )
-    assert run_state is not None
-    assert run_state.runtime_status == client.OrchestrationStatus.COMPLETED
-    output = json.loads(run_state.serialized_output or "null")
-    assert output["status"] == "Cancelled"
 
 
 def test_orchestrator_records_failure_when_no_context_bound(
@@ -229,7 +254,7 @@ def test_orchestrator_records_failure_when_no_context_bound(
 class _AlwaysFailingWriter:
     """Writer that raises on every call — used to force batch retries to exhaust."""
 
-    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding):
+    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding, metadata=None):
         raise RuntimeError("simulated permanent write failure")
 
 

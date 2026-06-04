@@ -20,12 +20,21 @@ ADDED
   (tail terminal instances indefinitely until stopped via `delete_job`).
   Exported blobs are self-describing: each blob carries an explicit
   `schema_version`, the orchestration's `OrchestrationState` metadata, and
-  the full ordered event list. The export workflow retries each instance up
+  the full ordered event list. Each exported blob also carries
+  `{"instance_id": <id>}` as destination-side metadata (the Azure writer
+  persists this as Azure Blob metadata) so consumers can scan a container
+  without parsing each blob body. The export workflow retries each instance up
   to 3 times with exponential backoff (15s/30s/60s), retries failed batches
   up to 3 times, caps in-flight exports via `max_parallel_exports`
   (default 32), continues-as-new every 5 page cycles to bound orchestrator
   history, and re-fetches entity state at the top of every page loop so
   external delete or mark-failed signals stop the orchestrator cleanly.
+  `delete_job` actively tears the job down: it clears the entity state,
+  terminates the driving orchestrator, waits briefly for it to settle, and
+  purges its orchestration history so a re-created job with the same ID
+  starts from a clean slate. Per-instance exports refuse to write a blob
+  when the target instance has been purged or has re-entered a non-terminal
+  state, surfacing the skipped instance as a per-batch failure.
   Job state lives in a durable entity with an explicit state-transition
   matrix (ACTIVE / COMPLETED / FAILED); invalid transitions raise
   `ExportJobInvalidTransitionError`. Persisted entity state uses a

@@ -17,6 +17,7 @@ model used by the rest of the extension.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -135,6 +136,7 @@ class AzureBlobHistoryExportWriter:
         payload: bytes,
         content_type: str,
         content_encoding: str | None,
+        metadata: Mapping[str, str] | None = None,
     ) -> None:
         del instance_id  # included by the protocol but not needed here
         # This writer pins to the container configured at construction
@@ -158,11 +160,19 @@ class AzureBlobHistoryExportWriter:
             if content_encoding
             else ContentSettings(content_type=content_type)
         )
+        # Azure Blob Storage requires the metadata dict to be a plain
+        # ``dict[str, str]`` (the SDK does its own validation).  Copy
+        # whatever the activity passed into the shape the underlying
+        # SDK expects, and pass ``None`` through unchanged so blobs
+        # written via :meth:`write` without metadata behave exactly
+        # the same as they did before this kwarg existed.
+        blob_metadata = dict(metadata) if metadata else None
         container_client.upload_blob(
             name=blob_name,
             data=payload,
             overwrite=self._options.overwrite,
             content_settings=content_settings,
+            metadata=blob_metadata,
         )
 
     # ------------------------------------------------------------------

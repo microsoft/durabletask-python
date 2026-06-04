@@ -48,6 +48,15 @@ from durabletask.extensions.history_export.serialization import (
 from durabletask.extensions.history_export.writer import HistoryWriter
 
 
+# The set of runtime statuses considered "terminal" by the export
+# activity's safety guard.  Matches the .NET ``IsCompleted`` helper.
+_TERMINAL_RUNTIME_STATUSES: frozenset[client_module.OrchestrationStatus] = frozenset({
+    client_module.OrchestrationStatus.COMPLETED,
+    client_module.OrchestrationStatus.FAILED,
+    client_module.OrchestrationStatus.TERMINATED,
+})
+
+
 # The activity name registered with the worker is simply ``fn.__name__``
 # (see :func:`durabletask.task.get_name`).  These constants exist so
 # downstream code (the orchestrator, tests) can refer to the names
@@ -174,13 +183,39 @@ def export_instance_history(
     prefix: str | None = str(prefix_raw) if prefix_raw is not None else None
 
     try:
-        events = ctx.client.get_orchestration_history(instance_id)
-        # Fetch the orchestration's terminal metadata too so the
-        # exported blob is self-describing (matches the .NET behavior).
+        # Resolve the instance's terminal metadata first.  If the
+        # instance was purged, deleted, or has somehow re-entered a
+        # non-terminal state between ``list_terminal_instances`` and
+        # now, we refuse to write a partial/empty blob and surface a
+        # specific failure to the orchestrator.  Matches the .NET
+        # ``ExportInstanceHistoryActivity`` guard.
         state = ctx.client.get_orchestration_state(
             instance_id, fetch_payloads=True,
         )
-        metadata = orchestration_state_to_dict(state) if state is not None else None
+        if state is None:
+            return {
+                "instance_id": instance_id,
+                "success": False,
+                "error": (
+                    f"instance {instance_id!r} no longer exists or has been "
+                    "purged"
+                ),
+            }
+        if state.runtime_status not in _TERMINAL_RUNTIME_STATUSES:
+            return {
+                "instance_id": instance_id,
+                "success": False,
+                "error": (
+                    f"instance {instance_id!r} is no longer terminal "
+                    f"(runtime_status={state.runtime_status.name})"
+                ),
+            }
+
+        events = ctx.client.get_orchestration_history(instance_id)
+        # The exported blob is self-describing: it carries the
+        # serialized ``OrchestrationState`` metadata alongside the
+        # event list.  Matches the .NET behavior.
+        metadata = orchestration_state_to_dict(state)
         payload = serialize_history(
             events,
             instance_id=instance_id,
@@ -195,6 +230,10 @@ def export_instance_history(
             payload=payload,
             content_type=content_type_for(fmt),
             content_encoding=content_encoding_for(fmt),
+            # Standard hook downstream consumers use to scan a
+            # container without parsing each blob body.  Matches the
+            # .NET writer's ``Metadata["instanceId"]`` convention.
+            metadata={"instance_id": instance_id},
         )
     except Exception as ex:  # noqa: BLE001 - reported back via return value
         return {

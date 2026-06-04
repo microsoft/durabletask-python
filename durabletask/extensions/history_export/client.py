@@ -59,6 +59,8 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Any, cast
 
+import grpc
+
 from durabletask import client as client_module
 from durabletask import entities
 from durabletask import worker as worker_module
@@ -92,6 +94,31 @@ from durabletask.extensions.history_export.orchestrator import (
 
 _TERMINAL_STATUSES = frozenset({ExportJobStatus.COMPLETED, ExportJobStatus.FAILED})
 _ENTITY_ID_PREFIX = f"@{ENTITY_NAME.lower()}@"
+
+# Max seconds :meth:`ExportHistoryClient.delete_job` waits for the
+# driving orchestrator to terminate before continuing on to purge.
+# Sized to be longer than a single ``commit_checkpoint`` round-trip
+# but short enough that a stuck orchestrator cannot block the caller
+# indefinitely.
+_DELETE_WAIT_TIMEOUT_SECONDS = 30.0
+
+
+def _grpc_status(ex: grpc.RpcError) -> grpc.StatusCode | None:
+    """Return the gRPC status code of *ex*, or ``None`` if it is not set.
+
+    The ``code()`` method is declared on the runtime ``grpc.Call``
+    mixin rather than on :class:`grpc.RpcError` itself, so we go
+    through ``getattr`` to keep both pyright and runtime happy when a
+    test backend raises a bare ``RpcError``.
+    """
+    code = getattr(ex, "code", None)
+    if not callable(code):
+        return None
+    try:
+        result = code()
+    except Exception:  # noqa: BLE001 - defensive, never re-raise here
+        return None
+    return result if isinstance(result, grpc.StatusCode) else None
 
 
 __all__ = ["ExportHistoryClient", "ExportHistoryJobClient"]
@@ -311,22 +338,71 @@ class ExportHistoryClient:
             time.sleep(poll_interval)
 
     def delete_job(self, job_id: str) -> None:
-        """Request deletion of the export-job entity, clearing its state.
+        """Stop and delete an export job.
 
-        This call is **best-effort and fire-and-forget**: it enqueues a
-        ``delete`` signal on the entity but does not wait for the
-        entity dispatcher to process it.  Callers that need
-        confirmation should poll :meth:`get_job` and wait for it to
-        return ``None``.
+        The call performs the full teardown sequence (matching the
+        .NET ``DefaultExportHistoryJobClient.DeleteAsync`` flow):
 
-        The driving orchestrator will detect the deletion at its next
-        loop iteration (via :meth:`OrchestrationContext.call_entity`)
-        and exit cleanly without issuing further signals.
+        1.  Signal the entity to clear its persisted state
+            (``ExportJobEntity.OP_DELETE``).
+        2.  Terminate the driving orchestrator so it stops issuing
+            further activity calls and entity signals.
+        3.  Wait briefly for the orchestrator to actually reach a
+            terminal state.
+        4.  Purge the orchestration history so a re-created job with
+            the same ID can start from a clean slate.
+
+        Steps 2–4 are best-effort: each tolerates a missing
+        orchestrator (the job may never have run, or already been
+        purged) by swallowing gRPC ``NOT_FOUND`` errors.  Step 3
+        tolerates a slow termination by logging and continuing rather
+        than blocking the caller indefinitely.
 
         This does NOT delete blobs already written to the destination.
         """
         entity_id = entities.EntityInstanceId(ENTITY_NAME, job_id)
+        orch_instance_id = orchestrator_instance_id_for(job_id)
+
+        # Step 1: clear the persisted entity state.
         self._client.signal_entity(entity_id, ExportJobEntity.OP_DELETE)
+
+        # Step 2: terminate the driving orchestrator so it stops
+        # issuing activity calls and entity signals.
+        try:
+            self._client.terminate_orchestration(
+                orch_instance_id, recursive=True,
+            )
+        except grpc.RpcError as ex:
+            if _grpc_status(ex) != grpc.StatusCode.NOT_FOUND:
+                raise
+
+        # Step 3: wait briefly for the orchestration to settle so the
+        # subsequent purge actually removes its history.  Capped by
+        # ``_DELETE_WAIT_TIMEOUT_SECONDS`` so a stuck orchestrator
+        # cannot block the caller indefinitely; a slow termination is
+        # logged rather than re-raised.
+        try:
+            self._client.wait_for_orchestration_completion(
+                orch_instance_id, timeout=_DELETE_WAIT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Export job %r orchestrator %r did not terminate within %ss; "
+                "continuing with purge anyway",
+                job_id, orch_instance_id, _DELETE_WAIT_TIMEOUT_SECONDS,
+            )
+        except grpc.RpcError as ex:
+            if _grpc_status(ex) != grpc.StatusCode.NOT_FOUND:
+                raise
+
+        # Step 4: purge the orchestration history.
+        try:
+            self._client.purge_orchestration(
+                orch_instance_id, recursive=True,
+            )
+        except grpc.RpcError as ex:
+            if _grpc_status(ex) != grpc.StatusCode.NOT_FOUND:
+                raise
 
     def cancel_job(self, job_id: str) -> None:
         """Alias for :meth:`delete_job`.

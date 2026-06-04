@@ -46,13 +46,14 @@ class _InMemoryWriter:
         self._lock = threading.Lock()
         self.blobs: dict[str, dict] = {}
 
-    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding):
+    def write(self, *, instance_id, container, blob_name, payload, content_type, content_encoding, metadata=None):
         with self._lock:
             self.blobs[blob_name] = {
                 "instance_id": instance_id,
                 "payload": payload,
                 "content_type": content_type,
                 "content_encoding": content_encoding,
+                "metadata": dict(metadata) if metadata else None,
             }
 
 
@@ -164,6 +165,10 @@ def test_activities_list_and_export_to_in_memory_writer(c, seeded_ids):
         entry = writer.blobs[name]
         assert entry["content_type"] == "application/x-ndjson"
         assert entry["content_encoding"] == "gzip"
+        # N-9: activity must pass {"instance_id": ...} blob metadata
+        # to the writer so downstream consumers can scan a container
+        # without parsing each blob body.
+        assert entry["metadata"] == {"instance_id": sid}
         raw = gzip.decompress(entry["payload"]).decode("utf-8")
         lines = raw.strip().split("\n")
         assert len(lines) >= 2  # metadata + at least one event
@@ -230,3 +235,88 @@ def test_activities_require_bound_context(c):
     assert state.runtime_status == client.OrchestrationStatus.FAILED
     assert state.failure_details is not None
     assert "without a bound context" in (state.failure_details.message or "")
+
+
+# ---------------------------------------------------------------------
+# Unit tests for the N-2 guard
+# ---------------------------------------------------------------------
+#
+# The activity body refuses to write a blob when the target instance
+# either no longer exists (e.g. purged between list and export) or has
+# re-entered a non-terminal state.  Exercising this via the full
+# orchestrator would require fabricating a race against the in-memory
+# backend; calling the activity body directly with a stub client lets
+# us cover the guard deterministically.
+
+
+class _StubGetStateClient:
+    """Minimal stand-in for ``TaskHubGrpcClient`` covering N-2 paths."""
+
+    def __init__(self, *, state):
+        self._state = state
+        self.history_calls = 0
+
+    def get_orchestration_state(self, instance_id, *, fetch_payloads=False):
+        del instance_id, fetch_payloads
+        return self._state
+
+    def get_orchestration_history(self, instance_id):
+        del instance_id
+        self.history_calls += 1
+        return []
+
+
+class _CountingWriter:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def write(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def _basic_activity_input() -> dict:
+    return {
+        "instance_id": "inst-x",
+        "format": ExportFormat(kind=ExportFormatKind.JSON).to_dict(),
+        "destination": ExportDestination(container="exports").to_dict(),
+    }
+
+
+def test_export_activity_skips_when_instance_no_longer_exists():
+    """N-2: instance purged between list and export -> failure without write."""
+    from durabletask.extensions.history_export.activities import (
+        export_instance_history,
+    )
+
+    stub_client = _StubGetStateClient(state=None)
+    writer = _CountingWriter()
+    bind_context(HistoryExportContext(client=stub_client, writer=writer))
+
+    result = export_instance_history(None, _basic_activity_input())
+
+    assert result["success"] is False
+    assert "no longer exists" in result["error"]
+    assert writer.calls == []
+    assert stub_client.history_calls == 0
+
+
+def test_export_activity_skips_when_instance_is_not_terminal():
+    """N-2: instance has re-entered a running state -> failure without write."""
+    from durabletask.extensions.history_export.activities import (
+        export_instance_history,
+    )
+
+    class _State:
+        runtime_status = client.OrchestrationStatus.RUNNING
+
+    stub_client = _StubGetStateClient(state=_State())
+    writer = _CountingWriter()
+    bind_context(HistoryExportContext(client=stub_client, writer=writer))
+
+    result = export_instance_history(None, _basic_activity_input())
+
+    assert result["success"] is False
+    assert "no longer terminal" in result["error"]
+    assert "RUNNING" in result["error"]
+    assert writer.calls == []
+    assert stub_client.history_calls == 0

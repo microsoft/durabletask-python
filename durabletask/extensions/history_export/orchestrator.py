@@ -133,6 +133,11 @@ def export_job_orchestrator(
         }
     """
     job_id = str(input["job_id"])
+    # All log records emitted from the orchestrator body go through
+    # the SDK's replay-safe logger so a single log line is not
+    # re-emitted on every replay of the orchestrator's history.
+    # Matches the .NET ``CreateReplaySafeLogger`` pattern.
+    safe_logger = ctx.create_replay_safe_logger(logger)
     config_input = input["config"]
     if not isinstance(config_input, Mapping):
         raise TypeError("config input must be a mapping")
@@ -166,14 +171,14 @@ def export_job_orchestrator(
                 yield ctx.call_entity(entity_id, ExportJobEntity.OP_GET)
             )
             if current_state is None:
-                logger.info(
+                safe_logger.info(
                     "Export job %r entity has been deleted; exiting orchestrator",
                     job_id,
                 )
                 return {"job_id": job_id, "status": "Cancelled", "totals": totals}
             current_status = current_state.get("status")
             if current_status != ExportJobStatus.ACTIVE.value:
-                logger.info(
+                safe_logger.info(
                     "Export job %r entity status is %s; exiting orchestrator",
                     job_id, current_status,
                 )
@@ -202,19 +207,20 @@ def export_job_orchestrator(
             batch_failures: list[dict[str, Any]] = []
 
             # Empty page handling matches the .NET ExportJobOrchestrator:
-            # CONTINUOUS sleeps and re-polls, BATCH exits cleanly even
-            # if the backend returned a non-null continuation token.
-            # This guards against backends that legally return an empty
-            # page with a token (the orchestrator would otherwise spin
-            # forever in BATCH mode emitting no-op commit_checkpoints).
+            # CONTINUOUS sleeps and re-polls (preserving the in-memory
+            # ``continuation_token`` so the next list call resumes
+            # from the last bookmark rather than rescanning the whole
+            # window), BATCH exits cleanly even if the backend
+            # returned a non-null continuation token.  The BATCH guard
+            # prevents backends that legally return an empty page with
+            # a token from spinning the orchestrator forever.
             if not instance_ids:
                 if config.mode is ExportMode.CONTINUOUS:
                     yield ctx.create_timer(
                         ctx.current_utc_datetime + _continuous_idle_delay()
                     )
-                    continuation_token = None
                     continue
-                ctx.signal_entity(
+                yield ctx.call_entity(
                     entity_id,
                     ExportJobEntity.OP_COMMIT_CHECKPOINT,
                     {
@@ -258,7 +264,7 @@ def export_job_orchestrator(
             ]
 
             if not batch_succeeded:
-                ctx.signal_entity(
+                yield ctx.call_entity(
                     entity_id,
                     ExportJobEntity.OP_COMMIT_CHECKPOINT,
                     {
@@ -273,14 +279,14 @@ def export_job_orchestrator(
                 totals["exported"] += exported_delta
                 totals["failed"] += failed_delta
                 # The entity already transitioned to FAILED via
-                # the commit_checkpoint signal above; returning
+                # the commit_checkpoint call above; returning
                 # cleanly avoids the outer ``except`` issuing a
                 # second mark_failed signal which the transitions
                 # matrix would reject (the entity is no longer
                 # ACTIVE).  Surfacing the cause is the caller's
                 # responsibility via :meth:`ExportHistoryClient.get_job`,
                 # whose ``last_error`` carries the failure summary.
-                logger.warning(
+                safe_logger.warning(
                     "Export job %r marked FAILED after %d batch attempts; "
                     "%d instances failed to export",
                     job_id, MAX_BATCH_RETRY_ATTEMPTS, failed_delta,
@@ -295,14 +301,21 @@ def export_job_orchestrator(
             next_token: str | None = (
                 str(next_token_raw) if next_token_raw is not None else None
             )
-            ctx.signal_entity(
+            # The persisted ``last_instance_key`` always reflects the
+            # orchestrator's *resume cursor*: if the backend returned a
+            # fresh page token, use that; otherwise stick with the
+            # cursor that produced this page so CONTINUOUS recovery via
+            # continue-as-new resumes from the right bookmark rather
+            # than re-scanning the whole window.
+            resume_cursor = next_token if next_token else continuation_token
+            yield ctx.call_entity(
                 entity_id,
                 ExportJobEntity.OP_COMMIT_CHECKPOINT,
                 {
                     "scanned_delta": scanned_delta,
                     "exported_delta": exported_delta,
                     "failed_delta": failed_delta,
-                    "last_instance_key": next_token,
+                    "last_instance_key": resume_cursor,
                 },
             )
 
@@ -313,20 +326,35 @@ def export_job_orchestrator(
             if not next_token:
                 if config.mode is ExportMode.CONTINUOUS:
                     # Tail mode: sleep, then loop back and re-check.
+                    # Preserve ``continuation_token`` (= resume_cursor)
+                    # across the sleep so the next list call resumes
+                    # from the last bookmark rather than rescanning
+                    # the whole window on every quiet cycle.
                     yield ctx.create_timer(
                         ctx.current_utc_datetime + _continuous_idle_delay()
                     )
-                    continuation_token = None
                     continue
                 break
 
             continuation_token = next_token
 
         # Reaching here means BATCH mode finished its window cleanly.
-        ctx.signal_entity(entity_id, ExportJobEntity.OP_MARK_COMPLETED)
+        # Use ``call_entity`` for the final transition so the orchestrator
+        # only resolves after the entity has durably recorded COMPLETED;
+        # callers polling :meth:`ExportHistoryClient.wait_for_job` then see
+        # the terminal status immediately rather than racing a backlog of
+        # in-flight entity signals.
+        yield ctx.call_entity(entity_id, ExportJobEntity.OP_MARK_COMPLETED)
         return {"job_id": job_id, "status": "Completed", "totals": totals}
 
     except Exception as ex:  # noqa: BLE001 - reported back via mark_failed
+        # Best-effort terminal error report.  We deliberately use
+        # ``signal_entity`` (fire-and-forget) rather than
+        # ``call_entity`` here: if the entity backend is the thing that
+        # raised, awaiting an entity call would just raise again and
+        # discard our cause.  Signalling at least enqueues the
+        # ``mark_failed`` so the user has a chance of seeing it in
+        # :meth:`ExportHistoryClient.get_job`.
         ctx.signal_entity(
             entity_id,
             ExportJobEntity.OP_MARK_FAILED,

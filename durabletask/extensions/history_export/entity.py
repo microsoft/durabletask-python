@@ -211,7 +211,15 @@ class ExportJobEntity(entities.DurableEntity):
     def commit_checkpoint(self, payload: Mapping[str, Any]) -> dict[str, Any] | None:
         state = self._load()
         if state is None:
-            raise ValueError("Cannot commit_checkpoint on uninitialized export job")
+            # The entity was deleted between the orchestrator's
+            # mid-loop ``get`` call and this checkpoint (the race
+            # window is small but real for CONTINUOUS jobs cancelled
+            # via :meth:`ExportHistoryClient.delete_job`).  Return
+            # ``None`` so the orchestrator's ``call_entity`` resolves
+            # cleanly and the loop exits via its normal
+            # "entity gone" path rather than raising and triggering
+            # an outer ``mark_failed`` on an already-deleted entity.
+            return None
         job_id = self._job_id()
 
         # commit_checkpoint may transition ACTIVE -> ACTIVE (no-op) or
@@ -266,7 +274,10 @@ class ExportJobEntity(entities.DurableEntity):
     def mark_completed(self, _: Any = None) -> dict[str, Any] | None:
         state = self._load()
         if state is None:
-            raise ValueError("Cannot mark_completed on uninitialized export job")
+            # Entity vanished mid-flight (see ``commit_checkpoint``
+            # for the race description); silently succeed so the
+            # orchestrator's final ``call_entity`` does not raise.
+            return None
         job_id = self._job_id()
         assert_valid_transition(
             self.OP_MARK_COMPLETED, state.status, ExportJobStatus.COMPLETED,
@@ -285,7 +296,11 @@ class ExportJobEntity(entities.DurableEntity):
     ) -> dict[str, Any] | None:
         state = self._load()
         if state is None:
-            raise ValueError("Cannot mark_failed on uninitialized export job")
+            # Entity vanished mid-flight (see ``commit_checkpoint``
+            # for the race description); silently succeed so the
+            # orchestrator's best-effort failure report does not
+            # raise on an already-deleted entity.
+            return None
         job_id = self._job_id()
         assert_valid_transition(
             self.OP_MARK_FAILED, state.status, ExportJobStatus.FAILED, job_id=job_id,
