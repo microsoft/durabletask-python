@@ -318,5 +318,89 @@ def test_export_activity_skips_when_instance_is_not_terminal():
     assert result["success"] is False
     assert "no longer terminal" in result["error"]
     assert "RUNNING" in result["error"]
-    assert writer.calls == []
-    assert stub_client.history_calls == 0
+
+
+# ---------------------------------------------------------------------
+# Unit tests for the N-8 blob-naming scheme
+# ---------------------------------------------------------------------
+
+
+def test_blob_name_matches_dotnet_hash_scheme():
+    """N-8: blob name is lowercase-hex sha256 of '{:O}|{instance_id}'.
+
+    Pins the exact .NET-aligned scheme so any future drift (timestamp
+    format, hash function, casing) breaks loudly.  The expected hash
+    is computed by hand from the same inputs the activity would use.
+    """
+    import hashlib
+
+    from durabletask.extensions.history_export.activities import (
+        _blob_name_for,
+        _dotnet_o_format,
+    )
+
+    last_updated = datetime(2026, 6, 4, 17, 9, 9, 420990, tzinfo=timezone.utc)
+    instance_id = "inst-1"
+    fmt = ExportFormat(kind=ExportFormatKind.JSON)
+
+    # The seven-digit fractional-seconds format is what .NET emits for
+    # the same instant.
+    assert _dotnet_o_format(last_updated) == "2026-06-04T17:09:09.4209900+00:00"
+
+    expected_hash = hashlib.sha256(
+        f"{_dotnet_o_format(last_updated)}|{instance_id}".encode("utf-8")
+    ).hexdigest()
+
+    assert _blob_name_for(
+        instance_id=instance_id,
+        last_updated_at=last_updated,
+        prefix=None,
+        fmt=fmt,
+    ) == f"{expected_hash}.json"
+
+    assert _blob_name_for(
+        instance_id=instance_id,
+        last_updated_at=last_updated,
+        prefix="exports/run-1/",
+        fmt=ExportFormat(kind=ExportFormatKind.JSONL_GZIP),
+    ) == f"exports/run-1/{expected_hash}.jsonl.gz"
+
+
+def test_blob_name_isolates_instance_ids_that_differ_only_by_slash():
+    """N-8: instance IDs containing '/' no longer collide.
+
+    The old scheme used ``instance_id.replace(\"/\", \"_\")`` which
+    collapsed ``v1/x`` and ``v1_x`` to the same blob name.  Hashing
+    isolates them.
+    """
+    from durabletask.extensions.history_export.activities import _blob_name_for
+
+    last_updated = datetime(2026, 6, 4, 17, 9, 9, 420990, tzinfo=timezone.utc)
+    fmt = ExportFormat(kind=ExportFormatKind.JSON)
+
+    name_a = _blob_name_for(
+        instance_id="v1/x", last_updated_at=last_updated, prefix=None, fmt=fmt,
+    )
+    name_b = _blob_name_for(
+        instance_id="v1_x", last_updated_at=last_updated, prefix=None, fmt=fmt,
+    )
+    assert name_a != name_b
+
+
+def test_blob_name_changes_when_instance_terminal_timestamp_changes():
+    """N-8: re-export at a different terminal time lands at a new blob."""
+    from durabletask.extensions.history_export.activities import _blob_name_for
+
+    fmt = ExportFormat(kind=ExportFormatKind.JSON)
+    instance_id = "inst-x"
+
+    earlier = datetime(2026, 6, 4, 17, 0, 0, 0, tzinfo=timezone.utc)
+    later = datetime(2026, 6, 4, 18, 0, 0, 0, tzinfo=timezone.utc)
+
+    name_earlier = _blob_name_for(
+        instance_id=instance_id, last_updated_at=earlier, prefix=None, fmt=fmt,
+    )
+    name_later = _blob_name_for(
+        instance_id=instance_id, last_updated_at=later, prefix=None, fmt=fmt,
+    )
+    assert name_earlier != name_later

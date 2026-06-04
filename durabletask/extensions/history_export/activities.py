@@ -24,9 +24,10 @@ within the worker that registered them.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from durabletask import client as client_module
@@ -222,7 +223,21 @@ def export_instance_history(
             fmt=fmt,
             metadata=metadata,
         )
-        blob_name = _blob_name_for(instance_id=instance_id, prefix=prefix, fmt=fmt)
+        # Blob name is a SHA-256 hash of the instance's terminal
+        # timestamp + instance ID (matches the .NET
+        # ``ExportInstanceHistoryActivity`` scheme).  This means:
+        # • Two exports of the *same* completion produce the same
+        #   blob name (idempotent under retry when ``overwrite=True``).
+        # • An instance re-exported after a later completion lands
+        #   at a new path rather than overwriting the previous one.
+        # • Instance IDs that differ only by ``/`` no longer collide
+        #   under the old ``.replace("/", "_")`` transform.
+        blob_name = _blob_name_for(
+            instance_id=instance_id,
+            last_updated_at=state.last_updated_at,
+            prefix=prefix,
+            fmt=fmt,
+        )
         ctx.writer.write(
             instance_id=instance_id,
             container=container,
@@ -249,12 +264,56 @@ def export_instance_history(
 # Helpers
 # ----------------------------------------------------------------------
 
-def _blob_name_for(*, instance_id: str, prefix: str | None, fmt: ExportFormat) -> str:
+def _blob_name_for(
+    *,
+    instance_id: str,
+    last_updated_at: datetime,
+    prefix: str | None,
+    fmt: ExportFormat,
+) -> str:
+    """Return the destination blob name for one exported instance.
+
+    Matches the .NET ``ExportInstanceHistoryActivity.GenerateBlobFileName``
+    scheme: lowercase-hex SHA-256 of
+    ``f"{last_updated_at:O}|{instance_id}"`` with the format-appropriate
+    extension appended, optionally namespaced under the configured
+    destination prefix.  Hash byte-equivalence with .NET output
+    requires matching the .NET ``DateTimeOffset.ToString("O")`` format
+    exactly (see :func:`_dotnet_o_format`).
+    """
+    timestamp_str = _dotnet_o_format(last_updated_at)
+    hash_input = f"{timestamp_str}|{instance_id}"
+    digest = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
     ext = file_extension_for(fmt)
-    safe_id = instance_id.replace("/", "_")
+    blob_name = f"{digest}{ext}"
     if prefix:
-        return f"{prefix.rstrip('/')}/{safe_id}{ext}"
-    return f"{safe_id}{ext}"
+        return f"{prefix.rstrip('/')}/{blob_name}"
+    return blob_name
+
+
+def _dotnet_o_format(dt: datetime) -> str:
+    """Format *dt* to match .NET ``DateTimeOffset.ToString("O")``.
+
+    .NET's round-trip format is ``yyyy-MM-ddTHH:mm:ss.fffffffK`` for
+    ``DateTimeOffset``, where ``K`` resolves to ``+HH:MM`` / ``-HH:MM``
+    and fractional seconds always render with seven digits (100-ns
+    ticks resolution).  Python :class:`datetime.datetime` only carries
+    microsecond precision (six digits), so the seventh digit is always
+    a trailing zero.  Naive datetimes are assumed UTC.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    base = dt.strftime("%Y-%m-%dT%H:%M:%S")
+    fractional = f"{dt.microsecond:06d}0"
+    offset = dt.utcoffset()
+    if offset is None:
+        offset_str = "+00:00"
+    else:
+        total_minutes = int(offset.total_seconds() // 60)
+        sign = "+" if total_minutes >= 0 else "-"
+        total_minutes = abs(total_minutes)
+        offset_str = f"{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
+    return f"{base}.{fractional}{offset_str}"
 
 
 def register(worker_instance: worker_module.TaskHubGrpcWorker) -> None:

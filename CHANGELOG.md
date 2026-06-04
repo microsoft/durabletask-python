@@ -20,10 +20,15 @@ ADDED
   (tail terminal instances indefinitely until stopped via `delete_job`).
   Exported blobs are self-describing: each blob carries an explicit
   `schema_version`, the orchestration's `OrchestrationState` metadata, and
-  the full ordered event list. Each exported blob also carries
-  `{"instance_id": <id>}` as destination-side metadata (the Azure writer
-  persists this as Azure Blob metadata) so consumers can scan a container
-  without parsing each blob body. The export workflow retries each instance up
+  the full ordered event list. Blob names are a lowercase-hex SHA-256 of
+  ``{last_updated_at}|{instance_id}`` with the format extension appended
+  (matches the .NET `ExportInstanceHistoryActivity` naming scheme), so
+  re-exporting an instance after a later terminal update lands at a new
+  blob path rather than overwriting the previous one, and instance IDs
+  that differ only by `/` no longer collide. Each exported blob also
+  carries `{"instance_id": <id>}` as destination-side metadata (the Azure
+  writer persists this as Azure Blob metadata) so consumers can scan a
+  container without parsing each blob body. The export workflow retries each instance up
   to 3 times with exponential backoff (15s/30s/60s), retries failed batches
   up to 3 times, caps in-flight exports via `max_parallel_exports`
   (default 32), continues-as-new every 5 page cycles to bound orchestrator
