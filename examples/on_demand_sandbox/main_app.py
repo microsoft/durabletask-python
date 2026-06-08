@@ -19,11 +19,11 @@ def hello_orchestrator(ctx: task.OrchestrationContext, name: str):
     return (yield ctx.call_activity(REMOTE_HELLO, input=name))
 
 
-def _get_required_env(legacy_name: str, preferred_name: str) -> str:
-    value = os.getenv(legacy_name)
+def _get_required_env(name: str) -> str:
+    value = os.getenv(name)
     if value:
         return value
-    raise RuntimeError(f"Set {preferred_name} before running the on-demand sandbox sample.")
+    raise RuntimeError(f"Set {name} before running the on-demand sandbox sample.")
 
 
 taskhub_name = os.getenv("DTS_TASK_HUB") or "OnDemandSandboxPocHub"
@@ -31,14 +31,9 @@ endpoint = os.getenv("DTS_ENDPOINT", "http://localhost:8080")
 worker_profile_id = os.getenv("DTS_WORKER_PROFILE_ID", "default")
 container_image = (
     os.getenv("DTS_ON_DEMAND_SANDBOX_CONTAINER_IMAGE")
-    or os.getenv("DTS_SERVERLESS_CONTAINER_IMAGE")
     or "on-demand-sandbox-remote-worker:local")
-image_pull_managed_identity_client_id = (
-    os.getenv("DTS_ON_DEMAND_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID")
-    or _get_required_env("DTS_SERVERLESS_IMAGE_PULL_UMI_CLIENT_ID", "DTS_ON_DEMAND_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID"))
-scheduler_managed_identity_client_id = (
-    os.getenv("DTS_ON_DEMAND_SANDBOX_SCHEDULER_UMI_CLIENT_ID")
-    or _get_required_env("DTS_SERVERLESS_SCHEDULER_UMI_CLIENT_ID", "DTS_ON_DEMAND_SANDBOX_SCHEDULER_UMI_CLIENT_ID"))
+image_pull_managed_identity_client_id = _get_required_env("DTS_ON_DEMAND_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID")
+scheduler_managed_identity_client_id = _get_required_env("DTS_ON_DEMAND_SANDBOX_SCHEDULER_UMI_CLIENT_ID")
 sample_input = os.getenv("DTS_SAMPLE_HELLO_INPUT", "on-demand sandbox Python")
 sample_timeout_seconds = int(os.getenv("DTS_SAMPLE_TIMEOUT_SECONDS", "300"))
 

@@ -148,9 +148,6 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
                 active_count = self._on_demand_sandbox_active_activities
             yield build_on_demand_sandbox_worker_heartbeat(active_count)
 
-    def _configure_serverless_activity_filters(self) -> None:
-        self._configure_on_demand_sandbox_activity_filters()
-
 
 def _resolve_taskhub() -> str:
     resolved_taskhub = os.getenv("DTS_TASK_HUB")
@@ -201,9 +198,7 @@ def _resolve_token_credential():
 
 
 def _resolve_max_concurrent_activities() -> int:
-    value = (
-        os.getenv("DTS_ON_DEMAND_SANDBOX_MAX_ACTIVITIES")
-        or os.getenv("DTS_SERVERLESS_MAX_ACTIVITIES"))
+    value = os.getenv("DTS_ON_DEMAND_SANDBOX_MAX_ACTIVITIES")
     max_concurrent_activities = (
         int(value)
         if value
@@ -213,4 +208,3 @@ def _resolve_max_concurrent_activities() -> int:
         raise ValueError(
             "On-demand sandbox activity worker max concurrent activities must be greater than zero.")
     return max_concurrent_activities
-

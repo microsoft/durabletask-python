@@ -10,8 +10,8 @@ ENV GRPC_DEFAULT_SSL_ROOTS_FILE_PATH=/etc/ssl/certs/ca-certificates.crt
 COPY . /src
 RUN pip install --no-cache-dir /src /src/durabletask-azuremanaged azure-identity
 
-COPY examples/serverless/remote_worker.py /app/remote_worker.py
-COPY examples/serverless/activity_names.py /app/activity_names.py
+COPY examples/on_demand_sandbox/remote_worker.py /app/remote_worker.py
+COPY examples/on_demand_sandbox/activity_names.py /app/activity_names.py
 
 EXPOSE 8080
 ENTRYPOINT ["python", "/app/remote_worker.py"]

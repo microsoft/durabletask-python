@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from durabletask.azuremanaged.internal import serverless_activities_service_pb2 as durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2
+from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2
 
 GRPC_GENERATED_VERSION = '1.65.4'
 GRPC_VERSION = grpc.__version__
@@ -20,7 +20,7 @@ except ImportError:
 if _version_not_supported:
     warnings.warn(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in durabletask/azuremanaged/internal/serverless_activities_service_pb2_grpc.py depends on'
+        + f' but the generated code in durabletask/azuremanaged/internal/on_demand_sandbox_activities_service_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -41,18 +41,18 @@ class OnDemandSandboxActivitiesStub(object):
         """
         self.ConnectOnDemandSandboxActivityWorker = channel.stream_unary(
                 '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/ConnectOnDemandSandboxActivityWorker',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.FromString,
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.FromString,
                 _registered_method=True)
         self.DeclareOnDemandSandboxActivities = channel.unary_unary(
                 '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/DeclareOnDemandSandboxActivities',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclaration.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.FromString,
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityDeclaration.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.FromString,
                 _registered_method=True)
         self.RemoveOnDemandSandboxActivityDeclaration = channel.unary_unary(
                 '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/RemoveOnDemandSandboxActivityDeclaration',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.FromString,
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.FromString,
                 _registered_method=True)
 
 
@@ -91,18 +91,18 @@ def add_OnDemandSandboxActivitiesServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'ConnectOnDemandSandboxActivityWorker': grpc.stream_unary_rpc_method_handler(
                     servicer.ConnectOnDemandSandboxActivityWorker,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.SerializeToString,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.SerializeToString,
             ),
             'DeclareOnDemandSandboxActivities': grpc.unary_unary_rpc_method_handler(
                     servicer.DeclareOnDemandSandboxActivities,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclaration.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.SerializeToString,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityDeclaration.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.SerializeToString,
             ),
             'RemoveOnDemandSandboxActivityDeclaration': grpc.unary_unary_rpc_method_handler(
                     servicer.RemoveOnDemandSandboxActivityDeclaration,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.SerializeToString,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -130,8 +130,8 @@ class OnDemandSandboxActivities(object):
             request_iterator,
             target,
             '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/ConnectOnDemandSandboxActivityWorker',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.FromString,
+            durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityWorkerMessage.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityWorkerSessionResult.FromString,
             options,
             channel_credentials,
             insecure,
@@ -157,8 +157,8 @@ class OnDemandSandboxActivities(object):
             request,
             target,
             '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/DeclareOnDemandSandboxActivities',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclaration.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.FromString,
+            durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityDeclaration.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.OnDemandSandboxActivityDeclarationResult.FromString,
             options,
             channel_credentials,
             insecure,
@@ -184,8 +184,8 @@ class OnDemandSandboxActivities(object):
             request,
             target,
             '/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/RemoveOnDemandSandboxActivityDeclaration',
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_serverless__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.FromString,
+            durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationRequest.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_on__demand__sandbox__activities__service__pb2.RemoveOnDemandSandboxActivityDeclarationResult.FromString,
             options,
             channel_credentials,
             insecure,

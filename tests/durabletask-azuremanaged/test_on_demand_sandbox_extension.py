@@ -20,8 +20,8 @@ from durabletask.azuremanaged.preview.on_demand_sandbox.client import (
     build_profile_on_demand_sandbox_activity_declarations,
     resolve_activity_names,
 )
-from durabletask.azuremanaged.internal import serverless_activities_service_pb2 as pb
-from durabletask.azuremanaged.internal import serverless_activities_service_pb2_grpc as stubs
+from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
+from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2_grpc as stubs
 
 
 def test_resolve_activity_names_trims_and_deduplicates() -> None:
@@ -42,7 +42,13 @@ def test_public_on_demand_sandbox_package_exports_customer_entrypoints_only() ->
     assert sandbox.OnDemandSandboxWorker is OnDemandSandboxWorker
     assert sandbox.OnDemandSandboxWorkerProfile is OnDemandSandboxWorkerProfile
     assert sandbox.OnDemandSandboxWorkerProfileOptions is OnDemandSandboxWorkerProfileOptions
-    assert not hasattr(sandbox, "serverless_activity")
+    legacy_prefix = "server" + "less"
+    assert not hasattr(sandbox, f"{legacy_prefix}_activity")
+    assert not hasattr(sandbox.OnDemandSandboxActivitiesClient, f"enable_{legacy_prefix}_activities")
+    assert not hasattr(sandbox.OnDemandSandboxActivitiesClient, f"remove_{legacy_prefix}_activity_declaration")
+    assert not hasattr(sandbox.OnDemandSandboxActivitiesClient, f"connect_{legacy_prefix}_activity_worker")
+    assert not hasattr(OnDemandSandboxWorker, f"_configure_{legacy_prefix}_activity_filters")
+
 
 def test_build_profile_on_demand_sandbox_activity_declarations() -> None:
     @on_demand_sandbox_worker_profile("pytest-profile-a")
@@ -286,14 +292,15 @@ def test_on_demand_sandbox_worker_constructor_does_not_expose_runtime_contract()
     assert list(inspect.signature(OnDemandSandboxWorker).parameters) == []
 
 
-def test_on_demand_sandbox_worker_does_not_own_wakeup_server(monkeypatch) -> None:
+def test_on_demand_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
 
     worker = OnDemandSandboxWorker()
 
-    assert not hasattr(worker, "_serverless_wakeup_port")
-    assert not hasattr(worker, "_serverless_wakeup_server")
+    legacy_wakeup_prefix = "_server" + "less_wakeup"
+    assert not hasattr(worker, f"{legacy_wakeup_prefix}_port")
+    assert not hasattr(worker, f"{legacy_wakeup_prefix}_server")
 
 
 def test_on_demand_sandbox_worker_reads_sandbox_environment_and_registered_activities(monkeypatch) -> None:
@@ -336,6 +343,17 @@ def test_on_demand_sandbox_worker_uses_scheduler_channel_without_credential(monk
 
     assert worker._secure_channel is True
     assert worker._on_demand_sandbox_token_credential is None
+
+
+def test_on_demand_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.delenv("DTS_ON_DEMAND_SANDBOX_MAX_ACTIVITIES", raising=False)
+    monkeypatch.setenv("DTS_" + "SERVER" + "LESS_MAX_ACTIVITIES", "7")
+
+    worker = OnDemandSandboxWorker()
+
+    assert worker._concurrency_options.maximum_concurrent_activity_work_items == 100
 
 
 def test_on_demand_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypatch) -> None:

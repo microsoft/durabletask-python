@@ -12,8 +12,8 @@ from durabletask import task
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSDefaultClientInterceptorImpl,
 )
-from durabletask.azuremanaged.internal import serverless_activities_service_pb2 as pb
-from durabletask.azuremanaged.internal import serverless_activities_service_pb2_grpc as stubs
+from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
+from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2_grpc as stubs
 from durabletask.grpc_options import GrpcChannelOptions
 import durabletask.internal.shared as shared
 
@@ -317,19 +317,6 @@ class OnDemandSandboxActivitiesClient:
     ) -> pb.OnDemandSandboxActivityWorkerSessionResult:
         return self._stub.ConnectOnDemandSandboxActivityWorker(messages)
 
-    def enable_serverless_activities(self) -> None:
-        """Declare all configured on-demand sandbox worker profiles with DTS."""
-        self.enable_on_demand_sandbox_activities()
-
-    def remove_serverless_activity_declaration(self, worker_profile_id: str) -> None:
-        self.remove_on_demand_sandbox_activity_declaration(worker_profile_id)
-
-    def connect_serverless_activity_worker(
-            self,
-            messages: Iterable[pb.OnDemandSandboxActivityWorkerMessage]
-    ) -> pb.OnDemandSandboxActivityWorkerSessionResult:
-        return self.connect_on_demand_sandbox_activity_worker(messages)
-
 
 def _normalize_optional_strings(values: Iterable[str]) -> list[str]:
     return [value.strip() for value in values if value and value.strip()]
@@ -389,4 +376,3 @@ def _parse_substrate(substrate: Optional[str]) -> "pb.SubstrateKind":
     if substrate.lower() == "acasessionpool":
         return pb.SUBSTRATE_KIND_ACA_SESSION_POOL
     return pb.SUBSTRATE_KIND_UNSPECIFIED
-

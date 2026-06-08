@@ -49,7 +49,7 @@ From the repository root:
 
 ```powershell
 docker build `
-  -f examples\serverless\Containerfile `
+  -f examples\on_demand_sandbox\Containerfile `
   -t <public container image reference> `
   .
 docker push <public container image reference>
@@ -68,7 +68,7 @@ pip install -e . -e .\durabletask-azuremanaged
 Then run:
 
 ```powershell
-python examples\serverless\main_app.py
+python examples\on_demand_sandbox\main_app.py
 ```
 
 The declarer app registers the on-demand sandbox activity metadata, starts
