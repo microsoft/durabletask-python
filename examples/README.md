@@ -168,10 +168,6 @@ python activity_sequence.py
 > The `large_payload/` example requires Azurite or an Azure Storage
 > account and an additional install step. See the
 > [large payload README](./large_payload/README.md) for details.
->
-> The `serverless/` example requires a DTS private preview scheduler with
-> serverless activities enabled. See the
-> [serverless README](./serverless/README.md) for setup details.
 
 ### Review Orchestration History and Status
 
