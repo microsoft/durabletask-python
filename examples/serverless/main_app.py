@@ -6,9 +6,9 @@ from azure.identity import DefaultAzureCredential
 
 from durabletask import client, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
-from durabletask.azuremanaged.preview.ondemand_sandbox import OnDemandSandboxActivitiesClient
-from durabletask.azuremanaged.preview.ondemand_sandbox import OnDemandSandboxWorkerProfile
-from durabletask.azuremanaged.preview.ondemand_sandbox import on_demand_sandbox_worker_profile
+from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxActivitiesClient
+from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfile
+from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 from activity_names import REMOTE_HELLO

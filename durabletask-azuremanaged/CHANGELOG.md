@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-- Added preview `durabletask.azuremanaged.preview.ondemand_sandbox` APIs for
+- Added preview `durabletask.azuremanaged.preview.on_demand_sandbox` APIs for
   declaring DTS on-demand sandbox activities and running a sandbox activity worker.
 - Added profile-based DTS on-demand sandbox declarations with
   `@on_demand_sandbox_worker_profile`, `OnDemandSandboxWorkerProfile.configure()`,

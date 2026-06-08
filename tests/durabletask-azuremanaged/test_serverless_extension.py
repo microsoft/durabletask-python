@@ -5,15 +5,14 @@ import inspect
 
 from azure.core.credentials import AccessToken
 
-import durabletask.azuremanaged.extensions.serverless as serverless
-import durabletask.azuremanaged.preview.ondemand_sandbox as sandbox
-import durabletask.azuremanaged.preview.ondemand_sandbox.client as sandbox_client
-import durabletask.azuremanaged.preview.ondemand_sandbox.worker as sandbox_worker
-from durabletask.azuremanaged.preview.ondemand_sandbox import OnDemandSandboxWorker
-from durabletask.azuremanaged.preview.ondemand_sandbox import OnDemandSandboxWorkerProfile
-from durabletask.azuremanaged.preview.ondemand_sandbox import OnDemandSandboxWorkerProfileOptions
-from durabletask.azuremanaged.preview.ondemand_sandbox import on_demand_sandbox_worker_profile
-from durabletask.azuremanaged.preview.ondemand_sandbox.client import (
+import durabletask.azuremanaged.preview.on_demand_sandbox as sandbox
+import durabletask.azuremanaged.preview.on_demand_sandbox.client as sandbox_client
+import durabletask.azuremanaged.preview.on_demand_sandbox.worker as sandbox_worker
+from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorker
+from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfile
+from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfileOptions
+from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
+from durabletask.azuremanaged.preview.on_demand_sandbox.client import (
     build_image_ref,
     build_on_demand_sandbox_activity_declaration,
     build_on_demand_sandbox_worker_heartbeat,
@@ -44,20 +43,6 @@ def test_public_on_demand_sandbox_package_exports_customer_entrypoints_only() ->
     assert sandbox.OnDemandSandboxWorkerProfile is OnDemandSandboxWorkerProfile
     assert sandbox.OnDemandSandboxWorkerProfileOptions is OnDemandSandboxWorkerProfileOptions
     assert not hasattr(sandbox, "serverless_activity")
-
-
-def test_legacy_serverless_package_exports_compatibility_entrypoints_only() -> None:
-    assert serverless.__all__ == [
-        "ServerlessWorker",
-        "ServerlessWorkerProfile",
-        "ServerlessWorkerProfileOptions",
-        "ServerlessActivitiesClient",
-        "serverless_worker_profile",
-    ]
-    assert serverless.ServerlessWorker is OnDemandSandboxWorker
-    assert serverless.ServerlessWorkerProfile is OnDemandSandboxWorkerProfile
-    assert serverless.ServerlessWorkerProfileOptions is OnDemandSandboxWorkerProfileOptions
-
 
 def test_build_profile_on_demand_sandbox_activity_declarations() -> None:
     @on_demand_sandbox_worker_profile("pytest-profile-a")

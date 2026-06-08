@@ -4,7 +4,7 @@ import os
 import time
 
 from durabletask import task
-from durabletask.azuremanaged.preview.ondemand_sandbox import OnDemandSandboxWorker
+from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorker
 
 from activity_names import REMOTE_HELLO
 

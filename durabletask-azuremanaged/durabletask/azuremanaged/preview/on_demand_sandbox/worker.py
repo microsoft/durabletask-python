@@ -9,7 +9,7 @@ from typing import Iterator, Optional
 
 from azure.identity import ManagedIdentityCredential
 
-from durabletask.azuremanaged.preview.ondemand_sandbox.client import (
+from durabletask.azuremanaged.preview.on_demand_sandbox.client import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     DEFAULT_WORKER_PROFILE_ID,
     OnDemandSandboxActivitiesClient,
@@ -213,7 +213,4 @@ def _resolve_max_concurrent_activities() -> int:
         raise ValueError(
             "On-demand sandbox activity worker max concurrent activities must be greater than zero.")
     return max_concurrent_activities
-
-
-ServerlessWorker = OnDemandSandboxWorker
 

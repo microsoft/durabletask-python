@@ -390,13 +390,3 @@ def _parse_substrate(substrate: Optional[str]) -> "pb.SubstrateKind":
         return pb.SUBSTRATE_KIND_ACA_SESSION_POOL
     return pb.SUBSTRATE_KIND_UNSPECIFIED
 
-
-ServerlessWorkerProfileOptions = OnDemandSandboxWorkerProfileOptions
-ServerlessWorkerProfile = OnDemandSandboxWorkerProfile
-serverless_worker_profile = on_demand_sandbox_worker_profile
-build_serverless_activity_declaration = build_on_demand_sandbox_activity_declaration
-build_profile_serverless_activity_declarations = build_profile_on_demand_sandbox_activity_declarations
-build_serverless_worker_start = build_on_demand_sandbox_worker_start
-build_serverless_worker_heartbeat = build_on_demand_sandbox_worker_heartbeat
-ServerlessActivitiesClient = OnDemandSandboxActivitiesClient
-
