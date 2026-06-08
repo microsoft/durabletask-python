@@ -1,25 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Serverless activities extension for Azure Managed Durable Task Scheduler.
+"""Compatibility package for Azure Managed on-demand sandbox preview APIs.
 
-This extension provides preview APIs for declaring serverless activity
-worker images and running a Python activity worker inside a DTS-launched
-sandbox.
-
-Usage::
-
-    from durabletask.azuremanaged.extensions.serverless import (
-        ServerlessWorker,
-        ServerlessActivitiesClient,
-    )
+New code should import from ``durabletask.azuremanaged.preview.ondemand_sandbox``.
 """
 
-from durabletask.azuremanaged.extensions.serverless.client import ServerlessActivitiesClient
-from durabletask.azuremanaged.extensions.serverless.client import ServerlessWorkerProfile
-from durabletask.azuremanaged.extensions.serverless.client import ServerlessWorkerProfileOptions
-from durabletask.azuremanaged.extensions.serverless.client import serverless_worker_profile
-from durabletask.azuremanaged.extensions.serverless.worker import ServerlessWorker
+from durabletask.azuremanaged.preview.ondemand_sandbox.client import ServerlessActivitiesClient
+from durabletask.azuremanaged.preview.ondemand_sandbox.client import ServerlessWorkerProfile
+from durabletask.azuremanaged.preview.ondemand_sandbox.client import ServerlessWorkerProfileOptions
+from durabletask.azuremanaged.preview.ondemand_sandbox.client import serverless_worker_profile
+from durabletask.azuremanaged.preview.ondemand_sandbox.worker import ServerlessWorker
 
 __all__ = [
     "ServerlessWorker",

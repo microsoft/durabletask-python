@@ -14,7 +14,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\nEdurabletask/azuremanaged/internal/serverless_activities_service.proto\x12%microsoft.durabletask.ondemandsandbox\"\xf1\x01\n$OnDemandSandboxActivityWorkerMessage\x12Z\n\x05start\x18\x01 \x01(\x0b\x32I.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerStartH\x00\x12\x62\n\theartbeat\x18\x02 \x01(\x0b\x32M.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerHeartbeatH\x00\x42\t\n\x07message\"\x8a\x02\n\"OnDemandSandboxActivityWorkerStart\x12\x10\n\x08task_hub\x18\x01 \x01(\t\x12\x1c\n\x14max_activities_count\x18\x03 \x01(\x05\x12G\n\tsubstrate\x18\x04 \x01(\x0e\x32\x34.microsoft.durabletask.ondemandsandbox.SubstrateKind\x12\x1e\n\x16\x64ts_sandbox_identifier\x18\x05 \x01(\t\x12\x19\n\x11worker_profile_id\x18\x06 \x01(\t\x12\x16\n\x0e\x61\x63tivity_names\x18\x07 \x03(\tJ\x04\x08\x02\x10\x03R\x12worker_instance_id\"I\n&OnDemandSandboxActivityWorkerHeartbeat\x12\x1f\n\x17\x61\x63tive_activities_count\x18\x01 \x01(\x05\"=\n*OnDemandSandboxActivityWorkerSessionResult\x12\x0f\n\x07message\x18\x02 \x01(\t\"\x8d\x04\n\"OnDemandSandboxActivityDeclaration\x12\x19\n\x11worker_profile_id\x18\x02 \x01(\t\x12\x16\n\x0e\x61\x63tivity_names\x18\x03 \x03(\t\x12R\n\x05image\x18\x04 \x01(\x0b\x32\x43.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityImage\x12\x82\x01\n\x15\x65nvironment_variables\x18\x05 \x03(\x0b\x32\x63.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityDeclaration.EnvironmentVariablesEntry\x12!\n\x19max_concurrent_activities\x18\x06 \x01(\x05\x12Z\n\tresources\x18\x07 \x01(\x0b\x32G.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityResources\x12\x12\n\nentrypoint\x18\x08 \x03(\t\x12\x0b\n\x03\x63md\x18\t \x03(\t\x1a;\n\x19\x45nvironmentVariablesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"1\n\x1cOnDemandSandboxActivityImage\x12\x11\n\timage_ref\x18\x01 \x01(\t\"?\n OnDemandSandboxActivityResources\x12\x0b\n\x03\x63pu\x18\x01 \x01(\t\x12\x0e\n\x06memory\x18\x02 \x01(\t\"*\n(OnDemandSandboxActivityDeclarationResult\"L\n/RemoveOnDemandSandboxActivityDeclarationRequest\x12\x19\n\x11worker_profile_id\x18\x01 \x01(\t\"0\n.RemoveOnDemandSandboxActivityDeclarationResult*p\n\rSubstrateKind\x12\x1e\n\x1aSUBSTRATE_KIND_UNSPECIFIED\x10\x00\x12#\n\x1fSUBSTRATE_KIND_ACA_SESSION_POOL\x10\x01\x12\x1a\n\x16SUBSTRATE_KIND_SANDBOX\x10\x02\x32\x83\x05\n\x19OnDemandSandboxActivities\x12\xc8\x01\n$ConnectOnDemandSandboxActivityWorker\x12K.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerMessage\x1aQ.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerSessionResult(\x01\x12\xbe\x01\n DeclareOnDemandSandboxActivities\x12I.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityDeclaration\x1aO.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityDeclarationResult\x12\xd9\x01\n(RemoveOnDemandSandboxActivityDeclaration\x12V.microsoft.durabletask.ondemandsandbox.RemoveOnDemandSandboxActivityDeclarationRequest\x1aU.microsoft.durabletask.ondemandsandbox.RemoveOnDemandSandboxActivityDeclarationResultB1\xaa\x02.Microsoft.DurableTask.Protobuf.OnDemandSandboxb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\nEdurabletask/azuremanaged/internal/serverless_activities_service.proto\x12%microsoft.durabletask.ondemandsandbox\"\xf1\x01\n$OnDemandSandboxActivityWorkerMessage\x12Z\n\x05start\x18\x01 \x01(\x0b\x32I.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerStartH\x00\x12\x62\n\theartbeat\x18\x02 \x01(\x0b\x32M.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerHeartbeatH\x00\x42\t\n\x07message\"\x8a\x02\n\"OnDemandSandboxActivityWorkerStart\x12\x10\n\x08task_hub\x18\x01 \x01(\t\x12\x1c\n\x14max_activities_count\x18\x03 \x01(\x05\x12G\n\tsubstrate\x18\x04 \x01(\x0e\x32\x34.microsoft.durabletask.ondemandsandbox.SubstrateKind\x12\x1e\n\x16\x64ts_sandbox_identifier\x18\x05 \x01(\t\x12\x19\n\x11worker_profile_id\x18\x06 \x01(\t\x12\x16\n\x0e\x61\x63tivity_names\x18\x07 \x03(\tJ\x04\x08\x02\x10\x03R\x12worker_instance_id\"I\n&OnDemandSandboxActivityWorkerHeartbeat\x12\x1f\n\x17\x61\x63tive_activities_count\x18\x01 \x01(\x05\"=\n*OnDemandSandboxActivityWorkerSessionResult\x12\x0f\n\x07message\x18\x02 \x01(\t\"\xbb\x04\n\"OnDemandSandboxActivityDeclaration\x12\x19\n\x11worker_profile_id\x18\x02 \x01(\t\x12\x16\n\x0e\x61\x63tivity_names\x18\x03 \x03(\t\x12R\n\x05image\x18\x04 \x01(\x0b\x32\x43.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityImage\x12\x82\x01\n\x15\x65nvironment_variables\x18\x05 \x03(\x0b\x32\x63.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityDeclaration.EnvironmentVariablesEntry\x12!\n\x19max_concurrent_activities\x18\x06 \x01(\x05\x12Z\n\tresources\x18\x07 \x01(\x0b\x32G.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityResources\x12\x12\n\nentrypoint\x18\x08 \x03(\t\x12\x0b\n\x03\x63md\x18\t \x03(\t\x12,\n$scheduler_managed_identity_client_id\x18\n \x01(\t\x1a;\n\x19\x45nvironmentVariablesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"U\n\x1cOnDemandSandboxActivityImage\x12\x11\n\timage_ref\x18\x01 \x01(\t\x12\"\n\x1amanaged_identity_client_id\x18\x02 \x01(\t\"?\n OnDemandSandboxActivityResources\x12\x0b\n\x03\x63pu\x18\x01 \x01(\t\x12\x0e\n\x06memory\x18\x02 \x01(\t\"*\n(OnDemandSandboxActivityDeclarationResult\"L\n/RemoveOnDemandSandboxActivityDeclarationRequest\x12\x19\n\x11worker_profile_id\x18\x01 \x01(\t\"0\n.RemoveOnDemandSandboxActivityDeclarationResult*p\n\rSubstrateKind\x12\x1e\n\x1aSUBSTRATE_KIND_UNSPECIFIED\x10\x00\x12#\n\x1fSUBSTRATE_KIND_ACA_SESSION_POOL\x10\x01\x12\x1a\n\x16SUBSTRATE_KIND_SANDBOX\x10\x02\x32\x83\x05\n\x19OnDemandSandboxActivities\x12\xc8\x01\n$ConnectOnDemandSandboxActivityWorker\x12K.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerMessage\x1aQ.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityWorkerSessionResult(\x01\x12\xbe\x01\n DeclareOnDemandSandboxActivities\x12I.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityDeclaration\x1aO.microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivityDeclarationResult\x12\xd9\x01\n(RemoveOnDemandSandboxActivityDeclaration\x12V.microsoft.durabletask.ondemandsandbox.RemoveOnDemandSandboxActivityDeclarationRequest\x1aU.microsoft.durabletask.ondemandsandbox.RemoveOnDemandSandboxActivityDeclarationResultB1\xaa\x02.Microsoft.DurableTask.Protobuf.OnDemandSandboxb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -24,8 +24,8 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._serialized_options = b'\252\002.Microsoft.DurableTask.Protobuf.OnDemandSandbox'
   _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION_ENVIRONMENTVARIABLESENTRY']._loaded_options = None
   _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION_ENVIRONMENTVARIABLESENTRY']._serialized_options = b'8\001'
-  _globals['_SUBSTRATEKIND']._serialized_start=1579
-  _globals['_SUBSTRATEKIND']._serialized_end=1691
+  _globals['_SUBSTRATEKIND']._serialized_start=1661
+  _globals['_SUBSTRATEKIND']._serialized_end=1773
   _globals['_ONDEMANDSANDBOXACTIVITYWORKERMESSAGE']._serialized_start=113
   _globals['_ONDEMANDSANDBOXACTIVITYWORKERMESSAGE']._serialized_end=354
   _globals['_ONDEMANDSANDBOXACTIVITYWORKERSTART']._serialized_start=357
@@ -35,19 +35,19 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_ONDEMANDSANDBOXACTIVITYWORKERSESSIONRESULT']._serialized_start=700
   _globals['_ONDEMANDSANDBOXACTIVITYWORKERSESSIONRESULT']._serialized_end=761
   _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION']._serialized_start=764
-  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION']._serialized_end=1289
-  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION_ENVIRONMENTVARIABLESENTRY']._serialized_start=1230
-  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION_ENVIRONMENTVARIABLESENTRY']._serialized_end=1289
-  _globals['_ONDEMANDSANDBOXACTIVITYIMAGE']._serialized_start=1291
-  _globals['_ONDEMANDSANDBOXACTIVITYIMAGE']._serialized_end=1340
-  _globals['_ONDEMANDSANDBOXACTIVITYRESOURCES']._serialized_start=1342
-  _globals['_ONDEMANDSANDBOXACTIVITYRESOURCES']._serialized_end=1405
-  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_start=1407
-  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_end=1449
-  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONREQUEST']._serialized_start=1451
-  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONREQUEST']._serialized_end=1527
-  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_start=1529
-  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_end=1577
-  _globals['_ONDEMANDSANDBOXACTIVITIES']._serialized_start=1694
-  _globals['_ONDEMANDSANDBOXACTIVITIES']._serialized_end=2337
+  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION']._serialized_end=1335
+  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION_ENVIRONMENTVARIABLESENTRY']._serialized_start=1276
+  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATION_ENVIRONMENTVARIABLESENTRY']._serialized_end=1335
+  _globals['_ONDEMANDSANDBOXACTIVITYIMAGE']._serialized_start=1337
+  _globals['_ONDEMANDSANDBOXACTIVITYIMAGE']._serialized_end=1422
+  _globals['_ONDEMANDSANDBOXACTIVITYRESOURCES']._serialized_start=1424
+  _globals['_ONDEMANDSANDBOXACTIVITYRESOURCES']._serialized_end=1487
+  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_start=1489
+  _globals['_ONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_end=1531
+  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONREQUEST']._serialized_start=1533
+  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONREQUEST']._serialized_end=1609
+  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_start=1611
+  _globals['_REMOVEONDEMANDSANDBOXACTIVITYDECLARATIONRESULT']._serialized_end=1659
+  _globals['_ONDEMANDSANDBOXACTIVITIES']._serialized_start=1776
+  _globals['_ONDEMANDSANDBOXACTIVITIES']._serialized_end=2419
 # @@protoc_insertion_point(module_scope)
