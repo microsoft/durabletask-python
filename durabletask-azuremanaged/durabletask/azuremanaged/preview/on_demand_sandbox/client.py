@@ -6,9 +6,9 @@ from typing import Optional, Sequence
 import grpc
 from azure.core.credentials import TokenCredential
 
+from durabletask.azuremanaged.preview.on_demand_sandbox._normalization import _normalize_required
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     _build_profile_on_demand_sandbox_activity_declarations,
-    _normalize_required,
 )
 from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,

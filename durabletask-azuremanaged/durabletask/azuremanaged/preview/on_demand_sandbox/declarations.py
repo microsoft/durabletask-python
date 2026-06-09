@@ -7,6 +7,10 @@ from typing import Callable, Iterable, Optional
 
 from durabletask import task
 from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
+from durabletask.azuremanaged.preview.on_demand_sandbox._normalization import (
+    _normalize_required,
+    _resolve_activity_names,
+)
 
 
 DEFAULT_WORKER_PROFILE_ID = "default"
@@ -77,18 +81,6 @@ def on_demand_sandbox_worker_profile(worker_profile_id: str) -> Callable[[type],
         return cls
 
     return decorator
-
-
-def _resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
-    resolved: list[str] = []
-    seen: set[str] = set()
-    names = [activity_names] if isinstance(activity_names, str) else activity_names
-    for name in names:
-        normalized = name.strip()
-        if normalized and normalized not in seen:
-            resolved.append(normalized)
-            seen.add(normalized)
-    return resolved
 
 
 def _build_on_demand_sandbox_activity_declaration(
@@ -228,12 +220,6 @@ def _build_on_demand_sandbox_worker_heartbeat(active_activities_count: int) -> p
 
 def _normalize_optional_strings(values: Iterable[str]) -> list[str]:
     return [value.strip() for value in values if value and value.strip()]
-
-
-def _normalize_required(value: Optional[str], message: str) -> str:
-    if not value or not value.strip():
-        raise ValueError(message)
-    return value.strip()
 
 
 def _normalize_cpu(value: str) -> str:

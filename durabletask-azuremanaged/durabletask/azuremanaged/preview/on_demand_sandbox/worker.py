@@ -9,12 +9,12 @@ from typing import Iterator, Optional
 
 from azure.identity import ManagedIdentityCredential
 
+from durabletask.azuremanaged.preview.on_demand_sandbox._normalization import _resolve_activity_names
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     DEFAULT_WORKER_PROFILE_ID,
     _build_on_demand_sandbox_worker_heartbeat,
     _build_on_demand_sandbox_worker_start,
-    _resolve_activity_names,
 )
 from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,
