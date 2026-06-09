@@ -68,8 +68,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
 
     def add_activity(self, fn):
         activity_name = super().add_activity(fn)
-        self._on_demand_sandbox_activity_names = resolve_activity_names(
-            [*self._on_demand_sandbox_activity_names, activity_name])
+        self._on_demand_sandbox_activity_names.append(activity_name)
         return activity_name
 
     def start(self) -> None:
