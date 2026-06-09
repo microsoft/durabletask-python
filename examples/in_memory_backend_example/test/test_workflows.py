@@ -72,9 +72,9 @@ class TestProcessOrder:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(process_order, input=order)
-            state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(process_order, input=order)
+                state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -98,9 +98,9 @@ class TestProcessOrder:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(process_order, input=order)
-            state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(process_order, input=order)
+                state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -118,9 +118,9 @@ class TestProcessOrder:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(process_order, input=order)
-            state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(process_order, input=order)
+                state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.FAILED
@@ -136,9 +136,9 @@ class TestProcessOrder:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(process_order, input=order)
-            state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(process_order, input=order)
+                state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.FAILED
@@ -163,9 +163,9 @@ class TestOrderWithApproval:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
-            state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
+                state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -184,12 +184,12 @@ class TestOrderWithApproval:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
 
-            # Raise the approval event
-            c.raise_orchestration_event(instance_id, "approval", data=True)
-            state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+                # Raise the approval event
+                c.raise_orchestration_event(instance_id, "approval", data=True)
+                state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -208,12 +208,12 @@ class TestOrderWithApproval:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
 
-            # Reject the order
-            c.raise_orchestration_event(instance_id, "approval", data=False)
-            state = c.wait_for_orchestration_completion(instance_id, timeout=30)
+                # Reject the order
+                c.raise_orchestration_event(instance_id, "approval", data=False)
+                state = c.wait_for_orchestration_completion(instance_id, timeout=30)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED
@@ -232,11 +232,11 @@ class TestOrderWithApproval:
 
         with _create_worker() as w:
             w.start()
-            c = client.TaskHubGrpcClient(host_address=HOST)
-            instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
+            with client.TaskHubGrpcClient(host_address=HOST) as c:
+                instance_id = c.schedule_new_orchestration(order_with_approval, input=order)
 
-            # Don't raise any event — let the timer fire
-            state = c.wait_for_orchestration_completion(instance_id, timeout=60)
+                # Don't raise any event — let the timer fire
+                state = c.wait_for_orchestration_completion(instance_id, timeout=60)
 
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.COMPLETED

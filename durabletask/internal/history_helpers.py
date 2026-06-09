@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterable, Iterable, Optional
+from collections.abc import AsyncIterable, Iterable
+from typing import Any
 
 import durabletask.history as history
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -13,7 +14,7 @@ from durabletask.payload.store import PayloadStore
 
 def collect_history_events(
     chunks: Iterable[pb.HistoryChunk],
-    payload_store: Optional[PayloadStore] = None,
+    payload_store: PayloadStore | None = None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     for chunk in chunks:
@@ -23,7 +24,7 @@ def collect_history_events(
 
 async def collect_history_events_async(
     chunks: AsyncIterable[pb.HistoryChunk],
-    payload_store: Optional[PayloadStore] = None,
+    payload_store: PayloadStore | None = None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     async for chunk in chunks:
@@ -31,13 +32,13 @@ async def collect_history_events_async(
     return events
 
 
-def history_event_to_dict(event: history.HistoryEvent) -> dict:
+def history_event_to_dict(event: history.HistoryEvent) -> dict[str, Any]:
     return history.to_dict(event)
 
 
 def _clone_and_convert_events(
     source_events: Iterable[pb.HistoryEvent],
-    payload_store: Optional[PayloadStore],
+    payload_store: PayloadStore | None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     for source_event in source_events:
@@ -48,13 +49,13 @@ def _clone_and_convert_events(
             event = pb.HistoryEvent()
             event.CopyFrom(source_event)
             payload_helpers.deexternalize_payloads(event, payload_store)
-        events.append(history._from_protobuf(event))
+        events.append(history._from_protobuf(event))  # pyright: ignore[reportPrivateUsage]
     return events
 
 
 async def _clone_and_convert_events_async(
     source_events: Iterable[pb.HistoryEvent],
-    payload_store: Optional[PayloadStore],
+    payload_store: PayloadStore | None,
 ) -> list[history.HistoryEvent]:
     events: list[history.HistoryEvent] = []
     for source_event in source_events:
@@ -64,5 +65,5 @@ async def _clone_and_convert_events_async(
             event = pb.HistoryEvent()
             event.CopyFrom(source_event)
             await payload_helpers.deexternalize_payloads_async(event, payload_store)
-        events.append(history._from_protobuf(event))
+        events.append(history._from_protobuf(event))  # pyright: ignore[reportPrivateUsage]
     return events

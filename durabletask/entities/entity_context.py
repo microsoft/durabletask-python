@@ -1,5 +1,5 @@
 
-from typing import Any, Optional, Type, TypeVar, Union, overload
+from typing import Any, TypeVar, overload
 import uuid
 from durabletask.entities.entity_instance_id import EntityInstanceId
 from durabletask.internal import helpers, shared
@@ -43,23 +43,23 @@ class EntityContext:
         return self._operation
 
     @overload
-    def get_state(self, intended_type: Type[TState], default: TState) -> TState:
+    def get_state(self, intended_type: type[TState], default: TState) -> TState:
         ...
 
     @overload
-    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+    def get_state(self, intended_type: type[TState]) -> TState | None:
         ...
 
     @overload
     def get_state(self, intended_type: None = None, default: Any = None) -> Any:
         ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Union[None, TState, Any]:
+    def get_state(self, intended_type: type[TState] | None = None, default: TState | None = None) -> TState | Any | None:
         """Get the current state of the entity, optionally converting it to a specified type.
 
         Parameters
         ----------
-        intended_type : Type[TState] | None, optional
+        intended_type : type[TState] | None, optional
             The type to which the state should be converted. If None, the state is returned as-is.
         default : TState, optional
             The default value to return if the state is not found or cannot be converted.
@@ -71,7 +71,7 @@ class EntityContext:
         """
         return self._state.get_state(intended_type, default)
 
-    def set_state(self, new_state: Any):
+    def set_state(self, new_state: Any) -> None:
         """Set the state of the entity to a new value.
 
         Parameters
@@ -81,7 +81,7 @@ class EntityContext:
         """
         self._state.set_state(new_state)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Optional[Any] = None) -> None:
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Any | None = None) -> None:
         """Signal another entity to perform an operation.
 
         Parameters
@@ -93,7 +93,7 @@ class EntityContext:
         input : Any, optional
             The input to provide to the entity for the operation.
         """
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = shared.to_json(input) if input is not None else None
         self._state.add_operation_action(
             pb.OperationAction(
                 sendSignal=pb.SendSignalAction(
@@ -107,7 +107,7 @@ class EntityContext:
             )
         )
 
-    def schedule_new_orchestration(self, orchestration_name: str, input: Optional[Any] = None, instance_id: Optional[str] = None) -> str:
+    def schedule_new_orchestration(self, orchestration_name: str, input: Any | None = None, instance_id: str | None = None) -> str:
         """Schedule a new orchestration instance.
 
         Parameters
@@ -124,7 +124,7 @@ class EntityContext:
         str
             The instance ID of the scheduled orchestration.
         """
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = shared.to_json(input) if input is not None else None
         if not instance_id:
             instance_id = uuid.uuid4().hex
         self._state.add_operation_action(

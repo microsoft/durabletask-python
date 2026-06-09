@@ -39,9 +39,9 @@ def test_class_entity_unhandled_failure_fails():
         w.add_entity(FailingEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -66,9 +66,9 @@ def test_function_entity_unhandled_failure_fails():
         w.add_entity(failing_entity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -97,9 +97,9 @@ def test_class_entity_handled_failure_succeeds():
         w.add_entity(FailingEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -129,9 +129,9 @@ def test_function_entity_handled_failure_succeeds():
         w.add_entity(failing_entity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -168,9 +168,9 @@ def test_entity_failure_unlocks_entity():
         w.add_entity(failing_entity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)

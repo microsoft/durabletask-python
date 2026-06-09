@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 from importlib.metadata import version
-from typing import Optional
 
 import grpc
 from azure.core.credentials import TokenCredential
@@ -15,8 +14,6 @@ from durabletask.azuremanaged.internal.access_token_manager import (
 from durabletask.internal.grpc_interceptor import (
     DefaultAsyncClientInterceptorImpl,
     DefaultClientInterceptorImpl,
-    _AsyncClientCallDetails,
-    _ClientCallDetails,
 )
 
 
@@ -27,9 +24,9 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
 
     def __init__(
             self,
-            token_credential: Optional[TokenCredential],
+            token_credential: TokenCredential | None,
             taskhub_name: str,
-            worker_id: Optional[str] = None):
+            worker_id: str | None = None):
         try:
             # Get the version of the azuremanaged package
             sdk_version = version('durabletask-azuremanaged')
@@ -63,7 +60,7 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
             self._metadata.append(("authorization", f"Bearer {token}"))
 
     def _intercept_call(
-            self, client_call_details: _ClientCallDetails) -> grpc.ClientCallDetails:
+            self, client_call_details: grpc.ClientCallDetails) -> grpc.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
             call details."""
         # Refresh the auth token if a credential was provided. The call to
@@ -83,7 +80,7 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
     This class implements async gRPC interceptors to add DTS-specific headers
     (task hub name, user agent, and authentication token) to all async calls."""
 
-    def __init__(self, token_credential: Optional[AsyncTokenCredential], taskhub_name: str):
+    def __init__(self, token_credential: AsyncTokenCredential | None, taskhub_name: str):
         try:
             # Get the version of the azuremanaged package
             sdk_version = version('durabletask-azuremanaged')
@@ -115,7 +112,7 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
             self._metadata.append(("authorization", f"Bearer {token}"))
 
     async def _intercept_call(
-            self, client_call_details: _AsyncClientCallDetails) -> grpc.aio.ClientCallDetails:
+            self, client_call_details: grpc.aio.ClientCallDetails) -> grpc.aio.ClientCallDetails:
         """Internal intercept_call implementation which adds metadata to grpc metadata in the RPC
             call details."""
         # Refresh the auth token if a credential was provided. The call to

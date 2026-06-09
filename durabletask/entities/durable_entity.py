@@ -1,4 +1,4 @@
-from typing import Any, Optional, Type, TypeVar, Union, overload
+from typing import Any, TypeVar, overload
 
 from durabletask.entities.entity_context import EntityContext
 from durabletask.entities.entity_instance_id import EntityInstanceId
@@ -11,23 +11,23 @@ class DurableEntity:
         self.entity_context = context
 
     @overload
-    def get_state(self, intended_type: Type[TState], default: TState) -> TState:
+    def get_state(self, intended_type: type[TState], default: TState) -> TState:
         ...
 
     @overload
-    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+    def get_state(self, intended_type: type[TState]) -> TState | None:
         ...
 
     @overload
     def get_state(self, intended_type: None = None, default: Any = None) -> Any:
         ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Union[None, TState, Any]:
+    def get_state(self, intended_type: type[TState] | None = None, default: TState | None = None) -> TState | Any | None:
         """Get the current state of the entity, optionally converting it to a specified type.
 
         Parameters
         ----------
-        intended_type : Type[TState] | None, optional
+        intended_type : type[TState] | None, optional
             The type to which the state should be converted. If None, the state is returned as-is.
         default : TState, optional
             The default value to return if the state is not found or cannot be converted.
@@ -49,7 +49,7 @@ class DurableEntity:
         """
         self.entity_context.set_state(state)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Optional[Any] = None) -> None:
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Any | None = None) -> None:
         """Signal another entity to perform an operation.
 
         Parameters
@@ -63,7 +63,7 @@ class DurableEntity:
         """
         self.entity_context.signal_entity(entity_instance_id, operation, input)
 
-    def schedule_new_orchestration(self, orchestration_name: str, input: Optional[Any] = None, instance_id: Optional[str] = None) -> str:
+    def schedule_new_orchestration(self, orchestration_name: str, input: Any | None = None, instance_id: str | None = None) -> str:
         """Schedule a new orchestration instance.
 
         Parameters

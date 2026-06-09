@@ -5,12 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
-
 ## v1.5.0
+
+BREAKING CHANGES (type-level only — no runtime impact for typical users)
+
+These changes do not alter runtime behavior for clients or activity/orchestrator
+authors, but because the package ships `py.typed`, consumers running strict type
+checkers (pyright/mypy) against their own code — or subclassing the public
+abstract types — may see new type-check errors and need to update their
+overrides:
+
+- `OrchestrationContext.create_timer` now returns the specific `TimerTask` type
+  (was `CancellableTask`)
+  ([#93](https://github.com/microsoft/durabletask-python/issues/93)).
+- `OrchestrationContext.wait_for_external_event` now returns `CancellableTask[Any]`
+  (was a bare `CancellableTask`).
+- `WhenAnyTask` is now generic; `when_any(tasks: Sequence[Task[T]])` returns
+  `WhenAnyTask[T]` for better static inference of the completing child task
+  ([#94](https://github.com/microsoft/durabletask-python/issues/94)).
+  `CompositeTask.on_child_completed` now takes `Task[Any]`.
+- `TaskHubGrpcWorker.add_activity` / `add_entity` (and the internal registry
+  methods) now require `Activity[Any, Any]` / `Entity[Any, Any]` instead of the
+  bare `Activity` / `Entity` aliases.
+- `OrchestrationContext.call_entity` / `signal_entity` `input` parameter widened
+  from `TInput | None` to `Any` (Liskov-safe for callers; subclass overrides
+  using the old narrower type will be flagged).
+- gRPC client interceptors now use the public `grpc.ClientCallDetails` /
+  `grpc.aio.ClientCallDetails` types instead of private internal namedtuples;
+  custom interceptor subclasses should retype their override parameters.
+- These changes also broadly improve generic type-safety hints throughout the
+  SDK ([#92](https://github.com/microsoft/durabletask-python/issues/92)).
 
 ADDED
 
+- Added context-manager support (`__enter__` / `__exit__`) to
+  `TaskHubGrpcClient` so it can be used with `with` statements, mirroring the
+  existing `AsyncTaskHubGrpcClient` async-context-manager support and the
+  `TaskHubGrpcWorker` pattern. `DurableTaskSchedulerClient` inherits this
+  behavior automatically. `__exit__` delegates to `close()`, so the
+  resiliency-aware teardown (in-flight recreate thread join, retired-channel
+  timer cancellation, and SDK-owned channel cleanup) runs unchanged through the
+  new `with` path.
 - Added `ReplaySafeLogger` and `OrchestrationContext.create_replay_safe_logger()`
   for suppressing duplicate log messages during orchestrator replay
 - Added `GrpcChannelOptions` and `GrpcRetryPolicyOptions` for configuring
@@ -20,8 +55,41 @@ ADDED
   `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker` to
   support pre-configured channel passthrough and low-level gRPC channel
   customization.
-- Added `get_orchestration_history()` and `list_instance_ids()` to the sync and async gRPC clients.
-- Added in-memory backend support for `StreamInstanceHistory` and `ListInstanceIds` so local orchestration tests can retrieve history and page terminal instance IDs by completion window.
+- Added `GrpcWorkerResiliencyOptions` and `GrpcClientResiliencyOptions`, plus
+  `resiliency_options` constructor parameters on `TaskHubGrpcClient`,
+  `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`, to configure hello
+  deadlines, silent-disconnect detection, reconnect backoff, and channel
+  recreation thresholds for SDK-managed gRPC connections.
+- Added `get_orchestration_history()` and `list_instance_ids()` to the sync
+  and async gRPC clients.
+- Added in-memory backend support for `StreamInstanceHistory` and
+  `ListInstanceIds` so local orchestration tests can retrieve history and page
+  terminal instance IDs by completion window.
+
+CHANGED
+
+- `when_any` now copies its input into a new list (`WhenAnyTask(list(tasks))`).
+  Previously the task aliased the caller's list, so mutating it after
+  construction was visible inside the task; that side effect no longer occurs.
+
+FIXED
+
+- Fixed `EntityInstanceId.__lt__` infinite recursion when compared against a
+  non-`EntityInstanceId` operand. It now returns `NotImplemented`, so mixed-type
+  comparisons raise `TypeError` cleanly instead of recursing.
+- Improved `TaskHubGrpcWorker` recovery from stale or disconnected gRPC streams
+  so configured hello timeouts apply on fresh connections, received work resets
+  failure tracking, SDK-owned channels are refreshed and cleaned up safely, and
+  caller-owned channels are never recreated or closed during reconnects.
+- Fixed `TaskHubGrpcWorker` so in-flight and queued work item completions keep
+  draining across graceful gRPC stream resets and worker shutdown before the
+  worker retires an SDK-owned channel.
+- Improved sync and async gRPC clients so repeated transport failures recreate
+  SDK-owned channels, while long-poll deadlines, successful replies, and
+  application-level RPC errors do not trigger unnecessary channel replacement.
+- Fixed `TaskHubGrpcClient.close()` so explicit sync client shutdown now closes
+  any previously retired SDK-owned gRPC channels immediately instead of waiting
+  for the delayed cleanup timer.
 
 ## v1.4.0
 

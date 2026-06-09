@@ -16,9 +16,10 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import TypeAlias, cast
 
 import grpc
 from concurrent import futures
@@ -30,25 +31,33 @@ import durabletask.internal.helpers as helpers
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 
+_FilterMap: TypeAlias = dict[str, frozenset[str]]
+_WorkItemFilter: TypeAlias = _FilterMap | None
+
+
+def _new_history_event_list() -> list[pb.HistoryEvent]:
+    return []
+
+
 @dataclass
 class OrchestrationInstance:
     """Internal orchestration instance state stored by the in-memory backend."""
     instance_id: str
     name: str
     status: pb.OrchestrationStatus
-    version: Optional[str] = None
-    input: Optional[str] = None
-    output: Optional[str] = None
-    custom_status: Optional[str] = None
+    version: str | None = None
+    input: str | None = None
+    output: str | None = None
+    custom_status: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: Optional[datetime] = None
-    failure_details: Optional[pb.TaskFailureDetails] = None
-    history: list[pb.HistoryEvent] = field(default_factory=list)
-    pending_events: list[pb.HistoryEvent] = field(default_factory=list)
-    dispatched_events: list[pb.HistoryEvent] = field(default_factory=list)
+    completed_at: datetime | None = None
+    failure_details: pb.TaskFailureDetails | None = None
+    history: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
+    pending_events: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
+    dispatched_events: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
     completion_token: int = 0
-    tags: Optional[dict[str, str]] = None
+    tags: dict[str, str] | None = None
 
 
 @dataclass
@@ -57,20 +66,20 @@ class ActivityWorkItem:
     instance_id: str
     name: str
     task_id: int
-    input: Optional[str]
+    input: str | None
     completion_token: int
-    version: Optional[str] = None
+    version: str | None = None
 
 
 @dataclass
 class EntityState:
     """Internal entity state stored by the in-memory backend."""
     instance_id: str
-    serialized_state: Optional[str] = None
+    serialized_state: str | None = None
     last_modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    locked_by: Optional[str] = None
-    pending_operations: list[pb.HistoryEvent] = field(default_factory=list)
-    dispatched_operations: list[pb.HistoryEvent] = field(default_factory=list)
+    locked_by: str | None = None
+    pending_operations: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
+    dispatched_operations: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
     completion_token: int = 0
 
 
@@ -86,7 +95,7 @@ class PendingLockRequest:
 class EntityWorkItem:
     """Entity work item that needs to be executed."""
     instance_id: str
-    entity_state: Optional[str]
+    entity_state: str | None
     operations: list[pb.HistoryEvent]
     completion_token: int
 
@@ -96,7 +105,7 @@ class StateWaiter:
     """Promise resolver for waiting on orchestration state changes."""
     predicate: Callable[[OrchestrationInstance], bool]
     event: threading.Event = field(default_factory=threading.Event)
-    result: Optional[OrchestrationInstance] = None
+    result: OrchestrationInstance | None = None
 
 
 _DEFAULT_PAGE_SIZE = 100
@@ -140,7 +149,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._next_completion_token: int = 1
         self._max_history_size = max_history_size
         self._port = port
-        self._server: Optional[grpc.Server] = None
+        self._server: grpc.Server | None = None
         self._logger = logging.getLogger(__name__)
         self._shutdown_event = threading.Event()
         self._work_available = threading.Event()
@@ -153,14 +162,19 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             The address the server is listening on (e.g., "localhost:50051")
         """
         self._shutdown_event.clear()
-        self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        stubs.add_TaskHubSidecarServiceServicer_to_server(self, self._server)
-        self._server.add_insecure_port(f'[::]:{self._port}')
-        self._server.start()
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        self._server = server
+        add_servicer = cast(
+            Callable[[InMemoryOrchestrationBackend, grpc.Server], None],
+            stubs.add_TaskHubSidecarServiceServicer_to_server,  # pyright: ignore[reportUnknownMemberType]
+        )
+        add_servicer(self, server)
+        server.add_insecure_port(f'[::]:{self._port}')
+        server.start()
         self._logger.info(f"In-memory backend started on port {self._port}")
         return f"localhost:{self._port}"
 
-    def stop(self, grace: Optional[float] = None):
+    def stop(self, grace: float | None = None):
         """
         Stops the gRPC server.
 
@@ -197,11 +211,11 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     # gRPC Service Methods
 
-    def Hello(self, request, context):
+    def Hello(self, request: empty_pb2.Empty, context: grpc.ServicerContext) -> empty_pb2.Empty:
         """Sends a hello request to the sidecar service."""
         return empty_pb2.Empty()
 
-    def StartInstance(self, request: pb.CreateInstanceRequest, context):
+    def StartInstance(self, request: pb.CreateInstanceRequest, context: grpc.ServicerContext) -> pb.CreateInstanceResponse:
         """Starts a new orchestration instance."""
         instance_id = request.instanceId if request.instanceId else uuid.uuid4().hex
 
@@ -269,7 +283,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         return pb.CreateInstanceResponse(instanceId=instance_id)
 
-    def GetInstance(self, request: pb.GetInstanceRequest, context):
+    def GetInstance(self, request: pb.GetInstanceRequest, context: grpc.ServicerContext) -> pb.GetInstanceResponse:
         """Gets the status of an existing orchestration instance."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -278,7 +292,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
             return self._build_instance_response(instance, request.getInputsAndOutputs)
 
-    def WaitForInstanceStart(self, request: pb.GetInstanceRequest, context):
+    def WaitForInstanceStart(self, request: pb.GetInstanceRequest, context: grpc.ServicerContext) -> pb.GetInstanceResponse:
         """Waits for an orchestration instance to reach a running or completion state."""
         def predicate(inst: OrchestrationInstance) -> bool:
             return inst.status != pb.ORCHESTRATION_STATUS_PENDING
@@ -294,7 +308,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         return self._build_instance_response(instance, request.getInputsAndOutputs)
 
-    def WaitForInstanceCompletion(self, request: pb.GetInstanceRequest, context):
+    def WaitForInstanceCompletion(self, request: pb.GetInstanceRequest, context: grpc.ServicerContext) -> pb.GetInstanceResponse:
         """Waits for an orchestration instance to reach a completion state."""
         instance = self._wait_for_state(
             request.instanceId,
@@ -311,7 +325,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         return self._build_instance_response(instance, request.getInputsAndOutputs)
 
-    def RaiseEvent(self, request: pb.RaiseEventRequest, context):
+    def RaiseEvent(self, request: pb.RaiseEventRequest, context: grpc.ServicerContext) -> pb.RaiseEventResponse:
         """Raises an event to a running orchestration instance."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -338,7 +352,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._logger.info(f"Raised event '{request.name}' for instance '{request.instanceId}'")
         return pb.RaiseEventResponse()
 
-    def TerminateInstance(self, request: pb.TerminateRequest, context):
+    def TerminateInstance(self, request: pb.TerminateRequest, context: grpc.ServicerContext) -> pb.TerminateResponse:
         """Terminates a running orchestration instance."""
         with self._lock:
             self._terminate_instance_internal(
@@ -349,7 +363,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         return pb.TerminateResponse()
 
-    def SuspendInstance(self, request: pb.SuspendRequest, context):
+    def SuspendInstance(self, request: pb.SuspendRequest, context: grpc.ServicerContext) -> pb.SuspendResponse:
         """Suspends a running orchestration instance."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -369,7 +383,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._logger.info(f"Suspended instance '{request.instanceId}'")
         return pb.SuspendResponse()
 
-    def ResumeInstance(self, request: pb.ResumeRequest, context):
+    def ResumeInstance(self, request: pb.ResumeRequest, context: grpc.ServicerContext) -> pb.ResumeResponse:
         """Resumes a suspended orchestration instance."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -386,7 +400,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._logger.info(f"Resumed instance '{request.instanceId}'")
         return pb.ResumeResponse()
 
-    def PurgeInstances(self, request: pb.PurgeInstancesRequest, context):
+    def PurgeInstances(self, request: pb.PurgeInstancesRequest, context: grpc.ServicerContext) -> pb.PurgeInstancesResponse:
         """Purges orchestration instances from the store."""
         purged_count = 0
 
@@ -402,7 +416,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             elif request.HasField("purgeInstanceFilter"):
                 # Filter-based purge
                 pf = request.purgeInstanceFilter
-                to_purge = []
+                to_purge: list[str] = []
                 for iid, inst in self._instances.items():
                     if not self._is_terminal_status(inst.status):
                         continue
@@ -424,7 +438,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             isComplete=wrappers_pb2.BoolValue(value=True),
         )
 
-    def RestartInstance(self, request: pb.RestartInstanceRequest, context):
+    def RestartInstance(self, request: pb.RestartInstanceRequest, context: grpc.ServicerContext) -> pb.RestartInstanceResponse:
         """Restarts a completed orchestration instance."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -460,10 +474,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             f"Restarted instance '{request.instanceId}' as '{new_instance_id}'")
         return pb.RestartInstanceResponse(instanceId=new_instance_id)
 
-    def ListInstanceIds(self, request: pb.ListInstanceIdsRequest, context):
+    def ListInstanceIds(self, request: pb.ListInstanceIdsRequest, context: grpc.ServicerContext) -> pb.ListInstanceIdsResponse:
         """Lists terminal orchestration instance IDs with completion-time pagination."""
         with self._lock:
-            matching = []
+            matching: list[OrchestrationInstance] = []
             for instance in self._instances.values():
                 if not self._is_terminal_status(instance.status):
                     continue
@@ -478,7 +492,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 matching.append(instance)
 
             matching.sort(key=lambda i: (i.completed_at, i.instance_id))
-            sort_keys = [(i.completed_at, i.instance_id) for i in matching]
+            sort_keys: list[tuple[datetime, str]] = [
+                (cast(datetime, i.completed_at), i.instance_id) for i in matching
+            ]
 
             start_index = 0
             if request.HasField("lastInstanceKey") and request.lastInstanceKey.value:
@@ -494,7 +510,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             next_token = None
             if start_index + page_size < len(matching) and page:
                 last = page[-1]
-                encoded = f"{last.completed_at.isoformat()}{_TOKEN_SEP}{last.instance_id}"
+                last_completed_at = cast(datetime, last.completed_at)
+                encoded = f"{last_completed_at.isoformat()}{_TOKEN_SEP}{last.instance_id}"
                 next_token = wrappers_pb2.StringValue(value=encoded)
 
         return pb.ListInstanceIdsResponse(
@@ -503,7 +520,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         )
 
     @staticmethod
-    def _parse_work_item_filters(request: pb.GetWorkItemsRequest):
+    def _parse_work_item_filters(request: pb.GetWorkItemsRequest) -> tuple[_WorkItemFilter, _WorkItemFilter, _WorkItemFilter]:
         """Extract filters from the request.
 
         Returns a tuple of three values, one per work-item category.  Each
@@ -517,22 +534,22 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             return None, None, None
         wf = request.workItemFilters
 
-        def _build_filter(filters):
+        def _build_filter(filters: Iterable[pb.OrchestrationFilter | pb.ActivityFilter]) -> _FilterMap:
             result: dict[str, frozenset[str]] = {}
             for f in filters:
-                versions = frozenset(f.versions) if f.versions else frozenset()
-                existing = result.get(f.name, frozenset())
+                versions = frozenset[str](f.versions) if f.versions else frozenset[str]()
+                existing = result.get(f.name, frozenset[str]())
                 result[f.name] = existing | versions
             return result
 
         orch_filter = _build_filter(wf.orchestrations)
         activity_filter = _build_filter(wf.activities)
-        entity_filter = {f.name: frozenset() for f in wf.entities}
+        entity_filter: _FilterMap = {f.name: frozenset[str]() for f in wf.entities}
         return orch_filter, activity_filter, entity_filter
 
     @staticmethod
-    def _matches_filter(name: str, version: Optional[str],
-                        filt: Optional[dict[str, frozenset[str]]]) -> bool:
+    def _matches_filter(name: str, version: str | None,
+                        filt: dict[str, frozenset[str]] | None) -> bool:
         """Check whether a work item matches the parsed filter.
 
         *filt* is ``None`` when the worker did not opt into filtering
@@ -549,7 +566,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             return True  # empty set -- any version
         return (version or "") in accepted_versions
 
-    def GetWorkItems(self, request: pb.GetWorkItemsRequest, context):
+    def GetWorkItems(self, request: pb.GetWorkItemsRequest, context: grpc.ServicerContext) -> Iterator[pb.WorkItem]:
         """Streams work items to the worker (orchestration and activity work items)."""
         self._logger.info("Worker connected and requesting work items")
         orch_filter, activity_filter, entity_filter = self._parse_work_item_filters(request)
@@ -613,8 +630,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     # Check for activity work
                     if not work_item and self._activity_queue:
                         # Scan for the first matching activity
-                        skipped: list = []
-                        matched_activity = None
+                        skipped: list[ActivityWorkItem] = []
+                        matched_activity: ActivityWorkItem | None = None
                         while self._activity_queue:
                             candidate = self._activity_queue.popleft()
                             if not self._matches_filter(
@@ -706,7 +723,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         except Exception:
             self._logger.exception("Error in GetWorkItems stream")
 
-    def CompleteOrchestratorTask(self, request: pb.OrchestratorResponse, context):
+    def CompleteOrchestratorTask(self, request: pb.OrchestratorResponse, context: grpc.ServicerContext) -> pb.CompleteTaskResponse:
         """Completes an orchestration execution with the given actions."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -791,7 +808,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         return pb.CompleteTaskResponse()
 
-    def CompleteActivityTask(self, request: pb.ActivityResponse, context):
+    def CompleteActivityTask(self, request: pb.ActivityResponse, context: grpc.ServicerContext) -> pb.CompleteTaskResponse:
         """Completes an activity execution."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -826,7 +843,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         return pb.CompleteTaskResponse()
 
-    def CompleteEntityTask(self, request: pb.EntityBatchResult, context):
+    def CompleteEntityTask(self, request: pb.EntityBatchResult, context: grpc.ServicerContext) -> pb.CompleteTaskResponse:
         """Completes an entity batch execution."""
         with self._lock:
             # Find entity by completion token
@@ -926,7 +943,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         return pb.CompleteTaskResponse()
 
-    def SignalEntity(self, request: pb.SignalEntityRequest, context):
+    def SignalEntity(self, request: pb.SignalEntityRequest, context: grpc.ServicerContext) -> pb.SignalEntityResponse:
         """Signals an entity, queueing an operation for processing."""
         with self._lock:
             entity_id = request.instanceId
@@ -956,7 +973,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._logger.info(f"Signaled entity '{entity_id}' operation '{request.name}'")
         return pb.SignalEntityResponse()
 
-    def GetEntity(self, request: pb.GetEntityRequest, context):
+    def GetEntity(self, request: pb.GetEntityRequest, context: grpc.ServicerContext) -> pb.GetEntityResponse:
         """Gets entity state."""
         with self._lock:
             entity = self._entities.get(request.instanceId)
@@ -977,7 +994,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
             return pb.GetEntityResponse(exists=True, entity=metadata)
 
-    def QueryInstances(self, request: pb.QueryInstancesRequest, context):
+    def QueryInstances(self, request: pb.QueryInstancesRequest, context: grpc.ServicerContext) -> pb.QueryInstancesResponse:
         """Query orchestration instances with filtering support."""
         with self._lock:
             query = request.query
@@ -988,7 +1005,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 except ValueError:
                     start_index = 0
 
-            matching = []
+            matching: list[OrchestrationInstance] = []
             for instance in self._instances.values():
                 # Filter by runtime status
                 if query.runtimeStatus and instance.status not in query.runtimeStatus:
@@ -1011,7 +1028,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             page_size = query.maxInstanceCount if query.maxInstanceCount > 0 else len(matching)
             page = matching[start_index:start_index + page_size]
 
-            states = []
+            states: list[pb.OrchestrationState] = []
             for inst in page:
                 created_ts = timestamp_pb2.Timestamp()
                 created_ts.FromDatetime(inst.created_at)
@@ -1044,7 +1061,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             continuationToken=continuation_token,
         )
 
-    def QueryEntities(self, request: pb.QueryEntitiesRequest, context):
+    def QueryEntities(self, request: pb.QueryEntitiesRequest, context: grpc.ServicerContext) -> pb.QueryEntitiesResponse:
         """Query entities with filtering support."""
         with self._lock:
             query = request.query
@@ -1055,7 +1072,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 except ValueError:
                     start_index = 0
 
-            matching = []
+            matching: list[EntityState] = []
             for entity in self._entities.values():
                 # Filter by instance ID prefix
                 if query.HasField("instanceIdStartsWith") and query.instanceIdStartsWith.value:
@@ -1078,7 +1095,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             page_size = query.pageSize.value if query.HasField("pageSize") and query.pageSize.value > 0 else len(matching)
             page = matching[start_index:start_index + page_size]
 
-            entities = []
+            entities: list[pb.EntityMetadata] = []
             for ent in page:
                 last_modified_ts = timestamp_pb2.Timestamp()
                 last_modified_ts.FromDatetime(ent.last_modified_at)
@@ -1105,7 +1122,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             continuationToken=continuation_token,
         )
 
-    def CleanEntityStorage(self, request: pb.CleanEntityStorageRequest, context):
+    def CleanEntityStorage(self, request: pb.CleanEntityStorageRequest, context: grpc.ServicerContext) -> pb.CleanEntityStorageResponse:
         """Clean entity storage: remove empty entities and release orphaned locks."""
         empty_removed = 0
         locks_released = 0
@@ -1132,7 +1149,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             orphanedLocksReleased=locks_released,
         )
 
-    def StreamInstanceHistory(self, request: pb.StreamInstanceHistoryRequest, context):
+    def StreamInstanceHistory(self, request: pb.StreamInstanceHistoryRequest, context: grpc.ServicerContext) -> Iterator[pb.HistoryChunk]:
         """Streams orchestration history for an instance."""
         with self._lock:
             instance = self._instances.get(request.instanceId)
@@ -1146,23 +1163,23 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         for offset in range(0, len(history), chunk_size):
             yield pb.HistoryChunk(events=history[offset:offset + chunk_size])
 
-    def CreateTaskHub(self, request: pb.CreateTaskHubRequest, context):
+    def CreateTaskHub(self, request: pb.CreateTaskHubRequest, context: grpc.ServicerContext) -> pb.CreateTaskHubResponse:
         """Creates task hub resources (no-op for in-memory)."""
         return pb.CreateTaskHubResponse()
 
-    def DeleteTaskHub(self, request: pb.DeleteTaskHubRequest, context):
+    def DeleteTaskHub(self, request: pb.DeleteTaskHubRequest, context: grpc.ServicerContext) -> pb.DeleteTaskHubResponse:
         """Deletes task hub resources (no-op for in-memory)."""
         return pb.DeleteTaskHubResponse()
 
-    def RewindInstance(self, request: pb.RewindInstanceRequest, context):
+    def RewindInstance(self, request: pb.RewindInstanceRequest, context: grpc.ServicerContext) -> pb.RewindInstanceResponse:
         """Rewinds an orchestration instance (not implemented)."""
         context.abort(grpc.StatusCode.UNIMPLEMENTED, "RewindInstance not implemented")
 
-    def AbandonTaskActivityWorkItem(self, request: pb.AbandonActivityTaskRequest, context):
+    def AbandonTaskActivityWorkItem(self, request: pb.AbandonActivityTaskRequest, context: grpc.ServicerContext) -> pb.AbandonActivityTaskResponse:
         """Abandons an activity work item."""
         return pb.AbandonActivityTaskResponse()
 
-    def AbandonTaskOrchestratorWorkItem(self, request: pb.AbandonOrchestrationTaskRequest, context):
+    def AbandonTaskOrchestratorWorkItem(self, request: pb.AbandonOrchestrationTaskRequest, context: grpc.ServicerContext) -> pb.AbandonOrchestrationTaskResponse:
         """Abandons an orchestration work item, restoring it for re-processing."""
         with self._lock:
             for instance_id in list(self._orchestration_in_flight):
@@ -1179,7 +1196,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     break
         return pb.AbandonOrchestrationTaskResponse()
 
-    def AbandonTaskEntityWorkItem(self, request: pb.AbandonEntityTaskRequest, context):
+    def AbandonTaskEntityWorkItem(self, request: pb.AbandonEntityTaskRequest, context: grpc.ServicerContext) -> pb.AbandonEntityTaskResponse:
         """Abandons an entity work item, restoring it for re-processing."""
         with self._lock:
             for entity in self._entities.values():
@@ -1216,8 +1233,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         return self._is_terminal_status(instance.status)
 
     def _create_instance_internal(self, instance_id: str, name: str,
-                                  encoded_input: Optional[str] = None,
-                                  version: Optional[str] = None):
+                                  encoded_input: str | None = None,
+                                  version: str | None = None):
         """Creates a new instance directly in internal state (no gRPC context needed)."""
         existing = self._instances.get(instance_id)
         if existing:
@@ -1252,7 +1269,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._enqueue_orchestration(instance_id)
 
     def _raise_event_internal(self, instance_id: str, event_name: str,
-                              event_data: Optional[str] = None):
+                              event_data: str | None = None):
         """Raises an event directly in internal state (no gRPC context needed)."""
         instance = self._instances.get(instance_id)
         if not instance:
@@ -1263,7 +1280,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance.last_updated_at = datetime.now(timezone.utc)
         self._enqueue_orchestration(instance.instance_id)
 
-    def _terminate_instance_internal(self, instance_id: str, output: Optional[str],
+    def _terminate_instance_internal(self, instance_id: str, output: str | None,
                                      recursive: bool = False):
         """Internal method to terminate an instance."""
         if recursive:
@@ -1310,7 +1327,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     def _wait_for_state(self, instance_id: str,
                         predicate: Callable[[OrchestrationInstance], bool],
-                        timeout: Optional[float]) -> Optional[OrchestrationInstance]:
+                        timeout: float | None) -> OrchestrationInstance | None:
         """Waits for an orchestration to reach a state matching the predicate."""
         with self._lock:
             instance = self._instances.get(instance_id)
@@ -1422,7 +1439,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     @staticmethod
     def _clone_history_event(event: pb.HistoryEvent) -> pb.HistoryEvent:
-        cloned_event = pb.HistoryEvent()
+        cloned_event: pb.HistoryEvent = pb.HistoryEvent()
         cloned_event.CopyFrom(event)
         return cloned_event
 
@@ -1474,7 +1491,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         now = datetime.now(timezone.utc)
         delay = max(0, (fire_at - now).total_seconds())
 
-        def fire_timer():
+        def fire_timer() -> None:
             time.sleep(delay)
             with self._lock:
                 current_instance = self._instances.get(instance.instance_id)
@@ -1522,7 +1539,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     def _watch_sub_orchestration(self, parent_instance_id: str, sub_instance_id: str, task_id: int):
         """Watches a sub-orchestration for completion and delivers the result to the parent."""
-        def watch():
+        def watch() -> None:
             # Wait for sub-orchestration to complete
             sub_instance = self._wait_for_state(
                 sub_instance_id,
@@ -1708,7 +1725,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     def _try_grant_pending_locks(self):
         """Attempts to grant any pending lock requests that can now be fulfilled."""
-        still_pending = []
+        still_pending: list[PendingLockRequest] = []
         for pending in self._pending_lock_requests:
             if self._can_grant_lock(pending):
                 self._grant_lock(pending)
@@ -1731,7 +1748,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._enqueue_entity(entity_id)
 
     def _signal_entity_internal(self, entity_id: str, operation: str,
-                                input_value: Optional[str] = None):
+                                input_value: str | None = None):
         """Internal method to signal an entity (from entity side-effect actions)."""
         event = pb.HistoryEvent(
             eventId=-1,

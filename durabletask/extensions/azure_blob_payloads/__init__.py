@@ -25,7 +25,7 @@ Usage::
 """
 
 try:
-    from azure.storage.blob import BlobServiceClient  # noqa: F401
+    from azure.storage.blob import BlobServiceClient  # noqa: F401  # pyright: ignore[reportUnusedImport]
 except ImportError as exc:
     raise ImportError(
         "The 'azure-storage-blob' package is required for blob payload "

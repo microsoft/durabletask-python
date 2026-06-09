@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, List, Optional, Sequence, TypeVar, Union
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from google.protobuf import wrappers_pb2
 
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -31,11 +34,11 @@ TOutput = TypeVar('TOutput')
 
 
 def prepare_sync_interceptors(
-        metadata: Optional[list[tuple[str, str]]],
-        interceptors: Optional[Sequence[shared.ClientInterceptor]]
-) -> Optional[list[shared.ClientInterceptor]]:
+        metadata: list[tuple[str, str]] | None,
+        interceptors: Sequence[shared.ClientInterceptor] | None
+) -> list[shared.ClientInterceptor] | None:
     """Prepare the list of sync gRPC interceptors, adding a metadata interceptor if needed."""
-    result: Optional[list[shared.ClientInterceptor]] = None
+    result: list[shared.ClientInterceptor] | None = None
     if interceptors is not None:
         result = list(interceptors)
         if metadata is not None:
@@ -46,11 +49,11 @@ def prepare_sync_interceptors(
 
 
 def prepare_async_interceptors(
-        metadata: Optional[list[tuple[str, str]]],
-        interceptors: Optional[Sequence[shared.AsyncClientInterceptor]]
-) -> Optional[list[shared.AsyncClientInterceptor]]:
+        metadata: list[tuple[str, str]] | None,
+        interceptors: Sequence[shared.AsyncClientInterceptor] | None
+) -> list[shared.AsyncClientInterceptor] | None:
     """Prepare the list of async gRPC interceptors, adding a metadata interceptor if needed."""
-    result: Optional[list[shared.AsyncClientInterceptor]] = None
+    result: list[shared.AsyncClientInterceptor] | None = None
     if interceptors is not None:
         result = list(interceptors)
         if metadata is not None:
@@ -61,13 +64,13 @@ def prepare_async_interceptors(
 
 
 def build_schedule_new_orchestration_req(
-        orchestrator: Union[task.Orchestrator[TInput, TOutput], str], *,
-        input: Optional[TInput],
-        instance_id: Optional[str],
-        start_at: Optional[datetime],
-        reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy],
-        tags: Optional[dict[str, str]],
-        version: Optional[str]) -> pb.CreateInstanceRequest:
+        orchestrator: task.Orchestrator[TInput, TOutput] | str, *,
+        input: TInput | None,
+        instance_id: str | None,
+        start_at: datetime | None,
+        reuse_id_policy: pb.OrchestrationIdReusePolicy | None,
+        tags: dict[str, str] | None,
+        version: str | None) -> pb.CreateInstanceRequest:
     """Build a CreateInstanceRequest for scheduling a new orchestration."""
     name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
     return pb.CreateInstanceRequest(
@@ -83,7 +86,7 @@ def build_schedule_new_orchestration_req(
 
 def build_query_instances_req(
         orchestration_query: OrchestrationQuery,
-        continuation_token) -> pb.QueryInstancesRequest:
+        continuation_token: wrappers_pb2.StringValue | None) -> pb.QueryInstancesRequest:
     """Build a QueryInstancesRequest from an OrchestrationQuery."""
     return pb.QueryInstancesRequest(
         query=pb.InstanceQuery(
@@ -98,9 +101,9 @@ def build_query_instances_req(
 
 
 def build_purge_by_filter_req(
-        created_time_from: Optional[datetime],
-        created_time_to: Optional[datetime],
-        runtime_status: Optional[List[OrchestrationStatus]],
+        created_time_from: datetime | None,
+        created_time_to: datetime | None,
+        runtime_status: list[OrchestrationStatus] | None,
         recursive: bool) -> pb.PurgeInstancesRequest:
     """Build a PurgeInstancesRequest for purging orchestrations by filter."""
     return pb.PurgeInstancesRequest(
@@ -115,7 +118,7 @@ def build_purge_by_filter_req(
 
 def build_query_entities_req(
         entity_query: EntityQuery,
-        continuation_token) -> pb.QueryEntitiesRequest:
+        continuation_token: wrappers_pb2.StringValue | None) -> pb.QueryEntitiesRequest:
     """Build a QueryEntitiesRequest from an EntityQuery."""
     return pb.QueryEntitiesRequest(
         query=pb.EntityQuery(
@@ -130,7 +133,10 @@ def build_query_entities_req(
     )
 
 
-def check_continuation_token(resp_token, prev_token, logger: logging.Logger) -> bool:
+def check_continuation_token(
+        resp_token: wrappers_pb2.StringValue | None,
+        prev_token: wrappers_pb2.StringValue | None,
+        logger: logging.Logger) -> bool:
     """Check if a continuation token indicates more pages. Returns True to continue, False to stop."""
     if resp_token and resp_token.value and resp_token.value != "0":
         logger.info(f"Received continuation token with value {resp_token.value}, fetching next page...")
@@ -144,7 +150,7 @@ def check_continuation_token(resp_token, prev_token, logger: logging.Logger) -> 
 def log_completion_state(
         logger: logging.Logger,
         instance_id: str,
-        state: Optional[OrchestrationState]):
+        state: OrchestrationState | None) -> None:
     """Log the final state of a completed orchestration."""
     if not state:
         return
@@ -162,7 +168,7 @@ def log_completion_state(
 def build_raise_event_req(
         instance_id: str,
         event_name: str,
-        data: Optional[Any] = None) -> pb.RaiseEventRequest:
+        data: Any | None = None) -> pb.RaiseEventRequest:
     """Build a RaiseEventRequest for raising an orchestration event."""
     return pb.RaiseEventRequest(
         instanceId=instance_id,
@@ -173,7 +179,7 @@ def build_raise_event_req(
 
 def build_terminate_req(
         instance_id: str,
-        output: Optional[Any] = None,
+        output: Any | None = None,
         recursive: bool = True) -> pb.TerminateRequest:
     """Build a TerminateRequest for terminating an orchestration."""
     return pb.TerminateRequest(
@@ -186,7 +192,7 @@ def build_terminate_req(
 def build_signal_entity_req(
         entity_instance_id: EntityInstanceId,
         operation_name: str,
-        input: Optional[Any] = None) -> pb.SignalEntityRequest:
+        input: Any | None = None) -> pb.SignalEntityRequest:
     """Build a SignalEntityRequest for signaling an entity."""
     return pb.SignalEntityRequest(
         instanceId=str(entity_instance_id),

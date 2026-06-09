@@ -37,10 +37,10 @@ def test_client_signal_class_entity_and_custom_name():
         w.add_entity(EmptyEntity, name="EntityNameCustom")
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        entity_id = entities.EntityInstanceId("EntityNameCustom", "testEntity")
-        c.signal_entity(entity_id, "do_nothing")
-        time.sleep(2)  # wait for the signal to be processed
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            entity_id = entities.EntityInstanceId("EntityNameCustom", "testEntity")
+            c.signal_entity(entity_id, "do_nothing")
+            time.sleep(2)  # wait for the signal to be processed
 
     assert invoked
 
@@ -59,14 +59,14 @@ def test_client_get_class_entity():
         w.add_entity(EmptyEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        entity_id = entities.EntityInstanceId("EmptyEntity", "testEntity")
-        c.signal_entity(entity_id, "do_nothing")
-        time.sleep(2)  # wait for the signal to be processed
-        state = c.get_entity(entity_id, include_state=True)
-        assert state is not None
-        assert state.id == entity_id
-        assert state.get_state(int) == 1
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            entity_id = entities.EntityInstanceId("EmptyEntity", "testEntity")
+            c.signal_entity(entity_id, "do_nothing")
+            time.sleep(2)  # wait for the signal to be processed
+            state = c.get_entity(entity_id, include_state=True)
+            assert state is not None
+            assert state.id == entity_id
+            assert state.get_state(int) == 1
 
     assert invoked
 
@@ -89,10 +89,10 @@ def test_orchestration_signal_class_entity_and_custom_name():
         w.add_entity(EmptyEntity, name="EntityNameCustom")
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(empty_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
-        time.sleep(2)  # wait for the signal to be processed
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(empty_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
+            time.sleep(2)  # wait for the signal to be processed
 
     assert invoked
     assert state is not None
@@ -123,9 +123,9 @@ def test_orchestration_call_class_entity():
         w.add_entity(EmptyEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(empty_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(empty_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert invoked
     assert state is not None
