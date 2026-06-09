@@ -29,11 +29,10 @@ class OnDemandSandboxWorkerProfileOptions:
     """Options for a decorated on-demand sandbox worker profile."""
 
     worker_profile_id: str
+    # Full OCI image reference for the sandbox worker container, for example
+    # "myregistry.azurecr.io/workers/hello:1.0" or
+    # "myregistry.azurecr.io/workers/hello@sha256:0123456789abcdef...".
     container_image: Optional[str] = None
-    registry_server: Optional[str] = None
-    repository: Optional[str] = None
-    tag: Optional[str] = None
-    image_digest: Optional[str] = None
     image_pull_managed_identity_client_id: Optional[str] = None
     scheduler_managed_identity_client_id: Optional[str] = None
     cpu: str = DEFAULT_CPU
@@ -97,42 +96,12 @@ def resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
     return resolved
 
 
-def build_image_ref(
-        *,
-        container_image: Optional[str] = None,
-        registry_server: Optional[str] = None,
-        repository: Optional[str] = None,
-        tag: Optional[str] = None,
-        image_digest: Optional[str] = None) -> Optional[str]:
-    if container_image and container_image.strip():
-        return container_image.strip()
-
-    if not repository or not repository.strip():
-        return None
-
-    image = repository.strip()
-    if registry_server and registry_server.strip():
-        image = f"{registry_server.strip()}/{image}"
-
-    if image_digest and image_digest.strip():
-        return f"{image}@{image_digest.strip()}"
-
-    if tag and tag.strip():
-        return f"{image}:{tag.strip()}"
-
-    return image
-
-
 def build_on_demand_sandbox_activity_declaration(
         *,
         activity_names: str | Iterable[str],
         scheduler_managed_identity_client_id: str,
         worker_profile_id: str = DEFAULT_WORKER_PROFILE_ID,
         container_image: Optional[str] = None,
-        registry_server: Optional[str] = None,
-        repository: Optional[str] = None,
-        tag: Optional[str] = None,
-        image_digest: Optional[str] = None,
         image_pull_managed_identity_client_id: Optional[str] = None,
         cpu: str = DEFAULT_CPU,
         memory: str = DEFAULT_MEMORY,
@@ -140,6 +109,13 @@ def build_on_demand_sandbox_activity_declaration(
         max_concurrent_activities: int = DEFAULT_MAX_CONCURRENT_ACTIVITIES,
         entrypoint: Optional[Iterable[str]] = None,
         cmd: Optional[Iterable[str]] = None) -> pb.OnDemandSandboxActivityDeclaration:
+    """Build a sandbox activity declaration.
+
+    Args:
+        container_image: Full OCI image reference for the sandbox worker container,
+            such as "myregistry.azurecr.io/workers/hello:1.0" or
+            "myregistry.azurecr.io/workers/hello@sha256:0123456789abcdef...".
+    """
     resolved_activity_names = resolve_activity_names(activity_names)
     if not resolved_activity_names:
         raise ValueError("On-demand sandbox activity declaration requires at least one activity name.")
@@ -150,14 +126,11 @@ def build_on_demand_sandbox_activity_declaration(
     if max_concurrent_activities <= 0:
         raise ValueError("On-demand sandbox activity max concurrent activities must be greater than zero.")
 
-    image_ref = build_image_ref(
-        container_image=container_image,
-        registry_server=registry_server,
-        repository=repository,
-        tag=tag,
-        image_digest=image_digest)
-    if not image_ref:
-        raise ValueError("On-demand sandbox activity image metadata requires a container image reference.")
+    image_ref = _normalize_required(
+        container_image,
+        "On-demand sandbox activity image metadata requires a container image reference like "
+        "'myregistry.azurecr.io/workers/hello:1.0' or "
+        "'myregistry.azurecr.io/workers/hello@sha256:...'.")
 
     resolved_scheduler_managed_identity_client_id = _normalize_required(
         scheduler_managed_identity_client_id,
@@ -207,10 +180,6 @@ def build_profile_on_demand_sandbox_activity_declarations() -> list[pb.OnDemandS
             activity_names=activity_names,
             worker_profile_id=profile.worker_profile_id,
             container_image=profile.container_image,
-            registry_server=profile.registry_server,
-            repository=profile.repository,
-            tag=profile.tag,
-            image_digest=profile.image_digest,
             image_pull_managed_identity_client_id=profile.image_pull_managed_identity_client_id,
             scheduler_managed_identity_client_id=profile.scheduler_managed_identity_client_id,
             cpu=profile.cpu,

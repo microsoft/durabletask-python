@@ -13,7 +13,6 @@ from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWo
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfileOptions
 from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
 from durabletask.azuremanaged.preview.on_demand_sandbox.client import (
-    build_image_ref,
     build_on_demand_sandbox_activity_declaration,
     build_on_demand_sandbox_worker_heartbeat,
     build_on_demand_sandbox_worker_start,
@@ -134,18 +133,6 @@ def test_profile_options_add_activity_accepts_callable() -> None:
         assert list(declaration.activity_names) == ["pytest_callable_remote_hello"]
     finally:
         sandbox_client._worker_profiles.pop("pytest-callable-profile", None)
-
-
-def test_build_image_ref_matches_dotnet_options() -> None:
-    assert build_image_ref(container_image=" repo/image:tag ") == "repo/image:tag"
-    assert build_image_ref(
-        registry_server="example.azurecr.io",
-        repository="worker",
-        tag="v1") == "example.azurecr.io/worker:v1"
-    assert build_image_ref(
-        registry_server="example.azurecr.io",
-        repository="worker",
-        image_digest="sha256:abc") == "example.azurecr.io/worker@sha256:abc"
 
 
 def test_build_on_demand_sandbox_activity_declaration() -> None:
