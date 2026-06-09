@@ -18,6 +18,7 @@ from durabletask.azuremanaged.preview.on_demand_sandbox.client import (
     resolve_activity_names,
 )
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+import durabletask.internal.shared as shared
 from durabletask.worker import (
     ActivityWorkItemFilter,
     ConcurrencyOptions,
@@ -41,7 +42,10 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         concurrency_options = ConcurrencyOptions(
             maximum_concurrent_activity_work_items=resolved_max_concurrent_activities)
 
+        self._on_demand_sandbox_host_address = resolved_host_address
+        self._on_demand_sandbox_secure_channel = resolved_secure_channel
         self._on_demand_sandbox_token_credential = resolved_token_credential
+        self._on_demand_sandbox_logger = shared.get_logger("worker")
 
         super().__init__(
             host_address=resolved_host_address,
@@ -62,10 +66,13 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         self._on_demand_sandbox_active_activities = 0
         self._on_demand_sandbox_active_activities_lock = threading.Lock()
 
-    def start(self) -> None:
-        if self._is_running:
-            raise RuntimeError("The worker is already running.")
+    def add_activity(self, fn):
+        activity_name = super().add_activity(fn)
+        self._on_demand_sandbox_activity_names = resolve_activity_names(
+            [*self._on_demand_sandbox_activity_names, activity_name])
+        return activity_name
 
+    def start(self) -> None:
         self._configure_on_demand_sandbox_activity_filters()
         super().start()
         self._start_on_demand_sandbox_registration()
@@ -74,17 +81,16 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         self._stop_on_demand_sandbox_registration()
         super().stop()
 
-    def _execute_activity(self, req, stub, completionToken):
+    def _durabletask_on_activity_execution_started(self, req) -> None:
         with self._on_demand_sandbox_active_activities_lock:
             self._on_demand_sandbox_active_activities += 1
-        try:
-            return super()._execute_activity(req, stub, completionToken)
-        finally:
-            with self._on_demand_sandbox_active_activities_lock:
-                self._on_demand_sandbox_active_activities = max(0, self._on_demand_sandbox_active_activities - 1)
+
+    def _durabletask_on_activity_execution_completed(self, req) -> None:
+        with self._on_demand_sandbox_active_activities_lock:
+            self._on_demand_sandbox_active_activities = max(0, self._on_demand_sandbox_active_activities - 1)
 
     def _configure_on_demand_sandbox_activity_filters(self) -> None:
-        activity_names = resolve_activity_names(self._registry.activities.keys())
+        activity_names = resolve_activity_names(self._on_demand_sandbox_activity_names)
         if not activity_names:
             raise RuntimeError(
                 "On-demand sandbox worker requires at least one registered activity before it can register.")
@@ -114,12 +120,10 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         while not self._on_demand_sandbox_registration_stop.is_set():
             try:
                 client = OnDemandSandboxActivitiesClient(
-                    host_address=self._host_address,
+                    host_address=self._on_demand_sandbox_host_address,
                     taskhub=self._on_demand_sandbox_taskhub,
                     token_credential=self._on_demand_sandbox_token_credential,
-                    channel=self._channel,
-                    secure_channel=self._secure_channel,
-                    channel_options=self._channel_options)
+                    secure_channel=self._on_demand_sandbox_secure_channel)
                 try:
                     client.connect_on_demand_sandbox_activity_worker(self._registration_messages())
                     retry_delay = 1.0
@@ -128,7 +132,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
             except Exception as ex:
                 if self._on_demand_sandbox_registration_stop.is_set():
                     break
-                self._logger.warning("On-demand sandbox activity worker registration failed: %s", ex)
+                self._on_demand_sandbox_logger.warning("On-demand sandbox activity worker registration failed: %s", ex)
                 delay = random.uniform(0, retry_delay)
                 self._on_demand_sandbox_registration_stop.wait(delay)
                 retry_delay = min(retry_delay * 2, 30.0)

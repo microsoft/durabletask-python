@@ -290,6 +290,7 @@ def test_generated_stub_uses_on_demand_sandbox_rpc_paths() -> None:
 
 def test_on_demand_sandbox_worker_constructor_does_not_expose_runtime_contract() -> None:
     assert list(inspect.signature(OnDemandSandboxWorker).parameters) == []
+    assert "_execute_activity" not in OnDemandSandboxWorker.__dict__
 
 
 def test_on_demand_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
@@ -311,17 +312,23 @@ def test_on_demand_sandbox_worker_reads_sandbox_environment_and_registered_activ
     monkeypatch.setenv("DTS_SUBSTRATE", "AcaSessionPool")
     monkeypatch.setenv("DTS_SANDBOX_ID", "env-sandbox")
 
+    def EnvActivity(_ctx, value):
+        return value
+
+    def OtherActivity(_ctx, value):
+        return value
+
     worker = OnDemandSandboxWorker()
-    worker._registry.add_named_activity("EnvActivity", lambda _ctx, value: value)
-    worker._registry.add_named_activity("OtherActivity", lambda _ctx, value: value)
+    worker.add_activity(EnvActivity)
+    worker.add_activity(OtherActivity)
     worker._configure_on_demand_sandbox_activity_filters()
     start = next(worker._registration_messages())
 
-    assert worker._host_address == "http://localhost:8080"
+    assert worker._on_demand_sandbox_host_address == "http://localhost:8080"
     assert worker._on_demand_sandbox_token_credential is None
     assert worker._on_demand_sandbox_taskhub == "env-hub"
     assert worker._on_demand_sandbox_worker_profile_id == "env-profile"
-    assert worker._concurrency_options.maximum_concurrent_activity_work_items == 7
+    assert worker.concurrency_options.maximum_concurrent_activity_work_items == 7
     assert worker._work_item_filters is not None
     assert [activity.name for activity in worker._work_item_filters.activities] == [
         "EnvActivity",
@@ -353,7 +360,23 @@ def test_on_demand_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> 
 
     worker = OnDemandSandboxWorker()
 
-    assert worker._concurrency_options.maximum_concurrent_activity_work_items == 100
+    assert worker.concurrency_options.maximum_concurrent_activity_work_items == 100
+
+
+def test_on_demand_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+
+    worker = OnDemandSandboxWorker()
+
+    worker._durabletask_on_activity_execution_started(object())
+    assert worker._on_demand_sandbox_active_activities == 1
+
+    worker._durabletask_on_activity_execution_completed(object())
+    assert worker._on_demand_sandbox_active_activities == 0
+
+    worker._durabletask_on_activity_execution_completed(object())
+    assert worker._on_demand_sandbox_active_activities == 0
 
 
 def test_on_demand_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypatch) -> None:
