@@ -1,4 +1,4 @@
-"""Declarer app for the DTS on-demand sandbox activities sample."""
+"""Declarer app for the Durable Task Scheduler on-demand sandbox activities sample."""
 
 import os
 

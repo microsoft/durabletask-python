@@ -4,8 +4,8 @@
 """On-demand sandbox preview APIs for Azure Managed Durable Task Scheduler.
 
 This extension provides preview APIs for declaring on-demand sandbox activity
-worker images and running a Python activity worker inside a DTS-launched
-sandbox.
+worker images and running a Python activity worker inside a Durable Task
+Scheduler-launched sandbox.
 
 Usage::
 
@@ -28,4 +28,3 @@ __all__ = [
     "OnDemandSandboxActivitiesClient",
     "on_demand_sandbox_worker_profile",
 ]
-

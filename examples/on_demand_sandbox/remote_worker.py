@@ -1,4 +1,4 @@
-"""Remote worker image entrypoint for the DTS on-demand sandbox activities sample."""
+"""Remote worker image entrypoint for the Durable Task Scheduler on-demand sandbox activities sample."""
 
 import os
 import time

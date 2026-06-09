@@ -27,10 +27,10 @@ from durabletask.worker import (
 
 
 class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
-    """DTS worker mode for activity containers started by on-demand sandbox activities.
+    """Durable Task Scheduler worker mode for activity containers started by on-demand sandbox activities.
 
-    This worker registers a live worker session with DTS and restricts dispatch
-    to the activities registered on this worker.
+    This worker registers a live worker session with Durable Task Scheduler and
+    restricts dispatch to the activities registered on this worker.
     """
 
     def __init__(self):

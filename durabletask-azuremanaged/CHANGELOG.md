@@ -8,21 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 - Added preview `durabletask.azuremanaged.preview.on_demand_sandbox` APIs for
-  declaring DTS on-demand sandbox activities and running a sandbox activity worker.
-- Added profile-based DTS on-demand sandbox declarations with
-  `@on_demand_sandbox_worker_profile`, `OnDemandSandboxWorkerProfile.configure()`,
-  `OnDemandSandboxWorkerProfileOptions.add_activity(...)`, and
-  `OnDemandSandboxActivitiesClient.enable_on_demand_sandbox_activities()`.
-- Changed on-demand sandbox worker profile declarations so the decorator names the
-  profile and the profile class configures image, resources, concurrency, and
-  customer environment variables explicitly.
-- Changed on-demand sandbox activity worker configuration to require explicit SDK
-  parameters instead of reading DTS environment variables inside the SDK.
-- Removed the on-demand sandbox worker wakeup HTTP listener because ADC sandbox
-  workers use outbound DTS registration and do not require an inbound probe
-  endpoint.
-- Changed on-demand sandbox worker registration to rely on gRPC status instead of an
-  accepted response flag.
+  declaring Durable Task Scheduler on-demand sandbox activities, registering
+  worker profiles, and running sandbox activity workers.
 
 ## v1.5.0
 

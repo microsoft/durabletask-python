@@ -161,7 +161,7 @@ def build_on_demand_sandbox_activity_declaration(
 
     resolved_scheduler_managed_identity_client_id = _normalize_required(
         scheduler_managed_identity_client_id,
-        "On-demand sandbox activity declaration requires the managed identity client ID workers use to connect to the DTS scheduler.")
+        "On-demand sandbox activity declaration requires the managed identity client ID workers use to connect to Durable Task Scheduler.")
     resolved_image_pull_managed_identity_client_id = _normalize_required(
         image_pull_managed_identity_client_id,
         "On-demand sandbox activity declaration requires the managed identity client ID ADC uses to pull the worker image.")
@@ -265,7 +265,7 @@ def build_on_demand_sandbox_worker_heartbeat(active_activities_count: int) -> pb
 
 
 class OnDemandSandboxActivitiesClient:
-    """Client for DTS on-demand sandbox activity management operations."""
+    """Client for Durable Task Scheduler on-demand sandbox activity management operations."""
 
     def __init__(
             self, *,
@@ -298,7 +298,7 @@ class OnDemandSandboxActivitiesClient:
             self._channel.close()
 
     def enable_on_demand_sandbox_activities(self) -> None:
-        """Declare all configured on-demand sandbox worker profiles with DTS."""
+        """Declare all configured on-demand sandbox worker profiles with Durable Task Scheduler."""
         declarations = build_profile_on_demand_sandbox_activity_declarations()
         if not declarations:
             raise ValueError("No configured on-demand sandbox activities were found.")

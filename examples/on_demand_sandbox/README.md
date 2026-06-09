@@ -1,11 +1,11 @@
-# DTS on-demand sandbox activities sample
+# Durable Task Scheduler on-demand sandbox activities sample
 
-This sample mirrors the .NET on-demand sandbox sample with two customer-owned pieces:
+This sample mirrors the .NET on-demand sandbox sample with three customer-owned pieces:
 
 1. A **declarer app** (`main_app.py`) that declares which activity should run
    in an on-demand sandbox, starts the orchestration, and waits for the result.
 2. A **remote worker image** (`remote_worker.py` plus `Containerfile`) that
-   DTS starts in a sandbox to execute the declared activity.
+   Durable Task Scheduler starts in a sandbox to execute the declared activity.
 3. A tiny shared module (`activity_names.py`) that keeps the declarer and remote
    worker on the same activity name constants.
 
@@ -36,12 +36,12 @@ memory, max concurrency, customer environment variables, and on-demand sandbox a
 names with `options.add_activity(...)`. The declarer and remote worker both use
 `activity_names.py` so they stay in sync.
 
-The remote worker code cannot pass DTS runtime settings to the SDK. In a
+The remote worker code cannot pass Durable Task Scheduler runtime settings to the SDK. In a
 sandbox, `OnDemandSandboxWorker()` reads `DTS_ENDPOINT`,
 `DTS_TASK_HUB`, `DTS_WORKER_PROFILE_ID`, `DTS_ON_DEMAND_SANDBOX_MAX_ACTIVITIES`,
 `DTS_SUBSTRATE`, and `DTS_SANDBOX_ID` from environment variables injected by
-DTS. The worker reports its registered activity names when it connects, and
-DTS validates they match the declaration before advertising worker capacity.
+Durable Task Scheduler. The worker reports its registered activity names when it connects, and
+Durable Task Scheduler validates they match the declaration before advertising worker capacity.
 
 ## Build the remote worker image
 
@@ -55,7 +55,7 @@ docker build `
 docker push <public container image reference>
 ```
 
-Private preview requires the image to be publicly pullable by ADC/DTS.
+Private preview requires the image to be publicly pullable by the sandbox platform.
 
 ## Run the declarer app
 
