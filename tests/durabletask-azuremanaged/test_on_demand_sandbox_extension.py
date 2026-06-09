@@ -9,6 +9,7 @@ import durabletask.azuremanaged.preview.on_demand_sandbox as sandbox
 import durabletask.azuremanaged.preview.on_demand_sandbox.client as sandbox_client
 import durabletask.azuremanaged.preview.on_demand_sandbox.worker as sandbox_worker
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorker
+from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxActivitiesClient
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfile
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfileOptions
 from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
@@ -278,6 +279,10 @@ def test_generated_stub_uses_on_demand_sandbox_rpc_paths() -> None:
 def test_on_demand_sandbox_worker_constructor_does_not_expose_runtime_contract() -> None:
     assert list(inspect.signature(OnDemandSandboxWorker).parameters) == []
     assert "_execute_activity" not in OnDemandSandboxWorker.__dict__
+
+
+def test_on_demand_sandbox_activities_client_does_not_expose_worker_registration_rpc() -> None:
+    assert not hasattr(OnDemandSandboxActivitiesClient, "connect_on_demand_sandbox_activity_worker")
 
 
 def test_on_demand_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:

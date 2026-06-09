@@ -233,8 +233,8 @@ def build_on_demand_sandbox_worker_heartbeat(active_activities_count: int) -> pb
             active_activities_count=active_activities_count))
 
 
-class OnDemandSandboxActivitiesClient:
-    """Client for Durable Task Scheduler on-demand sandbox activity management operations."""
+class _OnDemandSandboxActivitiesGrpcClient:
+    """Internal gRPC client for on-demand sandbox activity RPCs."""
 
     def __init__(
             self, *,
@@ -266,18 +266,15 @@ class OnDemandSandboxActivitiesClient:
         if self._owns_channel:
             self._channel.close()
 
-    def enable_on_demand_sandbox_activities(self) -> None:
-        """Declare all configured on-demand sandbox worker profiles with Durable Task Scheduler."""
-        declarations = build_profile_on_demand_sandbox_activity_declarations()
-        if not declarations:
-            raise ValueError("No configured on-demand sandbox activities were found.")
+    def declare_on_demand_sandbox_activities(
+            self,
+            declaration: pb.OnDemandSandboxActivityDeclaration) -> pb.OnDemandSandboxActivityDeclarationResult:
+        return self._stub.DeclareOnDemandSandboxActivities(declaration)
 
-        for declaration in declarations:
-            self._stub.DeclareOnDemandSandboxActivities(declaration)
-
-    def remove_on_demand_sandbox_activity_declaration(self, worker_profile_id: str) -> None:
-        worker_profile_id = _normalize_required(worker_profile_id, "Worker profile ID is required.")
-        self._stub.RemoveOnDemandSandboxActivityDeclaration(
+    def remove_on_demand_sandbox_activity_declaration(
+            self,
+            worker_profile_id: str) -> pb.RemoveOnDemandSandboxActivityDeclarationResult:
+        return self._stub.RemoveOnDemandSandboxActivityDeclaration(
             pb.RemoveOnDemandSandboxActivityDeclarationRequest(worker_profile_id=worker_profile_id))
 
     def connect_on_demand_sandbox_activity_worker(
@@ -285,6 +282,44 @@ class OnDemandSandboxActivitiesClient:
             messages: Iterable[pb.OnDemandSandboxActivityWorkerMessage]
     ) -> pb.OnDemandSandboxActivityWorkerSessionResult:
         return self._stub.ConnectOnDemandSandboxActivityWorker(messages)
+
+
+class OnDemandSandboxActivitiesClient:
+    """Client for Durable Task Scheduler on-demand sandbox activity management operations."""
+
+    def __init__(
+            self, *,
+            host_address: str,
+            taskhub: str,
+            token_credential: Optional[TokenCredential],
+            channel: Optional[grpc.Channel] = None,
+            secure_channel: bool = True,
+            interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
+            channel_options: Optional[GrpcChannelOptions] = None):
+        self._grpc_client = _OnDemandSandboxActivitiesGrpcClient(
+            host_address=host_address,
+            taskhub=taskhub,
+            token_credential=token_credential,
+            channel=channel,
+            secure_channel=secure_channel,
+            interceptors=interceptors,
+            channel_options=channel_options)
+
+    def close(self) -> None:
+        self._grpc_client.close()
+
+    def enable_on_demand_sandbox_activities(self) -> None:
+        """Declare all configured on-demand sandbox worker profiles with Durable Task Scheduler."""
+        declarations = build_profile_on_demand_sandbox_activity_declarations()
+        if not declarations:
+            raise ValueError("No configured on-demand sandbox activities were found.")
+
+        for declaration in declarations:
+            self._grpc_client.declare_on_demand_sandbox_activities(declaration)
+
+    def remove_on_demand_sandbox_activity_declaration(self, worker_profile_id: str) -> None:
+        worker_profile_id = _normalize_required(worker_profile_id, "Worker profile ID is required.")
+        self._grpc_client.remove_on_demand_sandbox_activity_declaration(worker_profile_id)
 
 
 def _normalize_optional_strings(values: Iterable[str]) -> list[str]:

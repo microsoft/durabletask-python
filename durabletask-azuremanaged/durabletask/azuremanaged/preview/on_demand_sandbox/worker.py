@@ -12,7 +12,7 @@ from azure.identity import ManagedIdentityCredential
 from durabletask.azuremanaged.preview.on_demand_sandbox.client import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     DEFAULT_WORKER_PROFILE_ID,
-    OnDemandSandboxActivitiesClient,
+    _OnDemandSandboxActivitiesGrpcClient,
     build_on_demand_sandbox_worker_heartbeat,
     build_on_demand_sandbox_worker_start,
     resolve_activity_names,
@@ -118,7 +118,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         retry_delay = 1.0
         while not self._on_demand_sandbox_registration_stop.is_set():
             try:
-                client = OnDemandSandboxActivitiesClient(
+                client = _OnDemandSandboxActivitiesGrpcClient(
                     host_address=self._on_demand_sandbox_host_address,
                     taskhub=self._on_demand_sandbox_taskhub,
                     token_credential=self._on_demand_sandbox_token_credential,
