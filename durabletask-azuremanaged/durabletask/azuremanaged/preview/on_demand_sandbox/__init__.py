@@ -16,9 +16,9 @@ Usage::
 """
 
 from durabletask.azuremanaged.preview.on_demand_sandbox.client import OnDemandSandboxActivitiesClient
-from durabletask.azuremanaged.preview.on_demand_sandbox.client import OnDemandSandboxWorkerProfile
-from durabletask.azuremanaged.preview.on_demand_sandbox.client import OnDemandSandboxWorkerProfileOptions
-from durabletask.azuremanaged.preview.on_demand_sandbox.client import on_demand_sandbox_worker_profile
+from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import OnDemandSandboxWorkerProfile
+from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import OnDemandSandboxWorkerProfileOptions
+from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import on_demand_sandbox_worker_profile
 from durabletask.azuremanaged.preview.on_demand_sandbox.worker import OnDemandSandboxWorker
 
 __all__ = [

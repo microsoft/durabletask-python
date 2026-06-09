@@ -6,14 +6,14 @@ import inspect
 from azure.core.credentials import AccessToken
 
 import durabletask.azuremanaged.preview.on_demand_sandbox as sandbox
-import durabletask.azuremanaged.preview.on_demand_sandbox.client as sandbox_client
+import durabletask.azuremanaged.preview.on_demand_sandbox.declarations as sandbox_declarations
 import durabletask.azuremanaged.preview.on_demand_sandbox.worker as sandbox_worker
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorker
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxActivitiesClient
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfile
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfileOptions
 from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
-from durabletask.azuremanaged.preview.on_demand_sandbox.client import (
+from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     build_on_demand_sandbox_activity_declaration,
     build_on_demand_sandbox_worker_heartbeat,
     build_on_demand_sandbox_worker_start,
@@ -108,8 +108,8 @@ def test_build_profile_on_demand_sandbox_activity_declarations_rejects_activity_
         else:
             raise AssertionError("Expected overlapping on-demand sandbox activity ownership to fail.")
     finally:
-        sandbox_client._worker_profiles.pop("pytest-overlap-profile-a", None)
-        sandbox_client._worker_profiles.pop("pytest-overlap-profile-b", None)
+        sandbox_declarations._worker_profiles.pop("pytest-overlap-profile-a", None)
+        sandbox_declarations._worker_profiles.pop("pytest-overlap-profile-b", None)
 
 
 def test_profile_options_add_activity_accepts_callable() -> None:
@@ -133,7 +133,7 @@ def test_profile_options_add_activity_accepts_callable() -> None:
         declaration = declarations[0]
         assert list(declaration.activity_names) == ["pytest_callable_remote_hello"]
     finally:
-        sandbox_client._worker_profiles.pop("pytest-callable-profile", None)
+        sandbox_declarations._worker_profiles.pop("pytest-callable-profile", None)
 
 
 def test_build_on_demand_sandbox_activity_declaration() -> None:
