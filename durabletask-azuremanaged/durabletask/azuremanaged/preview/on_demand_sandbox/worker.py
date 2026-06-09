@@ -9,7 +9,7 @@ from typing import Iterator, Optional
 
 from azure.identity import ManagedIdentityCredential
 
-from durabletask.azuremanaged.preview.on_demand_sandbox._helpers import _resolve_activity_names
+from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import _resolve_activity_names
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     DEFAULT_WORKER_PROFILE_ID,
