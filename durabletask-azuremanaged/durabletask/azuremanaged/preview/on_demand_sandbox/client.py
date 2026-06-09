@@ -8,6 +8,7 @@ from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     _build_profile_on_demand_sandbox_activity_declarations,
+    _normalize_required,
 )
 from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,
@@ -52,9 +53,3 @@ class OnDemandSandboxActivitiesClient:
     def remove_on_demand_sandbox_activity_declaration(self, worker_profile_id: str) -> None:
         worker_profile_id = _normalize_required(worker_profile_id, "Worker profile ID is required.")
         self._transport.remove_on_demand_sandbox_activity_declaration(worker_profile_id)
-
-
-def _normalize_required(value: Optional[str], message: str) -> str:
-    if not value or not value.strip():
-        raise ValueError(message)
-    return value.strip()
