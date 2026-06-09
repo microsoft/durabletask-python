@@ -7,7 +7,7 @@ from typing import Callable, Iterable, Optional
 
 from durabletask import task
 from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
-from durabletask.azuremanaged.preview.on_demand_sandbox._normalization import (
+from durabletask.azuremanaged.preview.on_demand_sandbox._helpers import (
     _normalize_required,
     _resolve_activity_names,
 )
