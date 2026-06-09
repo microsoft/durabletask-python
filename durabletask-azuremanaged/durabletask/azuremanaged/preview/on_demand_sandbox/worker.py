@@ -12,9 +12,9 @@ from azure.identity import ManagedIdentityCredential
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     DEFAULT_WORKER_PROFILE_ID,
-    build_on_demand_sandbox_worker_heartbeat,
-    build_on_demand_sandbox_worker_start,
-    resolve_activity_names,
+    _build_on_demand_sandbox_worker_heartbeat,
+    _build_on_demand_sandbox_worker_start,
+    _resolve_activity_names,
 )
 from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,
@@ -68,7 +68,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         self._on_demand_sandbox_active_activities = 0
         self._on_demand_sandbox_active_activities_lock = threading.Lock()
 
-    def add_activity(self, fn):
+    def add_activity(self, fn) -> str:
         activity_name = super().add_activity(fn)
         self._on_demand_sandbox_activity_names.append(activity_name)
         return activity_name
@@ -91,7 +91,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
             self._on_demand_sandbox_active_activities = max(0, self._on_demand_sandbox_active_activities - 1)
 
     def _configure_on_demand_sandbox_activity_filters(self) -> None:
-        activity_names = resolve_activity_names(self._on_demand_sandbox_activity_names)
+        activity_names = _resolve_activity_names(self._on_demand_sandbox_activity_names)
         if not activity_names:
             raise RuntimeError(
                 "On-demand sandbox worker requires at least one registered activity before it can register.")
@@ -112,8 +112,13 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
 
     def _stop_on_demand_sandbox_registration(self) -> None:
         self._on_demand_sandbox_registration_stop.set()
-        if self._on_demand_sandbox_registration_thread is not None:
-            self._on_demand_sandbox_registration_thread.join(timeout=10)
+        thread = self._on_demand_sandbox_registration_thread
+        if thread is not None:
+            thread.join(timeout=10)
+            if thread.is_alive():
+                self._on_demand_sandbox_logger.warning(
+                    "On-demand sandbox activity worker registration thread did not stop within 10 seconds.")
+                return
             self._on_demand_sandbox_registration_thread = None
 
     def _run_on_demand_sandbox_registration_loop(self) -> None:
@@ -139,7 +144,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
                 retry_delay = min(retry_delay * 2, 30.0)
 
     def _registration_messages(self) -> Iterator:
-        yield build_on_demand_sandbox_worker_start(
+        yield _build_on_demand_sandbox_worker_start(
             taskhub=self._on_demand_sandbox_taskhub,
             worker_profile_id=self._on_demand_sandbox_worker_profile_id,
             max_activities_count=self._on_demand_sandbox_max_activities,
@@ -151,7 +156,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
                 self._on_demand_sandbox_heartbeat_interval_seconds):
             with self._on_demand_sandbox_active_activities_lock:
                 active_count = self._on_demand_sandbox_active_activities
-            yield build_on_demand_sandbox_worker_heartbeat(active_count)
+            yield _build_on_demand_sandbox_worker_heartbeat(active_count)
 
 
 def _resolve_taskhub() -> str:

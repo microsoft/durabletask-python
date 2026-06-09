@@ -30,6 +30,15 @@ $env:DTS_ON_DEMAND_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID = "<image-pull UMI client ID
 $env:DTS_ON_DEMAND_SANDBOX_SCHEDULER_UMI_CLIENT_ID = "<scheduler UMI client ID>"
 ```
 
+```bash
+export DTS_ENDPOINT="<scheduler endpoint>"
+export DTS_TASK_HUB="<task hub name>"
+export DTS_WORKER_PROFILE_ID="default"
+export DTS_ON_DEMAND_SANDBOX_CONTAINER_IMAGE="<container image reference>"
+export DTS_ON_DEMAND_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID="<image-pull UMI client ID>"
+export DTS_ON_DEMAND_SANDBOX_SCHEDULER_UMI_CLIENT_ID="<scheduler UMI client ID>"
+```
+
 After pushing the remote worker image, set `DTS_ON_DEMAND_SANDBOX_CONTAINER_IMAGE` to
 the pushed image reference. `RemoteWorkerProfile.configure()` declares CPU,
 memory, max concurrency, customer environment variables, and on-demand sandbox activity
@@ -55,6 +64,14 @@ docker build `
 docker push <public container image reference>
 ```
 
+```bash
+docker build \
+  -f examples/on_demand_sandbox/Containerfile \
+  -t <public container image reference> \
+  .
+docker push <public container image reference>
+```
+
 Private preview requires the image to be publicly pullable by the sandbox platform.
 
 ## Run the declarer app
@@ -65,10 +82,18 @@ Install local packages from the repository root:
 pip install -e . -e .\durabletask-azuremanaged
 ```
 
+```bash
+pip install -e . -e ./durabletask-azuremanaged
+```
+
 Then run:
 
 ```powershell
 python examples\on_demand_sandbox\main_app.py
+```
+
+```bash
+python examples/on_demand_sandbox/main_app.py
 ```
 
 The declarer app registers the on-demand sandbox activity metadata, starts

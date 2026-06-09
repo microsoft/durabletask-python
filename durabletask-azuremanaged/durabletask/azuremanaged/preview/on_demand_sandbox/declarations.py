@@ -69,13 +69,17 @@ def on_demand_sandbox_worker_profile(worker_profile_id: str) -> Callable[[type],
         if callable(configure):
             configure(options)
 
+        if not _resolve_activity_names(options.activity_names):
+            raise ValueError(
+                f"On-demand sandbox worker profile '{normalized_profile}' must declare at least one activity.")
+
         _worker_profiles[normalized_profile] = options
         return cls
 
     return decorator
 
 
-def resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
+def _resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
     resolved: list[str] = []
     seen: set[str] = set()
     names = [activity_names] if isinstance(activity_names, str) else activity_names
@@ -87,7 +91,7 @@ def resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
     return resolved
 
 
-def build_on_demand_sandbox_activity_declaration(
+def _build_on_demand_sandbox_activity_declaration(
         *,
         activity_names: str | Iterable[str],
         scheduler_managed_identity_client_id: str,
@@ -107,7 +111,7 @@ def build_on_demand_sandbox_activity_declaration(
             such as "myregistry.azurecr.io/workers/hello:1.0" or
             "myregistry.azurecr.io/workers/hello@sha256:0123456789abcdef...".
     """
-    resolved_activity_names = resolve_activity_names(activity_names)
+    resolved_activity_names = _resolve_activity_names(activity_names)
     if not resolved_activity_names:
         raise ValueError("On-demand sandbox activity declaration requires at least one activity name.")
 
@@ -150,24 +154,22 @@ def build_on_demand_sandbox_activity_declaration(
     return declaration
 
 
-def build_profile_on_demand_sandbox_activity_declarations() -> list[pb.OnDemandSandboxActivityDeclaration]:
+def _build_profile_on_demand_sandbox_activity_declarations() -> list[pb.OnDemandSandboxActivityDeclaration]:
     """Build on-demand sandbox declarations from worker profile configuration."""
     declarations: list[pb.OnDemandSandboxActivityDeclaration] = []
     activity_owners: dict[str, str] = {}
     for profile in _worker_profiles.values():
-        activity_names = resolve_activity_names(profile.activity_names)
-        if not activity_names:
-            continue
+        activity_names = _resolve_activity_names(profile.activity_names)
 
         for activity_name in activity_names:
             existing_profile = activity_owners.get(activity_name)
             if existing_profile and existing_profile != profile.worker_profile_id:
                 raise ValueError(
                     f"On-demand sandbox activity '{activity_name}' is assigned to both worker profile "
-                    f"'{existing_profile}' and '{profile.worker_profile_id}'.")
+                f"'{existing_profile}' and '{profile.worker_profile_id}'.")
             activity_owners[activity_name] = profile.worker_profile_id
 
-        declarations.append(build_on_demand_sandbox_activity_declaration(
+        declarations.append(_build_on_demand_sandbox_activity_declaration(
             activity_names=activity_names,
             worker_profile_id=profile.worker_profile_id,
             container_image=profile.container_image,
@@ -183,7 +185,7 @@ def build_profile_on_demand_sandbox_activity_declarations() -> list[pb.OnDemandS
     return declarations
 
 
-def build_on_demand_sandbox_worker_start(
+def _build_on_demand_sandbox_worker_start(
         *,
         taskhub: str,
         worker_profile_id: str,
@@ -200,7 +202,7 @@ def build_on_demand_sandbox_worker_start(
     if max_activities_count <= 0:
         raise ValueError("On-demand sandbox activity worker max activity count must be greater than zero.")
 
-    resolved_activity_names = resolve_activity_names(activity_names)
+    resolved_activity_names = _resolve_activity_names(activity_names)
     if not resolved_activity_names:
         raise ValueError("On-demand sandbox activity worker registration requires at least one registered activity.")
 
@@ -215,7 +217,7 @@ def build_on_demand_sandbox_worker_start(
     return message
 
 
-def build_on_demand_sandbox_worker_heartbeat(active_activities_count: int) -> pb.OnDemandSandboxActivityWorkerMessage:
+def _build_on_demand_sandbox_worker_heartbeat(active_activities_count: int) -> pb.OnDemandSandboxActivityWorkerMessage:
     if active_activities_count < 0:
         raise ValueError("On-demand sandbox activity worker active activity count cannot be negative.")
 

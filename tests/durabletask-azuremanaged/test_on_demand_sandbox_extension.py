@@ -14,18 +14,18 @@ from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWo
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfileOptions
 from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
-    build_on_demand_sandbox_activity_declaration,
-    build_on_demand_sandbox_worker_heartbeat,
-    build_on_demand_sandbox_worker_start,
-    build_profile_on_demand_sandbox_activity_declarations,
-    resolve_activity_names,
+    _build_on_demand_sandbox_activity_declaration,
+    _build_on_demand_sandbox_worker_heartbeat,
+    _build_on_demand_sandbox_worker_start,
+    _build_profile_on_demand_sandbox_activity_declarations,
+    _resolve_activity_names,
 )
 from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
 from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2_grpc as stubs
 
 
 def test_resolve_activity_names_trims_and_deduplicates() -> None:
-    assert resolve_activity_names([" RemoteHello ", "", "RemoteHello", "Other"]) == [
+    assert _resolve_activity_names([" RemoteHello ", "", "RemoteHello", "Other"]) == [
         "RemoteHello",
         "Other",
     ]
@@ -63,22 +63,43 @@ def test_build_profile_on_demand_sandbox_activity_declarations() -> None:
             options.environment_variables["ON_DEMAND_SANDBOX_SAMPLE_MARKER"] = "custom-value"
             options.add_activity("PytestRemoteHello")
 
-    declarations = [
-        declaration for declaration in build_profile_on_demand_sandbox_activity_declarations()
-        if declaration.worker_profile_id == "pytest-profile-a"
-    ]
+    try:
+        declarations = [
+            declaration for declaration in _build_profile_on_demand_sandbox_activity_declarations()
+            if declaration.worker_profile_id == "pytest-profile-a"
+        ]
 
-    declaration = declarations[0]
-    assert list(declaration.activity_names) == ["PytestRemoteHello"]
-    assert declaration.image.image_ref == "example.azurecr.io/python-worker:v1"
-    assert declaration.image.managed_identity_client_id == "image-pull-client-id"
-    assert declaration.scheduler_managed_identity_client_id == "scheduler-client-id"
-    assert declaration.resources.cpu == "500m"
-    assert declaration.resources.memory == "1Gi"
-    assert declaration.max_concurrent_activities == 3
-    assert declaration.environment_variables["ON_DEMAND_SANDBOX_SAMPLE_MARKER"] == "custom-value"
-    assert list(declaration.entrypoint) == []
-    assert list(declaration.cmd) == []
+        declaration = declarations[0]
+        assert list(declaration.activity_names) == ["PytestRemoteHello"]
+        assert declaration.image.image_ref == "example.azurecr.io/python-worker:v1"
+        assert declaration.image.managed_identity_client_id == "image-pull-client-id"
+        assert declaration.scheduler_managed_identity_client_id == "scheduler-client-id"
+        assert declaration.resources.cpu == "500m"
+        assert declaration.resources.memory == "1Gi"
+        assert declaration.max_concurrent_activities == 3
+        assert declaration.environment_variables["ON_DEMAND_SANDBOX_SAMPLE_MARKER"] == "custom-value"
+        assert list(declaration.entrypoint) == []
+        assert list(declaration.cmd) == []
+    finally:
+        sandbox_declarations._worker_profiles.pop("pytest-profile-a", None)
+
+
+def test_on_demand_sandbox_worker_profile_requires_activity() -> None:
+    try:
+        try:
+            @on_demand_sandbox_worker_profile("pytest-empty-profile")
+            class PytestEmptyProfile(OnDemandSandboxWorkerProfile):
+                def configure(self, options: OnDemandSandboxWorkerProfileOptions) -> None:
+                    options.container_image = "example.azurecr.io/python-worker:v1"
+                    options.image_pull_managed_identity_client_id = "image-pull-client-id"
+                    options.scheduler_managed_identity_client_id = "scheduler-client-id"
+        except ValueError as ex:
+            assert "pytest-empty-profile" in str(ex)
+            assert "at least one activity" in str(ex)
+        else:
+            raise AssertionError("Expected empty on-demand sandbox worker profile to fail.")
+    finally:
+        sandbox_declarations._worker_profiles.pop("pytest-empty-profile", None)
 
 
 def test_build_profile_on_demand_sandbox_activity_declarations_rejects_activity_overlap() -> None:
@@ -100,7 +121,7 @@ def test_build_profile_on_demand_sandbox_activity_declarations_rejects_activity_
 
     try:
         try:
-            build_profile_on_demand_sandbox_activity_declarations()
+            _build_profile_on_demand_sandbox_activity_declarations()
         except ValueError as ex:
             assert "PytestOverlapRemoteHello" in str(ex)
             assert "pytest-overlap-profile-a" in str(ex)
@@ -126,7 +147,7 @@ def test_profile_options_add_activity_accepts_callable() -> None:
 
     try:
         declarations = [
-            declaration for declaration in build_profile_on_demand_sandbox_activity_declarations()
+            declaration for declaration in _build_profile_on_demand_sandbox_activity_declarations()
             if declaration.worker_profile_id == "pytest-callable-profile"
         ]
 
@@ -137,7 +158,7 @@ def test_profile_options_add_activity_accepts_callable() -> None:
 
 
 def test_build_on_demand_sandbox_activity_declaration() -> None:
-    declaration = build_on_demand_sandbox_activity_declaration(
+    declaration = _build_on_demand_sandbox_activity_declaration(
         worker_profile_id="preview",
         activity_names=["RemoteHello"],
         container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
@@ -171,7 +192,7 @@ def test_build_on_demand_sandbox_activity_declaration_accepts_adc_resource_quant
         ("0.5", "1Gi"),
         ("2", "2048"),
     ]:
-        declaration = build_on_demand_sandbox_activity_declaration(
+        declaration = _build_on_demand_sandbox_activity_declaration(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
             container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
@@ -194,7 +215,7 @@ def test_build_on_demand_sandbox_activity_declaration_rejects_invalid_adc_resour
         ("500m", "500m", "memory"),
     ]:
         try:
-            build_on_demand_sandbox_activity_declaration(
+            _build_on_demand_sandbox_activity_declaration(
                 worker_profile_id="preview",
                 activity_names=["RemoteHello"],
                 container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
@@ -209,7 +230,7 @@ def test_build_on_demand_sandbox_activity_declaration_rejects_invalid_adc_resour
 
 
 def test_build_on_demand_sandbox_activity_declaration_accepts_single_name() -> None:
-    declaration = build_on_demand_sandbox_activity_declaration(
+    declaration = _build_on_demand_sandbox_activity_declaration(
         worker_profile_id="preview",
         activity_names="RemoteHello",
         container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
@@ -221,7 +242,7 @@ def test_build_on_demand_sandbox_activity_declaration_accepts_single_name() -> N
 
 def test_build_on_demand_sandbox_activity_declaration_requires_scheduler_managed_identity_client_id() -> None:
     try:
-        build_on_demand_sandbox_activity_declaration(
+        _build_on_demand_sandbox_activity_declaration(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
             container_image="example.azurecr.io/on-demand-sandbox-worker:v1")
@@ -233,7 +254,7 @@ def test_build_on_demand_sandbox_activity_declaration_requires_scheduler_managed
 
 def test_build_on_demand_sandbox_activity_declaration_requires_image_pull_managed_identity_client_id() -> None:
     try:
-        build_on_demand_sandbox_activity_declaration(
+        _build_on_demand_sandbox_activity_declaration(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
             container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
@@ -245,7 +266,7 @@ def test_build_on_demand_sandbox_activity_declaration_requires_image_pull_manage
 
 
 def test_build_on_demand_sandbox_worker_start_and_heartbeat() -> None:
-    start = build_on_demand_sandbox_worker_start(
+    start = _build_on_demand_sandbox_worker_start(
         taskhub="hub",
         worker_profile_id="preview",
         max_activities_count=2,
@@ -260,7 +281,7 @@ def test_build_on_demand_sandbox_worker_start_and_heartbeat() -> None:
     assert start.start.dts_sandbox_identifier == "sandbox-1"
     assert list(start.start.activity_names) == ["RemoteHello"]
 
-    heartbeat = build_on_demand_sandbox_worker_heartbeat(1)
+    heartbeat = _build_on_demand_sandbox_worker_heartbeat(1)
     assert heartbeat.heartbeat.active_activities_count == 1
 
 
@@ -332,6 +353,31 @@ def test_on_demand_sandbox_worker_reads_sandbox_environment_and_registered_activ
     assert start.start.substrate == pb.SUBSTRATE_KIND_ACA_SESSION_POOL
     assert start.start.dts_sandbox_identifier == "env-sandbox"
     assert list(start.start.activity_names) == ["EnvActivity", "OtherActivity"]
+
+
+def test_on_demand_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+
+    class StillRunningThread:
+        def __init__(self):
+            self.join_timeout = None
+
+        def join(self, timeout=None):
+            self.join_timeout = timeout
+
+        def is_alive(self):
+            return True
+
+    worker = OnDemandSandboxWorker()
+    thread = StillRunningThread()
+    worker._on_demand_sandbox_registration_thread = thread
+
+    worker._stop_on_demand_sandbox_registration()
+
+    assert thread.join_timeout == 10
+    assert worker._on_demand_sandbox_registration_stop.is_set()
+    assert worker._on_demand_sandbox_registration_thread is thread
 
 
 def test_on_demand_sandbox_worker_uses_scheduler_channel_without_credential(monkeypatch) -> None:

@@ -7,7 +7,7 @@ import grpc
 from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
-    build_profile_on_demand_sandbox_activity_declarations,
+    _build_profile_on_demand_sandbox_activity_declarations,
 )
 from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,
@@ -42,7 +42,7 @@ class OnDemandSandboxActivitiesClient:
 
     def enable_on_demand_sandbox_activities(self) -> None:
         """Declare all configured on-demand sandbox worker profiles with Durable Task Scheduler."""
-        declarations = build_profile_on_demand_sandbox_activity_declarations()
+        declarations = _build_profile_on_demand_sandbox_activity_declarations()
         if not declarations:
             raise ValueError("No configured on-demand sandbox activities were found.")
 
