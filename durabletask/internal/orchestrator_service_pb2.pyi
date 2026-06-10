@@ -1269,30 +1269,30 @@ class SkipGracefulOrchestrationTerminationsResponse(_message.Message):
     def __init__(self, unterminatedInstanceIds: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class GetWorkItemsRequest(_message.Message):
-    __slots__ = ("maxConcurrentOrchestrationWorkItems", "maxConcurrentActivityWorkItems", "maxConcurrentEntityWorkItems", "capabilities", "workItemFilters")
+    __slots__ = ("maxConcurrentOrchestrationWorkItems", "maxConcurrentActivityWorkItems", "maxConcurrentEntityWorkItems", "capabilities", "workItemFilters", "worker_instance_id")
     MAXCONCURRENTORCHESTRATIONWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     MAXCONCURRENTACTIVITYWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     MAXCONCURRENTENTITYWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
     WORKITEMFILTERS_FIELD_NUMBER: _ClassVar[int]
+    WORKER_INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     maxConcurrentOrchestrationWorkItems: int
     maxConcurrentActivityWorkItems: int
     maxConcurrentEntityWorkItems: int
     capabilities: _containers.RepeatedScalarFieldContainer[WorkerCapability]
     workItemFilters: WorkItemFilters
-    def __init__(self, maxConcurrentOrchestrationWorkItems: _Optional[int] = ..., maxConcurrentActivityWorkItems: _Optional[int] = ..., maxConcurrentEntityWorkItems: _Optional[int] = ..., capabilities: _Optional[_Iterable[_Union[WorkerCapability, str]]] = ..., workItemFilters: _Optional[_Union[WorkItemFilters, _Mapping]] = ...) -> None: ...
+    worker_instance_id: str
+    def __init__(self, maxConcurrentOrchestrationWorkItems: _Optional[int] = ..., maxConcurrentActivityWorkItems: _Optional[int] = ..., maxConcurrentEntityWorkItems: _Optional[int] = ..., capabilities: _Optional[_Iterable[_Union[WorkerCapability, str]]] = ..., workItemFilters: _Optional[_Union[WorkItemFilters, _Mapping]] = ..., worker_instance_id: _Optional[str] = ...) -> None: ...
 
 class WorkItemFilters(_message.Message):
-    __slots__ = ("orchestrations", "activities", "entities", "exclude_activities")
+    __slots__ = ("orchestrations", "activities", "entities")
     ORCHESTRATIONS_FIELD_NUMBER: _ClassVar[int]
     ACTIVITIES_FIELD_NUMBER: _ClassVar[int]
     ENTITIES_FIELD_NUMBER: _ClassVar[int]
-    EXCLUDE_ACTIVITIES_FIELD_NUMBER: _ClassVar[int]
     orchestrations: _containers.RepeatedCompositeFieldContainer[OrchestrationFilter]
     activities: _containers.RepeatedCompositeFieldContainer[ActivityFilter]
     entities: _containers.RepeatedCompositeFieldContainer[EntityFilter]
-    exclude_activities: _containers.RepeatedCompositeFieldContainer[ActivityFilter]
-    def __init__(self, orchestrations: _Optional[_Iterable[_Union[OrchestrationFilter, _Mapping]]] = ..., activities: _Optional[_Iterable[_Union[ActivityFilter, _Mapping]]] = ..., entities: _Optional[_Iterable[_Union[EntityFilter, _Mapping]]] = ..., exclude_activities: _Optional[_Iterable[_Union[ActivityFilter, _Mapping]]] = ...) -> None: ...
+    def __init__(self, orchestrations: _Optional[_Iterable[_Union[OrchestrationFilter, _Mapping]]] = ..., activities: _Optional[_Iterable[_Union[ActivityFilter, _Mapping]]] = ..., entities: _Optional[_Iterable[_Union[EntityFilter, _Mapping]]] = ...) -> None: ...
 
 class OrchestrationFilter(_message.Message):
     __slots__ = ("name", "versions")
