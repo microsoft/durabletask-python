@@ -26,4 +26,5 @@ with OnDemandSandboxWorker() as worker:
     try:
         threading.Event().wait()
     except KeyboardInterrupt:
+        # Expected on Ctrl+C: exit loop and let the context manager stop the worker gracefully.
         pass
