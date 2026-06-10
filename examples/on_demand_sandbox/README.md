@@ -90,9 +90,17 @@ Private preview requires the image to be publicly pullable by the sandbox platfo
 
 Install local packages from the repository root:
 
-```powershell
+Bash:
+
+~~~bash
+pip install -e . -e ./durabletask-azuremanaged
+~~~
+
+PowerShell:
+
+~~~powershell
 pip install -e . -e .\durabletask-azuremanaged
-```
+~~~
 
 ```bash
 pip install -e . -e ./durabletask-azuremanaged
@@ -100,9 +108,17 @@ pip install -e . -e ./durabletask-azuremanaged
 
 Then run:
 
-```powershell
+Bash:
+
+~~~bash
+python examples/on_demand_sandbox/main_app.py
+~~~
+
+PowerShell:
+
+~~~powershell
 python examples\on_demand_sandbox\main_app.py
-```
+~~~
 
 ```bash
 python examples/on_demand_sandbox/main_app.py
