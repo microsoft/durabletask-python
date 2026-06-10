@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing import Callable, Iterable, Optional, Protocol, Sequence, cast
+from typing import Iterable, Optional, Protocol, Sequence, cast
 
 import grpc
 from azure.core.credentials import TokenCredential
@@ -16,18 +16,20 @@ import durabletask.internal.shared as shared
 
 
 class _OnDemandSandboxActivitiesStub(Protocol):
-    DeclareOnDemandSandboxActivities: Callable[
-        [pb.OnDemandSandboxActivityDeclaration],
-        pb.OnDemandSandboxActivityDeclarationResult,
-    ]
-    RemoveOnDemandSandboxActivityDeclaration: Callable[
-        [pb.RemoveOnDemandSandboxActivityDeclarationRequest],
-        pb.RemoveOnDemandSandboxActivityDeclarationResult,
-    ]
-    ConnectOnDemandSandboxActivityWorker: Callable[
-        [Iterable[pb.OnDemandSandboxActivityWorkerMessage]],
-        pb.OnDemandSandboxActivityWorkerSessionResult,
-    ]
+    def DeclareOnDemandSandboxActivities(
+            self,
+            request: pb.OnDemandSandboxActivityDeclaration) -> pb.OnDemandSandboxActivityDeclarationResult:
+        ...
+
+    def RemoveOnDemandSandboxActivityDeclaration(
+            self,
+            request: pb.RemoveOnDemandSandboxActivityDeclarationRequest) -> pb.RemoveOnDemandSandboxActivityDeclarationResult:
+        ...
+
+    def ConnectOnDemandSandboxActivityWorker(
+            self,
+            request_iterator: Iterable[pb.OnDemandSandboxActivityWorkerMessage]) -> pb.OnDemandSandboxActivityWorkerSessionResult:
+        ...
 
 
 class OnDemandSandboxActivitiesGrpcTransport:
