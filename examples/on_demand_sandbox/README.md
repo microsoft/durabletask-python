@@ -56,13 +56,25 @@ Durable Task Scheduler validates they match the declaration before advertising w
 
 From the repository root:
 
-```powershell
+Bash:
+
+~~~bash
+docker build \
+  -f examples/on_demand_sandbox/Containerfile \
+  -t <public container image reference> \
+  .
+docker push <public container image reference>
+~~~
+
+PowerShell:
+
+~~~powershell
 docker build `
   -f examples\on_demand_sandbox\Containerfile `
   -t <public container image reference> `
   .
 docker push <public container image reference>
-```
+~~~
 
 ```bash
 docker build \
