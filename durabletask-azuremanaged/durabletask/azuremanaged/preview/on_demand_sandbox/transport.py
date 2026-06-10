@@ -19,17 +19,17 @@ class _OnDemandSandboxActivitiesStub(Protocol):
     def DeclareOnDemandSandboxActivities(
             self,
             request: pb.OnDemandSandboxActivityDeclaration) -> pb.OnDemandSandboxActivityDeclarationResult:
-        ...
+        raise NotImplementedError
 
     def RemoveOnDemandSandboxActivityDeclaration(
             self,
             request: pb.RemoveOnDemandSandboxActivityDeclarationRequest) -> pb.RemoveOnDemandSandboxActivityDeclarationResult:
-        ...
+        raise NotImplementedError
 
     def ConnectOnDemandSandboxActivityWorker(
             self,
             request_iterator: Iterable[pb.OnDemandSandboxActivityWorkerMessage]) -> pb.OnDemandSandboxActivityWorkerSessionResult:
-        ...
+        raise NotImplementedError
 
 
 class OnDemandSandboxActivitiesGrpcTransport:
