@@ -23,6 +23,7 @@ from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,
 )
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+import durabletask.internal.orchestrator_service_pb2 as worker_pb
 import durabletask.internal.shared as shared
 from durabletask.worker import (
     ActivityWorkItemFilter,
@@ -85,11 +86,11 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         self._stop_on_demand_sandbox_registration()
         super().stop()
 
-    def _durabletask_on_activity_execution_started(self, req: object) -> None:
+    def _durabletask_on_activity_execution_started(self, req: worker_pb.ActivityRequest) -> None:
         with self._on_demand_sandbox_active_activities_lock:
             self._on_demand_sandbox_active_activities += 1
 
-    def _durabletask_on_activity_execution_completed(self, req: object) -> None:
+    def _durabletask_on_activity_execution_completed(self, req: worker_pb.ActivityRequest) -> None:
         with self._on_demand_sandbox_active_activities_lock:
             self._on_demand_sandbox_active_activities = max(0, self._on_demand_sandbox_active_activities - 1)
 
