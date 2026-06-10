@@ -21,14 +21,27 @@ Reference .NET template:
 
 Set these before running the declarer app:
 
-```powershell
+Bash:
+
+~~~bash
+export DTS_ENDPOINT="<scheduler endpoint>"
+export DTS_TASK_HUB="<task hub name>"
+export DTS_WORKER_PROFILE_ID="default"
+export DTS_ON_DEMAND_SANDBOX_CONTAINER_IMAGE="<container image reference>"
+export DTS_ON_DEMAND_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID="<image-pull UMI client ID>"
+export DTS_ON_DEMAND_SANDBOX_SCHEDULER_UMI_CLIENT_ID="<scheduler UMI client ID>"
+~~~
+
+PowerShell:
+
+~~~powershell
 $env:DTS_ENDPOINT = "<scheduler endpoint>"
 $env:DTS_TASK_HUB = "<task hub name>"
 $env:DTS_WORKER_PROFILE_ID = "default"
 $env:DTS_ON_DEMAND_SANDBOX_CONTAINER_IMAGE = "<container image reference>"
 $env:DTS_ON_DEMAND_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID = "<image-pull UMI client ID>"
 $env:DTS_ON_DEMAND_SANDBOX_SCHEDULER_UMI_CLIENT_ID = "<scheduler UMI client ID>"
-```
+~~~
 
 ```bash
 export DTS_ENDPOINT="<scheduler endpoint>"
