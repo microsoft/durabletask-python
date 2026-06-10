@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- Updates base dependency to durabletask v1.6.0.
 - Added preview `durabletask.azuremanaged.preview.on_demand_sandbox` APIs for
   declaring Durable Task Scheduler on-demand sandbox activities, registering
   worker profiles, and running sandbox activity workers.

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Added activity execution lifecycle hooks used by Azure Managed on-demand
+  sandbox workers to report active activity counts while work is running.
+
 ## v1.5.0
 
 BREAKING CHANGES (type-level only — no runtime impact for typical users)
