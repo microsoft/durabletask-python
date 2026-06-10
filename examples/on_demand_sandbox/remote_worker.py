@@ -1,7 +1,7 @@
 """Remote worker image entrypoint for the Durable Task Scheduler on-demand sandbox activities sample."""
 
 import os
-import time
+import threading
 
 from durabletask import task
 from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorker
@@ -24,7 +24,6 @@ with OnDemandSandboxWorker() as worker:
     worker.start()
     print("Python on-demand sandbox remote worker is running. Press Ctrl+C to stop.")
     try:
-        while True:
-            time.sleep(3600)
+        threading.Event().wait()
     except KeyboardInterrupt:
         pass
