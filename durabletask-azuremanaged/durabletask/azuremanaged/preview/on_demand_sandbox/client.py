@@ -6,9 +6,9 @@ from typing import Optional, Sequence
 import grpc
 from azure.core.credentials import TokenCredential
 
-from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import _normalize_required
+from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import normalize_required
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
-    _build_profile_on_demand_sandbox_activity_declarations,
+    build_profile_on_demand_sandbox_activity_declarations,
 )
 from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,
@@ -43,7 +43,7 @@ class OnDemandSandboxActivitiesClient:
 
     def enable_on_demand_sandbox_activities(self) -> None:
         """Declare all configured on-demand sandbox worker profiles with Durable Task Scheduler."""
-        declarations = _build_profile_on_demand_sandbox_activity_declarations()
+        declarations = build_profile_on_demand_sandbox_activity_declarations()
         if not declarations:
             raise ValueError("No configured on-demand sandbox activities were found.")
 
@@ -51,5 +51,5 @@ class OnDemandSandboxActivitiesClient:
             self._transport.declare_on_demand_sandbox_activities(declaration)
 
     def remove_on_demand_sandbox_activity_declaration(self, worker_profile_id: str) -> None:
-        worker_profile_id = _normalize_required(worker_profile_id, "Worker profile ID is required.")
+        worker_profile_id = normalize_required(worker_profile_id, "Worker profile ID is required.")
         self._transport.remove_on_demand_sandbox_activity_declaration(worker_profile_id)

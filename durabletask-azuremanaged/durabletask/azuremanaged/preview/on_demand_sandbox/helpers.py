@@ -4,13 +4,13 @@
 from typing import Iterable, Optional
 
 
-def _normalize_required(value: Optional[str], message: str) -> str:
+def normalize_required(value: Optional[str], message: str) -> str:
     if not value or not value.strip():
         raise ValueError(message)
     return value.strip()
 
 
-def _resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
+def resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
     resolved: list[str] = []
     seen: set[str] = set()
     names = [activity_names] if isinstance(activity_names, str) else activity_names

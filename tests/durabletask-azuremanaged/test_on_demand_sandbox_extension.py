@@ -15,17 +15,17 @@ from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWo
 from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     _build_on_demand_sandbox_activity_declaration,
-    _build_on_demand_sandbox_worker_heartbeat,
-    _build_on_demand_sandbox_worker_start,
-    _build_profile_on_demand_sandbox_activity_declarations,
-    _resolve_activity_names,
+    build_on_demand_sandbox_worker_heartbeat,
+    build_on_demand_sandbox_worker_start,
+    build_profile_on_demand_sandbox_activity_declarations,
 )
+from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import resolve_activity_names
 from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
 from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2_grpc as stubs
 
 
 def test_resolve_activity_names_trims_and_deduplicates() -> None:
-    assert _resolve_activity_names([" RemoteHello ", "", "RemoteHello", "Other"]) == [
+    assert resolve_activity_names([" RemoteHello ", "", "RemoteHello", "Other"]) == [
         "RemoteHello",
         "Other",
     ]
@@ -65,7 +65,7 @@ def test_build_profile_on_demand_sandbox_activity_declarations() -> None:
 
     try:
         declarations = [
-            declaration for declaration in _build_profile_on_demand_sandbox_activity_declarations()
+            declaration for declaration in build_profile_on_demand_sandbox_activity_declarations()
             if declaration.worker_profile_id == "pytest-profile-a"
         ]
 
@@ -121,7 +121,7 @@ def test_build_profile_on_demand_sandbox_activity_declarations_rejects_activity_
 
     try:
         try:
-            _build_profile_on_demand_sandbox_activity_declarations()
+            build_profile_on_demand_sandbox_activity_declarations()
         except ValueError as ex:
             assert "PytestOverlapRemoteHello" in str(ex)
             assert "pytest-overlap-profile-a" in str(ex)
@@ -147,7 +147,7 @@ def test_profile_options_add_activity_accepts_callable() -> None:
 
     try:
         declarations = [
-            declaration for declaration in _build_profile_on_demand_sandbox_activity_declarations()
+            declaration for declaration in build_profile_on_demand_sandbox_activity_declarations()
             if declaration.worker_profile_id == "pytest-callable-profile"
         ]
 
@@ -266,7 +266,7 @@ def test_build_on_demand_sandbox_activity_declaration_requires_image_pull_manage
 
 
 def test_build_on_demand_sandbox_worker_start_and_heartbeat() -> None:
-    start = _build_on_demand_sandbox_worker_start(
+    start = build_on_demand_sandbox_worker_start(
         taskhub="hub",
         worker_profile_id="preview",
         max_activities_count=2,
@@ -281,7 +281,7 @@ def test_build_on_demand_sandbox_worker_start_and_heartbeat() -> None:
     assert start.start.dts_sandbox_identifier == "sandbox-1"
     assert list(start.start.activity_names) == ["RemoteHello"]
 
-    heartbeat = _build_on_demand_sandbox_worker_heartbeat(1)
+    heartbeat = build_on_demand_sandbox_worker_heartbeat(1)
     assert heartbeat.heartbeat.active_activities_count == 1
 
 

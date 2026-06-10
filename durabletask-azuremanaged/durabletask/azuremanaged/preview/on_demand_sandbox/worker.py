@@ -5,16 +5,19 @@ import os
 import random
 import threading
 
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
+from azure.core.credentials import TokenCredential
 from azure.identity import ManagedIdentityCredential
 
-from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import _resolve_activity_names
+from durabletask import task
+from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
+from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import resolve_activity_names
 from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     DEFAULT_WORKER_PROFILE_ID,
-    _build_on_demand_sandbox_worker_heartbeat,
-    _build_on_demand_sandbox_worker_start,
+    build_on_demand_sandbox_worker_heartbeat,
+    build_on_demand_sandbox_worker_start,
 )
 from durabletask.azuremanaged.preview.on_demand_sandbox.transport import (
     OnDemandSandboxActivitiesGrpcTransport,
@@ -35,7 +38,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
     restricts dispatch to the activities registered on this worker.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         resolved_host_address = _resolve_host_address()
         resolved_taskhub = _resolve_taskhub()
         resolved_secure_channel = _resolve_secure_channel(resolved_host_address)
@@ -68,7 +71,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         self._on_demand_sandbox_active_activities = 0
         self._on_demand_sandbox_active_activities_lock = threading.Lock()
 
-    def add_activity(self, fn) -> str:
+    def add_activity(self, fn: task.Activity[Any, Any]) -> str:
         activity_name = super().add_activity(fn)
         self._on_demand_sandbox_activity_names.append(activity_name)
         return activity_name
@@ -82,16 +85,16 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         self._stop_on_demand_sandbox_registration()
         super().stop()
 
-    def _durabletask_on_activity_execution_started(self, req) -> None:
+    def _durabletask_on_activity_execution_started(self, req: object) -> None:
         with self._on_demand_sandbox_active_activities_lock:
             self._on_demand_sandbox_active_activities += 1
 
-    def _durabletask_on_activity_execution_completed(self, req) -> None:
+    def _durabletask_on_activity_execution_completed(self, req: object) -> None:
         with self._on_demand_sandbox_active_activities_lock:
             self._on_demand_sandbox_active_activities = max(0, self._on_demand_sandbox_active_activities - 1)
 
     def _configure_on_demand_sandbox_activity_filters(self) -> None:
-        activity_names = _resolve_activity_names(self._on_demand_sandbox_activity_names)
+        activity_names = resolve_activity_names(self._on_demand_sandbox_activity_names)
         if not activity_names:
             raise RuntimeError(
                 "On-demand sandbox worker requires at least one registered activity before it can register.")
@@ -143,8 +146,8 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
                 self._on_demand_sandbox_registration_stop.wait(delay)
                 retry_delay = min(retry_delay * 2, 30.0)
 
-    def _registration_messages(self) -> Iterator:
-        yield _build_on_demand_sandbox_worker_start(
+    def _registration_messages(self) -> Iterator[pb.OnDemandSandboxActivityWorkerMessage]:
+        yield build_on_demand_sandbox_worker_start(
             taskhub=self._on_demand_sandbox_taskhub,
             worker_profile_id=self._on_demand_sandbox_worker_profile_id,
             max_activities_count=self._on_demand_sandbox_max_activities,
@@ -156,7 +159,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
                 self._on_demand_sandbox_heartbeat_interval_seconds):
             with self._on_demand_sandbox_active_activities_lock:
                 active_count = self._on_demand_sandbox_active_activities
-            yield _build_on_demand_sandbox_worker_heartbeat(active_count)
+            yield build_on_demand_sandbox_worker_heartbeat(active_count)
 
 
 def _resolve_taskhub() -> str:
@@ -193,7 +196,7 @@ def _resolve_worker_profile_id() -> str:
     return resolved_worker_profile_id.strip()
 
 
-def _resolve_token_credential():
+def _resolve_token_credential() -> TokenCredential | None:
     authentication = os.getenv("DTS_AUTHENTICATION", "")
     if authentication.lower() != "managedidentity":
         return None

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing import Iterable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Protocol, Sequence, cast
 
 import grpc
 from azure.core.credentials import TokenCredential
@@ -13,6 +13,21 @@ from durabletask.azuremanaged.internal import on_demand_sandbox_activities_servi
 from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2_grpc as stubs
 from durabletask.grpc_options import GrpcChannelOptions
 import durabletask.internal.shared as shared
+
+
+class _OnDemandSandboxActivitiesStub(Protocol):
+    DeclareOnDemandSandboxActivities: Callable[
+        [pb.OnDemandSandboxActivityDeclaration],
+        pb.OnDemandSandboxActivityDeclarationResult,
+    ]
+    RemoveOnDemandSandboxActivityDeclaration: Callable[
+        [pb.RemoveOnDemandSandboxActivityDeclarationRequest],
+        pb.RemoveOnDemandSandboxActivityDeclarationResult,
+    ]
+    ConnectOnDemandSandboxActivityWorker: Callable[
+        [Iterable[pb.OnDemandSandboxActivityWorkerMessage]],
+        pb.OnDemandSandboxActivityWorkerSessionResult,
+    ]
 
 
 class OnDemandSandboxActivitiesGrpcTransport:
@@ -42,7 +57,7 @@ class OnDemandSandboxActivitiesGrpcTransport:
                 interceptors=resolved_interceptors,
                 channel_options=channel_options)
         self._channel = channel
-        self._stub = stubs.OnDemandSandboxActivitiesStub(channel)
+        self._stub = cast(_OnDemandSandboxActivitiesStub, stubs.OnDemandSandboxActivitiesStub(channel))
 
     def close(self) -> None:
         if self._owns_channel:
