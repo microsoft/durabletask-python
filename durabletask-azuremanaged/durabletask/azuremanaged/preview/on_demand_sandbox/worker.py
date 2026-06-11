@@ -45,6 +45,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         resolved_secure_channel = _resolve_secure_channel(resolved_host_address)
         resolved_token_credential = _resolve_token_credential()
         resolved_max_concurrent_activities = _resolve_max_concurrent_activities()
+        resolved_substrate = _resolve_substrate()
         concurrency_options = ConcurrencyOptions(
             maximum_concurrent_activity_work_items=resolved_max_concurrent_activities)
 
@@ -64,7 +65,7 @@ class OnDemandSandboxWorker(DurableTaskSchedulerWorker):
         self._on_demand_sandbox_worker_profile_id = _resolve_worker_profile_id()
         self._on_demand_sandbox_activity_names: list[str] = []
         self._on_demand_sandbox_max_activities = resolved_max_concurrent_activities
-        self._on_demand_sandbox_substrate = os.getenv("DTS_SUBSTRATE")
+        self._on_demand_sandbox_substrate = resolved_substrate
         self._on_demand_sandbox_dts_sandbox_identifier = os.getenv("DTS_SANDBOX_ID")
         self._on_demand_sandbox_heartbeat_interval_seconds = 2.0
         self._on_demand_sandbox_registration_stop = threading.Event()
@@ -209,6 +210,21 @@ def _resolve_token_credential() -> TokenCredential | None:
             "DTS_AUTHENTICATION is ManagedIdentity.")
 
     return ManagedIdentityCredential(client_id=client_id.strip())
+
+
+def _resolve_substrate() -> str:
+    substrate = os.getenv("DTS_SUBSTRATE")
+    if not substrate:
+        raise ValueError(
+            "On-demand sandbox worker requires DTS_SUBSTRATE to be injected in the "
+            "sandbox environment.")
+
+    normalized = substrate.strip()
+    if normalized.lower() not in ("sandbox", "acasessionpool"):
+        raise ValueError(
+            "On-demand sandbox worker requires DTS_SUBSTRATE to be Sandbox or AcaSessionPool.")
+
+    return normalized
 
 
 def _resolve_max_concurrent_activities() -> int:

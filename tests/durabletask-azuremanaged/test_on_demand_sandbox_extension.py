@@ -309,6 +309,7 @@ def test_on_demand_sandbox_activities_client_does_not_expose_worker_registration
 def test_on_demand_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
 
     worker = OnDemandSandboxWorker()
 
@@ -358,6 +359,7 @@ def test_on_demand_sandbox_worker_reads_sandbox_environment_and_registered_activ
 def test_on_demand_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
 
     class StillRunningThread:
         def __init__(self):
@@ -383,6 +385,7 @@ def test_on_demand_sandbox_worker_stop_keeps_handle_for_still_running_registrati
 def test_on_demand_sandbox_worker_uses_scheduler_channel_without_credential(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
 
     worker = OnDemandSandboxWorker()
 
@@ -393,6 +396,7 @@ def test_on_demand_sandbox_worker_uses_scheduler_channel_without_credential(monk
 def test_on_demand_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
     monkeypatch.delenv("DTS_ON_DEMAND_SANDBOX_MAX_ACTIVITIES", raising=False)
     monkeypatch.setenv("DTS_" + "SERVER" + "LESS_MAX_ACTIVITIES", "7")
 
@@ -404,6 +408,7 @@ def test_on_demand_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> 
 def test_on_demand_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
 
     worker = OnDemandSandboxWorker()
 
@@ -420,6 +425,7 @@ def test_on_demand_sandbox_worker_tracks_active_activity_count_with_hooks(monkey
 def test_on_demand_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.setenv("DTS_UMI_CLIENT_ID", "worker-client-id")
     monkeypatch.setattr(sandbox_worker, "ManagedIdentityCredential", _FakeManagedIdentityCredential)
@@ -434,6 +440,7 @@ def test_on_demand_sandbox_worker_uses_managed_identity_credential_when_injected
 def test_on_demand_sandbox_worker_requires_managed_identity_client_id_when_auth_enabled(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.delenv("DTS_UMI_CLIENT_ID", raising=False)
 
@@ -448,6 +455,7 @@ def test_on_demand_sandbox_worker_requires_managed_identity_client_id_when_auth_
 def test_on_demand_sandbox_worker_requires_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
 
     worker = OnDemandSandboxWorker()
 
@@ -457,6 +465,32 @@ def test_on_demand_sandbox_worker_requires_registered_activities(monkeypatch) ->
         assert "registered activity" in str(ex)
     else:
         raise AssertionError("Expected missing registered activity names to fail.")
+
+
+def test_on_demand_sandbox_worker_requires_injected_substrate(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.delenv("DTS_SUBSTRATE", raising=False)
+
+    try:
+        OnDemandSandboxWorker()
+    except ValueError as ex:
+        assert "DTS_SUBSTRATE" in str(ex)
+    else:
+        raise AssertionError("Expected missing DTS_SUBSTRATE to fail.")
+
+
+def test_on_demand_sandbox_worker_rejects_invalid_substrate(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_SUBSTRATE", "ContainerApp")
+
+    try:
+        OnDemandSandboxWorker()
+    except ValueError as ex:
+        assert "Sandbox or AcaSessionPool" in str(ex)
+    else:
+        raise AssertionError("Expected invalid DTS_SUBSTRATE to fail.")
 
 
 class _RecordingChannel:
