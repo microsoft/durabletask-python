@@ -9,31 +9,31 @@ from azure.core.credentials import TokenCredential
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSDefaultClientInterceptorImpl,
 )
-from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
-from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2_grpc as stubs
+from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
+from durabletask.azuremanaged.internal import sandbox_service_pb2_grpc as stubs
 from durabletask.grpc_options import GrpcChannelOptions
 import durabletask.internal.shared as shared
 
 
-class _OnDemandSandboxActivitiesStub(Protocol):
-    def DeclareOnDemandSandboxActivities(
+class _SandboxActivitiesStub(Protocol):
+    def DeclareSandboxActivities(
             self,
-            request: pb.OnDemandSandboxActivityDeclaration) -> pb.OnDemandSandboxActivityDeclarationResult:
+            request: pb.SandboxActivityDeclaration) -> pb.SandboxActivityDeclarationResult:
         raise NotImplementedError
 
-    def RemoveOnDemandSandboxActivityDeclaration(
+    def RemoveSandboxActivityDeclaration(
             self,
-            request: pb.RemoveOnDemandSandboxActivityDeclarationRequest) -> pb.RemoveOnDemandSandboxActivityDeclarationResult:
+            request: pb.RemoveSandboxActivityDeclarationRequest) -> pb.RemoveSandboxActivityDeclarationResult:
         raise NotImplementedError
 
-    def ConnectOnDemandSandboxActivityWorker(
+    def ConnectSandboxActivityWorker(
             self,
-            request_iterator: Iterable[pb.OnDemandSandboxActivityWorkerMessage]) -> pb.OnDemandSandboxActivityWorkerSessionResult:
+            request_iterator: Iterable[pb.SandboxActivityWorkerMessage]) -> pb.SandboxActivityWorkerSessionResult:
         raise NotImplementedError
 
 
-class OnDemandSandboxActivitiesGrpcTransport:
-    """Internal gRPC transport for on-demand sandbox activity RPCs."""
+class SandboxActivitiesGrpcTransport:
+    """Internal gRPC transport for sandbox activity RPCs."""
 
     def __init__(
             self, *,
@@ -59,25 +59,25 @@ class OnDemandSandboxActivitiesGrpcTransport:
                 interceptors=resolved_interceptors,
                 channel_options=channel_options)
         self._channel = channel
-        self._stub = cast(_OnDemandSandboxActivitiesStub, stubs.OnDemandSandboxActivitiesStub(channel))
+        self._stub = cast(_SandboxActivitiesStub, stubs.SandboxActivitiesStub(channel))
 
     def close(self) -> None:
         if self._owns_channel:
             self._channel.close()
 
-    def declare_on_demand_sandbox_activities(
+    def declare_sandbox_activities(
             self,
-            declaration: pb.OnDemandSandboxActivityDeclaration) -> pb.OnDemandSandboxActivityDeclarationResult:
-        return self._stub.DeclareOnDemandSandboxActivities(declaration)
+            declaration: pb.SandboxActivityDeclaration) -> pb.SandboxActivityDeclarationResult:
+        return self._stub.DeclareSandboxActivities(declaration)
 
-    def remove_on_demand_sandbox_activity_declaration(
+    def remove_sandbox_activity_declaration(
             self,
-            worker_profile_id: str) -> pb.RemoveOnDemandSandboxActivityDeclarationResult:
-        return self._stub.RemoveOnDemandSandboxActivityDeclaration(
-            pb.RemoveOnDemandSandboxActivityDeclarationRequest(worker_profile_id=worker_profile_id))
+            worker_profile_id: str) -> pb.RemoveSandboxActivityDeclarationResult:
+        return self._stub.RemoveSandboxActivityDeclaration(
+            pb.RemoveSandboxActivityDeclarationRequest(worker_profile_id=worker_profile_id))
 
-    def connect_on_demand_sandbox_activity_worker(
+    def connect_sandbox_activity_worker(
             self,
-            messages: Iterable[pb.OnDemandSandboxActivityWorkerMessage]
-    ) -> pb.OnDemandSandboxActivityWorkerSessionResult:
-        return self._stub.ConnectOnDemandSandboxActivityWorker(messages)
+            messages: Iterable[pb.SandboxActivityWorkerMessage]
+    ) -> pb.SandboxActivityWorkerSessionResult:
+        return self._stub.ConnectSandboxActivityWorker(messages)

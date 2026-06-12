@@ -6,8 +6,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Iterable, Optional
 
 from durabletask import task
-from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
-from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import (
+from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
+from durabletask.azuremanaged.preview.sandboxes.helpers import (
     normalize_required,
     resolve_activity_names,
 )
@@ -20,8 +20,8 @@ DEFAULT_MAX_CONCURRENT_ACTIVITIES = 100
 
 
 @dataclass
-class OnDemandSandboxWorkerProfileOptions:
-    """Options for a decorated on-demand sandbox worker profile."""
+class SandboxWorkerProfileOptions:
+    """Options for a decorated sandbox worker profile."""
 
     worker_profile_id: str
     # Full OCI image reference for the sandbox worker container, for example
@@ -39,35 +39,35 @@ class OnDemandSandboxWorkerProfileOptions:
     activity_names: list[str] = field(default_factory=list[str])
 
     def add_activity(self, activity: str | Callable[..., Any]) -> None:
-        """Add an activity to the on-demand sandbox worker profile declaration."""
+        """Add an activity to the sandbox worker profile declaration."""
         activity_name = task.get_name(activity) if callable(activity) else activity
         self.activity_names.append(
-            normalize_required(activity_name, "On-demand sandbox activity name is required."))
+            normalize_required(activity_name, "Sandbox activity name is required."))
 
 
-class OnDemandSandboxWorkerProfile:
-    """Base class for configuring a decorated on-demand sandbox worker profile."""
+class SandboxWorkerProfile:
+    """Base class for configuring a decorated sandbox worker profile."""
 
-    def configure(self, options: OnDemandSandboxWorkerProfileOptions) -> None:
-        """Configure the on-demand sandbox worker profile declaration options."""
-
-
-_worker_profiles: dict[str, OnDemandSandboxWorkerProfileOptions] = {}
+    def configure(self, options: SandboxWorkerProfileOptions) -> None:
+        """Configure the sandbox worker profile declaration options."""
 
 
-def on_demand_sandbox_worker_profile(worker_profile_id: str) -> Callable[[type], type]:
-    """Declare an on-demand sandbox worker profile using a decorated marker class."""
-    normalized_profile = normalize_required(worker_profile_id, "On-demand sandbox worker profile ID is required.")
+_worker_profiles: dict[str, SandboxWorkerProfileOptions] = {}
+
+
+def sandbox_worker_profile(worker_profile_id: str) -> Callable[[type], type]:
+    """Declare a sandbox worker profile using a decorated marker class."""
+    normalized_profile = normalize_required(worker_profile_id, "Sandbox worker profile ID is required.")
 
     def decorator(cls: type) -> type:
         if normalized_profile in _worker_profiles:
-            raise ValueError(f"On-demand sandbox worker profile '{normalized_profile}' is declared more than once.")
+            raise ValueError(f"Sandbox worker profile '{normalized_profile}' is declared more than once.")
 
-        options = OnDemandSandboxWorkerProfileOptions(worker_profile_id=normalized_profile)
+        options = SandboxWorkerProfileOptions(worker_profile_id=normalized_profile)
         try:
             profile = cls()
         except TypeError as ex:
-            raise TypeError("On-demand sandbox worker profile classes must have a parameterless constructor.") from ex
+            raise TypeError("Sandbox worker profile classes must have a parameterless constructor.") from ex
 
         configure = getattr(profile, "configure", None)
         if callable(configure):
@@ -75,7 +75,7 @@ def on_demand_sandbox_worker_profile(worker_profile_id: str) -> Callable[[type],
 
         if not resolve_activity_names(options.activity_names):
             raise ValueError(
-                f"On-demand sandbox worker profile '{normalized_profile}' must declare at least one activity.")
+                f"Sandbox worker profile '{normalized_profile}' must declare at least one activity.")
 
         _worker_profiles[normalized_profile] = options
         return cls
@@ -83,7 +83,7 @@ def on_demand_sandbox_worker_profile(worker_profile_id: str) -> Callable[[type],
     return decorator
 
 
-def _build_on_demand_sandbox_activity_declaration(
+def _build_sandbox_activity_declaration(
         *,
         activity_names: str | Iterable[str],
         scheduler_managed_identity_client_id: Optional[str],
@@ -95,7 +95,7 @@ def _build_on_demand_sandbox_activity_declaration(
         environment_variables: Optional[dict[str, str]] = None,
         max_concurrent_activities: int = DEFAULT_MAX_CONCURRENT_ACTIVITIES,
         entrypoint: Optional[Iterable[str]] = None,
-        cmd: Optional[Iterable[str]] = None) -> pb.OnDemandSandboxActivityDeclaration:
+        cmd: Optional[Iterable[str]] = None) -> pb.SandboxActivityDeclaration:
     """Build a sandbox activity declaration.
 
     Args:
@@ -105,36 +105,36 @@ def _build_on_demand_sandbox_activity_declaration(
     """
     resolved_activity_names = resolve_activity_names(activity_names)
     if not resolved_activity_names:
-        raise ValueError("On-demand sandbox activity declaration requires at least one activity name.")
+        raise ValueError("Sandbox activity declaration requires at least one activity name.")
 
     if not worker_profile_id or not worker_profile_id.strip():
-        raise ValueError("On-demand sandbox activity declaration requires a worker profile ID.")
+        raise ValueError("Sandbox activity declaration requires a worker profile ID.")
 
     if max_concurrent_activities <= 0:
-        raise ValueError("On-demand sandbox activity max concurrent activities must be greater than zero.")
+        raise ValueError("Sandbox activity max concurrent activities must be greater than zero.")
 
     image_ref = normalize_required(
         container_image,
-        "On-demand sandbox activity image metadata requires a container image reference like "
+        "Sandbox activity image metadata requires a container image reference like "
         "'myregistry.azurecr.io/workers/hello:1.0' or "
         "'myregistry.azurecr.io/workers/hello@sha256:...'.")
 
     resolved_scheduler_managed_identity_client_id = normalize_required(
         scheduler_managed_identity_client_id,
-        "On-demand sandbox activity declaration requires the managed identity client ID workers use to connect to Durable Task Scheduler.")
+        "Sandbox activity declaration requires the managed identity client ID workers use to connect to Durable Task Scheduler.")
     resolved_image_pull_managed_identity_client_id = normalize_required(
         image_pull_managed_identity_client_id,
-        "On-demand sandbox activity declaration requires the managed identity client ID ADC uses to pull the worker image.")
+        "Sandbox activity declaration requires the managed identity client ID ADC uses to pull the worker image.")
 
     resolved_cpu = _normalize_cpu(cpu)
     resolved_memory = _normalize_memory(memory)
 
-    declaration = pb.OnDemandSandboxActivityDeclaration(
+    declaration = pb.SandboxActivityDeclaration(
         worker_profile_id=worker_profile_id.strip(),
-        image=pb.OnDemandSandboxActivityImage(
+        image=pb.SandboxActivityImage(
             image_ref=image_ref,
             managed_identity_client_id=resolved_image_pull_managed_identity_client_id),
-        resources=pb.OnDemandSandboxActivityResources(
+        resources=pb.SandboxActivityResources(
             cpu=resolved_cpu,
             memory=resolved_memory),
         scheduler_managed_identity_client_id=resolved_scheduler_managed_identity_client_id,
@@ -146,9 +146,9 @@ def _build_on_demand_sandbox_activity_declaration(
     return declaration
 
 
-def build_profile_on_demand_sandbox_activity_declarations() -> list[pb.OnDemandSandboxActivityDeclaration]:
-    """Build on-demand sandbox declarations from worker profile configuration."""
-    declarations: list[pb.OnDemandSandboxActivityDeclaration] = []
+def build_profile_sandbox_activity_declarations() -> list[pb.SandboxActivityDeclaration]:
+    """Build sandbox declarations from worker profile configuration."""
+    declarations: list[pb.SandboxActivityDeclaration] = []
     activity_owners: dict[str, str] = {}
     for profile in _worker_profiles.values():
         activity_names = resolve_activity_names(profile.activity_names)
@@ -157,11 +157,11 @@ def build_profile_on_demand_sandbox_activity_declarations() -> list[pb.OnDemandS
             existing_profile = activity_owners.get(activity_name)
             if existing_profile and existing_profile != profile.worker_profile_id:
                 raise ValueError(
-                    f"On-demand sandbox activity '{activity_name}' is assigned to both worker profile "
+                    f"Sandbox activity '{activity_name}' is assigned to both worker profile "
                     f"'{existing_profile}' and '{profile.worker_profile_id}'.")
             activity_owners[activity_name] = profile.worker_profile_id
 
-        declarations.append(_build_on_demand_sandbox_activity_declaration(
+        declarations.append(_build_sandbox_activity_declaration(
             activity_names=activity_names,
             worker_profile_id=profile.worker_profile_id,
             container_image=profile.container_image,
@@ -177,44 +177,44 @@ def build_profile_on_demand_sandbox_activity_declarations() -> list[pb.OnDemandS
     return declarations
 
 
-def build_on_demand_sandbox_worker_start(
+def build_sandbox_worker_start(
         *,
         taskhub: str,
         worker_profile_id: str,
         max_activities_count: int,
         activity_names: Iterable[str],
-        substrate: Optional[str] = None,
-        dts_sandbox_identifier: Optional[str] = None) -> pb.OnDemandSandboxActivityWorkerMessage:
+        sandbox_provider: Optional[str] = None,
+        dts_sandbox_identifier: Optional[str] = None) -> pb.SandboxActivityWorkerMessage:
     if not taskhub or not taskhub.strip():
-        raise ValueError("On-demand sandbox activity worker registration requires a task hub name.")
+        raise ValueError("Sandbox activity worker registration requires a task hub name.")
 
     if not worker_profile_id or not worker_profile_id.strip():
-        raise ValueError("On-demand sandbox activity worker registration requires a worker profile ID.")
+        raise ValueError("Sandbox activity worker registration requires a worker profile ID.")
 
     if max_activities_count <= 0:
-        raise ValueError("On-demand sandbox activity worker max activity count must be greater than zero.")
+        raise ValueError("Sandbox activity worker max activity count must be greater than zero.")
 
     resolved_activity_names = resolve_activity_names(activity_names)
     if not resolved_activity_names:
-        raise ValueError("On-demand sandbox activity worker registration requires at least one registered activity.")
+        raise ValueError("Sandbox activity worker registration requires at least one registered activity.")
 
-    message = pb.OnDemandSandboxActivityWorkerMessage(
-        start=pb.OnDemandSandboxActivityWorkerStart(
+    message = pb.SandboxActivityWorkerMessage(
+        start=pb.SandboxActivityWorkerStart(
             task_hub=taskhub.strip(),
             worker_profile_id=worker_profile_id.strip(),
             max_activities_count=max_activities_count,
-            substrate=_parse_substrate(substrate),
+            sandbox_provider=_parse_sandbox_provider(sandbox_provider),
             dts_sandbox_identifier=(dts_sandbox_identifier or "").strip()))
     message.start.activity_names.extend(resolved_activity_names)
     return message
 
 
-def build_on_demand_sandbox_worker_heartbeat(active_activities_count: int) -> pb.OnDemandSandboxActivityWorkerMessage:
+def build_sandbox_worker_heartbeat(active_activities_count: int) -> pb.SandboxActivityWorkerMessage:
     if active_activities_count < 0:
-        raise ValueError("On-demand sandbox activity worker active activity count cannot be negative.")
+        raise ValueError("Sandbox activity worker active activity count cannot be negative.")
 
-    return pb.OnDemandSandboxActivityWorkerMessage(
-        heartbeat=pb.OnDemandSandboxActivityWorkerHeartbeat(
+    return pb.SandboxActivityWorkerMessage(
+        heartbeat=pb.SandboxActivityWorkerHeartbeat(
             active_activities_count=active_activities_count))
 
 
@@ -223,21 +223,21 @@ def _normalize_optional_strings(values: Iterable[str]) -> list[str]:
 
 
 def _normalize_cpu(value: str) -> str:
-    normalized = normalize_required(value, "On-demand sandbox activity declaration requires CPU resources.")
+    normalized = normalize_required(value, "Sandbox activity declaration requires CPU resources.")
     milli_cpu = _try_parse_cpu_millicores(normalized)
     if milli_cpu is None or milli_cpu <= 0:
         raise ValueError(
-            "On-demand sandbox activity CPU resources must be a positive Kubernetes-style CPU quantity. "
+            "Sandbox activity CPU resources must be a positive Kubernetes-style CPU quantity. "
             "Use formats like '500m', '2', or '0.5'.")
     return normalized
 
 
 def _normalize_memory(value: str) -> str:
-    normalized = normalize_required(value, "On-demand sandbox activity declaration requires memory resources.")
+    normalized = normalize_required(value, "Sandbox activity declaration requires memory resources.")
     memory_mib = _try_parse_memory_mib(normalized)
     if memory_mib is None or memory_mib <= 0:
         raise ValueError(
-            "On-demand sandbox activity memory resources must be a positive Kubernetes-style memory quantity. "
+            "Sandbox activity memory resources must be a positive Kubernetes-style memory quantity. "
             "Use formats like '256Mi', '1Gi', or '2048'.")
     return normalized
 
@@ -262,11 +262,11 @@ def _try_parse_memory_mib(value: str) -> Optional[int]:
         return None
 
 
-def _parse_substrate(substrate: Optional[str]) -> "pb.SubstrateKind":
-    if not substrate:
-        return pb.SUBSTRATE_KIND_UNSPECIFIED
-    if substrate.lower() == "sandbox":
-        return pb.SUBSTRATE_KIND_SANDBOX
-    if substrate.lower() == "acasessionpool":
-        return pb.SUBSTRATE_KIND_ACA_SESSION_POOL
-    return pb.SUBSTRATE_KIND_UNSPECIFIED
+def _parse_sandbox_provider(sandbox_provider: Optional[str]) -> "pb.SandboxProviderKind":
+    if not sandbox_provider:
+        return pb.SANDBOX_PROVIDER_KIND_UNSPECIFIED
+    if sandbox_provider.lower() == "sandbox":
+        return pb.SANDBOX_PROVIDER_KIND_SANDBOX
+    if sandbox_provider.lower() == "acasessionpool":
+        return pb.SANDBOX_PROVIDER_KIND_ACA_SESSION_POOL
+    return pb.SANDBOX_PROVIDER_KIND_UNSPECIFIED

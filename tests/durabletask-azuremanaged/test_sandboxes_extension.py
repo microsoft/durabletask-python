@@ -5,23 +5,23 @@ import inspect
 
 from azure.core.credentials import AccessToken
 
-import durabletask.azuremanaged.preview.on_demand_sandbox as sandbox
-import durabletask.azuremanaged.preview.on_demand_sandbox.declarations as sandbox_declarations
-import durabletask.azuremanaged.preview.on_demand_sandbox.worker as sandbox_worker
-from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorker
-from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxActivitiesClient
-from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfile
-from durabletask.azuremanaged.preview.on_demand_sandbox import OnDemandSandboxWorkerProfileOptions
-from durabletask.azuremanaged.preview.on_demand_sandbox import on_demand_sandbox_worker_profile
-from durabletask.azuremanaged.preview.on_demand_sandbox.declarations import (
-    _build_on_demand_sandbox_activity_declaration,
-    build_on_demand_sandbox_worker_heartbeat,
-    build_on_demand_sandbox_worker_start,
-    build_profile_on_demand_sandbox_activity_declarations,
+import durabletask.azuremanaged.preview.sandboxes as sandbox
+import durabletask.azuremanaged.preview.sandboxes.declarations as sandbox_declarations
+import durabletask.azuremanaged.preview.sandboxes.worker as sandbox_worker
+from durabletask.azuremanaged.preview.sandboxes import SandboxWorker
+from durabletask.azuremanaged.preview.sandboxes import SandboxActivitiesClient
+from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfile
+from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfileOptions
+from durabletask.azuremanaged.preview.sandboxes import sandbox_worker_profile
+from durabletask.azuremanaged.preview.sandboxes.declarations import (
+    _build_sandbox_activity_declaration,
+    build_sandbox_worker_heartbeat,
+    build_sandbox_worker_start,
+    build_profile_sandbox_activity_declarations,
 )
-from durabletask.azuremanaged.preview.on_demand_sandbox.helpers import resolve_activity_names
-from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2 as pb
-from durabletask.azuremanaged.internal import on_demand_sandbox_activities_service_pb2_grpc as stubs
+from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activity_names
+from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
+from durabletask.azuremanaged.internal import sandbox_service_pb2_grpc as stubs
 
 
 def test_resolve_activity_names_trims_and_deduplicates() -> None:
@@ -31,28 +31,28 @@ def test_resolve_activity_names_trims_and_deduplicates() -> None:
     ]
 
 
-def test_public_on_demand_sandbox_package_exports_customer_entrypoints_only() -> None:
+def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
     assert sandbox.__all__ == [
-        "OnDemandSandboxWorker",
-        "OnDemandSandboxWorkerProfile",
-        "OnDemandSandboxWorkerProfileOptions",
-        "OnDemandSandboxActivitiesClient",
-        "on_demand_sandbox_worker_profile",
+        "SandboxWorker",
+        "SandboxWorkerProfile",
+        "SandboxWorkerProfileOptions",
+        "SandboxActivitiesClient",
+        "sandbox_worker_profile",
     ]
-    assert sandbox.OnDemandSandboxWorker is OnDemandSandboxWorker
-    assert sandbox.OnDemandSandboxWorkerProfile is OnDemandSandboxWorkerProfile
-    assert sandbox.OnDemandSandboxWorkerProfileOptions is OnDemandSandboxWorkerProfileOptions
+    assert sandbox.SandboxWorker is SandboxWorker
+    assert sandbox.SandboxWorkerProfile is SandboxWorkerProfile
+    assert sandbox.SandboxWorkerProfileOptions is SandboxWorkerProfileOptions
     legacy_prefix = "server" + "less"
     assert not hasattr(sandbox, f"{legacy_prefix}_activity")
-    assert not hasattr(sandbox.OnDemandSandboxActivitiesClient, f"enable_{legacy_prefix}_activities")
-    assert not hasattr(sandbox.OnDemandSandboxActivitiesClient, f"remove_{legacy_prefix}_activity_declaration")
-    assert not hasattr(sandbox.OnDemandSandboxActivitiesClient, f"connect_{legacy_prefix}_activity_worker")
-    assert not hasattr(OnDemandSandboxWorker, f"_configure_{legacy_prefix}_activity_filters")
+    assert not hasattr(sandbox.SandboxActivitiesClient, f"enable_{legacy_prefix}_activities")
+    assert not hasattr(sandbox.SandboxActivitiesClient, f"remove_{legacy_prefix}_activity_declaration")
+    assert not hasattr(sandbox.SandboxActivitiesClient, f"connect_{legacy_prefix}_activity_worker")
+    assert not hasattr(SandboxWorker, f"_configure_{legacy_prefix}_activity_filters")
 
 
-def test_build_profile_on_demand_sandbox_activity_declarations() -> None:
-    @on_demand_sandbox_worker_profile("pytest-profile-a")
-    class PytestProfileA(OnDemandSandboxWorkerProfile):
+def test_build_profile_sandbox_activity_declarations() -> None:
+    @sandbox_worker_profile("pytest-profile-a")
+    class PytestProfileA(SandboxWorkerProfile):
         def configure(self, options) -> None:
             options.container_image = "example.azurecr.io/python-worker:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
@@ -60,12 +60,12 @@ def test_build_profile_on_demand_sandbox_activity_declarations() -> None:
             options.cpu = "500m"
             options.memory = "1Gi"
             options.max_concurrent_activities = 3
-            options.environment_variables["ON_DEMAND_SANDBOX_SAMPLE_MARKER"] = "custom-value"
+            options.environment_variables["SANDBOX_SAMPLE_MARKER"] = "custom-value"
             options.add_activity("PytestRemoteHello")
 
     try:
         declarations = [
-            declaration for declaration in build_profile_on_demand_sandbox_activity_declarations()
+            declaration for declaration in build_profile_sandbox_activity_declarations()
             if declaration.worker_profile_id == "pytest-profile-a"
         ]
 
@@ -77,19 +77,19 @@ def test_build_profile_on_demand_sandbox_activity_declarations() -> None:
         assert declaration.resources.cpu == "500m"
         assert declaration.resources.memory == "1Gi"
         assert declaration.max_concurrent_activities == 3
-        assert declaration.environment_variables["ON_DEMAND_SANDBOX_SAMPLE_MARKER"] == "custom-value"
+        assert declaration.environment_variables["SANDBOX_SAMPLE_MARKER"] == "custom-value"
         assert list(declaration.entrypoint) == []
         assert list(declaration.cmd) == []
     finally:
         sandbox_declarations._worker_profiles.pop("pytest-profile-a", None)
 
 
-def test_on_demand_sandbox_worker_profile_requires_activity() -> None:
+def test_sandbox_worker_profile_requires_activity() -> None:
     try:
         try:
-            @on_demand_sandbox_worker_profile("pytest-empty-profile")
-            class PytestEmptyProfile(OnDemandSandboxWorkerProfile):
-                def configure(self, options: OnDemandSandboxWorkerProfileOptions) -> None:
+            @sandbox_worker_profile("pytest-empty-profile")
+            class PytestEmptyProfile(SandboxWorkerProfile):
+                def configure(self, options: SandboxWorkerProfileOptions) -> None:
                     options.container_image = "example.azurecr.io/python-worker:v1"
                     options.image_pull_managed_identity_client_id = "image-pull-client-id"
                     options.scheduler_managed_identity_client_id = "scheduler-client-id"
@@ -97,23 +97,23 @@ def test_on_demand_sandbox_worker_profile_requires_activity() -> None:
             assert "pytest-empty-profile" in str(ex)
             assert "at least one activity" in str(ex)
         else:
-            raise AssertionError("Expected empty on-demand sandbox worker profile to fail.")
+            raise AssertionError("Expected empty sandbox worker profile to fail.")
     finally:
         sandbox_declarations._worker_profiles.pop("pytest-empty-profile", None)
 
 
-def test_build_profile_on_demand_sandbox_activity_declarations_rejects_activity_overlap() -> None:
-    @on_demand_sandbox_worker_profile("pytest-overlap-profile-a")
-    class PytestOverlapProfileA(OnDemandSandboxWorkerProfile):
-        def configure(self, options: OnDemandSandboxWorkerProfileOptions) -> None:
+def test_build_profile_sandbox_activity_declarations_rejects_activity_overlap() -> None:
+    @sandbox_worker_profile("pytest-overlap-profile-a")
+    class PytestOverlapProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
             options.container_image = "example.azurecr.io/python-worker-a:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
             options.add_activity("PytestOverlapRemoteHello")
 
-    @on_demand_sandbox_worker_profile("pytest-overlap-profile-b")
-    class PytestOverlapProfileB(OnDemandSandboxWorkerProfile):
-        def configure(self, options: OnDemandSandboxWorkerProfileOptions) -> None:
+    @sandbox_worker_profile("pytest-overlap-profile-b")
+    class PytestOverlapProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
             options.container_image = "example.azurecr.io/python-worker-b:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
@@ -121,13 +121,13 @@ def test_build_profile_on_demand_sandbox_activity_declarations_rejects_activity_
 
     try:
         try:
-            build_profile_on_demand_sandbox_activity_declarations()
+            build_profile_sandbox_activity_declarations()
         except ValueError as ex:
             assert "PytestOverlapRemoteHello" in str(ex)
             assert "pytest-overlap-profile-a" in str(ex)
             assert "pytest-overlap-profile-b" in str(ex)
         else:
-            raise AssertionError("Expected overlapping on-demand sandbox activity ownership to fail.")
+            raise AssertionError("Expected overlapping sandbox activity ownership to fail.")
     finally:
         sandbox_declarations._worker_profiles.pop("pytest-overlap-profile-a", None)
         sandbox_declarations._worker_profiles.pop("pytest-overlap-profile-b", None)
@@ -137,9 +137,9 @@ def test_profile_options_add_activity_accepts_callable() -> None:
     def pytest_callable_remote_hello(_ctx, value):
         return value
 
-    @on_demand_sandbox_worker_profile("pytest-callable-profile")
-    class PytestCallableProfile(OnDemandSandboxWorkerProfile):
-        def configure(self, options: OnDemandSandboxWorkerProfileOptions) -> None:
+    @sandbox_worker_profile("pytest-callable-profile")
+    class PytestCallableProfile(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
             options.container_image = "example.azurecr.io/python-worker:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
@@ -147,7 +147,7 @@ def test_profile_options_add_activity_accepts_callable() -> None:
 
     try:
         declarations = [
-            declaration for declaration in build_profile_on_demand_sandbox_activity_declarations()
+            declaration for declaration in build_profile_sandbox_activity_declarations()
             if declaration.worker_profile_id == "pytest-callable-profile"
         ]
 
@@ -157,11 +157,11 @@ def test_profile_options_add_activity_accepts_callable() -> None:
         sandbox_declarations._worker_profiles.pop("pytest-callable-profile", None)
 
 
-def test_build_on_demand_sandbox_activity_declaration() -> None:
-    declaration = _build_on_demand_sandbox_activity_declaration(
+def test_build_sandbox_activity_declaration() -> None:
+    declaration = _build_sandbox_activity_declaration(
         worker_profile_id="preview",
         activity_names=["RemoteHello"],
-        container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
+        container_image="example.azurecr.io/sandboxes-worker:v1",
         cpu="500m",
         memory="1Gi",
         environment_variables={
@@ -175,7 +175,7 @@ def test_build_on_demand_sandbox_activity_declaration() -> None:
 
     assert declaration.worker_profile_id == "preview"
     assert list(declaration.activity_names) == ["RemoteHello"]
-    assert declaration.image.image_ref == "example.azurecr.io/on-demand-sandbox-worker:v1"
+    assert declaration.image.image_ref == "example.azurecr.io/sandboxes-worker:v1"
     assert declaration.image.managed_identity_client_id == "image-pull-client-id"
     assert declaration.scheduler_managed_identity_client_id == "scheduler-client-id"
     assert declaration.resources.cpu == "500m"
@@ -186,16 +186,16 @@ def test_build_on_demand_sandbox_activity_declaration() -> None:
     assert list(declaration.cmd) == ["/app/remote_worker.py"]
 
 
-def test_build_on_demand_sandbox_activity_declaration_accepts_adc_resource_quantities() -> None:
+def test_build_sandbox_activity_declaration_accepts_adc_resource_quantities() -> None:
     for cpu, memory in [
         ("500m", "1024Mi"),
         ("0.5", "1Gi"),
         ("2", "2048"),
     ]:
-        declaration = _build_on_demand_sandbox_activity_declaration(
+        declaration = _build_sandbox_activity_declaration(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
-            container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
+            container_image="example.azurecr.io/sandboxes-worker:v1",
             image_pull_managed_identity_client_id="image-pull-client-id",
             scheduler_managed_identity_client_id="scheduler-client-id",
             cpu=cpu,
@@ -205,7 +205,7 @@ def test_build_on_demand_sandbox_activity_declaration_accepts_adc_resource_quant
         assert declaration.resources.memory == memory
 
 
-def test_build_on_demand_sandbox_activity_declaration_rejects_invalid_adc_resource_quantities() -> None:
+def test_build_sandbox_activity_declaration_rejects_invalid_adc_resource_quantities() -> None:
     for cpu, memory, expected_message in [
         ("0", "1024Mi", "CPU"),
         ("0m", "1024Mi", "CPU"),
@@ -215,10 +215,10 @@ def test_build_on_demand_sandbox_activity_declaration_rejects_invalid_adc_resour
         ("500m", "500m", "memory"),
     ]:
         try:
-            _build_on_demand_sandbox_activity_declaration(
+            _build_sandbox_activity_declaration(
                 worker_profile_id="preview",
                 activity_names=["RemoteHello"],
-                container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
+                container_image="example.azurecr.io/sandboxes-worker:v1",
                 image_pull_managed_identity_client_id="image-pull-client-id",
                 scheduler_managed_identity_client_id="scheduler-client-id",
                 cpu=cpu,
@@ -229,35 +229,35 @@ def test_build_on_demand_sandbox_activity_declaration_rejects_invalid_adc_resour
             raise AssertionError("Expected invalid resource quantity to fail.")
 
 
-def test_build_on_demand_sandbox_activity_declaration_accepts_single_name() -> None:
-    declaration = _build_on_demand_sandbox_activity_declaration(
+def test_build_sandbox_activity_declaration_accepts_single_name() -> None:
+    declaration = _build_sandbox_activity_declaration(
         worker_profile_id="preview",
         activity_names="RemoteHello",
-        container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
+        container_image="example.azurecr.io/sandboxes-worker:v1",
         image_pull_managed_identity_client_id="image-pull-client-id",
         scheduler_managed_identity_client_id="scheduler-client-id")
 
     assert list(declaration.activity_names) == ["RemoteHello"]
 
 
-def test_build_on_demand_sandbox_activity_declaration_requires_scheduler_managed_identity_client_id() -> None:
+def test_build_sandbox_activity_declaration_requires_scheduler_managed_identity_client_id() -> None:
     try:
-        _build_on_demand_sandbox_activity_declaration(
+        _build_sandbox_activity_declaration(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
-            container_image="example.azurecr.io/on-demand-sandbox-worker:v1")
+            container_image="example.azurecr.io/sandboxes-worker:v1")
     except TypeError as ex:
         assert "scheduler_managed_identity_client_id" in str(ex)
     else:
         raise AssertionError("Expected missing scheduler managed identity client ID to fail.")
 
 
-def test_build_on_demand_sandbox_activity_declaration_requires_image_pull_managed_identity_client_id() -> None:
+def test_build_sandbox_activity_declaration_requires_image_pull_managed_identity_client_id() -> None:
     try:
-        _build_on_demand_sandbox_activity_declaration(
+        _build_sandbox_activity_declaration(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
-            container_image="example.azurecr.io/on-demand-sandbox-worker:v1",
+            container_image="example.azurecr.io/sandboxes-worker:v1",
             scheduler_managed_identity_client_id="scheduler-client-id")
     except ValueError as ex:
         assert "ADC uses to pull the worker image" in str(ex)
@@ -265,65 +265,65 @@ def test_build_on_demand_sandbox_activity_declaration_requires_image_pull_manage
         raise AssertionError("Expected missing image pull managed identity client ID to fail.")
 
 
-def test_build_on_demand_sandbox_worker_start_and_heartbeat() -> None:
-    start = build_on_demand_sandbox_worker_start(
+def test_build_sandbox_worker_start_and_heartbeat() -> None:
+    start = build_sandbox_worker_start(
         taskhub="hub",
         worker_profile_id="preview",
         max_activities_count=2,
         activity_names=["RemoteHello"],
-        substrate="Sandbox",
+        sandbox_provider="Sandbox",
         dts_sandbox_identifier="sandbox-1")
 
     assert start.start.task_hub == "hub"
     assert start.start.worker_profile_id == "preview"
     assert start.start.max_activities_count == 2
-    assert start.start.substrate == pb.SUBSTRATE_KIND_SANDBOX
+    assert start.start.sandbox_provider == pb.SANDBOX_PROVIDER_KIND_SANDBOX
     assert start.start.dts_sandbox_identifier == "sandbox-1"
     assert list(start.start.activity_names) == ["RemoteHello"]
 
-    heartbeat = build_on_demand_sandbox_worker_heartbeat(1)
+    heartbeat = build_sandbox_worker_heartbeat(1)
     assert heartbeat.heartbeat.active_activities_count == 1
 
 
-def test_generated_stub_uses_on_demand_sandbox_rpc_paths() -> None:
+def test_generated_stub_uses_sandbox_rpc_paths() -> None:
     channel = _RecordingChannel()
-    stub = stubs.OnDemandSandboxActivitiesStub(channel)
+    stub = stubs.SandboxActivitiesStub(channel)
 
     assert stub is not None
     assert channel.methods == [
-        "/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/ConnectOnDemandSandboxActivityWorker",
-        "/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/DeclareOnDemandSandboxActivities",
-        "/microsoft.durabletask.ondemandsandbox.OnDemandSandboxActivities/RemoveOnDemandSandboxActivityDeclaration",
+        "/microsoft.durabletask.sandboxes.SandboxActivities/ConnectSandboxActivityWorker",
+        "/microsoft.durabletask.sandboxes.SandboxActivities/DeclareSandboxActivities",
+        "/microsoft.durabletask.sandboxes.SandboxActivities/RemoveSandboxActivityDeclaration",
     ]
 
 
-def test_on_demand_sandbox_worker_constructor_does_not_expose_runtime_contract() -> None:
-    assert list(inspect.signature(OnDemandSandboxWorker).parameters) == []
-    assert "_execute_activity" not in OnDemandSandboxWorker.__dict__
+def test_sandbox_worker_constructor_does_not_expose_runtime_contract() -> None:
+    assert list(inspect.signature(SandboxWorker).parameters) == []
+    assert "_execute_activity" not in SandboxWorker.__dict__
 
 
-def test_on_demand_sandbox_activities_client_does_not_expose_worker_registration_rpc() -> None:
-    assert not hasattr(OnDemandSandboxActivitiesClient, "connect_on_demand_sandbox_activity_worker")
+def test_sandbox_activities_client_does_not_expose_worker_registration_rpc() -> None:
+    assert not hasattr(SandboxActivitiesClient, "connect_sandbox_activity_worker")
 
 
-def test_on_demand_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
+def test_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
 
     legacy_wakeup_prefix = "_server" + "less_wakeup"
     assert not hasattr(worker, f"{legacy_wakeup_prefix}_port")
     assert not hasattr(worker, f"{legacy_wakeup_prefix}_server")
 
 
-def test_on_demand_sandbox_worker_reads_sandbox_environment_and_registered_activities(monkeypatch) -> None:
+def test_sandbox_worker_reads_sandbox_environment_and_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
-    monkeypatch.setenv("DTS_ON_DEMAND_SANDBOX_MAX_ACTIVITIES", "7")
-    monkeypatch.setenv("DTS_SUBSTRATE", "AcaSessionPool")
+    monkeypatch.setenv("DTS_SANDBOX_MAX_ACTIVITIES", "7")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "AcaSessionPool")
     monkeypatch.setenv("DTS_SANDBOX_ID", "env-sandbox")
 
     def EnvActivity(_ctx, value):
@@ -332,16 +332,16 @@ def test_on_demand_sandbox_worker_reads_sandbox_environment_and_registered_activ
     def OtherActivity(_ctx, value):
         return value
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
     worker.add_activity(EnvActivity)
     worker.add_activity(OtherActivity)
-    worker._configure_on_demand_sandbox_activity_filters()
+    worker._configure_sandbox_activity_filters()
     start = next(worker._registration_messages())
 
-    assert worker._on_demand_sandbox_host_address == "http://localhost:8080"
-    assert worker._on_demand_sandbox_token_credential is None
-    assert worker._on_demand_sandbox_taskhub == "env-hub"
-    assert worker._on_demand_sandbox_worker_profile_id == "env-profile"
+    assert worker._sandbox_host_address == "http://localhost:8080"
+    assert worker._sandbox_token_credential is None
+    assert worker._sandbox_taskhub == "env-hub"
+    assert worker._sandbox_worker_profile_id == "env-profile"
     assert worker.concurrency_options.maximum_concurrent_activity_work_items == 7
     assert worker._work_item_filters is not None
     assert [activity.name for activity in worker._work_item_filters.activities] == [
@@ -351,15 +351,15 @@ def test_on_demand_sandbox_worker_reads_sandbox_environment_and_registered_activ
     assert start.start.task_hub == "env-hub"
     assert start.start.worker_profile_id == "env-profile"
     assert start.start.max_activities_count == 7
-    assert start.start.substrate == pb.SUBSTRATE_KIND_ACA_SESSION_POOL
+    assert start.start.sandbox_provider == pb.SANDBOX_PROVIDER_KIND_ACA_SESSION_POOL
     assert start.start.dts_sandbox_identifier == "env-sandbox"
     assert list(start.start.activity_names) == ["EnvActivity", "OtherActivity"]
 
 
-def test_on_demand_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(monkeypatch) -> None:
+def test_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
     class StillRunningThread:
         def __init__(self):
@@ -371,126 +371,126 @@ def test_on_demand_sandbox_worker_stop_keeps_handle_for_still_running_registrati
         def is_alive(self):
             return True
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
     thread = StillRunningThread()
-    worker._on_demand_sandbox_registration_thread = thread
+    worker._sandbox_registration_thread = thread
 
-    worker._stop_on_demand_sandbox_registration()
+    worker._stop_sandbox_registration()
 
     assert thread.join_timeout == 10
-    assert worker._on_demand_sandbox_registration_stop.is_set()
-    assert worker._on_demand_sandbox_registration_thread is thread
+    assert worker._sandbox_registration_stop.is_set()
+    assert worker._sandbox_registration_thread is thread
 
 
-def test_on_demand_sandbox_worker_uses_scheduler_channel_without_credential(monkeypatch) -> None:
+def test_sandbox_worker_uses_scheduler_channel_without_credential(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
 
     assert worker._secure_channel is True
-    assert worker._on_demand_sandbox_token_credential is None
+    assert worker._sandbox_token_credential is None
 
 
-def test_on_demand_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
+def test_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
-    monkeypatch.delenv("DTS_ON_DEMAND_SANDBOX_MAX_ACTIVITIES", raising=False)
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    monkeypatch.delenv("DTS_SANDBOX_MAX_ACTIVITIES", raising=False)
     monkeypatch.setenv("DTS_" + "SERVER" + "LESS_MAX_ACTIVITIES", "7")
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
 
     assert worker.concurrency_options.maximum_concurrent_activity_work_items == 100
 
 
-def test_on_demand_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> None:
+def test_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
 
     worker._durabletask_on_activity_execution_started(object())
-    assert worker._on_demand_sandbox_active_activities == 1
+    assert worker._sandbox_active_activities == 1
 
     worker._durabletask_on_activity_execution_completed(object())
-    assert worker._on_demand_sandbox_active_activities == 0
+    assert worker._sandbox_active_activities == 0
 
     worker._durabletask_on_activity_execution_completed(object())
-    assert worker._on_demand_sandbox_active_activities == 0
+    assert worker._sandbox_active_activities == 0
 
 
-def test_on_demand_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypatch) -> None:
+def test_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.setenv("DTS_UMI_CLIENT_ID", "worker-client-id")
     monkeypatch.setattr(sandbox_worker, "ManagedIdentityCredential", _FakeManagedIdentityCredential)
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
 
     assert worker._secure_channel is True
-    assert isinstance(worker._on_demand_sandbox_token_credential, _FakeManagedIdentityCredential)
-    assert worker._on_demand_sandbox_token_credential.client_id == "worker-client-id"
+    assert isinstance(worker._sandbox_token_credential, _FakeManagedIdentityCredential)
+    assert worker._sandbox_token_credential.client_id == "worker-client-id"
 
 
-def test_on_demand_sandbox_worker_requires_managed_identity_client_id_when_auth_enabled(monkeypatch) -> None:
+def test_sandbox_worker_requires_managed_identity_client_id_when_auth_enabled(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.delenv("DTS_UMI_CLIENT_ID", raising=False)
 
     try:
-        OnDemandSandboxWorker()
+        SandboxWorker()
     except ValueError as ex:
         assert "DTS_UMI_CLIENT_ID" in str(ex)
     else:
         raise AssertionError("Expected missing managed identity client IDs to fail.")
 
 
-def test_on_demand_sandbox_worker_requires_registered_activities(monkeypatch) -> None:
+def test_sandbox_worker_requires_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
-    worker = OnDemandSandboxWorker()
+    worker = SandboxWorker()
 
     try:
-        worker._configure_on_demand_sandbox_activity_filters()
+        worker._configure_sandbox_activity_filters()
     except RuntimeError as ex:
         assert "registered activity" in str(ex)
     else:
         raise AssertionError("Expected missing registered activity names to fail.")
 
 
-def test_on_demand_sandbox_worker_requires_injected_substrate(monkeypatch) -> None:
+def test_sandbox_worker_requires_injected_sandbox_provider(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.delenv("DTS_SUBSTRATE", raising=False)
+    monkeypatch.delenv("DTS_SANDBOX_PROVIDER", raising=False)
 
     try:
-        OnDemandSandboxWorker()
+        SandboxWorker()
     except ValueError as ex:
-        assert "DTS_SUBSTRATE" in str(ex)
+        assert "DTS_SANDBOX_PROVIDER" in str(ex)
     else:
-        raise AssertionError("Expected missing DTS_SUBSTRATE to fail.")
+        raise AssertionError("Expected missing DTS_SANDBOX_PROVIDER to fail.")
 
 
-def test_on_demand_sandbox_worker_rejects_invalid_substrate(monkeypatch) -> None:
+def test_sandbox_worker_rejects_invalid_sandbox_provider(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_SUBSTRATE", "ContainerApp")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "ContainerApp")
 
     try:
-        OnDemandSandboxWorker()
+        SandboxWorker()
     except ValueError as ex:
         assert "Sandbox or AcaSessionPool" in str(ex)
     else:
-        raise AssertionError("Expected invalid DTS_SUBSTRATE to fail.")
+        raise AssertionError("Expected invalid DTS_SANDBOX_PROVIDER to fail.")
 
 
 class _RecordingChannel:

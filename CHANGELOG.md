@@ -7,8 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-- Added activity execution lifecycle hooks used by Azure Managed on-demand
-  sandbox workers to report active activity counts while work is running.
+- Added activity execution lifecycle hooks used by Azure Managed sandbox
+  workers to report active activity counts while work is running.
 
 ## v1.5.0
 
