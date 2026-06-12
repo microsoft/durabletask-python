@@ -309,6 +309,7 @@ def test_sandbox_activities_client_does_not_expose_worker_registration_rpc() -> 
 def test_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
     worker = SandboxWorker()
@@ -359,6 +360,7 @@ def test_sandbox_worker_reads_sandbox_environment_and_registered_activities(monk
 def test_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
     class StillRunningThread:
@@ -385,6 +387,7 @@ def test_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(
 def test_sandbox_worker_uses_scheduler_channel_without_credential(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
     worker = SandboxWorker()
@@ -396,6 +399,7 @@ def test_sandbox_worker_uses_scheduler_channel_without_credential(monkeypatch) -
 def test_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
     monkeypatch.delenv("DTS_SANDBOX_MAX_ACTIVITIES", raising=False)
     monkeypatch.setenv("DTS_" + "SERVER" + "LESS_MAX_ACTIVITIES", "7")
@@ -408,6 +412,7 @@ def test_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
 def test_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
     worker = SandboxWorker()
@@ -425,6 +430,7 @@ def test_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> 
 def test_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.setenv("DTS_UMI_CLIENT_ID", "worker-client-id")
@@ -440,6 +446,7 @@ def test_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypat
 def test_sandbox_worker_requires_managed_identity_client_id_when_auth_enabled(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.delenv("DTS_UMI_CLIENT_ID", raising=False)
@@ -455,6 +462,7 @@ def test_sandbox_worker_requires_managed_identity_client_id_when_auth_enabled(mo
 def test_sandbox_worker_requires_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
 
     worker = SandboxWorker()
@@ -470,6 +478,7 @@ def test_sandbox_worker_requires_registered_activities(monkeypatch) -> None:
 def test_sandbox_worker_requires_injected_sandbox_provider(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.delenv("DTS_SANDBOX_PROVIDER", raising=False)
 
     try:
@@ -483,6 +492,7 @@ def test_sandbox_worker_requires_injected_sandbox_provider(monkeypatch) -> None:
 def test_sandbox_worker_rejects_invalid_sandbox_provider(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "ContainerApp")
 
     try:

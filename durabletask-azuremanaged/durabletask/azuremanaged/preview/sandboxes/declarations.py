@@ -13,7 +13,6 @@ from durabletask.azuremanaged.preview.sandboxes.helpers import (
 )
 
 
-DEFAULT_WORKER_PROFILE_ID = "default"
 DEFAULT_CPU = "1000m"
 DEFAULT_MEMORY = "2048Mi"
 DEFAULT_MAX_CONCURRENT_ACTIVITIES = 100
@@ -87,7 +86,7 @@ def _build_sandbox_activity_declaration(
         *,
         activity_names: str | Iterable[str],
         scheduler_managed_identity_client_id: Optional[str],
-        worker_profile_id: str = DEFAULT_WORKER_PROFILE_ID,
+        worker_profile_id: str,
         container_image: Optional[str] = None,
         image_pull_managed_identity_client_id: Optional[str] = None,
         cpu: str = DEFAULT_CPU,

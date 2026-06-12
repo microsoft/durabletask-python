@@ -15,7 +15,6 @@ from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activity_names
 from durabletask.azuremanaged.preview.sandboxes.declarations import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
-    DEFAULT_WORKER_PROFILE_ID,
     build_sandbox_worker_heartbeat,
     build_sandbox_worker_start,
 )
@@ -192,9 +191,12 @@ def _resolve_secure_channel(host_address: str) -> bool:
 
 
 def _resolve_worker_profile_id() -> str:
-    resolved_worker_profile_id = (
-        os.getenv("DTS_WORKER_PROFILE_ID")
-        or DEFAULT_WORKER_PROFILE_ID)
+    resolved_worker_profile_id = os.getenv("DTS_WORKER_PROFILE_ID")
+    if not resolved_worker_profile_id or not resolved_worker_profile_id.strip():
+        raise ValueError(
+            "Sandbox worker requires DTS_WORKER_PROFILE_ID to be injected in the "
+            "sandbox environment.")
+
     return resolved_worker_profile_id.strip()
 
 
