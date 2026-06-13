@@ -117,13 +117,13 @@ def test_build_profile_sandbox_activity_declarations_rejects_activity_overlap() 
             options.container_image = "example.azurecr.io/python-worker-b:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
-            options.add_activity("PytestOverlapRemoteHello")
+            options.add_activity("pytestoverlapremotehello")
 
     try:
         try:
             build_profile_sandbox_activity_declarations()
         except ValueError as ex:
-            assert "PytestOverlapRemoteHello" in str(ex)
+            assert "pytestoverlapremotehello" in str(ex)
             assert "pytest-overlap-profile-a" in str(ex)
             assert "pytest-overlap-profile-b" in str(ex)
         else:
@@ -311,6 +311,7 @@ def test_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    _configure_sandbox_worker_auth(monkeypatch)
 
     worker = SandboxWorker()
 
@@ -326,6 +327,7 @@ def test_sandbox_worker_reads_sandbox_environment_and_registered_activities(monk
     monkeypatch.setenv("DTS_SANDBOX_MAX_ACTIVITIES", "7")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "AcaSessionPool")
     monkeypatch.setenv("DTS_SANDBOX_ID", "env-sandbox")
+    _configure_sandbox_worker_auth(monkeypatch)
 
     def EnvActivity(_ctx, value):
         return value
@@ -340,7 +342,7 @@ def test_sandbox_worker_reads_sandbox_environment_and_registered_activities(monk
     start = next(worker._registration_messages())
 
     assert worker._sandbox_host_address == "http://localhost:8080"
-    assert worker._sandbox_token_credential is None
+    assert isinstance(worker._sandbox_token_credential, _FakeManagedIdentityCredential)
     assert worker._sandbox_taskhub == "env-hub"
     assert worker._sandbox_worker_profile_id == "env-profile"
     assert worker.concurrency_options.maximum_concurrent_activity_work_items == 7
@@ -362,6 +364,7 @@ def test_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    _configure_sandbox_worker_auth(monkeypatch)
 
     class StillRunningThread:
         def __init__(self):
@@ -384,16 +387,38 @@ def test_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(
     assert worker._sandbox_registration_thread is thread
 
 
-def test_sandbox_worker_uses_scheduler_channel_without_credential(monkeypatch) -> None:
+def test_sandbox_worker_requires_managed_identity_authentication(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    monkeypatch.delenv("DTS_AUTHENTICATION", raising=False)
+    monkeypatch.delenv("DTS_UMI_CLIENT_ID", raising=False)
 
-    worker = SandboxWorker()
+    try:
+        SandboxWorker()
+    except ValueError as ex:
+        assert "DTS_AUTHENTICATION" in str(ex)
+        assert "ManagedIdentity" in str(ex)
+    else:
+        raise AssertionError("Expected missing DTS_AUTHENTICATION to fail.")
 
-    assert worker._secure_channel is True
-    assert worker._sandbox_token_credential is None
+
+def test_sandbox_worker_rejects_invalid_authentication(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    monkeypatch.setenv("DTS_AUTHENTICATION", "DefaultAzureCredential")
+    monkeypatch.setenv("DTS_UMI_CLIENT_ID", "worker-client-id")
+
+    try:
+        SandboxWorker()
+    except ValueError as ex:
+        assert "DTS_AUTHENTICATION" in str(ex)
+        assert "ManagedIdentity" in str(ex)
+    else:
+        raise AssertionError("Expected invalid DTS_AUTHENTICATION to fail.")
 
 
 def test_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
@@ -403,10 +428,29 @@ def test_sandbox_worker_ignores_legacy_max_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
     monkeypatch.delenv("DTS_SANDBOX_MAX_ACTIVITIES", raising=False)
     monkeypatch.setenv("DTS_" + "SERVER" + "LESS_MAX_ACTIVITIES", "7")
+    _configure_sandbox_worker_auth(monkeypatch)
 
     worker = SandboxWorker()
 
     assert worker.concurrency_options.maximum_concurrent_activity_work_items == 100
+
+
+def test_sandbox_worker_rejects_invalid_max_activities(monkeypatch) -> None:
+    for value in ["", "0", "-1", "many"]:
+        monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+        monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+        monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
+        monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+        monkeypatch.setenv("DTS_SANDBOX_MAX_ACTIVITIES", value)
+        _configure_sandbox_worker_auth(monkeypatch)
+
+        try:
+            SandboxWorker()
+        except ValueError as ex:
+            assert "DTS_SANDBOX_MAX_ACTIVITIES" in str(ex)
+            assert "positive integer" in str(ex)
+        else:
+            raise AssertionError(f"Expected invalid DTS_SANDBOX_MAX_ACTIVITIES={value!r} to fail.")
 
 
 def test_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> None:
@@ -414,6 +458,7 @@ def test_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> 
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    _configure_sandbox_worker_auth(monkeypatch)
 
     worker = SandboxWorker()
 
@@ -464,6 +509,7 @@ def test_sandbox_worker_requires_registered_activities(monkeypatch) -> None:
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    _configure_sandbox_worker_auth(monkeypatch)
 
     worker = SandboxWorker()
 
@@ -480,6 +526,7 @@ def test_sandbox_worker_requires_injected_sandbox_provider(monkeypatch) -> None:
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.delenv("DTS_SANDBOX_PROVIDER", raising=False)
+    _configure_sandbox_worker_auth(monkeypatch)
 
     try:
         SandboxWorker()
@@ -494,6 +541,7 @@ def test_sandbox_worker_rejects_invalid_sandbox_provider(monkeypatch) -> None:
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "ContainerApp")
+    _configure_sandbox_worker_auth(monkeypatch)
 
     try:
         SandboxWorker()
@@ -522,3 +570,9 @@ class _FakeManagedIdentityCredential:
 
     def get_token(self, *scopes, **kwargs):
         return AccessToken("token", 9999999999)
+
+
+def _configure_sandbox_worker_auth(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
+    monkeypatch.setenv("DTS_UMI_CLIENT_ID", "worker-client-id")
+    monkeypatch.setattr(sandbox_worker, "ManagedIdentityCredential", _FakeManagedIdentityCredential)

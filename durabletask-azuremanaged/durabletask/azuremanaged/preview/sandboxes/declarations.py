@@ -153,12 +153,13 @@ def build_profile_sandbox_activity_declarations() -> list[pb.SandboxActivityDecl
         activity_names = resolve_activity_names(profile.activity_names)
 
         for activity_name in activity_names:
-            existing_profile = activity_owners.get(activity_name)
+            activity_key = activity_name.casefold()
+            existing_profile = activity_owners.get(activity_key)
             if existing_profile and existing_profile != profile.worker_profile_id:
                 raise ValueError(
                     f"Sandbox activity '{activity_name}' is assigned to both worker profile "
                     f"'{existing_profile}' and '{profile.worker_profile_id}'.")
-            activity_owners[activity_name] = profile.worker_profile_id
+            activity_owners[activity_key] = profile.worker_profile_id
 
         declarations.append(_build_sandbox_activity_declaration(
             activity_names=activity_names,

@@ -13,5 +13,4 @@ RUN pip install --no-cache-dir /src /src/durabletask-azuremanaged azure-identity
 COPY examples/sandboxes/remote_worker.py /app/remote_worker.py
 COPY examples/sandboxes/activity_names.py /app/activity_names.py
 
-EXPOSE 8080
 ENTRYPOINT ["python", "/app/remote_worker.py"]

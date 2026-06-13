@@ -202,8 +202,9 @@ def _resolve_worker_profile_id() -> str:
 
 def _resolve_token_credential() -> TokenCredential | None:
     authentication = os.getenv("DTS_AUTHENTICATION", "")
-    if authentication.lower() != "managedidentity":
-        return None
+    if authentication.strip().lower() != "managedidentity":
+        raise ValueError(
+            "Sandbox worker requires DTS_AUTHENTICATION to be ManagedIdentity.")
 
     client_id = os.getenv("DTS_UMI_CLIENT_ID", "")
     if not client_id.strip():
@@ -231,12 +232,16 @@ def _resolve_sandbox_provider() -> str:
 
 def _resolve_max_concurrent_activities() -> int:
     value = os.getenv("DTS_SANDBOX_MAX_ACTIVITIES")
-    max_concurrent_activities = (
-        int(value)
-        if value
-        else DEFAULT_MAX_CONCURRENT_ACTIVITIES)
+    if value is None:
+        return DEFAULT_MAX_CONCURRENT_ACTIVITIES
+
+    try:
+        max_concurrent_activities = int(value.strip())
+    except ValueError as ex:
+        raise ValueError(
+            "DTS_SANDBOX_MAX_ACTIVITIES must be a positive integer when injected by DTS.") from ex
 
     if max_concurrent_activities <= 0:
         raise ValueError(
-            "Sandbox activity worker max concurrent activities must be greater than zero.")
+            "DTS_SANDBOX_MAX_ACTIVITIES must be a positive integer when injected by DTS.")
     return max_concurrent_activities
