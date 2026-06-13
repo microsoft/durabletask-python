@@ -16,7 +16,8 @@ def resolve_activity_names(activity_names: str | Iterable[str]) -> list[str]:
     names = [activity_names] if isinstance(activity_names, str) else activity_names
     for name in names:
         normalized = name.strip()
-        if normalized and normalized not in seen:
+        key = normalized.casefold()
+        if normalized and key not in seen:
             resolved.append(normalized)
-            seen.add(normalized)
+            seen.add(key)
     return resolved

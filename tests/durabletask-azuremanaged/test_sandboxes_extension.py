@@ -25,7 +25,7 @@ from durabletask.azuremanaged.internal import sandbox_service_pb2_grpc as stubs
 
 
 def test_resolve_activity_names_trims_and_deduplicates() -> None:
-    assert resolve_activity_names([" RemoteHello ", "", "RemoteHello", "Other"]) == [
+    assert resolve_activity_names([" RemoteHello ", "", "RemoteHello", "remotehello", "Other"]) == [
         "RemoteHello",
         "Other",
     ]
@@ -209,6 +209,7 @@ def test_build_sandbox_activity_declaration_rejects_invalid_adc_resource_quantit
     for cpu, memory, expected_message in [
         ("0", "1024Mi", "CPU"),
         ("0m", "1024Mi", "CPU"),
+        ("500.5m", "1024Mi", "CPU"),
         ("500Mi", "1024Mi", "CPU"),
         ("500m", "0", "memory"),
         ("500m", "0Mi", "memory"),

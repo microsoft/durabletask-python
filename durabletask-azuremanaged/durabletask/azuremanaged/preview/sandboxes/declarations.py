@@ -245,7 +245,7 @@ def _normalize_memory(value: str) -> str:
 def _try_parse_cpu_millicores(value: str) -> Optional[int]:
     try:
         if value[-1:].lower() == "m":
-            return int(Decimal(value[:-1]))
+            return int(value[:-1])
         return int(Decimal(value) * 1000)
     except (InvalidOperation, ValueError):
         return None
