@@ -70,6 +70,8 @@ class SandboxActivitiesServicer(object):
 
     def DeclareSandboxActivities(self, request, context):
         """Declares sandbox activities before any live worker stream exists.
+        This private preview supports activity execution only as a business
+        decision; orchestrations and entities are not part of this contract.
         This is a configuration contract and does not advertise active worker
         capacity.
         """

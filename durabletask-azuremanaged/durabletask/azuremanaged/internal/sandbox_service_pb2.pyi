@@ -52,7 +52,7 @@ class SandboxActivityWorkerSessionResult(_message.Message):
     def __init__(self, message: _Optional[str] = ...) -> None: ...
 
 class SandboxActivityDeclaration(_message.Message):
-    __slots__ = ("worker_profile_id", "activity_names", "image", "environment_variables", "max_concurrent_activities", "resources", "entrypoint", "cmd", "scheduler_managed_identity_client_id")
+    __slots__ = ("worker_profile_id", "activity_names", "image", "environment_variables", "max_concurrent_activities", "resources", "scheduler_managed_identity_client_id")
     class EnvironmentVariablesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -66,8 +66,6 @@ class SandboxActivityDeclaration(_message.Message):
     ENVIRONMENT_VARIABLES_FIELD_NUMBER: _ClassVar[int]
     MAX_CONCURRENT_ACTIVITIES_FIELD_NUMBER: _ClassVar[int]
     RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    ENTRYPOINT_FIELD_NUMBER: _ClassVar[int]
-    CMD_FIELD_NUMBER: _ClassVar[int]
     SCHEDULER_MANAGED_IDENTITY_CLIENT_ID_FIELD_NUMBER: _ClassVar[int]
     worker_profile_id: str
     activity_names: _containers.RepeatedScalarFieldContainer[str]
@@ -75,18 +73,20 @@ class SandboxActivityDeclaration(_message.Message):
     environment_variables: _containers.ScalarMap[str, str]
     max_concurrent_activities: int
     resources: SandboxActivityResources
-    entrypoint: _containers.RepeatedScalarFieldContainer[str]
-    cmd: _containers.RepeatedScalarFieldContainer[str]
     scheduler_managed_identity_client_id: str
-    def __init__(self, worker_profile_id: _Optional[str] = ..., activity_names: _Optional[_Iterable[str]] = ..., image: _Optional[_Union[SandboxActivityImage, _Mapping]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., max_concurrent_activities: _Optional[int] = ..., resources: _Optional[_Union[SandboxActivityResources, _Mapping]] = ..., entrypoint: _Optional[_Iterable[str]] = ..., cmd: _Optional[_Iterable[str]] = ..., scheduler_managed_identity_client_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, worker_profile_id: _Optional[str] = ..., activity_names: _Optional[_Iterable[str]] = ..., image: _Optional[_Union[SandboxActivityImage, _Mapping]] = ..., environment_variables: _Optional[_Mapping[str, str]] = ..., max_concurrent_activities: _Optional[int] = ..., resources: _Optional[_Union[SandboxActivityResources, _Mapping]] = ..., scheduler_managed_identity_client_id: _Optional[str] = ...) -> None: ...
 
 class SandboxActivityImage(_message.Message):
-    __slots__ = ("image_ref", "managed_identity_client_id")
+    __slots__ = ("image_ref", "managed_identity_client_id", "entrypoint", "cmd")
     IMAGE_REF_FIELD_NUMBER: _ClassVar[int]
     MANAGED_IDENTITY_CLIENT_ID_FIELD_NUMBER: _ClassVar[int]
+    ENTRYPOINT_FIELD_NUMBER: _ClassVar[int]
+    CMD_FIELD_NUMBER: _ClassVar[int]
     image_ref: str
     managed_identity_client_id: str
-    def __init__(self, image_ref: _Optional[str] = ..., managed_identity_client_id: _Optional[str] = ...) -> None: ...
+    entrypoint: _containers.RepeatedScalarFieldContainer[str]
+    cmd: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, image_ref: _Optional[str] = ..., managed_identity_client_id: _Optional[str] = ..., entrypoint: _Optional[_Iterable[str]] = ..., cmd: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class SandboxActivityResources(_message.Message):
     __slots__ = ("cpu", "memory")

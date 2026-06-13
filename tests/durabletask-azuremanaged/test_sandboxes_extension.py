@@ -78,8 +78,8 @@ def test_build_profile_sandbox_activity_declarations() -> None:
         assert declaration.resources.memory == "1Gi"
         assert declaration.max_concurrent_activities == 3
         assert declaration.environment_variables["SANDBOX_SAMPLE_MARKER"] == "custom-value"
-        assert list(declaration.entrypoint) == []
-        assert list(declaration.cmd) == []
+        assert list(declaration.image.entrypoint) == []
+        assert list(declaration.image.cmd) == []
     finally:
         sandbox_declarations._worker_profiles.pop("pytest-profile-a", None)
 
@@ -182,8 +182,8 @@ def test_build_sandbox_activity_declaration() -> None:
     assert declaration.resources.memory == "1Gi"
     assert declaration.environment_variables["CUSTOM_ENV"] == "custom-value"
     assert declaration.max_concurrent_activities == 3
-    assert list(declaration.entrypoint) == ["python"]
-    assert list(declaration.cmd) == ["/app/remote_worker.py"]
+    assert list(declaration.image.entrypoint) == ["python"]
+    assert list(declaration.image.cmd) == ["/app/remote_worker.py"]
 
 
 def test_build_sandbox_activity_declaration_accepts_adc_resource_quantities() -> None:

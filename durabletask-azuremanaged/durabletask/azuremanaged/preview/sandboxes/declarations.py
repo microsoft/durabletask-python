@@ -140,8 +140,8 @@ def _build_sandbox_activity_declaration(
         max_concurrent_activities=max_concurrent_activities)
     declaration.activity_names.extend(resolved_activity_names)
     declaration.environment_variables.update(environment_variables or {})
-    declaration.entrypoint.extend(_normalize_optional_strings(entrypoint or []))
-    declaration.cmd.extend(_normalize_optional_strings(cmd or []))
+    declaration.image.entrypoint.extend(_normalize_optional_strings(entrypoint or []))
+    declaration.image.cmd.extend(_normalize_optional_strings(cmd or []))
     return declaration
 
 
