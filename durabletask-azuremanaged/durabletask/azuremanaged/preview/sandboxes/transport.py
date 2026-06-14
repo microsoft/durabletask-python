@@ -16,14 +16,14 @@ import durabletask.internal.shared as shared
 
 
 class _SandboxActivitiesStub(Protocol):
-    def DeclareSandboxActivities(
+    def DeclareSandboxWorkerProfile(
             self,
-            request: pb.SandboxActivityDeclaration) -> pb.SandboxActivityDeclarationResult:
+            request: pb.SandboxWorkerProfile) -> pb.DeclareSandboxWorkerProfileResult:
         raise NotImplementedError
 
-    def RemoveSandboxActivityDeclaration(
+    def RemoveSandboxWorkerProfile(
             self,
-            request: pb.RemoveSandboxActivityDeclarationRequest) -> pb.RemoveSandboxActivityDeclarationResult:
+            request: pb.RemoveSandboxWorkerProfileRequest) -> pb.RemoveSandboxWorkerProfileResult:
         raise NotImplementedError
 
     def ConnectSandboxActivityWorker(
@@ -65,16 +65,16 @@ class SandboxActivitiesGrpcTransport:
         if self._owns_channel:
             self._channel.close()
 
-    def declare_sandbox_activities(
+    def declare_sandbox_worker_profile(
             self,
-            declaration: pb.SandboxActivityDeclaration) -> pb.SandboxActivityDeclarationResult:
-        return self._stub.DeclareSandboxActivities(declaration)
+            worker_profile: pb.SandboxWorkerProfile) -> pb.DeclareSandboxWorkerProfileResult:
+        return self._stub.DeclareSandboxWorkerProfile(worker_profile)
 
-    def remove_sandbox_activity_declaration(
+    def remove_sandbox_worker_profile(
             self,
-            worker_profile_id: str) -> pb.RemoveSandboxActivityDeclarationResult:
-        return self._stub.RemoveSandboxActivityDeclaration(
-            pb.RemoveSandboxActivityDeclarationRequest(worker_profile_id=worker_profile_id))
+            worker_profile_id: str) -> pb.RemoveSandboxWorkerProfileResult:
+        return self._stub.RemoveSandboxWorkerProfile(
+            pb.RemoveSandboxWorkerProfileRequest(worker_profile_id=worker_profile_id))
 
     def connect_sandbox_activity_worker(
             self,

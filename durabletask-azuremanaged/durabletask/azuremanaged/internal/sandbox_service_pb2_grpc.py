@@ -5,10 +5,8 @@ import warnings
 
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2
 
-GRPC_GENERATED_VERSION = '1.65.4'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
-EXPECTED_ERROR_RELEASE = '1.66.0'
-SCHEDULED_RELEASE_DATE = 'August 6, 2024'
 _version_not_supported = False
 
 try:
@@ -18,15 +16,12 @@ except ImportError:
     _version_not_supported = True
 
 if _version_not_supported:
-    warnings.warn(
+    raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in durabletask/azuremanaged/internal/sandbox_service_pb2_grpc.py depends on'
+        + ' but the generated code in durabletask/azuremanaged/internal/sandbox_service_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
-        + f' This warning will become an error in {EXPECTED_ERROR_RELEASE},'
-        + f' scheduled for release on {SCHEDULED_RELEASE_DATE}.',
-        RuntimeWarning
     )
 
 
@@ -44,15 +39,15 @@ class SandboxActivitiesStub(object):
                 request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityWorkerMessage.SerializeToString,
                 response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityWorkerSessionResult.FromString,
                 _registered_method=True)
-        self.DeclareSandboxActivities = channel.unary_unary(
-                '/microsoft.durabletask.sandboxes.SandboxActivities/DeclareSandboxActivities',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityDeclaration.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityDeclarationResult.FromString,
+        self.DeclareSandboxWorkerProfile = channel.unary_unary(
+                '/microsoft.durabletask.sandboxes.SandboxActivities/DeclareSandboxWorkerProfile',
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxWorkerProfile.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.DeclareSandboxWorkerProfileResult.FromString,
                 _registered_method=True)
-        self.RemoveSandboxActivityDeclaration = channel.unary_unary(
-                '/microsoft.durabletask.sandboxes.SandboxActivities/RemoveSandboxActivityDeclaration',
-                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxActivityDeclarationRequest.SerializeToString,
-                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxActivityDeclarationResult.FromString,
+        self.RemoveSandboxWorkerProfile = channel.unary_unary(
+                '/microsoft.durabletask.sandboxes.SandboxActivities/RemoveSandboxWorkerProfile',
+                request_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxWorkerProfileRequest.SerializeToString,
+                response_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxWorkerProfileResult.FromString,
                 _registered_method=True)
 
 
@@ -68,8 +63,8 @@ class SandboxActivitiesServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def DeclareSandboxActivities(self, request, context):
-        """Declares sandbox activities before any live worker stream exists.
+    def DeclareSandboxWorkerProfile(self, request, context):
+        """Creates or updates a sandbox worker profile before any live worker stream exists.
         This private preview supports activity execution only as a business
         decision; orchestrations and entities are not part of this contract.
         This is a configuration contract and does not advertise active worker
@@ -79,8 +74,8 @@ class SandboxActivitiesServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def RemoveSandboxActivityDeclaration(self, request, context):
-        """Removes a sandbox activity declaration so the backend stops
+    def RemoveSandboxWorkerProfile(self, request, context):
+        """Removes a sandbox worker profile so the backend stops
         waking new sandbox workers for the specified worker profile. Existing
         workers are not terminated by this RPC.
         """
@@ -96,15 +91,15 @@ def add_SandboxActivitiesServicer_to_server(servicer, server):
                     request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityWorkerMessage.FromString,
                     response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityWorkerSessionResult.SerializeToString,
             ),
-            'DeclareSandboxActivities': grpc.unary_unary_rpc_method_handler(
-                    servicer.DeclareSandboxActivities,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityDeclaration.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityDeclarationResult.SerializeToString,
+            'DeclareSandboxWorkerProfile': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeclareSandboxWorkerProfile,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxWorkerProfile.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.DeclareSandboxWorkerProfileResult.SerializeToString,
             ),
-            'RemoveSandboxActivityDeclaration': grpc.unary_unary_rpc_method_handler(
-                    servicer.RemoveSandboxActivityDeclaration,
-                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxActivityDeclarationRequest.FromString,
-                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxActivityDeclarationResult.SerializeToString,
+            'RemoveSandboxWorkerProfile': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemoveSandboxWorkerProfile,
+                    request_deserializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxWorkerProfileRequest.FromString,
+                    response_serializer=durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxWorkerProfileResult.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -145,7 +140,7 @@ class SandboxActivities(object):
             _registered_method=True)
 
     @staticmethod
-    def DeclareSandboxActivities(request,
+    def DeclareSandboxWorkerProfile(request,
             target,
             options=(),
             channel_credentials=None,
@@ -158,9 +153,9 @@ class SandboxActivities(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/microsoft.durabletask.sandboxes.SandboxActivities/DeclareSandboxActivities',
-            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityDeclaration.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxActivityDeclarationResult.FromString,
+            '/microsoft.durabletask.sandboxes.SandboxActivities/DeclareSandboxWorkerProfile',
+            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.SandboxWorkerProfile.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.DeclareSandboxWorkerProfileResult.FromString,
             options,
             channel_credentials,
             insecure,
@@ -172,7 +167,7 @@ class SandboxActivities(object):
             _registered_method=True)
 
     @staticmethod
-    def RemoveSandboxActivityDeclaration(request,
+    def RemoveSandboxWorkerProfile(request,
             target,
             options=(),
             channel_credentials=None,
@@ -185,9 +180,9 @@ class SandboxActivities(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/microsoft.durabletask.sandboxes.SandboxActivities/RemoveSandboxActivityDeclaration',
-            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxActivityDeclarationRequest.SerializeToString,
-            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxActivityDeclarationResult.FromString,
+            '/microsoft.durabletask.sandboxes.SandboxActivities/RemoveSandboxWorkerProfile',
+            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxWorkerProfileRequest.SerializeToString,
+            durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2.RemoveSandboxWorkerProfileResult.FromString,
             options,
             channel_credentials,
             insecure,

@@ -38,7 +38,7 @@ class SandboxWorkerProfileOptions:
     activity_names: list[str] = field(default_factory=list[str])
 
     def add_activity(self, activity: str | Callable[..., Any]) -> None:
-        """Add an activity to the sandbox worker profile declaration."""
+        """Add an activity to the sandbox worker profile worker_profile."""
         activity_name = task.get_name(activity) if callable(activity) else activity
         self.activity_names.append(
             normalize_required(activity_name, "Sandbox activity name is required."))
@@ -48,7 +48,7 @@ class SandboxWorkerProfile:
     """Base class for configuring a decorated sandbox worker profile."""
 
     def configure(self, options: SandboxWorkerProfileOptions) -> None:
-        """Configure the sandbox worker profile declaration options."""
+        """Configure the sandbox worker profile worker_profile options."""
 
 
 _worker_profiles: dict[str, SandboxWorkerProfileOptions] = {}
@@ -82,7 +82,7 @@ def sandbox_worker_profile(worker_profile_id: str) -> Callable[[type], type]:
     return decorator
 
 
-def _build_sandbox_activity_declaration(
+def _build_sandbox_worker_profile(
         *,
         activity_names: str | Iterable[str],
         scheduler_managed_identity_client_id: Optional[str],
@@ -94,8 +94,8 @@ def _build_sandbox_activity_declaration(
         environment_variables: Optional[dict[str, str]] = None,
         max_concurrent_activities: int = DEFAULT_MAX_CONCURRENT_ACTIVITIES,
         entrypoint: Optional[Iterable[str]] = None,
-        cmd: Optional[Iterable[str]] = None) -> pb.SandboxActivityDeclaration:
-    """Build a sandbox activity declaration.
+        cmd: Optional[Iterable[str]] = None) -> pb.SandboxWorkerProfile:
+    """Build a sandbox activity worker_profile.
 
     Args:
         container_image: Full OCI image reference for the sandbox worker container,
@@ -104,10 +104,10 @@ def _build_sandbox_activity_declaration(
     """
     resolved_activity_names = resolve_activity_names(activity_names)
     if not resolved_activity_names:
-        raise ValueError("Sandbox activity declaration requires at least one activity name.")
+        raise ValueError("Sandbox activity worker_profile requires at least one activity name.")
 
     if not worker_profile_id or not worker_profile_id.strip():
-        raise ValueError("Sandbox activity declaration requires a worker profile ID.")
+        raise ValueError("Sandbox activity worker_profile requires a worker profile ID.")
 
     if max_concurrent_activities <= 0:
         raise ValueError("Sandbox activity max concurrent activities must be greater than zero.")
@@ -120,15 +120,15 @@ def _build_sandbox_activity_declaration(
 
     resolved_scheduler_managed_identity_client_id = normalize_required(
         scheduler_managed_identity_client_id,
-        "Sandbox activity declaration requires the managed identity client ID workers use to connect to Durable Task Scheduler.")
+        "Sandbox activity worker_profile requires the managed identity client ID workers use to connect to Durable Task Scheduler.")
     resolved_image_pull_managed_identity_client_id = normalize_required(
         image_pull_managed_identity_client_id,
-        "Sandbox activity declaration requires the managed identity client ID ADC uses to pull the worker image.")
+        "Sandbox activity worker_profile requires the managed identity client ID ADC uses to pull the worker image.")
 
     resolved_cpu = _normalize_cpu(cpu)
     resolved_memory = _normalize_memory(memory)
 
-    declaration = pb.SandboxActivityDeclaration(
+    worker_profile = pb.SandboxWorkerProfile(
         worker_profile_id=worker_profile_id.strip(),
         image=pb.SandboxActivityImage(
             image_ref=image_ref,
@@ -138,16 +138,16 @@ def _build_sandbox_activity_declaration(
             memory=resolved_memory),
         scheduler_managed_identity_client_id=resolved_scheduler_managed_identity_client_id,
         max_concurrent_activities=max_concurrent_activities)
-    declaration.activity_names.extend(resolved_activity_names)
-    declaration.environment_variables.update(environment_variables or {})
-    declaration.image.entrypoint.extend(_normalize_optional_strings(entrypoint or []))
-    declaration.image.cmd.extend(_normalize_optional_strings(cmd or []))
-    return declaration
+    worker_profile.activity_names.extend(resolved_activity_names)
+    worker_profile.environment_variables.update(environment_variables or {})
+    worker_profile.image.entrypoint.extend(_normalize_optional_strings(entrypoint or []))
+    worker_profile.image.cmd.extend(_normalize_optional_strings(cmd or []))
+    return worker_profile
 
 
-def build_profile_sandbox_activity_declarations() -> list[pb.SandboxActivityDeclaration]:
-    """Build sandbox declarations from worker profile configuration."""
-    declarations: list[pb.SandboxActivityDeclaration] = []
+def build_sandbox_worker_profiles() -> list[pb.SandboxWorkerProfile]:
+    """Build sandbox worker_profiles from worker profile configuration."""
+    worker_profiles: list[pb.SandboxWorkerProfile] = []
     activity_owners: dict[str, str] = {}
     for profile in _worker_profiles.values():
         activity_names = resolve_activity_names(profile.activity_names)
@@ -161,7 +161,7 @@ def build_profile_sandbox_activity_declarations() -> list[pb.SandboxActivityDecl
                     f"'{existing_profile}' and '{profile.worker_profile_id}'.")
             activity_owners[activity_key] = profile.worker_profile_id
 
-        declarations.append(_build_sandbox_activity_declaration(
+        worker_profiles.append(_build_sandbox_worker_profile(
             activity_names=activity_names,
             worker_profile_id=profile.worker_profile_id,
             container_image=profile.container_image,
@@ -174,7 +174,7 @@ def build_profile_sandbox_activity_declarations() -> list[pb.SandboxActivityDecl
             entrypoint=profile.entrypoint,
             cmd=profile.cmd))
 
-    return declarations
+    return worker_profiles
 
 
 def build_sandbox_worker_start(
@@ -223,7 +223,7 @@ def _normalize_optional_strings(values: Iterable[str]) -> list[str]:
 
 
 def _normalize_cpu(value: str) -> str:
-    normalized = normalize_required(value, "Sandbox activity declaration requires CPU resources.")
+    normalized = normalize_required(value, "Sandbox activity worker_profile requires CPU resources.")
     milli_cpu = _try_parse_cpu_millicores(normalized)
     if milli_cpu is None or milli_cpu <= 0:
         raise ValueError(
@@ -233,7 +233,7 @@ def _normalize_cpu(value: str) -> str:
 
 
 def _normalize_memory(value: str) -> str:
-    normalized = normalize_required(value, "Sandbox activity declaration requires memory resources.")
+    normalized = normalize_required(value, "Sandbox activity worker_profile requires memory resources.")
     memory_mib = _try_parse_memory_mib(normalized)
     if memory_mib is None or memory_mib <= 0:
         raise ValueError(

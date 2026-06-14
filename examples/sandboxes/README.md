@@ -53,7 +53,7 @@ sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`,
 `DTS_SANDBOX_ID` from environment variables injected by Durable Task Scheduler.
 The worker requires `DTS_AUTHENTICATION=ManagedIdentity` and reports its
 registered activity names when it connects. Durable Task Scheduler validates
-they match the declaration before advertising worker capacity.
+they match the worker_profile before advertising worker capacity.
 
 ## Build the remote worker image
 

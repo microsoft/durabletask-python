@@ -13,7 +13,7 @@ from azure.identity import ManagedIdentityCredential
 from durabletask import task
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activity_names
-from durabletask.azuremanaged.preview.sandboxes.declarations import (
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     build_sandbox_worker_heartbeat,
     build_sandbox_worker_start,

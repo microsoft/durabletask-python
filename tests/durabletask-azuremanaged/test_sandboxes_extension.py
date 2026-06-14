@@ -6,18 +6,18 @@ import inspect
 from azure.core.credentials import AccessToken
 
 import durabletask.azuremanaged.preview.sandboxes as sandbox
-import durabletask.azuremanaged.preview.sandboxes.declarations as sandbox_declarations
+import durabletask.azuremanaged.preview.sandboxes.worker_profiles as sandbox_worker_profiles
 import durabletask.azuremanaged.preview.sandboxes.worker as sandbox_worker
 from durabletask.azuremanaged.preview.sandboxes import SandboxWorker
 from durabletask.azuremanaged.preview.sandboxes import SandboxActivitiesClient
 from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfile
 from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfileOptions
 from durabletask.azuremanaged.preview.sandboxes import sandbox_worker_profile
-from durabletask.azuremanaged.preview.sandboxes.declarations import (
-    _build_sandbox_activity_declaration,
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
+    _build_sandbox_worker_profile,
     build_sandbox_worker_heartbeat,
     build_sandbox_worker_start,
-    build_profile_sandbox_activity_declarations,
+    build_sandbox_worker_profiles,
 )
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activity_names
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
@@ -45,12 +45,12 @@ def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
     legacy_prefix = "server" + "less"
     assert not hasattr(sandbox, f"{legacy_prefix}_activity")
     assert not hasattr(sandbox.SandboxActivitiesClient, f"enable_{legacy_prefix}_activities")
-    assert not hasattr(sandbox.SandboxActivitiesClient, f"remove_{legacy_prefix}_activity_declaration")
+    assert not hasattr(sandbox.SandboxActivitiesClient, f"remove_{legacy_prefix}_activity_worker_profile")
     assert not hasattr(sandbox.SandboxActivitiesClient, f"connect_{legacy_prefix}_activity_worker")
     assert not hasattr(SandboxWorker, f"_configure_{legacy_prefix}_activity_filters")
 
 
-def test_build_profile_sandbox_activity_declarations() -> None:
+def test_build_sandbox_worker_profiles() -> None:
     @sandbox_worker_profile("pytest-profile-a")
     class PytestProfileA(SandboxWorkerProfile):
         def configure(self, options) -> None:
@@ -64,24 +64,24 @@ def test_build_profile_sandbox_activity_declarations() -> None:
             options.add_activity("PytestRemoteHello")
 
     try:
-        declarations = [
-            declaration for declaration in build_profile_sandbox_activity_declarations()
-            if declaration.worker_profile_id == "pytest-profile-a"
+        worker_profiles = [
+            worker_profile for worker_profile in build_sandbox_worker_profiles()
+            if worker_profile.worker_profile_id == "pytest-profile-a"
         ]
 
-        declaration = declarations[0]
-        assert list(declaration.activity_names) == ["PytestRemoteHello"]
-        assert declaration.image.image_ref == "example.azurecr.io/python-worker:v1"
-        assert declaration.image.managed_identity_client_id == "image-pull-client-id"
-        assert declaration.scheduler_managed_identity_client_id == "scheduler-client-id"
-        assert declaration.resources.cpu == "500m"
-        assert declaration.resources.memory == "1Gi"
-        assert declaration.max_concurrent_activities == 3
-        assert declaration.environment_variables["SANDBOX_SAMPLE_MARKER"] == "custom-value"
-        assert list(declaration.image.entrypoint) == []
-        assert list(declaration.image.cmd) == []
+        worker_profile = worker_profiles[0]
+        assert list(worker_profile.activity_names) == ["PytestRemoteHello"]
+        assert worker_profile.image.image_ref == "example.azurecr.io/python-worker:v1"
+        assert worker_profile.image.managed_identity_client_id == "image-pull-client-id"
+        assert worker_profile.scheduler_managed_identity_client_id == "scheduler-client-id"
+        assert worker_profile.resources.cpu == "500m"
+        assert worker_profile.resources.memory == "1Gi"
+        assert worker_profile.max_concurrent_activities == 3
+        assert worker_profile.environment_variables["SANDBOX_SAMPLE_MARKER"] == "custom-value"
+        assert list(worker_profile.image.entrypoint) == []
+        assert list(worker_profile.image.cmd) == []
     finally:
-        sandbox_declarations._worker_profiles.pop("pytest-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-profile-a", None)
 
 
 def test_sandbox_worker_profile_requires_activity() -> None:
@@ -99,10 +99,10 @@ def test_sandbox_worker_profile_requires_activity() -> None:
         else:
             raise AssertionError("Expected empty sandbox worker profile to fail.")
     finally:
-        sandbox_declarations._worker_profiles.pop("pytest-empty-profile", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-empty-profile", None)
 
 
-def test_build_profile_sandbox_activity_declarations_rejects_activity_overlap() -> None:
+def test_build_sandbox_worker_profiles_rejects_activity_overlap() -> None:
     @sandbox_worker_profile("pytest-overlap-profile-a")
     class PytestOverlapProfileA(SandboxWorkerProfile):
         def configure(self, options: SandboxWorkerProfileOptions) -> None:
@@ -121,7 +121,7 @@ def test_build_profile_sandbox_activity_declarations_rejects_activity_overlap() 
 
     try:
         try:
-            build_profile_sandbox_activity_declarations()
+            build_sandbox_worker_profiles()
         except ValueError as ex:
             assert "pytestoverlapremotehello" in str(ex)
             assert "pytest-overlap-profile-a" in str(ex)
@@ -129,8 +129,8 @@ def test_build_profile_sandbox_activity_declarations_rejects_activity_overlap() 
         else:
             raise AssertionError("Expected overlapping sandbox activity ownership to fail.")
     finally:
-        sandbox_declarations._worker_profiles.pop("pytest-overlap-profile-a", None)
-        sandbox_declarations._worker_profiles.pop("pytest-overlap-profile-b", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-overlap-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-overlap-profile-b", None)
 
 
 def test_profile_options_add_activity_accepts_callable() -> None:
@@ -146,19 +146,19 @@ def test_profile_options_add_activity_accepts_callable() -> None:
             options.add_activity(pytest_callable_remote_hello)
 
     try:
-        declarations = [
-            declaration for declaration in build_profile_sandbox_activity_declarations()
-            if declaration.worker_profile_id == "pytest-callable-profile"
+        worker_profiles = [
+            worker_profile for worker_profile in build_sandbox_worker_profiles()
+            if worker_profile.worker_profile_id == "pytest-callable-profile"
         ]
 
-        declaration = declarations[0]
-        assert list(declaration.activity_names) == ["pytest_callable_remote_hello"]
+        worker_profile = worker_profiles[0]
+        assert list(worker_profile.activity_names) == ["pytest_callable_remote_hello"]
     finally:
-        sandbox_declarations._worker_profiles.pop("pytest-callable-profile", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-callable-profile", None)
 
 
-def test_build_sandbox_activity_declaration() -> None:
-    declaration = _build_sandbox_activity_declaration(
+def test_build_sandbox_worker_profile() -> None:
+    worker_profile = _build_sandbox_worker_profile(
         worker_profile_id="preview",
         activity_names=["RemoteHello"],
         container_image="example.azurecr.io/sandboxes-worker:v1",
@@ -173,26 +173,26 @@ def test_build_sandbox_activity_declaration() -> None:
         entrypoint=["python"],
         cmd=["/app/remote_worker.py"])
 
-    assert declaration.worker_profile_id == "preview"
-    assert list(declaration.activity_names) == ["RemoteHello"]
-    assert declaration.image.image_ref == "example.azurecr.io/sandboxes-worker:v1"
-    assert declaration.image.managed_identity_client_id == "image-pull-client-id"
-    assert declaration.scheduler_managed_identity_client_id == "scheduler-client-id"
-    assert declaration.resources.cpu == "500m"
-    assert declaration.resources.memory == "1Gi"
-    assert declaration.environment_variables["CUSTOM_ENV"] == "custom-value"
-    assert declaration.max_concurrent_activities == 3
-    assert list(declaration.image.entrypoint) == ["python"]
-    assert list(declaration.image.cmd) == ["/app/remote_worker.py"]
+    assert worker_profile.worker_profile_id == "preview"
+    assert list(worker_profile.activity_names) == ["RemoteHello"]
+    assert worker_profile.image.image_ref == "example.azurecr.io/sandboxes-worker:v1"
+    assert worker_profile.image.managed_identity_client_id == "image-pull-client-id"
+    assert worker_profile.scheduler_managed_identity_client_id == "scheduler-client-id"
+    assert worker_profile.resources.cpu == "500m"
+    assert worker_profile.resources.memory == "1Gi"
+    assert worker_profile.environment_variables["CUSTOM_ENV"] == "custom-value"
+    assert worker_profile.max_concurrent_activities == 3
+    assert list(worker_profile.image.entrypoint) == ["python"]
+    assert list(worker_profile.image.cmd) == ["/app/remote_worker.py"]
 
 
-def test_build_sandbox_activity_declaration_accepts_adc_resource_quantities() -> None:
+def test_build_sandbox_worker_profile_accepts_adc_resource_quantities() -> None:
     for cpu, memory in [
         ("500m", "1024Mi"),
         ("0.5", "1Gi"),
         ("2", "2048"),
     ]:
-        declaration = _build_sandbox_activity_declaration(
+        worker_profile = _build_sandbox_worker_profile(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
             container_image="example.azurecr.io/sandboxes-worker:v1",
@@ -201,11 +201,11 @@ def test_build_sandbox_activity_declaration_accepts_adc_resource_quantities() ->
             cpu=cpu,
             memory=memory)
 
-        assert declaration.resources.cpu == cpu
-        assert declaration.resources.memory == memory
+        assert worker_profile.resources.cpu == cpu
+        assert worker_profile.resources.memory == memory
 
 
-def test_build_sandbox_activity_declaration_rejects_invalid_adc_resource_quantities() -> None:
+def test_build_sandbox_worker_profile_rejects_invalid_adc_resource_quantities() -> None:
     for cpu, memory, expected_message in [
         ("0", "1024Mi", "CPU"),
         ("0m", "1024Mi", "CPU"),
@@ -216,7 +216,7 @@ def test_build_sandbox_activity_declaration_rejects_invalid_adc_resource_quantit
         ("500m", "500m", "memory"),
     ]:
         try:
-            _build_sandbox_activity_declaration(
+            _build_sandbox_worker_profile(
                 worker_profile_id="preview",
                 activity_names=["RemoteHello"],
                 container_image="example.azurecr.io/sandboxes-worker:v1",
@@ -230,20 +230,20 @@ def test_build_sandbox_activity_declaration_rejects_invalid_adc_resource_quantit
             raise AssertionError("Expected invalid resource quantity to fail.")
 
 
-def test_build_sandbox_activity_declaration_accepts_single_name() -> None:
-    declaration = _build_sandbox_activity_declaration(
+def test_build_sandbox_worker_profile_accepts_single_name() -> None:
+    worker_profile = _build_sandbox_worker_profile(
         worker_profile_id="preview",
         activity_names="RemoteHello",
         container_image="example.azurecr.io/sandboxes-worker:v1",
         image_pull_managed_identity_client_id="image-pull-client-id",
         scheduler_managed_identity_client_id="scheduler-client-id")
 
-    assert list(declaration.activity_names) == ["RemoteHello"]
+    assert list(worker_profile.activity_names) == ["RemoteHello"]
 
 
-def test_build_sandbox_activity_declaration_requires_scheduler_managed_identity_client_id() -> None:
+def test_build_sandbox_worker_profile_requires_scheduler_managed_identity_client_id() -> None:
     try:
-        _build_sandbox_activity_declaration(
+        _build_sandbox_worker_profile(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
             container_image="example.azurecr.io/sandboxes-worker:v1")
@@ -253,9 +253,9 @@ def test_build_sandbox_activity_declaration_requires_scheduler_managed_identity_
         raise AssertionError("Expected missing scheduler managed identity client ID to fail.")
 
 
-def test_build_sandbox_activity_declaration_requires_image_pull_managed_identity_client_id() -> None:
+def test_build_sandbox_worker_profile_requires_image_pull_managed_identity_client_id() -> None:
     try:
-        _build_sandbox_activity_declaration(
+        _build_sandbox_worker_profile(
             worker_profile_id="preview",
             activity_names=["RemoteHello"],
             container_image="example.azurecr.io/sandboxes-worker:v1",
@@ -293,8 +293,8 @@ def test_generated_stub_uses_sandbox_rpc_paths() -> None:
     assert stub is not None
     assert channel.methods == [
         "/microsoft.durabletask.sandboxes.SandboxActivities/ConnectSandboxActivityWorker",
-        "/microsoft.durabletask.sandboxes.SandboxActivities/DeclareSandboxActivities",
-        "/microsoft.durabletask.sandboxes.SandboxActivities/RemoveSandboxActivityDeclaration",
+        "/microsoft.durabletask.sandboxes.SandboxActivities/DeclareSandboxWorkerProfile",
+        "/microsoft.durabletask.sandboxes.SandboxActivities/RemoveSandboxWorkerProfile",
     ]
 
 

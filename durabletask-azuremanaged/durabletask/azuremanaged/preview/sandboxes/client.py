@@ -7,8 +7,8 @@ import grpc
 from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.preview.sandboxes.helpers import normalize_required
-from durabletask.azuremanaged.preview.sandboxes.declarations import (
-    build_profile_sandbox_activity_declarations,
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
+    build_sandbox_worker_profiles,
 )
 from durabletask.azuremanaged.preview.sandboxes.transport import (
     SandboxActivitiesGrpcTransport,
@@ -43,13 +43,13 @@ class SandboxActivitiesClient:
 
     def enable_sandbox_activities(self) -> None:
         """Declare all configured sandbox worker profiles with Durable Task Scheduler."""
-        declarations = build_profile_sandbox_activity_declarations()
-        if not declarations:
+        worker_profiles = build_sandbox_worker_profiles()
+        if not worker_profiles:
             raise ValueError("No configured sandbox activities were found.")
 
-        for declaration in declarations:
-            self._transport.declare_sandbox_activities(declaration)
+        for worker_profile in worker_profiles:
+            self._transport.declare_sandbox_worker_profile(worker_profile)
 
-    def remove_sandbox_activity_declaration(self, worker_profile_id: str) -> None:
+    def remove_sandbox_worker_profile(self, worker_profile_id: str) -> None:
         worker_profile_id = normalize_required(worker_profile_id, "Worker profile ID is required.")
-        self._transport.remove_sandbox_activity_declaration(worker_profile_id)
+        self._transport.remove_sandbox_worker_profile(worker_profile_id)
