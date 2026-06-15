@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Sandbox preview APIs for Azure Managed Durable Task Scheduler.
+"""Sandbox preview APIs for Durable Task Scheduler.
 
 This extension provides preview APIs for declaring sandbox activity
 worker images and running a Python activity worker inside a Durable Task
