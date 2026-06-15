@@ -8,8 +8,11 @@ from typing import Any, Callable, Iterable, Optional
 from durabletask import task
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.preview.sandboxes.helpers import (
+    SandboxActivity,
+    activities_overlap,
+    format_activity,
     normalize_required,
-    resolve_activity_names,
+    resolve_activities,
 )
 
 
@@ -35,13 +38,17 @@ class SandboxWorkerProfileOptions:
     max_concurrent_activities: int = DEFAULT_MAX_CONCURRENT_ACTIVITIES
     entrypoint: list[str] = field(default_factory=list[str])
     cmd: list[str] = field(default_factory=list[str])
-    activity_names: list[str] = field(default_factory=list[str])
+    activities: list[SandboxActivity] = field(default_factory=list[SandboxActivity])
 
-    def add_activity(self, activity: str | Callable[..., Any]) -> None:
+    def add_activity(
+            self,
+            activity: str | Callable[..., Any],
+            version: Optional[str]) -> None:
         """Add an activity to the sandbox worker profile worker_profile."""
         activity_name = task.get_name(activity) if callable(activity) else activity
-        self.activity_names.append(
-            normalize_required(activity_name, "Sandbox activity name is required."))
+        self.activities.append(SandboxActivity(
+            name=normalize_required(activity_name, "Sandbox activity name is required."),
+            version=(version.strip() if version and version.strip() else None)))
 
 
 class SandboxWorkerProfile:
@@ -72,7 +79,7 @@ def sandbox_worker_profile(worker_profile_id: str) -> Callable[[type], type]:
         if callable(configure):
             configure(options)
 
-        if not resolve_activity_names(options.activity_names):
+        if not resolve_activities(options.activities):
             raise ValueError(
                 f"Sandbox worker profile '{normalized_profile}' must declare at least one activity.")
 
@@ -84,7 +91,7 @@ def sandbox_worker_profile(worker_profile_id: str) -> Callable[[type], type]:
 
 def _build_sandbox_worker_profile(
         *,
-        activity_names: str | Iterable[str],
+        activities: Iterable[SandboxActivity],
         scheduler_managed_identity_client_id: Optional[str],
         worker_profile_id: str,
         container_image: Optional[str] = None,
@@ -102,9 +109,9 @@ def _build_sandbox_worker_profile(
             such as "myregistry.azurecr.io/workers/hello:1.0" or
             "myregistry.azurecr.io/workers/hello@sha256:0123456789abcdef...".
     """
-    resolved_activity_names = resolve_activity_names(activity_names)
-    if not resolved_activity_names:
-        raise ValueError("Sandbox activity worker_profile requires at least one activity name.")
+    resolved_activities = resolve_activities(activities)
+    if not resolved_activities:
+        raise ValueError("Sandbox activity worker_profile requires at least one activity.")
 
     if not worker_profile_id or not worker_profile_id.strip():
         raise ValueError("Sandbox activity worker_profile requires a worker profile ID.")
@@ -138,7 +145,10 @@ def _build_sandbox_worker_profile(
             memory=resolved_memory),
         scheduler_managed_identity_client_id=resolved_scheduler_managed_identity_client_id,
         max_concurrent_activities=max_concurrent_activities)
-    worker_profile.activity_names.extend(resolved_activity_names)
+    worker_profile.activities.extend([
+        pb.SandboxActivity(name=activity.name, version=activity.version or "")
+        for activity in resolved_activities
+    ])
     worker_profile.environment_variables.update(environment_variables or {})
     worker_profile.image.entrypoint.extend(_normalize_optional_strings(entrypoint or []))
     worker_profile.image.cmd.extend(_normalize_optional_strings(cmd or []))
@@ -148,21 +158,22 @@ def _build_sandbox_worker_profile(
 def build_sandbox_worker_profiles() -> list[pb.SandboxWorkerProfile]:
     """Build sandbox worker_profiles from worker profile configuration."""
     worker_profiles: list[pb.SandboxWorkerProfile] = []
-    activity_owners: dict[str, str] = {}
+    activity_owners: list[tuple[SandboxActivity, str]] = []
     for profile in _worker_profiles.values():
-        activity_names = resolve_activity_names(profile.activity_names)
+        activities = resolve_activities(profile.activities)
 
-        for activity_name in activity_names:
-            activity_key = activity_name.casefold()
-            existing_profile = activity_owners.get(activity_key)
-            if existing_profile and existing_profile != profile.worker_profile_id:
+        for activity in activities:
+            existing_profile = next((owner_profile for owner_activity, owner_profile in activity_owners
+                                     if activities_overlap(owner_activity, activity)
+                                     and owner_profile != profile.worker_profile_id), None)
+            if existing_profile:
                 raise ValueError(
-                    f"Sandbox activity '{activity_name}' is assigned to both worker profile "
+                    f"Sandbox activity '{format_activity(activity)}' is assigned to both worker profile "
                     f"'{existing_profile}' and '{profile.worker_profile_id}'.")
-            activity_owners[activity_key] = profile.worker_profile_id
+            activity_owners.append((activity, profile.worker_profile_id))
 
         worker_profiles.append(_build_sandbox_worker_profile(
-            activity_names=activity_names,
+            activities=activities,
             worker_profile_id=profile.worker_profile_id,
             container_image=profile.container_image,
             image_pull_managed_identity_client_id=profile.image_pull_managed_identity_client_id,
@@ -182,7 +193,7 @@ def build_sandbox_worker_start(
         taskhub: str,
         worker_profile_id: str,
         max_activities_count: int,
-        activity_names: Iterable[str],
+        activities: Iterable[SandboxActivity],
         sandbox_provider: Optional[str] = None,
         dts_sandbox_identifier: Optional[str] = None) -> pb.SandboxActivityWorkerMessage:
     if not taskhub or not taskhub.strip():
@@ -194,8 +205,8 @@ def build_sandbox_worker_start(
     if max_activities_count <= 0:
         raise ValueError("Sandbox activity worker max activity count must be greater than zero.")
 
-    resolved_activity_names = resolve_activity_names(activity_names)
-    if not resolved_activity_names:
+    resolved_activities = resolve_activities(activities)
+    if not resolved_activities:
         raise ValueError("Sandbox activity worker registration requires at least one registered activity.")
 
     message = pb.SandboxActivityWorkerMessage(
@@ -205,7 +216,10 @@ def build_sandbox_worker_start(
             max_activities_count=max_activities_count,
             sandbox_provider=_parse_sandbox_provider(sandbox_provider),
             dts_sandbox_identifier=(dts_sandbox_identifier or "").strip()))
-    message.start.activity_names.extend(resolved_activity_names)
+    message.start.activities.extend([
+        pb.SandboxActivity(name=activity.name, version=activity.version or "")
+        for activity in resolved_activities
+    ])
     return message
 
 

@@ -12,7 +12,8 @@ from azure.identity import ManagedIdentityCredential
 
 from durabletask import task
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
-from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activity_names
+from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
+from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
 from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
     build_sandbox_worker_heartbeat,
@@ -62,7 +63,7 @@ class SandboxWorker(DurableTaskSchedulerWorker):
 
         self._sandbox_taskhub = resolved_taskhub
         self._sandbox_worker_profile_id = _resolve_worker_profile_id()
-        self._sandbox_activity_names: list[str] = []
+        self._sandbox_activities: list[SandboxActivity] = []
         self._sandbox_max_activities = resolved_max_concurrent_activities
         self._sandbox_provider = resolved_sandbox_provider
         self._sandbox_dts_sandbox_identifier = os.getenv("DTS_SANDBOX_ID")
@@ -72,9 +73,12 @@ class SandboxWorker(DurableTaskSchedulerWorker):
         self._sandbox_active_activities = 0
         self._sandbox_active_activities_lock = threading.Lock()
 
-    def add_activity(self, fn: task.Activity[Any, Any]) -> str:
+    def add_activity(
+            self,
+            fn: task.Activity[Any, Any],
+            version: Optional[str]) -> str:
         activity_name = super().add_activity(fn)
-        self._sandbox_activity_names.append(activity_name)
+        self._sandbox_activities.append(SandboxActivity(activity_name, version))
         return activity_name
 
     def start(self) -> None:
@@ -95,15 +99,17 @@ class SandboxWorker(DurableTaskSchedulerWorker):
             self._sandbox_active_activities = max(0, self._sandbox_active_activities - 1)
 
     def _configure_sandbox_activity_filters(self) -> None:
-        activity_names = resolve_activity_names(self._sandbox_activity_names)
-        if not activity_names:
+        activities = resolve_activities(self._sandbox_activities)
+        if not activities:
             raise RuntimeError(
                 "Sandbox worker requires at least one registered activity before it can register.")
 
-        self._sandbox_activity_names = activity_names
+        self._sandbox_activities = activities
         self.use_work_item_filters(WorkItemFilters(
             orchestrations=[],
-            activities=[ActivityWorkItemFilter(name=name) for name in activity_names],
+            activities=[ActivityWorkItemFilter(
+                name=activity.name,
+                versions=[] if activity.version is None else [activity.version]) for activity in activities],
             entities=[]))
 
     def _start_sandbox_registration(self) -> None:
@@ -152,7 +158,7 @@ class SandboxWorker(DurableTaskSchedulerWorker):
             taskhub=self._sandbox_taskhub,
             worker_profile_id=self._sandbox_worker_profile_id,
             max_activities_count=self._sandbox_max_activities,
-            activity_names=self._sandbox_activity_names,
+            activities=self._sandbox_activities,
             sandbox_provider=self._sandbox_provider,
             dts_sandbox_identifier=self._sandbox_dts_sandbox_identifier)
 

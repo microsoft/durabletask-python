@@ -6,7 +6,7 @@ import threading
 from durabletask import task
 from durabletask.azuremanaged.preview.sandboxes import SandboxWorker
 
-from activity_names import REMOTE_HELLO
+from activities import REMOTE_HELLO
 
 
 def _remote_hello(ctx: task.ActivityContext, name: str) -> str:
@@ -16,11 +16,11 @@ def _remote_hello(ctx: task.ActivityContext, name: str) -> str:
     return f"Hello {name} from Python sandbox worker {sandbox_id}! SANDBOX_SAMPLE_MARKER={marker}"
 
 
-_remote_hello.__name__ = REMOTE_HELLO
+_remote_hello.__name__ = REMOTE_HELLO.name
 
 
 with SandboxWorker() as worker:
-    worker.add_activity(_remote_hello)
+    worker.add_activity(_remote_hello, version=REMOTE_HELLO.version)
     worker.start()
     print("Python sandbox remote worker is running. Press Ctrl+C to stop.")
     try:

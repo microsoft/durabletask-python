@@ -11,12 +11,12 @@ from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfile
 from durabletask.azuremanaged.preview.sandboxes import sandbox_worker_profile
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
-from activity_names import REMOTE_HELLO
+from activities import REMOTE_HELLO
 
 
 def hello_orchestrator(ctx: task.OrchestrationContext, name: str):
     """Orchestrator that calls an activity executed by the remote worker image."""
-    return (yield ctx.call_activity(REMOTE_HELLO, input=name))
+    return (yield ctx.call_activity(REMOTE_HELLO.name, input=name))
 
 
 def _get_required_env(name: str) -> str:
@@ -50,7 +50,7 @@ class RemoteWorkerProfile(SandboxWorkerProfile):
         options.memory = "2048Mi"
         options.max_concurrent_activities = 1
         options.environment_variables["SANDBOX_SAMPLE_MARKER"] = "sandboxes-python-sample-marker"
-        options.add_activity(REMOTE_HELLO)
+        options.add_activity(REMOTE_HELLO.name, version=REMOTE_HELLO.version)
 
 
 print(f"Using taskhub: {taskhub_name}")

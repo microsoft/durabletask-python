@@ -5,8 +5,10 @@ import warnings
 
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as durabletask_dot_azuremanaged_dot_internal_dot_sandbox__service__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.65.4'
 GRPC_VERSION = grpc.__version__
+EXPECTED_ERROR_RELEASE = '1.66.0'
+SCHEDULED_RELEASE_DATE = 'August 6, 2024'
 _version_not_supported = False
 
 try:
@@ -16,12 +18,15 @@ except ImportError:
     _version_not_supported = True
 
 if _version_not_supported:
-    raise RuntimeError(
+    warnings.warn(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in durabletask/azuremanaged/internal/sandbox_service_pb2_grpc.py depends on'
+        + f' but the generated code in durabletask/azuremanaged/internal/sandbox_service_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
+        + f' This warning will become an error in {EXPECTED_ERROR_RELEASE},'
+        + f' scheduled for release on {SCHEDULED_RELEASE_DATE}.',
+        RuntimeWarning
     )
 
 
@@ -65,8 +70,6 @@ class SandboxActivitiesServicer(object):
 
     def DeclareSandboxWorkerProfile(self, request, context):
         """Creates or updates a sandbox worker profile before any live worker stream exists.
-        This private preview supports activity execution only as a business
-        decision; orchestrations and entities are not part of this contract.
         This is a configuration contract and does not advertise active worker
         capacity.
         """

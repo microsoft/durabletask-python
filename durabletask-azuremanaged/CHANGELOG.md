@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added preview `durabletask.azuremanaged.preview.sandboxes` APIs for
   declaring Durable Task Scheduler sandbox activities, registering
   worker profiles, and running sandbox activity workers.
+- Added optional activity versions to sandbox worker profile declarations and
+  sandbox worker registration.
 
 ## v1.5.0
 

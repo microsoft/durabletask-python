@@ -6,8 +6,8 @@ This sample mirrors the .NET sandbox sample with three customer-owned pieces:
   in a sandbox, starts the orchestration, and waits for the result.
 2. A **remote worker image** (`remote_worker.py` plus `Containerfile`) that
    Durable Task Scheduler starts in a sandbox to execute the declared activity.
-3. A tiny shared module (`activity_names.py`) that keeps the declarer and remote
-   worker on the same activity name constants.
+3. A tiny shared module (`activities.py`) that keeps the declarer and remote
+  worker on the same activity identity constants.
 
 > [!NOTE]
 > Until the sandbox extension is published in a preview package, the worker
@@ -43,8 +43,10 @@ $env:DTS_SANDBOX_SCHEDULER_UMI_CLIENT_ID = "<scheduler UMI client ID>"
 After pushing the remote worker image, set `DTS_SANDBOX_CONTAINER_IMAGE` to
 the pushed image reference. `RemoteWorkerProfile.configure()` declares CPU,
 memory, max concurrency, customer environment variables, and sandbox activity
-names with `options.add_activity(...)`. The declarer and remote worker both use
-`activity_names.py` so they stay in sync.
+identities with `options.add_activity(name, version)`. This sample uses an
+unversioned activity identity (`version=None`) because Python orchestrations
+currently schedule activities by name. The declarer and remote worker both use
+`activities.py` so they stay in sync.
 
 The remote worker code cannot pass Durable Task Scheduler runtime settings to the SDK. In a
 sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`,
@@ -52,7 +54,7 @@ sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`,
 `DTS_SANDBOX_PROVIDER`, `DTS_AUTHENTICATION`, `DTS_UMI_CLIENT_ID`, and
 `DTS_SANDBOX_ID` from environment variables injected by Durable Task Scheduler.
 The worker requires `DTS_AUTHENTICATION=ManagedIdentity` and reports its
-registered activity names when it connects. Durable Task Scheduler validates
+registered activity identities when it connects. Durable Task Scheduler validates
 they match the worker_profile before advertising worker capacity.
 
 ## Build the remote worker image

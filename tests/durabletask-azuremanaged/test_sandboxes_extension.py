@@ -19,21 +19,29 @@ from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
     build_sandbox_worker_start,
     build_sandbox_worker_profiles,
 )
-from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activity_names
+from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
+from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.internal import sandbox_service_pb2_grpc as stubs
 
 
-def test_resolve_activity_names_trims_and_deduplicates() -> None:
-    assert resolve_activity_names([" RemoteHello ", "", "RemoteHello", "remotehello", "Other"]) == [
-        "RemoteHello",
-        "Other",
+def test_resolve_activities_trims_and_deduplicates() -> None:
+    assert resolve_activities([
+        SandboxActivity(" RemoteHello ", None),
+        SandboxActivity("", None),
+        SandboxActivity("RemoteHello", None),
+        SandboxActivity("remotehello", None),
+        SandboxActivity("Other", "v1"),
+    ]) == [
+        SandboxActivity("RemoteHello", None),
+        SandboxActivity("Other", "v1"),
     ]
 
 
 def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
     assert sandbox.__all__ == [
         "SandboxWorker",
+        "SandboxActivity",
         "SandboxWorkerProfile",
         "SandboxWorkerProfileOptions",
         "SandboxActivitiesClient",
@@ -61,7 +69,7 @@ def test_build_sandbox_worker_profiles() -> None:
             options.memory = "1Gi"
             options.max_concurrent_activities = 3
             options.environment_variables["SANDBOX_SAMPLE_MARKER"] = "custom-value"
-            options.add_activity("PytestRemoteHello")
+            options.add_activity("PytestRemoteHello", version="v1")
 
     try:
         worker_profiles = [
@@ -70,7 +78,8 @@ def test_build_sandbox_worker_profiles() -> None:
         ]
 
         worker_profile = worker_profiles[0]
-        assert list(worker_profile.activity_names) == ["PytestRemoteHello"]
+        assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
+            ("PytestRemoteHello", "v1")]
         assert worker_profile.image.image_ref == "example.azurecr.io/python-worker:v1"
         assert worker_profile.image.managed_identity_client_id == "image-pull-client-id"
         assert worker_profile.scheduler_managed_identity_client_id == "scheduler-client-id"
@@ -109,7 +118,7 @@ def test_build_sandbox_worker_profiles_rejects_activity_overlap() -> None:
             options.container_image = "example.azurecr.io/python-worker-a:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
-            options.add_activity("PytestOverlapRemoteHello")
+            options.add_activity("PytestOverlapRemoteHello", version=None)
 
     @sandbox_worker_profile("pytest-overlap-profile-b")
     class PytestOverlapProfileB(SandboxWorkerProfile):
@@ -117,7 +126,7 @@ def test_build_sandbox_worker_profiles_rejects_activity_overlap() -> None:
             options.container_image = "example.azurecr.io/python-worker-b:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
-            options.add_activity("pytestoverlapremotehello")
+            options.add_activity("pytestoverlapremotehello", version=None)
 
     try:
         try:
@@ -133,6 +142,42 @@ def test_build_sandbox_worker_profiles_rejects_activity_overlap() -> None:
         sandbox_worker_profiles._worker_profiles.pop("pytest-overlap-profile-b", None)
 
 
+def test_build_sandbox_worker_profiles_allows_same_activity_name_different_versions() -> None:
+    @sandbox_worker_profile("pytest-version-profile-a")
+    class PytestVersionProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.container_image = "example.azurecr.io/python-worker-a:v1"
+            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestVersionedActivity", version="v1")
+
+    @sandbox_worker_profile("pytest-version-profile-b")
+    class PytestVersionProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.container_image = "example.azurecr.io/python-worker-b:v1"
+            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestVersionedActivity", version="v2")
+
+    try:
+        worker_profiles = [
+            worker_profile for worker_profile in build_sandbox_worker_profiles()
+            if worker_profile.worker_profile_id in {"pytest-version-profile-a", "pytest-version-profile-b"}
+        ]
+
+        assert [worker_profile.worker_profile_id for worker_profile in worker_profiles] == [
+            "pytest-version-profile-a",
+            "pytest-version-profile-b",
+        ]
+        assert [(profile.activities[0].name, profile.activities[0].version) for profile in worker_profiles] == [
+            ("PytestVersionedActivity", "v1"),
+            ("PytestVersionedActivity", "v2"),
+        ]
+    finally:
+        sandbox_worker_profiles._worker_profiles.pop("pytest-version-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-version-profile-b", None)
+
+
 def test_profile_options_add_activity_accepts_callable() -> None:
     def pytest_callable_remote_hello(_ctx, value):
         return value
@@ -143,7 +188,7 @@ def test_profile_options_add_activity_accepts_callable() -> None:
             options.container_image = "example.azurecr.io/python-worker:v1"
             options.image_pull_managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
-            options.add_activity(pytest_callable_remote_hello)
+            options.add_activity(pytest_callable_remote_hello, version=None)
 
     try:
         worker_profiles = [
@@ -152,7 +197,8 @@ def test_profile_options_add_activity_accepts_callable() -> None:
         ]
 
         worker_profile = worker_profiles[0]
-        assert list(worker_profile.activity_names) == ["pytest_callable_remote_hello"]
+        assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
+            ("pytest_callable_remote_hello", "")]
     finally:
         sandbox_worker_profiles._worker_profiles.pop("pytest-callable-profile", None)
 
@@ -160,7 +206,7 @@ def test_profile_options_add_activity_accepts_callable() -> None:
 def test_build_sandbox_worker_profile() -> None:
     worker_profile = _build_sandbox_worker_profile(
         worker_profile_id="preview",
-        activity_names=["RemoteHello"],
+        activities=[SandboxActivity("RemoteHello", None)],
         container_image="example.azurecr.io/sandboxes-worker:v1",
         cpu="500m",
         memory="1Gi",
@@ -174,7 +220,8 @@ def test_build_sandbox_worker_profile() -> None:
         cmd=["/app/remote_worker.py"])
 
     assert worker_profile.worker_profile_id == "preview"
-    assert list(worker_profile.activity_names) == ["RemoteHello"]
+    assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
+        ("RemoteHello", "")]
     assert worker_profile.image.image_ref == "example.azurecr.io/sandboxes-worker:v1"
     assert worker_profile.image.managed_identity_client_id == "image-pull-client-id"
     assert worker_profile.scheduler_managed_identity_client_id == "scheduler-client-id"
@@ -194,7 +241,7 @@ def test_build_sandbox_worker_profile_accepts_adc_resource_quantities() -> None:
     ]:
         worker_profile = _build_sandbox_worker_profile(
             worker_profile_id="preview",
-            activity_names=["RemoteHello"],
+            activities=[SandboxActivity("RemoteHello", None)],
             container_image="example.azurecr.io/sandboxes-worker:v1",
             image_pull_managed_identity_client_id="image-pull-client-id",
             scheduler_managed_identity_client_id="scheduler-client-id",
@@ -218,7 +265,7 @@ def test_build_sandbox_worker_profile_rejects_invalid_adc_resource_quantities() 
         try:
             _build_sandbox_worker_profile(
                 worker_profile_id="preview",
-                activity_names=["RemoteHello"],
+                activities=[SandboxActivity("RemoteHello", None)],
                 container_image="example.azurecr.io/sandboxes-worker:v1",
                 image_pull_managed_identity_client_id="image-pull-client-id",
                 scheduler_managed_identity_client_id="scheduler-client-id",
@@ -230,22 +277,35 @@ def test_build_sandbox_worker_profile_rejects_invalid_adc_resource_quantities() 
             raise AssertionError("Expected invalid resource quantity to fail.")
 
 
-def test_build_sandbox_worker_profile_accepts_single_name() -> None:
+def test_build_sandbox_worker_profile_accepts_single_activity() -> None:
     worker_profile = _build_sandbox_worker_profile(
         worker_profile_id="preview",
-        activity_names="RemoteHello",
+        activities=[SandboxActivity("RemoteHello", None)],
         container_image="example.azurecr.io/sandboxes-worker:v1",
         image_pull_managed_identity_client_id="image-pull-client-id",
         scheduler_managed_identity_client_id="scheduler-client-id")
 
-    assert list(worker_profile.activity_names) == ["RemoteHello"]
+    assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
+        ("RemoteHello", "")]
+
+
+def test_build_sandbox_worker_profile_accepts_activity_versions() -> None:
+    worker_profile = _build_sandbox_worker_profile(
+        worker_profile_id="preview",
+        activities=[SandboxActivity("RemoteHello", "v1")],
+        container_image="example.azurecr.io/sandboxes-worker:v1",
+        image_pull_managed_identity_client_id="image-pull-client-id",
+        scheduler_managed_identity_client_id="scheduler-client-id")
+
+    assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
+        ("RemoteHello", "v1")]
 
 
 def test_build_sandbox_worker_profile_requires_scheduler_managed_identity_client_id() -> None:
     try:
         _build_sandbox_worker_profile(
             worker_profile_id="preview",
-            activity_names=["RemoteHello"],
+            activities=[SandboxActivity("RemoteHello", None)],
             container_image="example.azurecr.io/sandboxes-worker:v1")
     except TypeError as ex:
         assert "scheduler_managed_identity_client_id" in str(ex)
@@ -257,7 +317,7 @@ def test_build_sandbox_worker_profile_requires_image_pull_managed_identity_clien
     try:
         _build_sandbox_worker_profile(
             worker_profile_id="preview",
-            activity_names=["RemoteHello"],
+            activities=[SandboxActivity("RemoteHello", None)],
             container_image="example.azurecr.io/sandboxes-worker:v1",
             scheduler_managed_identity_client_id="scheduler-client-id")
     except ValueError as ex:
@@ -271,7 +331,7 @@ def test_build_sandbox_worker_start_and_heartbeat() -> None:
         taskhub="hub",
         worker_profile_id="preview",
         max_activities_count=2,
-        activity_names=["RemoteHello"],
+        activities=[SandboxActivity("RemoteHello", None)],
         sandbox_provider="Sandbox",
         dts_sandbox_identifier="sandbox-1")
 
@@ -280,7 +340,8 @@ def test_build_sandbox_worker_start_and_heartbeat() -> None:
     assert start.start.max_activities_count == 2
     assert start.start.sandbox_provider == pb.SANDBOX_PROVIDER_KIND_SANDBOX
     assert start.start.dts_sandbox_identifier == "sandbox-1"
-    assert list(start.start.activity_names) == ["RemoteHello"]
+    assert [(activity.name, activity.version) for activity in start.start.activities] == [
+        ("RemoteHello", "")]
 
     heartbeat = build_sandbox_worker_heartbeat(1)
     assert heartbeat.heartbeat.active_activities_count == 1
@@ -337,8 +398,8 @@ def test_sandbox_worker_reads_sandbox_environment_and_registered_activities(monk
         return value
 
     worker = SandboxWorker()
-    worker.add_activity(EnvActivity)
-    worker.add_activity(OtherActivity)
+    worker.add_activity(EnvActivity, version=None)
+    worker.add_activity(OtherActivity, version=None)
     worker._configure_sandbox_activity_filters()
     start = next(worker._registration_messages())
 
@@ -357,7 +418,10 @@ def test_sandbox_worker_reads_sandbox_environment_and_registered_activities(monk
     assert start.start.max_activities_count == 7
     assert start.start.sandbox_provider == pb.SANDBOX_PROVIDER_KIND_ACA_SESSION_POOL
     assert start.start.dts_sandbox_identifier == "env-sandbox"
-    assert list(start.start.activity_names) == ["EnvActivity", "OtherActivity"]
+    assert [(activity.name, activity.version) for activity in start.start.activities] == [
+        ("EnvActivity", ""),
+        ("OtherActivity", ""),
+    ]
 
 
 def test_sandbox_worker_stop_keeps_handle_for_still_running_registration_thread(monkeypatch) -> None:
