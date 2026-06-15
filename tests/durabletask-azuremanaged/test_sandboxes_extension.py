@@ -527,13 +527,13 @@ def test_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> 
 
     worker = SandboxWorker()
 
-    worker._durabletask_on_activity_execution_started(object())
+    worker._on_activity_execution_started(object())
     assert worker._sandbox_active_activities == 1
 
-    worker._durabletask_on_activity_execution_completed(object())
+    worker._on_activity_execution_completed(object())
     assert worker._sandbox_active_activities == 0
 
-    worker._durabletask_on_activity_execution_completed(object())
+    worker._on_activity_execution_completed(object())
     assert worker._sandbox_active_activities == 0
 
 

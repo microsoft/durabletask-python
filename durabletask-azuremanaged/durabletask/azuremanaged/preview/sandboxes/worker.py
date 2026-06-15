@@ -90,11 +90,11 @@ class SandboxWorker(DurableTaskSchedulerWorker):
         self._stop_sandbox_registration()
         super().stop()
 
-    def _durabletask_on_activity_execution_started(self, req: worker_pb.ActivityRequest) -> None:
+    def _on_activity_execution_started(self, req: worker_pb.ActivityRequest) -> None:
         with self._sandbox_active_activities_lock:
             self._sandbox_active_activities += 1
 
-    def _durabletask_on_activity_execution_completed(self, req: worker_pb.ActivityRequest) -> None:
+    def _on_activity_execution_completed(self, req: worker_pb.ActivityRequest) -> None:
         with self._sandbox_active_activities_lock:
             self._sandbox_active_activities = max(0, self._sandbox_active_activities - 1)
 

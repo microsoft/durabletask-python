@@ -20,10 +20,10 @@ class HookedWorker(TaskHubGrpcWorker):
         super().__init__()
         self.events = []
 
-    def _durabletask_on_activity_execution_started(self, req):
+    def _on_activity_execution_started(self, req):
         self.events.append(("started", req.name))
 
-    def _durabletask_on_activity_execution_completed(self, req):
+    def _on_activity_execution_completed(self, req):
         self.events.append(("completed", req.name))
 
 

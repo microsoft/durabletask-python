@@ -1217,10 +1217,10 @@ class TaskHubGrpcWorker:
         )
         self._logger.info(f"Cancelled orchestration task for invocation ID: {req.instanceId}")
 
-    def _durabletask_on_activity_execution_started(self, req: pb.ActivityRequest) -> None:
+    def _on_activity_execution_started(self, req: pb.ActivityRequest) -> None:
         pass
 
-    def _durabletask_on_activity_execution_completed(self, req: pb.ActivityRequest) -> None:
+    def _on_activity_execution_completed(self, req: pb.ActivityRequest) -> None:
         pass
 
     def _execute_activity(
@@ -1230,7 +1230,7 @@ class TaskHubGrpcWorker:
             completionToken: Any,
     ) -> None:
         instance_id = req.orchestrationInstance.instanceId
-        self._durabletask_on_activity_execution_started(req)
+        self._on_activity_execution_started(req)
         try:
             # De-externalize any large-payload tokens in the incoming request
             if self._payload_store is not None:
@@ -1281,7 +1281,7 @@ class TaskHubGrpcWorker:
                     f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
                 )
         finally:
-            self._durabletask_on_activity_execution_completed(req)
+            self._on_activity_execution_completed(req)
 
     def _cancel_activity(
             self,
