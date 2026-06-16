@@ -305,6 +305,12 @@ class ExportJobEntity(entities.DurableEntity):
         assert_valid_transition(
             self.OP_MARK_FAILED, state.status, ExportJobStatus.FAILED, job_id=job_id,
         )
+        if state.status is ExportJobStatus.FAILED:
+            # Idempotent no-op: if the job is already FAILED, do not
+            # mutate persisted state (especially ``last_error``) and
+            # avoid noisy invalid-transition logs from duplicate
+            # best-effort mark_failed signals.
+            return state.to_dict()
         reason = ""
         if payload is not None:
             reason = str(payload.get("reason", ""))

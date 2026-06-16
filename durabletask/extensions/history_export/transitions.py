@@ -46,6 +46,7 @@ TRANSITIONS: Mapping[tuple[str, ExportJobStatus | None], frozenset[ExportJobStat
     ("mark_completed", ExportJobStatus.ACTIVE): frozenset({ExportJobStatus.COMPLETED}),
 
     ("mark_failed", ExportJobStatus.ACTIVE): frozenset({ExportJobStatus.FAILED}),
+    ("mark_failed", ExportJobStatus.FAILED): frozenset({ExportJobStatus.FAILED}),
 }
 
 

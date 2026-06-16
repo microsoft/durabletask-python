@@ -57,9 +57,12 @@ class TestTransitionsMatrix:
             "mark_completed", ExportJobStatus.FAILED, ExportJobStatus.COMPLETED,
         )
 
-    def test_mark_failed_allowed_from_active(self) -> None:
+    def test_mark_failed_allowed_from_active_or_failed(self) -> None:
         assert is_valid_transition(
             "mark_failed", ExportJobStatus.ACTIVE, ExportJobStatus.FAILED,
+        )
+        assert is_valid_transition(
+            "mark_failed", ExportJobStatus.FAILED, ExportJobStatus.FAILED,
         )
 
     def test_unknown_operation_rejected(self) -> None:

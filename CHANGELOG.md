@@ -32,8 +32,12 @@ ADDED
   to 3 times with exponential backoff (15s/30s/60s), retries failed batches
   up to 3 times, caps in-flight exports via `max_parallel_exports`
   (default 32), continues-as-new every 5 page cycles to bound orchestrator
-  history, and re-fetches entity state at the top of every page loop so
+  history while preserving cumulative totals across continue-as-new segments,
+  and re-fetches entity state at the top of every page loop so
   external delete or mark-failed signals stop the orchestrator cleanly.
+  Empty-page BATCH checkpoints no longer reset the persisted resume cursor,
+  and duplicate `mark_failed` signals are now idempotent no-ops when a job
+  is already failed to reduce transition-noise logs.
   `delete_job` actively tears the job down: it clears the entity state,
   terminates the driving orchestrator, waits briefly for it to settle, and
   purges its orchestration history so a re-created job with the same ID

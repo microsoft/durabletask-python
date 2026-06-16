@@ -145,12 +145,22 @@ def export_job_orchestrator(
     config = ExportJobConfiguration.from_dict(config_mapping)
     initial_checkpoint = input.get("checkpoint") or {"last_instance_key": None}
     processed_cycles = int(input.get("processed_cycles", 0))
+    input_totals_raw = input.get("totals")
+    input_totals: Mapping[str, Any] = (
+        cast("Mapping[str, Any]", input_totals_raw)
+        if isinstance(input_totals_raw, Mapping)
+        else {}
+    )
 
     entity_id = task.EntityInstanceId(ENTITY_NAME, job_id)
     runtime_status_names = [s.name for s in config.filter.effective_runtime_status()]
     continuation_token: str | None = initial_checkpoint.get("last_instance_key")
 
-    totals: dict[str, int] = {"scanned": 0, "exported": 0, "failed": 0}
+    totals: dict[str, int] = {
+        "scanned": int(input_totals.get("scanned", 0)),
+        "exported": int(input_totals.get("exported", 0)),
+        "failed": int(input_totals.get("failed", 0)),
+    }
 
     try:
         while True:
@@ -160,6 +170,7 @@ def export_job_orchestrator(
                     "job_id": job_id,
                     "config": dict(config_mapping),
                     "checkpoint": {"last_instance_key": continuation_token},
+                    "totals": dict(totals),
                     "processed_cycles": 0,
                 })
                 return None
@@ -227,7 +238,6 @@ def export_job_orchestrator(
                         "scanned_delta": 0,
                         "exported_delta": 0,
                         "failed_delta": 0,
-                        "last_instance_key": None,
                     },
                 )
                 break
