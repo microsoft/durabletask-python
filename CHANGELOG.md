@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+ADDED
+
+- Added `durabletask.extensions.history_export` for exporting the event history of
+  terminal orchestrations to an external destination. Includes
+  `ExportHistoryClient`, a per-job `ExportHistoryJobClient` returned by
+  `get_job_client(...)`, and `list_jobs(...)` for enumerating jobs by status
+  or last-modified window. Ships with a bundled `AzureBlobHistoryExportWriter`
+  (installed with `pip install durabletask[history-export-azure]`) and a
+  `HistoryWriter` protocol for plugging in custom destinations. Supports both
+  `ExportMode.BATCH` (export a window and complete) and `ExportMode.CONTINUOUS`
+  (tail terminal instances indefinitely until stopped via `delete_job`).
+  Exported blobs are self-describing: each blob carries an explicit
+  `schema_version`, the orchestration's `OrchestrationState` metadata, and
+  the full ordered event list. Blob names are a lowercase-hex SHA-256 of
+  ``{last_updated_at}|{instance_id}`` with the format extension appended
+  (matches the .NET `ExportInstanceHistoryActivity` naming scheme), so
+  re-exporting an instance after a later terminal update lands at a new
+  blob path rather than overwriting the previous one, and instance IDs
+  that differ only by `/` no longer collide. Each exported blob also
+  carries `{"instance_id": <id>}` as destination-side metadata (the Azure
+  writer persists this as Azure Blob metadata) so consumers can scan a
+  container without parsing each blob body. The export workflow retries each instance up
+  to 3 times with exponential backoff (15s/30s/60s), retries failed batches
+  up to 3 times, caps in-flight exports via `max_parallel_exports`
+  (default 32), continues-as-new every 5 page cycles to bound orchestrator
+  history while preserving cumulative totals across continue-as-new segments,
+  and re-fetches entity state at the top of every page loop so
+  external delete or mark-failed signals stop the orchestrator cleanly.
+  Empty-page BATCH checkpoints no longer reset the persisted resume cursor,
+  and duplicate `mark_failed` signals are now idempotent no-ops when a job
+  is already failed to reduce transition-noise logs.
+  `delete_job` actively tears the job down: it clears the entity state,
+  terminates the driving orchestrator, waits briefly for it to settle, and
+  purges its orchestration history so a re-created job with the same ID
+  starts from a clean slate. Per-instance exports refuse to write a blob
+  when the target instance has been purged or has re-entered a non-terminal
+  state, surfacing the skipped instance as a per-batch failure.
+  Job state lives in a durable entity with an explicit state-transition
+  matrix (ACTIVE / COMPLETED / FAILED); invalid transitions raise
+  `ExportJobInvalidTransitionError`. Persisted entity state uses a
+  versioned, schema-stable JSON shape (`STATE_SCHEMA_VERSION`) with no
+  embedded Python type metadata. Each export job's driving orchestrator
+  uses a deterministic instance ID (`export-job-{job_id}`, exposed via
+  `orchestrator_instance_id_for(...)`) so callers can correlate a job ID
+  with its orchestrator for logging, monitoring, and restart.
+
 ## v1.5.0
 
 BREAKING CHANGES (type-level only — no runtime impact for typical users)
