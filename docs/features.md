@@ -412,6 +412,165 @@ class MyPayloadStore(PayloadStore):
 
 See the [large payload example](../examples/large_payload/) for a complete working sample.
 
+### Orchestration history export
+
+The optional `durabletask.extensions.history_export` package provides a workflow for exporting the
+full event history of terminal orchestrations to an external destination (for example Azure Blob
+Storage). It is modeled after the .NET SDK's `ExportHistory` package.
+
+An export job scans a time window of terminal instances, fetches each instance's history through
+the standard client API, serializes it, and writes it through a pluggable `HistoryWriter`. Job
+state is owned by a durable entity so progress survives worker restarts.
+
+#### Installation
+
+The core extension has no extra dependencies beyond the SDK. The bundled Azure Blob writer requires
+an optional dependency:
+
+```bash
+pip install durabletask[history-export-azure]
+```
+
+#### Configuring an export job
+
+```python
+from datetime import datetime, timedelta, timezone
+
+from durabletask import client, worker
+from durabletask.extensions.history_export import (
+    ExportDestination,
+    ExportFormat,
+    ExportFormatKind,
+    ExportHistoryClient,
+    ExportJobCreationOptions,
+    ExportMode,
+)
+from durabletask.extensions.history_export.azure_blob import (
+    AzureBlobHistoryExportWriter,
+    AzureBlobHistoryExportWriterOptions,
+)
+
+writer = AzureBlobHistoryExportWriter(
+    AzureBlobHistoryExportWriterOptions(
+        container_name="orchestration-history",
+        connection_string="DefaultEndpointsProtocol=https;...",
+    )
+)
+dt_client = client.TaskHubGrpcClient(host_address="localhost:4001")
+export_client = ExportHistoryClient(dt_client, writer)
+
+with worker.TaskHubGrpcWorker(host_address="localhost:4001") as w:
+    export_client.register_worker(w)
+    w.start()
+
+    now = datetime.now(timezone.utc)
+    desc = export_client.create_job(ExportJobCreationOptions(
+        mode=ExportMode.BATCH,
+        completed_time_from=now - timedelta(days=1),
+        completed_time_to=now,
+        destination=ExportDestination(container="orchestration-history", prefix="2026-05"),
+        format=ExportFormat(kind=ExportFormatKind.JSONL_GZIP),
+        max_instances_per_batch=100,
+    ))
+    final = export_client.wait_for_job(desc.job_id, timeout=600)
+    print(final.status, final.exported_instances, final.failed_instances)
+```
+
+#### Output formats
+
+| `ExportFormatKind` | Per-instance blob extension | Content-Type | Content-Encoding |
+|---|---|---|---|
+| `JSON` | `.json` | `application/json` | (none) |
+| `JSONL_GZIP` | `.jsonl.gz` | `application/x-ndjson` | `gzip` |
+
+The JSONL format prepends a metadata line and writes one event per line, which streams well for
+large histories.
+
+#### Modes
+
+Two `ExportMode` values are supported:
+
+- `BATCH` exports a fixed time window (`completed_time_from` .. `completed_time_to`) and then
+  marks the job `Completed`. This is the default and is appropriate for one-off backfills.
+- `CONTINUOUS` tails terminal instances indefinitely, sleeping between empty pages. The job
+  has no natural completion; stop it by calling `export_client.delete_job(job_id)` (or signalling
+  `mark_failed`). The orchestrator re-reads entity state at the top of each page loop, so the
+  next iteration after the delete observes the missing entity and exits cleanly.
+
+#### Listing and managing jobs
+
+Use `list_jobs(ExportJobQuery(...))` to enumerate existing jobs, optionally filtered by status
+or last-modified window:
+
+```python
+from durabletask.extensions.history_export import ExportJobQuery, ExportJobStatus
+
+for desc in export_client.list_jobs(
+    ExportJobQuery(status=[ExportJobStatus.FAILED])
+):
+    print(desc.job_id, desc.last_error)
+```
+
+Use `get_job_client(job_id)` for a per-job convenience wrapper that exposes `describe()`,
+`wait(timeout=...)`, and `delete()` directly:
+
+```python
+job_client = export_client.get_job_client(desc.job_id)
+final = job_client.wait(timeout=600)
+print(final.status.value, final.exported_instances)
+job_client.delete()
+```
+
+#### Custom destinations
+
+The Azure Blob writer is one implementation of the
+`HistoryWriter` extension point. Implement the protocol (no
+inheritance required — it's a `typing.Protocol`) to send exports to
+any destination (S3, GCS, SFTP, local filesystem, a database, etc.):
+
+```python
+from durabletask.extensions.history_export import HistoryWriter
+
+
+class LocalFileSystemHistoryWriter:
+    def __init__(self, root_dir: str) -> None:
+        self._root = root_dir
+
+    def write(
+        self,
+        *,
+        instance_id: str,
+        container: str,
+        blob_name: str,
+        payload: bytes,
+        content_type: str,
+        content_encoding: str | None,
+    ) -> None:
+        import os
+        # ``container`` is the destination's logical container name
+        # (an ExportDestination.container).  Per-job routing writers
+        # combine it with ``blob_name``; writers that pin to a fixed
+        # location at construction time may ignore it.
+        path = os.path.join(self._root, container, blob_name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fp:
+            fp.write(payload)
+
+
+export_client = ExportHistoryClient(
+    dt_client, LocalFileSystemHistoryWriter("/var/exports")
+)
+```
+
+> [!TIP]
+> The bundled `AzureBlobHistoryExportWriter` lives in the optional
+> `durabletask.extensions.history_export.azure_blob` submodule and
+> requires `pip install durabletask[history-export-azure]`. The
+> core history-export package has no third-party runtime
+> dependencies — only the bundled destination does. Future
+> first-party destinations (S3, GCS, etc.) will be packaged as
+> additional optional extras using the same pattern.
+
 ### Logging configuration
 
 Both the TaskHubGrpcWorker and TaskHubGrpcClient (as well as DurableTaskSchedulerWorker and
