@@ -76,7 +76,11 @@ class SandboxWorker(DurableTaskSchedulerWorker):
     def add_activity(
             self,
             fn: task.Activity[Any, Any],
-            version: Optional[str]) -> str:
+            **kwargs: Any) -> str:
+        version = kwargs.pop("version", None)
+        if kwargs:
+            unexpected = next(iter(kwargs))
+            raise TypeError(f"Unexpected keyword argument: {unexpected}")
         activity_name = super().add_activity(fn)
         self._sandbox_activities.append(SandboxActivity(activity_name, version))
         return activity_name
