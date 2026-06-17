@@ -10,7 +10,7 @@ from collections.abc import AsyncIterable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast, overload
 
 import grpc
 import grpc.aio
@@ -54,6 +54,7 @@ from durabletask.payload.store import PayloadStore
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
 TItem = TypeVar('TItem')
+T = TypeVar('T')
 
 
 class OrchestrationStatus(Enum):
@@ -81,6 +82,96 @@ class OrchestrationState:
     serialized_output: str | None
     serialized_custom_status: str | None
     failure_details: task.FailureDetails | None
+
+    @overload
+    def get_input(self, expected_type: type[T]) -> T | None:
+        ...
+
+    @overload
+    def get_input(self, expected_type: None = ...) -> Any:
+        ...
+
+    def get_input(self, expected_type: type | None = None) -> Any:
+        """Deserialize the orchestration's input.
+
+        Parameters
+        ----------
+        expected_type : type | None
+            Optional type used to reconstruct the input. When provided, the
+            payload is coerced to this type (dataclasses are constructed from
+            their dict payloads, types exposing a ``from_json()`` classmethod
+            are reconstructed via that hook) and the return value is typed as
+            ``expected_type | None``. When omitted, the raw deserialized JSON is
+            returned.
+
+        Returns
+        -------
+        Any
+            The deserialized input, or None if there is no input.
+        """
+        if self.serialized_input is None:
+            return None
+        return shared.from_json(self.serialized_input, expected_type)
+
+    @overload
+    def get_output(self, expected_type: type[T]) -> T | None:
+        ...
+
+    @overload
+    def get_output(self, expected_type: None = ...) -> Any:
+        ...
+
+    def get_output(self, expected_type: type | None = None) -> Any:
+        """Deserialize the orchestration's output.
+
+        Parameters
+        ----------
+        expected_type : type | None
+            Optional type used to reconstruct the output. When provided, the
+            payload is coerced to this type (dataclasses are constructed from
+            their dict payloads, types exposing a ``from_json()`` classmethod
+            are reconstructed via that hook) and the return value is typed as
+            ``expected_type | None``. When omitted, the raw deserialized JSON is
+            returned.
+
+        Returns
+        -------
+        Any
+            The deserialized output, or None if there is no output.
+        """
+        if self.serialized_output is None:
+            return None
+        return shared.from_json(self.serialized_output, expected_type)
+
+    @overload
+    def get_custom_status(self, expected_type: type[T]) -> T | None:
+        ...
+
+    @overload
+    def get_custom_status(self, expected_type: None = ...) -> Any:
+        ...
+
+    def get_custom_status(self, expected_type: type | None = None) -> Any:
+        """Deserialize the orchestration's custom status.
+
+        Parameters
+        ----------
+        expected_type : type | None
+            Optional type used to reconstruct the custom status. When provided,
+            the payload is coerced to this type (dataclasses are constructed
+            from their dict payloads, types exposing a ``from_json()``
+            classmethod are reconstructed via that hook) and the return value is
+            typed as ``expected_type | None``. When omitted, the raw
+            deserialized JSON is returned.
+
+        Returns
+        -------
+        Any
+            The deserialized custom status, or None if there is no custom status.
+        """
+        if self.serialized_custom_status is None:
+            return None
+        return shared.from_json(self.serialized_custom_status, expected_type)
 
     def raise_if_failed(self):
         if self.failure_details is not None:

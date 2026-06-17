@@ -3,6 +3,7 @@ from typing import Any, TypeVar, overload
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask.internal import shared
 
 TState = TypeVar("TState")
 
@@ -77,15 +78,7 @@ class EntityMetadata:
         if intended_type is None or self._state is None:
             return self._state
 
-        if isinstance(self._state, intended_type):
-            return self._state
-
-        try:
-            return intended_type(self._state)  # type: ignore[call-arg]
-        except Exception as ex:
-            raise TypeError(
-                f"Could not convert state of type '{type(self._state).__name__}' to '{intended_type.__name__}'"
-            ) from ex
+        return shared.coerce_to_type(self._state, intended_type)
 
     def get_locked_by(self) -> EntityInstanceId | None:
         """Get the identifier of the worker that currently holds the lock on the entity.

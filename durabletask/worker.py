@@ -38,6 +38,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
 import durabletask.internal.tracing as tracing
+import durabletask.internal.type_discovery as type_discovery
 from durabletask.internal.grpc_resiliency import (
     FailureTracker,
     get_full_jitter_delay_seconds,
@@ -50,6 +51,7 @@ from durabletask.payload.store import PayloadStore
 
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
+T = TypeVar("T")
 DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
 _STREAM_CLOSED_SENTINEL = object()
@@ -1635,6 +1637,30 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_tasks[id] = timer_task
         return timer_task
 
+    @overload
+    def call_activity(
+            self,
+            activity: task.Activity[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            tags: dict[str, str] | None = ...,
+            return_type: type[T],
+    ) -> task.CompletableTask[T]:
+        ...
+
+    @overload
+    def call_activity(
+            self,
+            activity: task.Activity[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            tags: dict[str, str] | None = ...,
+            return_type: None = ...,
+    ) -> task.CompletableTask[TOutput]:
+        ...
+
     def call_activity(
             self,
             activity: task.Activity[TInput, TOutput] | str,
@@ -1642,24 +1668,53 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             input: TInput | None = None,
             retry_policy: task.RetryPolicy | None = None,
             tags: dict[str, str] | None = None,
-    ) -> task.CompletableTask[TOutput]:
+            return_type: type | None = None,
+    ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
 
+        # An explicit return_type takes precedence; otherwise, when an activity
+        # function reference is supplied, discover its return annotation.
+        if return_type is None and not isinstance(activity, str):
+            return_type = type_discovery.activity_output_type(activity)
+
         self.call_activity_function_helper(
-            id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False, tags=tags
+            id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False, tags=tags,
+            return_type=return_type,
         )
-        return cast(task.CompletableTask[TOutput], self._pending_tasks.get(id, task.CompletableTask[TOutput]()))
+        return self._pending_tasks.get(id, task.CompletableTask[Any]())
+
+    @overload
+    def call_entity(
+            self,
+            entity: EntityInstanceId,
+            operation: str,
+            input: Any = ...,
+            *,
+            return_type: type[T],
+    ) -> task.CompletableTask[T]:
+        ...
+
+    @overload
+    def call_entity(
+            self,
+            entity: EntityInstanceId,
+            operation: str,
+            input: Any = ...,
+            return_type: None = ...,
+    ) -> task.CompletableTask[Any]:
+        ...
 
     def call_entity(
             self,
             entity: EntityInstanceId,
             operation: str,
             input: Any = None,
+            return_type: type | None = None,
     ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
-            id, entity, operation, input=input
+            id, entity, operation, input=input, return_type=return_type
         )
 
         return self._pending_tasks.get(id, task.CompletableTask[Any]())
@@ -1684,6 +1739,32 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         )
         return cast(task.CompletableTask[EntityLock], self._pending_tasks.get(id, task.CompletableTask[EntityLock]()))
 
+    @overload
+    def call_sub_orchestrator(
+            self,
+            orchestrator: task.Orchestrator[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            instance_id: str | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            version: str | None = ...,
+            return_type: type[T],
+    ) -> task.CompletableTask[T]:
+        ...
+
+    @overload
+    def call_sub_orchestrator(
+            self,
+            orchestrator: task.Orchestrator[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            instance_id: str | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            version: str | None = ...,
+            return_type: None = ...,
+    ) -> task.CompletableTask[TOutput]:
+        ...
+
     def call_sub_orchestrator(
             self,
             orchestrator: task.Orchestrator[TInput, TOutput] | str,
@@ -1692,7 +1773,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             instance_id: str | None = None,
             retry_policy: task.RetryPolicy | None = None,
             version: str | None = None,
-    ) -> task.CompletableTask[TOutput]:
+            return_type: type | None = None,
+    ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
         if isinstance(orchestrator, str):
             orchestrator_name = orchestrator
@@ -1707,9 +1789,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             retry_policy=retry_policy,
             is_sub_orch=True,
             instance_id=instance_id,
-            version=orchestrator_version
+            version=orchestrator_version,
+            return_type=return_type,
         )
-        return cast(task.CompletableTask[TOutput], self._pending_tasks.get(id, task.CompletableTask[TOutput]()))
+        return self._pending_tasks.get(id, task.CompletableTask[Any]())
 
     def call_activity_function_helper(
             self,
@@ -1723,6 +1806,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             instance_id: str | None = None,
             fn_task: task.CompletableTask[TOutput] | None = None,
             version: str | None = None,
+            return_type: type | None = None,
     ):
         if id is None:
             id = self.next_sequence_number()
@@ -1776,13 +1860,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         if fn_task is None:
             if retry_policy is None:
-                fn_task = task.CompletableTask[TOutput]()
+                fn_task = task.CompletableTask[TOutput](expected_type=return_type)
             else:
                 fn_task = task.RetryableTask[TOutput](
                     retry_policy=retry_policy,
                     action=action,
                     start_time=self.current_utc_datetime,
                     is_sub_orch=is_sub_orch,
+                    expected_type=return_type,
                 )
         self._pending_tasks[id] = fn_task
 
@@ -1793,6 +1878,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             operation: str,
             *,
             input: Any = None,
+            return_type: type | None = None,
     ) -> None:
         if id is None:
             id = self.next_sequence_number()
@@ -1805,7 +1891,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
-        fn_task = task.CompletableTask[Any]()
+        fn_task = task.CompletableTask[Any](expected_type=return_type)
         self._pending_tasks[id] = fn_task
 
     def signal_entity_function_helper(
@@ -1860,20 +1946,31 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)
             self._pending_actions[task_id] = action
 
-    def wait_for_external_event(self, name: str) -> task.CancellableTask[Any]:
+    @overload
+    def wait_for_external_event(self, name: str, *,
+                                data_type: type[T]) -> task.CancellableTask[T]:
+        ...
+
+    @overload
+    def wait_for_external_event(self, name: str, *,
+                                data_type: None = ...) -> task.CancellableTask[Any]:
+        ...
+
+    def wait_for_external_event(self, name: str, *,
+                                data_type: type | None = None) -> task.CancellableTask[Any]:
         # Check to see if this event has already been received, in which case we
         # can return it immediately. Otherwise, record out intent to receive an
         # event with the given name so that we can resume the generator when it
         # arrives. If there are multiple events with the same name, we return
         # them in the order they were received.
-        external_event_task: task.CancellableTask[Any] = task.CancellableTask()
+        external_event_task: task.CancellableTask[Any] = task.CancellableTask(expected_type=data_type)
         event_name = name.casefold()
         event_list = self._received_events.get(event_name, None)
         if event_list:
             event_data = event_list.pop(0)
             if not event_list:
                 del self._received_events[event_name]
-            external_event_task.complete(event_data)
+            external_event_task.complete(shared.coerce_to_type(event_data, data_type))
         else:
             task_list = self._pending_events.get(event_name, None)
             if not task_list:
@@ -2093,6 +2190,15 @@ class _OrchestrationExecutor:
                         event.executionStarted.HasField("input") and event.executionStarted.input.value != ""
                 ):
                     input = shared.from_json(event.executionStarted.input.value)
+                    input_type = type_discovery.orchestrator_input_type(fn)
+                    if input_type is not None:
+                        try:
+                            input = shared.coerce_to_type(input, input_type)
+                        except Exception as ex:
+                            self._logger.debug(
+                                f"{ctx.instance_id}: Could not coerce orchestrator input to "
+                                f"'{getattr(input_type, '__name__', input_type)}': {ex}. Using raw value."
+                            )
 
                 result = fn(
                     ctx, input
@@ -2241,7 +2347,9 @@ class _OrchestrationExecutor:
                         )
                 result = None
                 if not ph.is_empty(event.taskCompleted.result):
-                    result = shared.from_json(event.taskCompleted.result.value)
+                    result = shared.from_json(
+                        event.taskCompleted.result.value, activity_task._expected_type  # pyright: ignore[reportPrivateUsage]
+                    )
                 activity_task.complete(result)
                 ctx.resume()
             elif event.HasField("taskFailed"):
@@ -2351,7 +2459,8 @@ class _OrchestrationExecutor:
                 result = None
                 if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
                     result = shared.from_json(
-                        event.subOrchestrationInstanceCompleted.result.value
+                        event.subOrchestrationInstanceCompleted.result.value,
+                        sub_orch_task._expected_type,  # pyright: ignore[reportPrivateUsage]
                     )
                 sub_orch_task.complete(result)
                 ctx.resume()
@@ -2420,7 +2529,9 @@ class _OrchestrationExecutor:
                     if task_list:
                         event_task = task_list.pop(0)
                         if not ph.is_empty(event.eventRaised.input):
-                            decoded_result = shared.from_json(event.eventRaised.input.value)
+                            decoded_result = shared.from_json(
+                                event.eventRaised.input.value, event_task._expected_type  # pyright: ignore[reportPrivateUsage]
+                            )
                         event_task.complete(decoded_result)
                         if not task_list:
                             del ctx._pending_events[event_name]  # pyright: ignore[reportPrivateUsage]
@@ -2557,7 +2668,10 @@ class _OrchestrationExecutor:
                     return
                 result = None
                 if not ph.is_empty(event.entityOperationCompleted.output):
-                    result = shared.from_json(event.entityOperationCompleted.output.value)
+                    result = shared.from_json(
+                        event.entityOperationCompleted.output.value,
+                        entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
+                    )
                 ctx._entity_context.recover_lock_after_call(entity_id)  # pyright: ignore[reportPrivateUsage]
                 entity_task.complete(result)
                 ctx.resume()
@@ -2639,6 +2753,9 @@ class _OrchestrationExecutor:
         if not ph.is_empty(event.eventRaised.input):
             # TODO: Investigate why the event result is wrapped in a dict with "result" key
             result = shared.from_json(event.eventRaised.input.value)["result"]
+            # The expected type applies to the unwrapped result value, not the
+            # transport wrapper, so coerce after unwrapping.
+            result = shared.coerce_to_type(result, entity_task._expected_type)  # pyright: ignore[reportPrivateUsage]
         if is_lock_event:
             ctx._entity_context.complete_acquire(event.eventRaised.name)  # pyright: ignore[reportPrivateUsage]
             entity_task.complete(EntityLock(ctx))
@@ -2713,6 +2830,16 @@ class _ActivityExecutor:
             )
 
         activity_input = shared.from_json(encoded_input) if encoded_input else None
+        if activity_input is not None:
+            input_type = type_discovery.activity_input_type(fn)
+            if input_type is not None:
+                try:
+                    activity_input = shared.coerce_to_type(activity_input, input_type)
+                except Exception as ex:
+                    self._logger.debug(
+                        f"{orchestration_id}/{task_id}: Could not coerce activity input to "
+                        f"'{getattr(input_type, '__name__', input_type)}': {ex}. Using raw value."
+                    )
         ctx = task.ActivityContext(orchestration_id, task_id)
 
         # Execute the activity function
@@ -2753,6 +2880,16 @@ class _EntityExecutor:
             )
 
         entity_input = shared.from_json(encoded_input) if encoded_input else None
+        if entity_input is not None:
+            input_type = type_discovery.entity_input_type(fn, operation)
+            if input_type is not None:
+                try:
+                    entity_input = shared.coerce_to_type(entity_input, input_type)
+                except Exception as ex:
+                    self._logger.debug(
+                        f"{orchestration_id}: Could not coerce entity input to "
+                        f"'{getattr(input_type, '__name__', input_type)}': {ex}. Using raw value."
+                    )
         ctx = EntityContext(orchestration_id, operation, state, entity_id)
 
         if isinstance(fn, type) and issubclass(fn, DurableEntity):

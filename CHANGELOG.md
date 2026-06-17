@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Type-aware deserialization of payloads. `OrchestrationContext.call_activity`,
+  `call_sub_orchestrator`, and `call_entity` accept an optional `return_type`,
+  and `wait_for_external_event` accepts an optional `data_type`. When provided,
+  the result/event payload is coerced to that type: dataclasses are
+  reconstructed from their dict payloads (including nested dataclass, `Optional`,
+  and `list` fields), and types exposing a `from_json()` classmethod are rebuilt
+  via that hook. When omitted, the raw deserialized JSON is returned as before.
+  The `return_type` / `data_type` argument also refines the static type of the
+  returned task (e.g. `call_activity(..., return_type=Foo)` is typed as
+  `CompletableTask[Foo]`).
+- Inbound payloads are reconstructed from function type annotations. When an
+  orchestrator, activity, or entity operation annotates its input parameter with
+  a dataclass or a `from_json()`-capable type, the incoming payload is
+  automatically coerced to that type. Discovery is best-effort and conservative:
+  builtins and unannotated/unknown types are passed through unchanged, and a
+  payload that cannot be coerced falls back to the raw value.
+- `call_activity` results are reconstructed from the activity's return
+  annotation. When an activity function reference is passed (not a string name)
+  and its return type is annotated with a dataclass or `from_json()`-capable
+  type, the result is automatically coerced to that type. An explicit
+  `return_type` argument takes precedence over the discovered annotation.
+- Added typed accessors to `client.OrchestrationState`: `get_input()`,
+  `get_output()`, and `get_custom_status()` each accept an optional
+  `expected_type` and deserialize the corresponding `serialized_*` payload,
+  reconstructing dataclasses and `from_json()`-capable types. The raw
+  `serialized_input` / `serialized_output` / `serialized_custom_status` string
+  fields are retained.
+- Objects exposing a `to_json()` method are now JSON-serializable when passed as
+  activity/orchestrator inputs or outputs.
+- Entity state retrieval (`get_state(intended_type=...)`) now reconstructs
+  dataclasses from their stored dict payloads and supports types exposing a
+  `from_json()` classmethod, in addition to the existing constructor-based
+  coercion.
+
+### Changed
+
+- Custom objects (dataclasses, `SimpleNamespace`) are now serialized as plain
+  JSON without an internal type marker. Decoding without a `return_type` /
+  `data_type` therefore yields a plain `dict` (previously a `SimpleNamespace`
+  for marked payloads). Pass the new type arguments to reconstruct the original
+  type. Payloads produced by older SDK versions (carrying the legacy marker)
+  continue to deserialize, including into a `SimpleNamespace` when no type is
+  supplied.
+- JSON serialization failures now raise a `TypeError` that chains the original
+  error (`__cause__`) and names the offending type, making serialization issues
+  easier to diagnose.
+
 ## v1.5.0
 
 BREAKING CHANGES (type-level only — no runtime impact for typical users)

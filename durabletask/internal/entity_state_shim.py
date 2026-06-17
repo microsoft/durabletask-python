@@ -1,6 +1,7 @@
 from typing import Any, TypeVar, overload
 
 import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask.internal import shared
 
 TState = TypeVar("TState")
 
@@ -31,15 +32,7 @@ class StateShim:
         if intended_type is None:
             return self._current_state
 
-        if isinstance(self._current_state, intended_type):
-            return self._current_state
-
-        try:
-            return intended_type(self._current_state)  # type: ignore[call-arg]
-        except Exception as ex:
-            raise TypeError(
-                f"Could not convert state of type '{type(self._current_state).__name__}' to '{intended_type.__name__}'"
-            ) from ex
+        return shared.coerce_to_type(self._current_state, intended_type)
 
     def set_state(self, state: Any) -> None:
         self._current_state = state

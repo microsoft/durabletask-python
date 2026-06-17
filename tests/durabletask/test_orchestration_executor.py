@@ -450,6 +450,151 @@ def test_activity_task_completion():
     assert complete_action.result.value == encoded_output
 
 
+def test_activity_task_completion_with_return_type():
+    """Tests that call_activity(return_type=...) coerces the result to a dataclass."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Result:
+        message: str
+
+    def dummy_activity(ctx, _):
+        pass
+
+    captured: dict = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        result = yield ctx.call_activity(dummy_activity, return_type=Result)
+        captured["type"] = type(result).__name__
+        captured["message"] = result.message
+        return result.message
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
+
+    new_events = [helpers.new_task_completed_event(1, json.dumps({"message": "hi"}))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert captured["type"] == "Result"
+    assert captured["message"] == "hi"
+
+
+def test_activity_return_type_discovered_from_annotation():
+    """Tests that call_activity discovers the return type from the activity's annotation."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Result:
+        message: str
+
+    def annotated_activity(ctx, _) -> Result:
+        ...
+
+    captured: dict = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        result = yield ctx.call_activity(annotated_activity)
+        captured["type"] = type(result).__name__
+        captured["message"] = result.message
+        return result.message
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(annotated_activity))]
+
+    new_events = [helpers.new_task_completed_event(1, json.dumps({"message": "hi"}))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    assert captured["type"] == "Result"
+    assert captured["message"] == "hi"
+
+
+def test_explicit_return_type_overrides_discovered_annotation():
+    """Tests that an explicit return_type takes precedence over the annotation."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Annotated:
+        value: str
+
+    @dataclass
+    class Override:
+        value: str
+
+    def annotated_activity(ctx, _) -> Annotated:
+        ...
+
+    captured: dict = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        result = yield ctx.call_activity(annotated_activity, return_type=Override)
+        captured["type"] = type(result).__name__
+        return result.value
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(annotated_activity))]
+
+    new_events = [helpers.new_task_completed_event(1, json.dumps({"value": "x"}))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    assert captured["type"] == "Override"
+
+
+def test_orchestrator_input_type_discovery():
+    """Tests that an orchestrator's dataclass input annotation is reconstructed."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class StartArgs:
+        name: str
+        count: int
+
+    captured: dict = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, args: StartArgs):
+        captured["type"] = type(args).__name__
+        captured["name"] = args.name
+        captured["count"] = args.count
+        return args.count
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    encoded_input = json.dumps({"name": "abc", "count": 5})
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=encoded_input)]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor.execute(TEST_INSTANCE_ID, [], new_events)
+
+    assert captured["type"] == "StartArgs"
+    assert captured["name"] == "abc"
+    assert captured["count"] == 5
+
+
 def test_activity_task_failed():
     """Tests the failure of an activity task"""
     def dummy_activity(ctx, _):
