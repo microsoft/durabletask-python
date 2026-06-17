@@ -58,12 +58,25 @@ def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
     assert not hasattr(SandboxWorker, f"_configure_{legacy_prefix}_activity_filters")
 
 
+def _sandbox_image(
+        image_ref: str,
+        managed_identity_client_id: str | None = "image-pull-client-id",
+        entrypoint: list[str] | None = None,
+        cmd: list[str] | None = None):
+    options = SandboxWorkerProfileOptions(worker_profile_id="pytest-image-helper")
+    options.image.image_ref = image_ref
+    options.image.managed_identity_client_id = managed_identity_client_id
+    options.image.entrypoint.extend(entrypoint or [])
+    options.image.cmd.extend(cmd or [])
+    return options.image
+
+
 def test_build_sandbox_worker_profiles() -> None:
     @sandbox_worker_profile("pytest-profile-a")
     class PytestProfileA(SandboxWorkerProfile):
         def configure(self, options) -> None:
-            options.container_image = "example.azurecr.io/python-worker:v1"
-            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.image.image_ref = "example.azurecr.io/python-worker:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
             options.cpu = "500m"
             options.memory = "1Gi"
@@ -93,14 +106,52 @@ def test_build_sandbox_worker_profiles() -> None:
         sandbox_worker_profiles._worker_profiles.pop("pytest-profile-a", None)
 
 
+def test_sandbox_worker_profile_options_exposes_image_options() -> None:
+    options = SandboxWorkerProfileOptions(worker_profile_id="pytest-image-options-profile")
+
+    options.image.image_ref = "example.azurecr.io/python-worker:v1"
+    options.image.managed_identity_client_id = "image-pull-client-id"
+    options.image.entrypoint.append("python")
+    options.image.cmd.append("/app/remote_worker.py")
+    options.scheduler_managed_identity_client_id = "scheduler-client-id"
+    options.add_activity("PytestRemoteHello", version="v1")
+
+    worker_profile = _build_sandbox_worker_profile(
+        worker_profile_id=options.worker_profile_id,
+        activities=options.activities,
+        image=options.image,
+        scheduler_managed_identity_client_id=options.scheduler_managed_identity_client_id)
+
+    assert worker_profile.image.image_ref == "example.azurecr.io/python-worker:v1"
+    assert worker_profile.image.managed_identity_client_id == "image-pull-client-id"
+    assert list(worker_profile.image.entrypoint) == ["python"]
+    assert list(worker_profile.image.cmd) == ["/app/remote_worker.py"]
+
+
+def test_profile_options_add_activities_accepts_activity_range() -> None:
+    options = SandboxWorkerProfileOptions(worker_profile_id="pytest-activity-range-profile")
+
+    options.add_activity("RemoteHello", version=None)
+    options.add_activities([
+        SandboxWorkerProfileOptions.Activity(" RangeA ", None),
+        SandboxWorkerProfileOptions.Activity("RangeB", " v1 "),
+    ])
+
+    assert resolve_activities(options.activities) == [
+        SandboxActivity("RemoteHello", None),
+        SandboxActivity("RangeA", None),
+        SandboxActivity("RangeB", "v1"),
+    ]
+
+
 def test_sandbox_worker_profile_requires_activity() -> None:
     try:
         try:
             @sandbox_worker_profile("pytest-empty-profile")
             class PytestEmptyProfile(SandboxWorkerProfile):
                 def configure(self, options: SandboxWorkerProfileOptions) -> None:
-                    options.container_image = "example.azurecr.io/python-worker:v1"
-                    options.image_pull_managed_identity_client_id = "image-pull-client-id"
+                    options.image.image_ref = "example.azurecr.io/python-worker:v1"
+                    options.image.managed_identity_client_id = "image-pull-client-id"
                     options.scheduler_managed_identity_client_id = "scheduler-client-id"
         except ValueError as ex:
             assert "pytest-empty-profile" in str(ex)
@@ -115,16 +166,16 @@ def test_build_sandbox_worker_profiles_rejects_activity_overlap() -> None:
     @sandbox_worker_profile("pytest-overlap-profile-a")
     class PytestOverlapProfileA(SandboxWorkerProfile):
         def configure(self, options: SandboxWorkerProfileOptions) -> None:
-            options.container_image = "example.azurecr.io/python-worker-a:v1"
-            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
             options.add_activity("PytestOverlapRemoteHello", version=None)
 
     @sandbox_worker_profile("pytest-overlap-profile-b")
     class PytestOverlapProfileB(SandboxWorkerProfile):
         def configure(self, options: SandboxWorkerProfileOptions) -> None:
-            options.container_image = "example.azurecr.io/python-worker-b:v1"
-            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
             options.add_activity("pytestoverlapremotehello", version=None)
 
@@ -146,16 +197,16 @@ def test_build_sandbox_worker_profiles_allows_same_activity_name_different_versi
     @sandbox_worker_profile("pytest-version-profile-a")
     class PytestVersionProfileA(SandboxWorkerProfile):
         def configure(self, options: SandboxWorkerProfileOptions) -> None:
-            options.container_image = "example.azurecr.io/python-worker-a:v1"
-            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
             options.add_activity("PytestVersionedActivity", version="v1")
 
     @sandbox_worker_profile("pytest-version-profile-b")
     class PytestVersionProfileB(SandboxWorkerProfile):
         def configure(self, options: SandboxWorkerProfileOptions) -> None:
-            options.container_image = "example.azurecr.io/python-worker-b:v1"
-            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
             options.add_activity("PytestVersionedActivity", version="v2")
 
@@ -185,8 +236,8 @@ def test_profile_options_add_activity_accepts_callable() -> None:
     @sandbox_worker_profile("pytest-callable-profile")
     class PytestCallableProfile(SandboxWorkerProfile):
         def configure(self, options: SandboxWorkerProfileOptions) -> None:
-            options.container_image = "example.azurecr.io/python-worker:v1"
-            options.image_pull_managed_identity_client_id = "image-pull-client-id"
+            options.image.image_ref = "example.azurecr.io/python-worker:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
             options.scheduler_managed_identity_client_id = "scheduler-client-id"
             options.add_activity(pytest_callable_remote_hello, version=None)
 
@@ -207,17 +258,17 @@ def test_build_sandbox_worker_profile() -> None:
     worker_profile = _build_sandbox_worker_profile(
         worker_profile_id="preview",
         activities=[SandboxActivity("RemoteHello", None)],
-        container_image="example.azurecr.io/sandboxes-worker:v1",
+        image=_sandbox_image(
+            "example.azurecr.io/sandboxes-worker:v1",
+            entrypoint=["python"],
+            cmd=["/app/remote_worker.py"]),
         cpu="500m",
         memory="1Gi",
         environment_variables={
             "CUSTOM_ENV": "custom-value",
         },
         max_concurrent_activities=3,
-        image_pull_managed_identity_client_id="image-pull-client-id",
-        scheduler_managed_identity_client_id="scheduler-client-id",
-        entrypoint=["python"],
-        cmd=["/app/remote_worker.py"])
+        scheduler_managed_identity_client_id="scheduler-client-id")
 
     assert worker_profile.worker_profile_id == "preview"
     assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
@@ -235,15 +286,19 @@ def test_build_sandbox_worker_profile() -> None:
 
 def test_build_sandbox_worker_profile_accepts_adc_resource_quantities() -> None:
     for cpu, memory in [
+        ("250m", "512Mi"),
         ("500m", "1024Mi"),
+        ("500M", "1024Mi"),
         ("0.5", "1Gi"),
+        ("0.25", "512"),
+        ("1", "1024mi"),
         ("2", "2048"),
+        ("16", "32768Mi"),
     ]:
         worker_profile = _build_sandbox_worker_profile(
             worker_profile_id="preview",
             activities=[SandboxActivity("RemoteHello", None)],
-            container_image="example.azurecr.io/sandboxes-worker:v1",
-            image_pull_managed_identity_client_id="image-pull-client-id",
+            image=_sandbox_image("example.azurecr.io/sandboxes-worker:v1"),
             scheduler_managed_identity_client_id="scheduler-client-id",
             cpu=cpu,
             memory=memory)
@@ -256,18 +311,27 @@ def test_build_sandbox_worker_profile_rejects_invalid_adc_resource_quantities() 
     for cpu, memory, expected_message in [
         ("0", "1024Mi", "CPU"),
         ("0m", "1024Mi", "CPU"),
+        ("125m", "1024Mi", "CPU"),
+        ("300m", "1024Mi", "CPU"),
         ("500.5m", "1024Mi", "CPU"),
         ("500Mi", "1024Mi", "CPU"),
+        ("17", "1024Mi", "CPU"),
+        ("999999999999999999999999999999", "1024Mi", "CPU"),
         ("500m", "0", "memory"),
         ("500m", "0Mi", "memory"),
+        ("500m", "0.1Gi", "memory"),
+        ("500m", "512.5Mi", "memory"),
+        ("500m", "1024.5", "memory"),
+        ("250m", "513Mi", "memory"),
+        ("500m", "2048Mi", "memory"),
+        ("500m", "999999999999999999999999999999Gi", "memory"),
         ("500m", "500m", "memory"),
     ]:
         try:
             _build_sandbox_worker_profile(
                 worker_profile_id="preview",
                 activities=[SandboxActivity("RemoteHello", None)],
-                container_image="example.azurecr.io/sandboxes-worker:v1",
-                image_pull_managed_identity_client_id="image-pull-client-id",
+                image=_sandbox_image("example.azurecr.io/sandboxes-worker:v1"),
                 scheduler_managed_identity_client_id="scheduler-client-id",
                 cpu=cpu,
                 memory=memory)
@@ -281,8 +345,7 @@ def test_build_sandbox_worker_profile_accepts_single_activity() -> None:
     worker_profile = _build_sandbox_worker_profile(
         worker_profile_id="preview",
         activities=[SandboxActivity("RemoteHello", None)],
-        container_image="example.azurecr.io/sandboxes-worker:v1",
-        image_pull_managed_identity_client_id="image-pull-client-id",
+        image=_sandbox_image("example.azurecr.io/sandboxes-worker:v1"),
         scheduler_managed_identity_client_id="scheduler-client-id")
 
     assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
@@ -293,8 +356,7 @@ def test_build_sandbox_worker_profile_accepts_activity_versions() -> None:
     worker_profile = _build_sandbox_worker_profile(
         worker_profile_id="preview",
         activities=[SandboxActivity("RemoteHello", "v1")],
-        container_image="example.azurecr.io/sandboxes-worker:v1",
-        image_pull_managed_identity_client_id="image-pull-client-id",
+        image=_sandbox_image("example.azurecr.io/sandboxes-worker:v1"),
         scheduler_managed_identity_client_id="scheduler-client-id")
 
     assert [(activity.name, activity.version) for activity in worker_profile.activities] == [
@@ -306,7 +368,7 @@ def test_build_sandbox_worker_profile_requires_scheduler_managed_identity_client
         _build_sandbox_worker_profile(
             worker_profile_id="preview",
             activities=[SandboxActivity("RemoteHello", None)],
-            container_image="example.azurecr.io/sandboxes-worker:v1")
+            image=_sandbox_image("example.azurecr.io/sandboxes-worker:v1"))
     except TypeError as ex:
         assert "scheduler_managed_identity_client_id" in str(ex)
     else:
@@ -318,10 +380,12 @@ def test_build_sandbox_worker_profile_requires_image_pull_managed_identity_clien
         _build_sandbox_worker_profile(
             worker_profile_id="preview",
             activities=[SandboxActivity("RemoteHello", None)],
-            container_image="example.azurecr.io/sandboxes-worker:v1",
+            image=_sandbox_image(
+                "example.azurecr.io/sandboxes-worker:v1",
+                managed_identity_client_id=None),
             scheduler_managed_identity_client_id="scheduler-client-id")
     except ValueError as ex:
-        assert "ADC uses to pull the worker image" in str(ex)
+        assert "used to pull the worker image" in str(ex)
     else:
         raise AssertionError("Expected missing image pull managed identity client ID to fail.")
 

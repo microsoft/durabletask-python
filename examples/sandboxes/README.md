@@ -21,9 +21,7 @@ Set these before running the declarer app:
 Bash:
 
 ~~~bash
-export DTS_ENDPOINT="<scheduler endpoint>"
-export DTS_TASK_HUB="<task hub name>"
-export DTS_WORKER_PROFILE_ID="python-sandbox-worker"
+export DURABLE_TASK_SCHEDULER_CONNECTION_STRING="Endpoint=https://<scheduler-endpoint>;TaskHub=<task-hub-name>;Authentication=DefaultAzure"
 export DTS_SANDBOX_CONTAINER_IMAGE="<container image reference>"
 export DTS_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID="<image-pull UMI client ID>"
 export DTS_SANDBOX_SCHEDULER_UMI_CLIENT_ID="<scheduler UMI client ID>"
@@ -32,21 +30,25 @@ export DTS_SANDBOX_SCHEDULER_UMI_CLIENT_ID="<scheduler UMI client ID>"
 PowerShell:
 
 ~~~powershell
-$env:DTS_ENDPOINT = "<scheduler endpoint>"
-$env:DTS_TASK_HUB = "<task hub name>"
-$env:DTS_WORKER_PROFILE_ID = "python-sandbox-worker"
+$env:DURABLE_TASK_SCHEDULER_CONNECTION_STRING = "Endpoint=https://<scheduler-endpoint>;TaskHub=<task-hub-name>;Authentication=DefaultAzure"
 $env:DTS_SANDBOX_CONTAINER_IMAGE = "<container image reference>"
 $env:DTS_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID = "<image-pull UMI client ID>"
 $env:DTS_SANDBOX_SCHEDULER_UMI_CLIENT_ID = "<scheduler UMI client ID>"
 ~~~
 
+For `Authentication=DefaultAzure`, sign in with Azure CLI or configure another
+supported Azure identity before running the declarer app. For a local emulator,
+use `Authentication=None`.
+
 After pushing the remote worker image, set `DTS_SANDBOX_CONTAINER_IMAGE` to
 the pushed image reference. `RemoteWorkerProfile.configure()` declares CPU,
 memory, max concurrency, customer environment variables, and sandbox activity
-identities with `options.add_activity(name, version)`. This sample uses an
-unversioned activity identity (`version=None`) because Python orchestrations
-currently schedule activities by name. The declarer and remote worker both use
-`activities.py` so they stay in sync.
+identities with `options.image.image_ref`,
+`options.image.managed_identity_client_id`, and
+`options.add_activity(name, version)`. This sample uses an unversioned activity
+identity (`version=None`) because Python orchestrations currently schedule
+activities by name. The declarer and remote worker both use `activities.py` so
+they stay in sync.
 
 The remote worker code cannot pass Durable Task Scheduler runtime settings to the SDK. In a
 sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`,
@@ -81,7 +83,8 @@ docker build `
 docker push <public container image reference>
 ~~~
 
-Private preview requires the image to be publicly pullable by the sandbox platform.
+The sandbox platform pulls the image with `DTS_SANDBOX_IMAGE_PULL_UMI_CLIENT_ID`,
+so grant that identity pull access to the pushed image.
 
 ## Run the declarer app
 
