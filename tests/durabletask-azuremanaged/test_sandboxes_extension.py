@@ -436,6 +436,7 @@ def test_generated_stub_uses_sandbox_rpc_paths() -> None:
 def test_sandbox_worker_constructor_does_not_expose_runtime_contract() -> None:
     assert list(inspect.signature(SandboxWorker).parameters) == []
     assert "_execute_activity" not in SandboxWorker.__dict__
+    assert "add_activity" not in SandboxWorker.__dict__
 
 
 def test_sandbox_activities_client_does_not_expose_worker_registration_rpc() -> None:
@@ -472,8 +473,8 @@ def test_sandbox_worker_reads_sandbox_environment_and_registered_activities(monk
         return value
 
     worker = SandboxWorker()
-    worker.add_activity(EnvActivity, version=None)
-    worker.add_activity(OtherActivity, version=None)
+    worker.add_activity(EnvActivity)
+    worker.add_activity(OtherActivity)
     worker._configure_sandbox_activity_filters()
     start = next(worker._registration_messages())
 

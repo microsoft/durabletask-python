@@ -5,12 +5,11 @@ import os
 import random
 import threading
 
-from typing import Any, Iterator, Optional
+from typing import Iterator, Optional
 
 from azure.core.credentials import TokenCredential
 from azure.identity import ManagedIdentityCredential
 
-from durabletask import task
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
@@ -26,7 +25,6 @@ from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 import durabletask.internal.orchestrator_service_pb2 as worker_pb
 import durabletask.internal.shared as shared
 from durabletask.worker import (
-    ActivityWorkItemFilter,
     ConcurrencyOptions,
     WorkItemFilters,
 )
@@ -73,18 +71,6 @@ class SandboxWorker(DurableTaskSchedulerWorker):
         self._sandbox_active_activities = 0
         self._sandbox_active_activities_lock = threading.Lock()
 
-    def add_activity(
-            self,
-            fn: task.Activity[Any, Any],
-            **kwargs: Any) -> str:
-        version = kwargs.pop("version", None)
-        if kwargs:
-            unexpected = next(iter(kwargs))
-            raise TypeError(f"Unexpected keyword argument: {unexpected}")
-        activity_name = super().add_activity(fn)
-        self._sandbox_activities.append(SandboxActivity(activity_name, version))
-        return activity_name
-
     def start(self) -> None:
         self._configure_sandbox_activity_filters()
         super().start()
@@ -103,7 +89,12 @@ class SandboxWorker(DurableTaskSchedulerWorker):
             self._sandbox_active_activities = max(0, self._sandbox_active_activities - 1)
 
     def _configure_sandbox_activity_filters(self) -> None:
-        activities = resolve_activities(self._sandbox_activities)
+        registered_filters = WorkItemFilters._from_registry(self._registry)  # pyright: ignore[reportPrivateUsage]
+        activities = resolve_activities([
+            SandboxActivity(activity_filter.name, version)
+            for activity_filter in registered_filters.activities
+            for version in (activity_filter.versions or [None])
+        ])
         if not activities:
             raise RuntimeError(
                 "Sandbox worker requires at least one registered activity before it can register.")
@@ -111,9 +102,7 @@ class SandboxWorker(DurableTaskSchedulerWorker):
         self._sandbox_activities = activities
         self.use_work_item_filters(WorkItemFilters(
             orchestrations=[],
-            activities=[ActivityWorkItemFilter(
-                name=activity.name,
-                versions=[] if activity.version is None else [activity.version]) for activity in activities],
+            activities=registered_filters.activities,
             entities=[]))
 
     def _start_sandbox_registration(self) -> None:
