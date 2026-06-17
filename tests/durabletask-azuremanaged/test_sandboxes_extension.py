@@ -14,10 +14,15 @@ from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfile
 from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfileOptions
 from durabletask.azuremanaged.preview.sandboxes import sandbox_worker_profile
 from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
+    SandboxWorkerProfileImageOptions,
+)
+from durabletask.azuremanaged.preview.sandboxes.profile_builder import (
     _build_sandbox_worker_profile,
+    build_sandbox_worker_profiles,
+)
+from durabletask.azuremanaged.preview.sandboxes.worker_messages import (
     build_sandbox_worker_heartbeat,
     build_sandbox_worker_start,
-    build_sandbox_worker_profiles,
 )
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
 from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
@@ -59,10 +64,11 @@ def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
 
 
 def _sandbox_image(
-        image_ref: str,
-        managed_identity_client_id: str = "image-pull-client-id",
-        entrypoint: list[str] | None = None,
-        cmd: list[str] | None = None):
+    image_ref: str,
+    managed_identity_client_id: str = "image-pull-client-id",
+    entrypoint: list[str] | None = None,
+    cmd: list[str] | None = None,
+) -> SandboxWorkerProfileImageOptions:
     options = SandboxWorkerProfileOptions(worker_profile_id="pytest-image-helper")
     options.image.image_ref = image_ref
     options.image.managed_identity_client_id = managed_identity_client_id

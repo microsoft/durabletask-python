@@ -15,6 +15,8 @@ from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
 from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
     DEFAULT_MAX_CONCURRENT_ACTIVITIES,
+)
+from durabletask.azuremanaged.preview.sandboxes.worker_messages import (
     build_sandbox_worker_heartbeat,
     build_sandbox_worker_start,
 )

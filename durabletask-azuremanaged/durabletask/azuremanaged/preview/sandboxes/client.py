@@ -7,7 +7,7 @@ import grpc
 from azure.core.credentials import TokenCredential
 
 from durabletask.azuremanaged.preview.sandboxes.helpers import normalize_required
-from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
+from durabletask.azuremanaged.preview.sandboxes.profile_builder import (
     build_sandbox_worker_profiles,
 )
 from durabletask.azuremanaged.preview.sandboxes.transport import (
