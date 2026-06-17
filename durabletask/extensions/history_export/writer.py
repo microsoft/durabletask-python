@@ -1,0 +1,122 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""Destination-agnostic writer protocol for the history export extension.
+
+A :class:`HistoryWriter` is the extension point that lets the history
+export workflow target any blob-style backend (Azure Blob Storage,
+S3, GCS, local filesystem, SFTP, etc.).  The export activities call
+:meth:`HistoryWriter.write` once per exported instance with the
+serialized payload and the content-type / content-encoding metadata
+appropriate for the configured :class:`ExportFormat`.
+
+The protocol is intentionally structural — implementations do **not**
+need to inherit from a base class.  Any object with a compatible
+``write(...)`` method is a valid writer.  Use ``@runtime_checkable``
+support to write ``isinstance(obj, HistoryWriter)`` assertions if
+desired.
+
+Example custom writer::
+
+    class LocalFileSystemHistoryWriter:
+        def __init__(self, root_dir: str) -> None:
+            self._root = root_dir
+
+        def write(
+            self,
+            *,
+            instance_id: str,
+            container: str,
+            blob_name: str,
+            payload: bytes,
+            content_type: str,
+            content_encoding: str | None,
+            metadata: Mapping[str, str] | None = None,
+        ) -> None:
+            import os
+            # The ``container`` value comes from the export job's
+            # ExportDestination.container and is the logical
+            # bucket / subdirectory the caller asked the job to
+            # write into.
+            path = os.path.join(self._root, container, blob_name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as fp:
+                fp.write(payload)
+            # ``metadata`` is an optional dict of small string-valued
+            # key/value pairs the destination may persist alongside
+            # the blob (Azure Blob Storage and S3 both support this).
+            # Destinations that cannot represent it may ignore it.
+
+    writer = LocalFileSystemHistoryWriter("/var/exports")
+    export_client = ExportHistoryClient(dt_client, writer)
+
+The reason the protocol exposes both ``blob_name`` and ``instance_id``
+is so that destinations that key by something other than the blob
+name (database row IDs, message metadata, etc.) still have the
+orchestration identity available.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class HistoryWriter(Protocol):
+    """Destination-agnostic interface for writing one exported blob.
+
+    Implementations are expected to be **synchronous** and thread-safe
+    if a single instance is shared across activity workers.
+    """
+
+    def write(
+        self,
+        *,
+        instance_id: str,
+        container: str,
+        blob_name: str,
+        payload: bytes,
+        content_type: str,
+        content_encoding: str | None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> None:
+        """Persist one exported blob.
+
+        Args:
+            instance_id: The orchestration instance whose history this
+                payload represents.  Provided so destinations may use
+                it as a key, metadata, or sharding hint.
+            container: The destination container / bucket name the
+                job's :class:`ExportDestination` declared.  Writers
+                that want to honour per-job container routing should
+                use this value; writers that pin to a fixed container
+                at construction time (such as the bundled Azure Blob
+                writer) may ignore it.
+            blob_name: Destination-relative path / key, including any
+                configured destination prefix and file extension.
+                Does NOT include the ``container`` component — a
+                writer that routes per-container is expected to
+                combine the two.
+            payload: The serialized history bytes.  Already compressed
+                if the configured format calls for it.
+            content_type: The HTTP-style content type appropriate for
+                the configured format (e.g. ``application/json``).
+            content_encoding: ``"gzip"`` for the JSONL_GZIP format,
+                ``None`` for uncompressed formats.  Destinations that
+                model HTTP-style headers (such as Azure Blob Storage)
+                should persist this on the blob; destinations that
+                cannot represent it may ignore it.
+            metadata: Optional small string-valued key/value pairs the
+                activity asks the destination to persist alongside the
+                blob.  Azure Blob Storage and S3 expose this natively
+                as blob metadata / object tags; destinations that
+                cannot represent it may ignore it.  The activity
+                currently populates ``{"instance_id": instance_id}``
+                so downstream consumers can scan a container without
+                parsing each blob body.
+        """
+        ...
+
+
+__all__ = ["HistoryWriter"]

@@ -32,8 +32,8 @@ class SandboxWorkerProfileImageOptions:
     # Full OCI image reference for the sandbox worker container, for example
     # "myregistry.azurecr.io/workers/hello:1.0" or
     # "myregistry.azurecr.io/workers/hello@sha256:0123456789abcdef...".
-    image_ref: Optional[str] = None
-    managed_identity_client_id: Optional[str] = None
+    image_ref: str = ""
+    managed_identity_client_id: str = ""
     entrypoint: list[str] = field(default_factory=list[str])
     cmd: list[str] = field(default_factory=list[str])
 
@@ -51,7 +51,7 @@ class SandboxWorkerProfileOptions:
 
     worker_profile_id: str
     image: SandboxWorkerProfileImageOptions = field(default_factory=SandboxWorkerProfileImageOptions)
-    scheduler_managed_identity_client_id: Optional[str] = None
+    scheduler_managed_identity_client_id: str = ""
     cpu: str = DEFAULT_CPU
     memory: str = DEFAULT_MEMORY
     environment_variables: dict[str, str] = field(default_factory=dict[str, str])
@@ -115,7 +115,7 @@ def sandbox_worker_profile(worker_profile_id: str) -> Callable[[type], type]:
 def _build_sandbox_worker_profile(
         *,
         activities: Iterable[SandboxActivity],
-        scheduler_managed_identity_client_id: Optional[str],
+        scheduler_managed_identity_client_id: str = "",
         worker_profile_id: str,
         image: Optional[SandboxWorkerProfileImageOptions] = None,
         cpu: str = DEFAULT_CPU,

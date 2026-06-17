@@ -60,7 +60,7 @@ def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
 
 def _sandbox_image(
         image_ref: str,
-        managed_identity_client_id: str | None = "image-pull-client-id",
+        managed_identity_client_id: str = "image-pull-client-id",
         entrypoint: list[str] | None = None,
         cmd: list[str] | None = None):
     options = SandboxWorkerProfileOptions(worker_profile_id="pytest-image-helper")
@@ -369,8 +369,8 @@ def test_build_sandbox_worker_profile_requires_scheduler_managed_identity_client
             worker_profile_id="preview",
             activities=[SandboxActivity("RemoteHello", None)],
             image=_sandbox_image("example.azurecr.io/sandboxes-worker:v1"))
-    except TypeError as ex:
-        assert "scheduler_managed_identity_client_id" in str(ex)
+    except ValueError as ex:
+        assert "managed identity client ID workers use" in str(ex)
     else:
         raise AssertionError("Expected missing scheduler managed identity client ID to fail.")
 
@@ -382,7 +382,7 @@ def test_build_sandbox_worker_profile_requires_image_pull_managed_identity_clien
             activities=[SandboxActivity("RemoteHello", None)],
             image=_sandbox_image(
                 "example.azurecr.io/sandboxes-worker:v1",
-                managed_identity_client_id=None),
+                managed_identity_client_id=""),
             scheduler_managed_identity_client_id="scheduler-client-id")
     except ValueError as ex:
         assert "used to pull the worker image" in str(ex)
