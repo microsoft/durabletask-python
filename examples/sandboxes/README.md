@@ -45,10 +45,11 @@ the pushed image reference. `RemoteWorkerProfile.configure()` declares CPU,
 memory, max concurrency, customer environment variables, and sandbox activity
 identities with `options.image.image_ref`,
 `options.image.managed_identity_client_id`, and
-`options.add_activity(name, version)`. This sample uses an unversioned activity
-identity (`version=None`) because Python orchestrations currently schedule
-activities by name. The declarer and remote worker both use `activities.py` so
-they stay in sync.
+`options.add_activity(name)`. This sample uses an unversioned activity identity
+because Python orchestrations currently schedule activities by name. The sandbox
+metadata API can carry an optional activity version for future activity-version
+support, but this sample intentionally omits it. The declarer and remote worker
+both use `activities.py` so they stay in sync.
 
 The remote worker code cannot pass Durable Task Scheduler runtime settings to the SDK. In a
 sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`,

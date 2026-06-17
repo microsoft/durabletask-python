@@ -20,7 +20,7 @@ _remote_hello.__name__ = REMOTE_HELLO.name
 
 
 with SandboxWorker() as worker:
-    worker.add_activity(_remote_hello, version=REMOTE_HELLO.version)
+    worker.add_activity(_remote_hello)
     worker.start()
     print("Python sandbox remote worker is running. Press Ctrl+C to stop.")
     try:

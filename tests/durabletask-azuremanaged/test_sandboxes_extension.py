@@ -144,6 +144,16 @@ def test_profile_options_add_activities_accepts_activity_range() -> None:
     ]
 
 
+def test_profile_options_add_activity_defaults_to_unversioned() -> None:
+    options = SandboxWorkerProfileOptions(worker_profile_id="pytest-unversioned-profile")
+
+    options.add_activity("RemoteHello")
+
+    assert resolve_activities(options.activities) == [
+        SandboxActivity("RemoteHello", None),
+    ]
+
+
 def test_sandbox_worker_profile_requires_activity() -> None:
     try:
         try:

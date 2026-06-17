@@ -61,7 +61,7 @@ class SandboxWorkerProfileOptions:
     def add_activity(
             self,
             activity: str | Callable[..., Any],
-            version: Optional[str]) -> None:
+            version: Optional[str] = None) -> None:
         """Add an activity to the sandbox worker profile worker_profile."""
         activity_name = task.get_name(activity) if callable(activity) else activity
         self.activities.append(SandboxActivity(

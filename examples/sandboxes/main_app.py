@@ -86,7 +86,7 @@ class RemoteWorkerProfile(SandboxWorkerProfile):
         options.memory = "2048Mi"
         options.max_concurrent_activities = 1
         options.environment_variables["SANDBOX_SAMPLE_MARKER"] = "sandboxes-python-sample-marker"
-        options.add_activity(REMOTE_HELLO.name, version=REMOTE_HELLO.version)
+        options.add_activity(REMOTE_HELLO.name)
 
 
 print(f"Using taskhub: {taskhub_name}")
