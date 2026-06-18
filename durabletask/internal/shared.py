@@ -214,9 +214,14 @@ def _encode_custom_object(o: Any) -> Any:
         return dataclasses.asdict(o)
     if isinstance(o, SimpleNamespace):
         return vars(o)
-    to_json_hook = getattr(o, "to_json", None)
+    # Custom objects may opt in via a ``to_json`` hook. It is resolved off the
+    # type and called with the instance (``type(o).to_json(o)``) so that both
+    # instance methods and ``@staticmethod`` hooks work -- matching the calling
+    # convention used by ``azure-functions-durable``. The hook returns a
+    # JSON-serializable value (a structure or a string), not a JSON document.
+    to_json_hook = getattr(cast(Any, type(o)), "to_json", None)
     if callable(to_json_hook):
-        return to_json_hook()
+        return to_json_hook(o)
     # This will raise a TypeError describing the unsupported type.
     raise TypeError(f"Object of type '{type(o).__name__}' is not JSON serializable")
 
@@ -278,13 +283,16 @@ def coerce_to_type(value: Any, expected_type: Any) -> Any:
 def _coerce_generic(value: Any, expected_type: Any, origin: Any) -> Any:
     args = typing.get_args(expected_type)
     if origin is typing.Union or origin is types.UnionType:
-        # Optional[T] / Union[...]: if the value already matches a member type,
-        # keep it; otherwise coerce to the first non-None member.
+        # If the value already matches a member type, keep it as-is.
         non_none = [a for a in args if a is not type(None)]
         for arg in non_none:
             if isinstance(arg, type) and isinstance(value, arg):
                 return value
-        if non_none:
+        # ``Optional[T]`` (exactly one non-None member): coerce to that member.
+        # For a genuine multi-member ``Union`` where the value matched none of
+        # the members, leave it untouched rather than guessing the first arg --
+        # forcing a coercion there can silently mis-construct the wrong type.
+        if len(non_none) == 1:
             return coerce_to_type(value, non_none[0])
         return value
     if origin in (list, Sequence) and isinstance(value, list):

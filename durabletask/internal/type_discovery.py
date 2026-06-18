@@ -55,7 +55,11 @@ def is_reconstructable(annotation: Any) -> bool:
     return callable(getattr(cast(Any, annotation), "from_json", None))
 
 
-@functools.lru_cache(maxsize=None)
+# Bounded so a worker that registers dynamically-created functions or closures
+# cannot accumulate cache entries unboundedly over the process lifetime. The
+# common case (a fixed set of module-level orchestrators/activities) fits well
+# within this bound.
+@functools.lru_cache(maxsize=2048)
 def _resolved_hints(fn: Callable[..., Any]) -> dict[str, Any] | None:
     """Resolve a function's type hints, honoring postponed annotations.
 

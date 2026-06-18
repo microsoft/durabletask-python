@@ -28,9 +28,18 @@ if TYPE_CHECKING:
         OrchestrationStatus,
     )
     from durabletask.entities import EntityInstanceId
+    from durabletask.serialization import DataConverter
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
+
+
+def _serialize(value: Any, data_converter: DataConverter | None) -> str | None:
+    """Serialize ``value`` using the supplied converter, defaulting to the SDK's."""
+    if data_converter is None:
+        from durabletask.serialization import DEFAULT_DATA_CONVERTER
+        data_converter = DEFAULT_DATA_CONVERTER
+    return data_converter.serialize(value)
 
 
 def prepare_sync_interceptors(
@@ -70,13 +79,14 @@ def build_schedule_new_orchestration_req(
         start_at: datetime | None,
         reuse_id_policy: pb.OrchestrationIdReusePolicy | None,
         tags: dict[str, str] | None,
-        version: str | None) -> pb.CreateInstanceRequest:
+        version: str | None,
+        data_converter: DataConverter) -> pb.CreateInstanceRequest:
     """Build a CreateInstanceRequest for scheduling a new orchestration."""
     name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
     return pb.CreateInstanceRequest(
         name=name,
         instanceId=instance_id if instance_id else uuid.uuid4().hex,
-        input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
+        input=helpers.get_string_value(data_converter.serialize(input)),
         scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
         version=helpers.get_string_value(version),
         orchestrationIdReusePolicy=reuse_id_policy,
@@ -168,23 +178,25 @@ def log_completion_state(
 def build_raise_event_req(
         instance_id: str,
         event_name: str,
-        data: Any | None = None) -> pb.RaiseEventRequest:
+        data: Any | None = None,
+        data_converter: DataConverter | None = None) -> pb.RaiseEventRequest:
     """Build a RaiseEventRequest for raising an orchestration event."""
     return pb.RaiseEventRequest(
         instanceId=instance_id,
         name=event_name,
-        input=helpers.get_string_value(shared.to_json(data) if data is not None else None)
+        input=helpers.get_string_value(_serialize(data, data_converter))
     )
 
 
 def build_terminate_req(
         instance_id: str,
         output: Any | None = None,
-        recursive: bool = True) -> pb.TerminateRequest:
+        recursive: bool = True,
+        data_converter: DataConverter | None = None) -> pb.TerminateRequest:
     """Build a TerminateRequest for terminating an orchestration."""
     return pb.TerminateRequest(
         instanceId=instance_id,
-        output=helpers.get_string_value(shared.to_json(output) if output is not None else None),
+        output=helpers.get_string_value(_serialize(output, data_converter)),
         recursive=recursive
     )
 
@@ -192,12 +204,13 @@ def build_terminate_req(
 def build_signal_entity_req(
         entity_instance_id: EntityInstanceId,
         operation_name: str,
-        input: Any | None = None) -> pb.SignalEntityRequest:
+        input: Any | None = None,
+        data_converter: DataConverter | None = None) -> pb.SignalEntityRequest:
     """Build a SignalEntityRequest for signaling an entity."""
     return pb.SignalEntityRequest(
         instanceId=str(entity_instance_id),
         name=operation_name,
-        input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
+        input=helpers.get_string_value(_serialize(input, data_converter)),
         requestId=str(uuid.uuid4()),
         scheduledTime=None,
         parentTraceContext=None,

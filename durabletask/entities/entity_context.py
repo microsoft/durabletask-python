@@ -1,20 +1,28 @@
 
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 import uuid
 from durabletask.entities.entity_instance_id import EntityInstanceId
-from durabletask.internal import helpers, shared
+from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.orchestrator_service_pb2 as pb
+
+if TYPE_CHECKING:
+    from durabletask.serialization import DataConverter
 
 TState = TypeVar("TState")
 
 
 class EntityContext:
-    def __init__(self, orchestration_id: str, operation: str, state: StateShim, entity_id: EntityInstanceId):
+    def __init__(self, orchestration_id: str, operation: str, state: StateShim,
+                 entity_id: EntityInstanceId, data_converter: "DataConverter | None" = None):
         self._orchestration_id = orchestration_id
         self._operation = operation
         self._state = state
         self._entity_id = entity_id
+        if data_converter is None:
+            from durabletask.serialization import JsonDataConverter
+            data_converter = JsonDataConverter()
+        self._data_converter = data_converter
 
     @property
     def orchestration_id(self) -> str:
@@ -93,7 +101,7 @@ class EntityContext:
         input : Any, optional
             The input to provide to the entity for the operation.
         """
-        encoded_input: str | None = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = self._data_converter.serialize(input)
         self._state.add_operation_action(
             pb.OperationAction(
                 sendSignal=pb.SendSignalAction(
@@ -124,7 +132,7 @@ class EntityContext:
         str
             The instance ID of the scheduled orchestration.
         """
-        encoded_input: str | None = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = self._data_converter.serialize(input)
         if not instance_id:
             instance_id = uuid.uuid4().hex
         self._state.add_operation_action(

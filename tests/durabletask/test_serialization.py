@@ -54,6 +54,45 @@ class Widget:
 Point = namedtuple("Point", ["x", "y"])
 
 
+class StaticWidget:
+    """Custom object whose to_json/from_json are static methods returning a str.
+
+    This mirrors the ``azure-functions-durable`` sample convention where
+    ``to_json(obj)`` is a ``@staticmethod`` that returns a string.
+    """
+
+    def __init__(self, name: str):
+        self.name = name
+
+    @staticmethod
+    def to_json(obj: "StaticWidget") -> str:
+        return obj.name
+
+    @staticmethod
+    def from_json(data: str) -> "StaticWidget":
+        return StaticWidget(data)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, StaticWidget) and other.name == self.name
+
+
+def test_to_json_static_hook_receives_instance():
+    # type(obj).to_json(obj) must invoke the @staticmethod with the instance.
+    assert shared.to_json(StaticWidget("gizmo")) == '"gizmo"'
+
+
+def test_static_hook_round_trips_with_expected_type():
+    encoded = shared.to_json(StaticWidget("gizmo"))
+    result = shared.from_json(encoded, StaticWidget)
+    assert isinstance(result, StaticWidget)
+    assert result == StaticWidget("gizmo")
+
+
+def test_instance_to_json_hook_receives_instance():
+    # The same type(obj).to_json(obj) path works for plain instance methods.
+    assert json.loads(shared.to_json(Widget("gear", 5))) == {"label": "gear", "size": 5}
+
+
 # ----- to_json -----
 
 
@@ -202,3 +241,26 @@ def test_coerce_to_type_already_correct_type():
 def test_coerce_to_type_invalid_conversion_raises():
     with pytest.raises(TypeError):
         shared.coerce_to_type("not-a-number", int)
+
+
+def test_coerce_optional_dataclass_coerces_member():
+    from typing import Optional
+    result = shared.coerce_to_type({"street": "a", "city": "b"}, Optional[Address])
+    assert isinstance(result, Address)
+
+
+def test_coerce_genuine_union_leaves_unmatched_value_untouched():
+    from typing import Union
+
+    @dataclass
+    class A:
+        x: int
+
+    @dataclass
+    class B:
+        y: int
+
+    # A dict matching neither A nor B by isinstance must be returned unchanged,
+    # not force-coerced into the first union member.
+    value = {"z": 1}
+    assert shared.coerce_to_type(value, Union[A, B]) == {"z": 1}

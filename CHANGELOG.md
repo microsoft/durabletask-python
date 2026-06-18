@@ -52,6 +52,17 @@ ADDED
   uses a deterministic instance ID (`export-job-{job_id}`, exposed via
   `orchestrator_instance_id_for(...)`) so callers can correlate a job ID
   with its orchestrator for logging, monitoring, and restart.
+- Added a pluggable `DataConverter` abstraction (`durabletask.serialization`)
+  consumed by both the worker and the client. `TaskHubGrpcWorker`,
+  `TaskHubGrpcClient`, and `AsyncTaskHubGrpcClient` accept a `data_converter`
+  argument; every payload serialization boundary (inputs, outputs, events,
+  custom status, entity state) routes through it. The default
+  `JsonDataConverter` preserves existing behavior, so supplying a custom
+  converter (for example, one backed by pydantic) is purely opt-in. Custom
+  objects opt in via a `to_json()` hook -- invoked as `type(obj).to_json(obj)`
+  so both instance methods and `@staticmethod` hooks work -- and a
+  `from_json(value)` classmethod, matching the `azure-functions-durable`
+  convention.
 - Type-aware deserialization of payloads. `OrchestrationContext.call_activity`,
   `call_sub_orchestrator`, and `call_entity` accept an optional `return_type`,
   and `wait_for_external_event` accepts an optional `data_type`. When provided,
@@ -65,9 +76,11 @@ ADDED
 - Inbound payloads are reconstructed from function type annotations. When an
   orchestrator, activity, or entity operation annotates its input parameter with
   a dataclass or a `from_json()`-capable type, the incoming payload is
-  automatically coerced to that type. Discovery is best-effort and conservative:
-  builtins and unannotated/unknown types are passed through unchanged, and a
-  payload that cannot be coerced falls back to the raw value.
+  automatically coerced to that type. Coercion is best-effort: builtins and
+  unannotated/unknown types are passed through unchanged, and a payload that
+  cannot be coerced to the requested type falls back to the raw deserialized
+  value (logged at debug level) rather than raising. This best-effort policy is
+  owned by the default `JsonDataConverter`; a stricter converter can change it.
 - `call_activity` results are reconstructed from the activity's return
   annotation. When an activity function reference is passed (not a string name)
   and its return type is annotated with a dataclass or `from_json()`-capable

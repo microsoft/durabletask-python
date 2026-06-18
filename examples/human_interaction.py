@@ -6,7 +6,6 @@ represented by the orchestration is automatically cancelled."""
 import os
 import threading
 import time
-from collections import namedtuple
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -26,6 +25,12 @@ class Order:
 
     def __str__(self):
         return f'{self.Product} ({self.Quantity})'
+
+
+@dataclass
+class Approval:
+    """Represents an approval decision raised as an external event."""
+    approver: str
 
 
 def send_approval_request(_: task.ActivityContext, order: Order) -> None:
@@ -49,7 +54,8 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     yield ctx.call_activity(send_approval_request, input=order)
 
     # Approvals must be received within 24 hours or they will be cancelled.
-    approval_event = ctx.wait_for_external_event("approval_received")
+    # Passing ``data_type`` reconstructs the event payload as an ``Approval``.
+    approval_event = ctx.wait_for_external_event("approval_received", data_type=Approval)
     timeout_event = ctx.create_timer(timedelta(hours=24))
     winner = yield task.when_any([approval_event, timeout_event])
     if winner == timeout_event:
@@ -87,7 +93,7 @@ if __name__ == "__main__":
 
                 def prompt_for_approval():
                     input("Press [ENTER] to approve the order...\n")
-                    approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                    approval_event = Approval(approver=args.approver)
                     c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
                 # Prompt the user for approval on a background thread
@@ -133,7 +139,7 @@ if __name__ == "__main__":
 
             def prompt_for_approval():
                 input("Press [ENTER] to approve the order...\n")
-                approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                approval_event = Approval(approver=args.approver)
                 c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
             # Prompt the user for approval on a background thread
