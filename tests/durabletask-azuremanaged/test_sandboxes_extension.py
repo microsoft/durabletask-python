@@ -755,14 +755,14 @@ def test_sandbox_worker_defaults_missing_or_unknown_sandbox_provider(monkeypatch
         assert start.start.sandbox_provider == pb.SANDBOX_PROVIDER_KIND_UNSPECIFIED
 
 
-def test_sandbox_registration_does_not_retry_failed_precondition_without_structured_reasons() -> None:
+def test_sandbox_registration_retries_failed_precondition_until_structured_reasons() -> None:
     assert sandbox_worker._is_retriable_registration_failure(
         _FakeRpcError(grpc.StatusCode.UNAVAILABLE))
-    assert not sandbox_worker._is_retriable_registration_failure(
+    assert sandbox_worker._is_retriable_registration_failure(
         _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, "sandbox not ready"))
     assert not sandbox_worker._is_retriable_registration_failure(
         _FakeRpcError(grpc.StatusCode.INVALID_ARGUMENT))
-    assert not sandbox_worker._is_retriable_registration_failure(
+    assert sandbox_worker._is_retriable_registration_failure(
         _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, "worker profile does not match"))
 
 

@@ -243,14 +243,15 @@ def _resolve_dts_sandbox_identifier() -> str:
 _RETRIABLE_REGISTRATION_STATUS_CODES = {
     grpc.StatusCode.CANCELLED,
     grpc.StatusCode.DEADLINE_EXCEEDED,
+    grpc.StatusCode.FAILED_PRECONDITION,
     grpc.StatusCode.INTERNAL,
     grpc.StatusCode.RESOURCE_EXHAUSTED,
     grpc.StatusCode.UNAVAILABLE,
     grpc.StatusCode.UNKNOWN,
 }
 
-# TODO: Selectively retry FAILED_PRECONDITION only after sandbox worker
-# registration exposes structured, machine-readable transient reasons.
+# TODO: Stop retrying permanent FAILED_PRECONDITION responses once sandbox
+# worker registration exposes structured, machine-readable failure reasons.
 
 
 def _is_retriable_registration_failure(ex: Exception) -> bool:
