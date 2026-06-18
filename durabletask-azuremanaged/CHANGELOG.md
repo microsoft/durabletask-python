@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Updates base dependency to durabletask v1.6.0.
+- Added preview support for Durable Task Scheduler on-demand sandbox
+  activities under `durabletask.azuremanaged.preview.sandboxes`. Applications
+  can declare sandbox activities (with optional per-activity versions),
+  register sandbox worker profiles, and run a sandbox activity worker that
+  establishes a live worker session and dispatches only the activities it
+  has registered.
+
 ## v1.5.0
 
 - Updates base dependency to durabletask v1.5.0

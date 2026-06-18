@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added overridable activity-dispatch hooks `_on_activity_execution_started`
+  and `_on_activity_execution_completed` on `TaskHubGrpcWorker`, invoked
+  immediately before each activity runs and in a `finally` after it completes
+  or fails. Subclasses can override these to observe in-flight activity
+  execution (for example, to track the number of activities currently
+  running).
 - Added `durabletask.extensions.history_export` for exporting the event history of
   terminal orchestrations to an external destination. Includes
   `ExportHistoryClient`, a per-job `ExportHistoryJobClient` returned by

@@ -1217,6 +1217,12 @@ class TaskHubGrpcWorker:
         )
         self._logger.info(f"Cancelled orchestration task for invocation ID: {req.instanceId}")
 
+    def _on_activity_execution_started(self, req: pb.ActivityRequest) -> None:
+        pass
+
+    def _on_activity_execution_completed(self, req: pb.ActivityRequest) -> None:
+        pass
+
     def _execute_activity(
             self,
             req: pb.ActivityRequest,
@@ -1224,55 +1230,58 @@ class TaskHubGrpcWorker:
             completionToken: Any,
     ) -> None:
         instance_id = req.orchestrationInstance.instanceId
-
-        # De-externalize any large-payload tokens in the incoming request
-        if self._payload_store is not None:
-            payload_helpers.deexternalize_payloads(req, self._payload_store)
+        self._on_activity_execution_started(req)
         try:
-            executor = _ActivityExecutor(self._registry, self._logger)
-            with tracing.start_span(
-                tracing.create_span_name("activity", req.name),
-                trace_context=req.parentTraceContext,
-                kind=tracing.SpanKind.SERVER,
-                attributes={
-                    tracing.ATTR_TASK_TYPE: "activity",
-                    tracing.ATTR_TASK_INSTANCE_ID: instance_id,
-                    tracing.ATTR_TASK_NAME: req.name,
-                    tracing.ATTR_TASK_TASK_ID: str(req.taskId),
-                },
-            ) as span:
-                try:
-                    result = executor.execute(
-                        instance_id, req.name, req.taskId, req.input.value
-                    )
-                except Exception as ex:
-                    tracing.set_span_error(span, ex)
-                    raise
-            res = pb.ActivityResponse(
-                instanceId=instance_id,
-                taskId=req.taskId,
-                result=ph.get_string_value(result),
-                completionToken=completionToken,
-            )
-        except Exception as ex:
-            res = pb.ActivityResponse(
-                instanceId=instance_id,
-                taskId=req.taskId,
-                failureDetails=ph.new_failure_details(ex),
-                completionToken=completionToken,
-            )
-
-        try:
-            # Externalize any large payloads in the response
+            # De-externalize any large-payload tokens in the incoming request
             if self._payload_store is not None:
-                payload_helpers.externalize_payloads(
-                    res, self._payload_store, instance_id=instance_id,
+                payload_helpers.deexternalize_payloads(req, self._payload_store)
+            try:
+                executor = _ActivityExecutor(self._registry, self._logger)
+                with tracing.start_span(
+                    tracing.create_span_name("activity", req.name),
+                    trace_context=req.parentTraceContext,
+                    kind=tracing.SpanKind.SERVER,
+                    attributes={
+                        tracing.ATTR_TASK_TYPE: "activity",
+                        tracing.ATTR_TASK_INSTANCE_ID: instance_id,
+                        tracing.ATTR_TASK_NAME: req.name,
+                        tracing.ATTR_TASK_TASK_ID: str(req.taskId),
+                    },
+                ) as span:
+                    try:
+                        result = executor.execute(
+                            instance_id, req.name, req.taskId, req.input.value
+                        )
+                    except Exception as ex:
+                        tracing.set_span_error(span, ex)
+                        raise
+                res = pb.ActivityResponse(
+                    instanceId=instance_id,
+                    taskId=req.taskId,
+                    result=ph.get_string_value(result),
+                    completionToken=completionToken,
                 )
-            stub.CompleteActivityTask(res)
-        except Exception as ex:
-            self._logger.exception(
-                f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
-            )
+            except Exception as ex:
+                res = pb.ActivityResponse(
+                    instanceId=instance_id,
+                    taskId=req.taskId,
+                    failureDetails=ph.new_failure_details(ex),
+                    completionToken=completionToken,
+                )
+
+            try:
+                # Externalize any large payloads in the response
+                if self._payload_store is not None:
+                    payload_helpers.externalize_payloads(
+                        res, self._payload_store, instance_id=instance_id,
+                    )
+                stub.CompleteActivityTask(res)
+            except Exception as ex:
+                self._logger.exception(
+                    f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+                )
+        finally:
+            self._on_activity_execution_completed(req)
 
     def _cancel_activity(
             self,
