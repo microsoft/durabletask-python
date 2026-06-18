@@ -249,13 +249,8 @@ _RETRIABLE_REGISTRATION_STATUS_CODES = {
     grpc.StatusCode.UNKNOWN,
 }
 
-_PERMANENT_FAILED_PRECONDITION_DETAILS = (
-    "worker profile",
-    "registered activit",
-    "max activit",
-    "sandbox identifier",
-    "sandbox id",
-)
+# TODO: Selectively retry FAILED_PRECONDITION only after sandbox worker
+# registration exposes structured, machine-readable transient reasons.
 
 
 def _is_retriable_registration_failure(ex: Exception) -> bool:
@@ -263,19 +258,9 @@ def _is_retriable_registration_failure(ex: Exception) -> bool:
         status_code = ex.code()
         if status_code in _RETRIABLE_REGISTRATION_STATUS_CODES:
             return True
-        if status_code == grpc.StatusCode.FAILED_PRECONDITION:
-            details = _rpc_error_details(ex).casefold()
-            return not any(
-                detail in details
-                for detail in _PERMANENT_FAILED_PRECONDITION_DETAILS)
         return False
 
     return isinstance(ex, OSError)
-
-
-def _rpc_error_details(ex: grpc.RpcError) -> str:
-    details = ex.details()
-    return details if isinstance(details, str) else ""
 
 
 def _resolve_max_concurrent_activities() -> int:
