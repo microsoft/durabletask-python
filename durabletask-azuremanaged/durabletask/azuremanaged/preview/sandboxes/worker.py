@@ -7,6 +7,7 @@ import threading
 
 from typing import Iterator, Optional
 
+import grpc
 from azure.core.credentials import TokenCredential
 from azure.identity import ManagedIdentityCredential
 
@@ -45,6 +46,7 @@ class SandboxWorker(DurableTaskSchedulerWorker):
         resolved_secure_channel = _resolve_secure_channel(resolved_host_address)
         resolved_token_credential = _resolve_token_credential()
         resolved_max_concurrent_activities = _resolve_max_concurrent_activities()
+        resolved_dts_sandbox_identifier = _resolve_dts_sandbox_identifier()
         resolved_sandbox_provider = _resolve_sandbox_provider()
         concurrency_options = ConcurrencyOptions(
             maximum_concurrent_activity_work_items=resolved_max_concurrent_activities)
@@ -66,7 +68,7 @@ class SandboxWorker(DurableTaskSchedulerWorker):
         self._sandbox_activities: list[SandboxActivity] = []
         self._sandbox_max_activities = resolved_max_concurrent_activities
         self._sandbox_provider = resolved_sandbox_provider
-        self._sandbox_dts_sandbox_identifier = os.getenv("DTS_SANDBOX_ID")
+        self._sandbox_dts_sandbox_identifier = resolved_dts_sandbox_identifier
         self._sandbox_heartbeat_interval_seconds = 2.0
         self._sandbox_registration_stop = threading.Event()
         self._sandbox_registration_thread: Optional[threading.Thread] = None
@@ -143,6 +145,11 @@ class SandboxWorker(DurableTaskSchedulerWorker):
             except Exception as ex:
                 if self._sandbox_registration_stop.is_set():
                     break
+                if not _is_retriable_registration_failure(ex):
+                    self._sandbox_logger.error(
+                        "Sandbox activity worker registration failed permanently: %s", ex)
+                    self._sandbox_registration_stop.set()
+                    break
                 self._sandbox_logger.warning("Sandbox activity worker registration failed: %s", ex)
                 delay = random.uniform(0, retry_delay)
                 self._sandbox_registration_stop.wait(delay)
@@ -216,19 +223,59 @@ def _resolve_token_credential() -> TokenCredential | None:
     return ManagedIdentityCredential(client_id=client_id.strip())
 
 
-def _resolve_sandbox_provider() -> str:
+def _resolve_sandbox_provider() -> Optional[str]:
     sandbox_provider = os.getenv("DTS_SANDBOX_PROVIDER")
-    if not sandbox_provider:
+    if not sandbox_provider or not sandbox_provider.strip():
+        return None
+    return sandbox_provider.strip()
+
+
+def _resolve_dts_sandbox_identifier() -> str:
+    dts_sandbox_identifier = os.getenv("DTS_SANDBOX_ID")
+    if not dts_sandbox_identifier or not dts_sandbox_identifier.strip():
         raise ValueError(
-            "Sandbox worker requires DTS_SANDBOX_PROVIDER to be injected in the "
+            "Sandbox worker requires DTS_SANDBOX_ID to be injected in the "
             "sandbox environment.")
 
-    normalized = sandbox_provider.strip()
-    if normalized.lower() not in ("sandbox", "acasessionpool"):
-        raise ValueError(
-            "Sandbox worker requires DTS_SANDBOX_PROVIDER to be Sandbox or AcaSessionPool.")
+    return dts_sandbox_identifier.strip()
 
-    return normalized
+
+_RETRIABLE_REGISTRATION_STATUS_CODES = {
+    grpc.StatusCode.CANCELLED,
+    grpc.StatusCode.DEADLINE_EXCEEDED,
+    grpc.StatusCode.INTERNAL,
+    grpc.StatusCode.RESOURCE_EXHAUSTED,
+    grpc.StatusCode.UNAVAILABLE,
+    grpc.StatusCode.UNKNOWN,
+}
+
+_PERMANENT_FAILED_PRECONDITION_DETAILS = (
+    "worker profile",
+    "registered activit",
+    "max activit",
+    "sandbox identifier",
+    "sandbox id",
+)
+
+
+def _is_retriable_registration_failure(ex: Exception) -> bool:
+    if isinstance(ex, grpc.RpcError):
+        status_code = ex.code()
+        if status_code in _RETRIABLE_REGISTRATION_STATUS_CODES:
+            return True
+        if status_code == grpc.StatusCode.FAILED_PRECONDITION:
+            details = _rpc_error_details(ex).casefold()
+            return not any(
+                detail in details
+                for detail in _PERMANENT_FAILED_PRECONDITION_DETAILS)
+        return False
+
+    return isinstance(ex, OSError)
+
+
+def _rpc_error_details(ex: grpc.RpcError) -> str:
+    details = ex.details()
+    return details if isinstance(details, str) else ""
 
 
 def _resolve_max_concurrent_activities() -> int:

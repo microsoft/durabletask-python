@@ -5,6 +5,7 @@ from typing import Iterable, Optional
 
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
+from durabletask.azuremanaged.preview.sandboxes.helpers import normalize_required
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
 
 
@@ -29,13 +30,17 @@ def build_sandbox_worker_start(
     if not resolved_activities:
         raise ValueError("Sandbox activity worker registration requires at least one registered activity.")
 
+    resolved_dts_sandbox_identifier = normalize_required(
+        dts_sandbox_identifier,
+        "Sandbox activity worker registration requires a DTS sandbox ID.")
+
     message = pb.SandboxActivityWorkerMessage(
         start=pb.SandboxActivityWorkerStart(
             task_hub=taskhub.strip(),
             worker_profile_id=worker_profile_id.strip(),
             max_activities_count=max_activities_count,
             sandbox_provider=_parse_sandbox_provider(sandbox_provider),
-            dts_sandbox_identifier=(dts_sandbox_identifier or "").strip()))
+            dts_sandbox_identifier=resolved_dts_sandbox_identifier))
     message.start.activities.extend([
         pb.SandboxActivity(name=activity.name, version=activity.version or "")
         for activity in resolved_activities
@@ -53,10 +58,11 @@ def build_sandbox_worker_heartbeat(active_activities_count: int) -> pb.SandboxAc
 
 
 def _parse_sandbox_provider(sandbox_provider: Optional[str]) -> "pb.SandboxProviderKind":
-    if not sandbox_provider:
+    if not sandbox_provider or not sandbox_provider.strip():
         return pb.SANDBOX_PROVIDER_KIND_UNSPECIFIED
-    if sandbox_provider.lower() == "sandbox":
+    normalized = sandbox_provider.strip().lower()
+    if normalized == "sandbox":
         return pb.SANDBOX_PROVIDER_KIND_SANDBOX
-    if sandbox_provider.lower() == "acasessionpool":
+    if normalized == "acasessionpool":
         return pb.SANDBOX_PROVIDER_KIND_ACA_SESSION_POOL
     return pb.SANDBOX_PROVIDER_KIND_UNSPECIFIED

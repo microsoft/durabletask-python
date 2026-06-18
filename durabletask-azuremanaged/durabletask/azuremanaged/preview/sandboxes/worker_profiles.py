@@ -34,13 +34,6 @@ class SandboxWorkerProfileImageOptions:
 class SandboxWorkerProfileOptions:
     """Options for a decorated sandbox worker profile."""
 
-    @dataclass(frozen=True)
-    class Activity:
-        """Activity name and optional version for a sandbox worker profile."""
-
-        name: str
-        version: Optional[str]
-
     worker_profile_id: str
     image: SandboxWorkerProfileImageOptions = field(default_factory=SandboxWorkerProfileImageOptions)
     scheduler_managed_identity_client_id: str = ""
@@ -60,7 +53,7 @@ class SandboxWorkerProfileOptions:
             name=normalize_required(activity_name, "Sandbox activity name is required."),
             version=(version.strip() if version and version.strip() else None)))
 
-    def add_activities(self, activities: Iterable[Activity]) -> None:
+    def add_activities(self, activities: Iterable[SandboxActivity]) -> None:
         """Add activity names and versions to the sandbox worker profile."""
         for activity in activities:
             self.add_activity(activity.name, activity.version)

@@ -13,6 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   worker profiles, and running sandbox activity workers.
 - Added optional activity versions to sandbox worker profile declarations and
   sandbox worker registration.
+- Required sandbox workers to fail fast when `DTS_SANDBOX_ID` is missing,
+  treated `DTS_SANDBOX_PROVIDER` as optional metadata, and added context
+  manager support to `SandboxActivitiesClient`.
 
 ## v1.5.0
 

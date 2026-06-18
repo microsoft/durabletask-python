@@ -93,12 +93,12 @@ print(f"Using taskhub: {taskhub_name}")
 print(f"Using endpoint: {endpoint}")
 print(f"Declaring sandbox activity image: {container_image}")
 
-sandboxes_client = SandboxActivitiesClient(
-    host_address=endpoint,
-    secure_channel=secure_channel,
-    taskhub=taskhub_name,
-    token_credential=credential)
-sandboxes_client.enable_sandbox_activities()
+with SandboxActivitiesClient(
+        host_address=endpoint,
+        secure_channel=secure_channel,
+        taskhub=taskhub_name,
+        token_credential=credential) as sandboxes_client:
+    sandboxes_client.enable_sandbox_activities()
 
 with DurableTaskSchedulerWorker(
         host_address=endpoint,

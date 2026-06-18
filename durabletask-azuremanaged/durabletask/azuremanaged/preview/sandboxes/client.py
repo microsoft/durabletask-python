@@ -41,6 +41,12 @@ class SandboxActivitiesClient:
     def close(self) -> None:
         self._transport.close()
 
+    def __enter__(self) -> "SandboxActivitiesClient":
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.close()
+
     def enable_sandbox_activities(self) -> None:
         """Declare all configured sandbox worker profiles with Durable Task Scheduler."""
         worker_profiles = build_sandbox_worker_profiles()

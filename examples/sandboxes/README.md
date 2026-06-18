@@ -51,14 +51,15 @@ metadata API can carry an optional activity version for future activity-version
 support, but this sample intentionally omits it. The declarer and remote worker
 both use `activities.py` so they stay in sync.
 
-The remote worker code cannot pass Durable Task Scheduler runtime settings to the SDK. In a
-sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`,
-`DTS_TASK_HUB`, `DTS_WORKER_PROFILE_ID`, `DTS_SANDBOX_MAX_ACTIVITIES`,
-`DTS_SANDBOX_PROVIDER`, `DTS_AUTHENTICATION`, `DTS_UMI_CLIENT_ID`, and
-`DTS_SANDBOX_ID` from environment variables injected by Durable Task Scheduler.
-The worker requires `DTS_AUTHENTICATION=ManagedIdentity` and reports its
-registered activity identities when it connects. Durable Task Scheduler validates
-they match the worker_profile before advertising worker capacity.
+The remote worker code cannot pass Durable Task Scheduler runtime settings to
+the SDK. In a sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`, `DTS_TASK_HUB`,
+`DTS_WORKER_PROFILE_ID`, `DTS_SANDBOX_MAX_ACTIVITIES`, `DTS_AUTHENTICATION`,
+`DTS_UMI_CLIENT_ID`, and `DTS_SANDBOX_ID` from environment variables injected by
+Durable Task Scheduler. It also reads optional `DTS_SANDBOX_PROVIDER` metadata
+when present. The worker requires `DTS_AUTHENTICATION=ManagedIdentity` and
+reports its sandbox ID plus registered activity identities when it connects.
+Durable Task Scheduler validates they match the worker_profile before
+advertising worker capacity.
 
 ## Build the remote worker image
 

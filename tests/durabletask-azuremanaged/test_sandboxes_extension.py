@@ -3,9 +3,11 @@
 
 import inspect
 
+import grpc
 from azure.core.credentials import AccessToken
 
 import durabletask.azuremanaged.preview.sandboxes as sandbox
+import durabletask.azuremanaged.preview.sandboxes.client as sandbox_client
 import durabletask.azuremanaged.preview.sandboxes.worker_profiles as sandbox_worker_profiles
 import durabletask.azuremanaged.preview.sandboxes.worker as sandbox_worker
 from durabletask.azuremanaged.preview.sandboxes import SandboxWorker
@@ -139,8 +141,8 @@ def test_profile_options_add_activities_accepts_activity_range() -> None:
 
     options.add_activity("RemoteHello", version=None)
     options.add_activities([
-        SandboxWorkerProfileOptions.Activity(" RangeA ", None),
-        SandboxWorkerProfileOptions.Activity("RangeB", " v1 "),
+        SandboxActivity(" RangeA ", None),
+        SandboxActivity("RangeB", " v1 "),
     ])
 
     assert resolve_activities(options.activities) == [
@@ -148,6 +150,10 @@ def test_profile_options_add_activities_accepts_activity_range() -> None:
         SandboxActivity("RangeA", None),
         SandboxActivity("RangeB", "v1"),
     ]
+
+
+def test_profile_options_uses_single_activity_type() -> None:
+    assert not hasattr(SandboxWorkerProfileOptions, "Activity")
 
 
 def test_profile_options_add_activity_defaults_to_unversioned() -> None:
@@ -427,6 +433,21 @@ def test_build_sandbox_worker_start_and_heartbeat() -> None:
     assert heartbeat.heartbeat.active_activities_count == 1
 
 
+def test_build_sandbox_worker_start_requires_sandbox_identifier() -> None:
+    for value in [None, "", "   "]:
+        try:
+            build_sandbox_worker_start(
+                taskhub="hub",
+                worker_profile_id="preview",
+                max_activities_count=2,
+                activities=[SandboxActivity("RemoteHello", None)],
+                dts_sandbox_identifier=value)
+        except ValueError as ex:
+            assert "DTS sandbox ID" in str(ex)
+        else:
+            raise AssertionError(f"Expected dts_sandbox_identifier={value!r} to fail.")
+
+
 def test_generated_stub_uses_sandbox_rpc_paths() -> None:
     channel = _RecordingChannel()
     stub = stubs.SandboxActivitiesStub(channel)
@@ -447,6 +468,30 @@ def test_sandbox_worker_constructor_does_not_expose_runtime_contract() -> None:
 
 def test_sandbox_activities_client_does_not_expose_worker_registration_rpc() -> None:
     assert not hasattr(SandboxActivitiesClient, "connect_sandbox_activity_worker")
+
+
+def test_sandbox_activities_client_supports_context_manager(monkeypatch) -> None:
+    class FakeTransport:
+        last = None
+
+        def __init__(self, **kwargs):
+            self.closed = False
+            FakeTransport.last = self
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(sandbox_client, "SandboxActivitiesGrpcTransport", FakeTransport)
+
+    with SandboxActivitiesClient(
+            host_address="http://localhost:8080",
+            taskhub="hub",
+            token_credential=None) as client:
+        assert isinstance(client, SandboxActivitiesClient)
+        assert FakeTransport.last is not None
+        assert not FakeTransport.last.closed
+
+    assert FakeTransport.last.closed
 
 
 def test_sandbox_worker_does_not_own_legacy_wakeup_server(monkeypatch) -> None:
@@ -599,6 +644,26 @@ def test_sandbox_worker_rejects_invalid_max_activities(monkeypatch) -> None:
             raise AssertionError(f"Expected invalid DTS_SANDBOX_MAX_ACTIVITIES={value!r} to fail.")
 
 
+def test_sandbox_worker_requires_injected_sandbox_id(monkeypatch) -> None:
+    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
+    _configure_sandbox_worker_auth(monkeypatch)
+
+    for value in [None, "", "   "]:
+        if value is None:
+            monkeypatch.delenv("DTS_SANDBOX_ID", raising=False)
+        else:
+            monkeypatch.setenv("DTS_SANDBOX_ID", value)
+
+        try:
+            SandboxWorker()
+        except ValueError as ex:
+            assert "DTS_SANDBOX_ID" in str(ex)
+        else:
+            raise AssertionError(f"Expected DTS_SANDBOX_ID={value!r} to fail.")
+
+
 def test_sandbox_worker_tracks_active_activity_count_with_hooks(monkeypatch) -> None:
     monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
@@ -623,6 +688,7 @@ def test_sandbox_worker_uses_managed_identity_credential_when_injected(monkeypat
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
     monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    monkeypatch.setenv("DTS_SANDBOX_ID", "env-sandbox")
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.setenv("DTS_UMI_CLIENT_ID", "worker-client-id")
     monkeypatch.setattr(sandbox_worker, "ManagedIdentityCredential", _FakeManagedIdentityCredential)
@@ -667,34 +733,37 @@ def test_sandbox_worker_requires_registered_activities(monkeypatch) -> None:
         raise AssertionError("Expected missing registered activity names to fail.")
 
 
-def test_sandbox_worker_requires_injected_sandbox_provider(monkeypatch) -> None:
-    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
-    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
-    monkeypatch.delenv("DTS_SANDBOX_PROVIDER", raising=False)
-    _configure_sandbox_worker_auth(monkeypatch)
+def test_sandbox_worker_defaults_missing_or_unknown_sandbox_provider(monkeypatch) -> None:
+    def RemoteHello(_ctx, value):
+        return value
 
-    try:
-        SandboxWorker()
-    except ValueError as ex:
-        assert "DTS_SANDBOX_PROVIDER" in str(ex)
-    else:
-        raise AssertionError("Expected missing DTS_SANDBOX_PROVIDER to fail.")
+    for value in [None, "", "ContainerApp"]:
+        monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
+        monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+        monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
+        if value is None:
+            monkeypatch.delenv("DTS_SANDBOX_PROVIDER", raising=False)
+        else:
+            monkeypatch.setenv("DTS_SANDBOX_PROVIDER", value)
+        _configure_sandbox_worker_auth(monkeypatch)
+
+        worker = SandboxWorker()
+        worker.add_activity(RemoteHello)
+        worker._configure_sandbox_activity_filters()
+        start = next(worker._registration_messages())
+
+        assert start.start.sandbox_provider == pb.SANDBOX_PROVIDER_KIND_UNSPECIFIED
 
 
-def test_sandbox_worker_rejects_invalid_sandbox_provider(monkeypatch) -> None:
-    monkeypatch.setenv("DTS_ENDPOINT", "https://example.scheduler")
-    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
-    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
-    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "ContainerApp")
-    _configure_sandbox_worker_auth(monkeypatch)
-
-    try:
-        SandboxWorker()
-    except ValueError as ex:
-        assert "Sandbox or AcaSessionPool" in str(ex)
-    else:
-        raise AssertionError("Expected invalid DTS_SANDBOX_PROVIDER to fail.")
+def test_sandbox_registration_retries_transient_failures_only() -> None:
+    assert sandbox_worker._is_retriable_registration_failure(
+        _FakeRpcError(grpc.StatusCode.UNAVAILABLE))
+    assert sandbox_worker._is_retriable_registration_failure(
+        _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, "sandbox not ready"))
+    assert not sandbox_worker._is_retriable_registration_failure(
+        _FakeRpcError(grpc.StatusCode.INVALID_ARGUMENT))
+    assert not sandbox_worker._is_retriable_registration_failure(
+        _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, "worker profile does not match"))
 
 
 class _RecordingChannel:
@@ -718,7 +787,21 @@ class _FakeManagedIdentityCredential:
         return AccessToken("token", 9999999999)
 
 
+class _FakeRpcError(grpc.RpcError):
+    def __init__(self, status_code: grpc.StatusCode, details: str = ""):
+        super().__init__()
+        self._status_code = status_code
+        self._details = details
+
+    def code(self):
+        return self._status_code
+
+    def details(self):
+        return self._details
+
+
 def _configure_sandbox_worker_auth(monkeypatch) -> None:
     monkeypatch.setenv("DTS_AUTHENTICATION", "ManagedIdentity")
     monkeypatch.setenv("DTS_UMI_CLIENT_ID", "worker-client-id")
+    monkeypatch.setenv("DTS_SANDBOX_ID", "env-sandbox")
     monkeypatch.setattr(sandbox_worker, "ManagedIdentityCredential", _FakeManagedIdentityCredential)
