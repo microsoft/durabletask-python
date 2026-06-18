@@ -132,7 +132,7 @@ class TestFunctionBasedEntityDispatch:
 
 
 class TestStateShimCoercion:
-    """Tests for StateShim.get_state type coercion via shared.coerce_to_type."""
+    """Tests for StateShim.get_state type coercion via the data converter."""
 
     def test_get_state_none_returns_default(self):
         state = StateShim(None)

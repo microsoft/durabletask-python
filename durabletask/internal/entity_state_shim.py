@@ -1,17 +1,23 @@
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 import durabletask.internal.orchestrator_service_pb2 as pb
-from durabletask.internal import shared
+
+if TYPE_CHECKING:
+    from durabletask.serialization import DataConverter
 
 TState = TypeVar("TState")
 
 
 class StateShim:
-    def __init__(self, start_state: Any):
+    def __init__(self, start_state: Any, data_converter: "DataConverter | None" = None):
         self._current_state: Any = start_state
         self._checkpoint_state: Any = start_state
         self._operation_actions: list[pb.OperationAction] = []
         self._actions_checkpoint_state: int = 0
+        if data_converter is None:
+            from durabletask.serialization import JsonDataConverter
+            data_converter = JsonDataConverter()
+        self._data_converter = data_converter
 
     @overload
     def get_state(self, intended_type: type[TState], default: TState) -> TState:
@@ -32,7 +38,7 @@ class StateShim:
         if intended_type is None:
             return self._current_state
 
-        return shared.coerce_to_type(self._current_state, intended_type)
+        return self._data_converter.coerce(self._current_state, intended_type)
 
     def set_state(self, state: Any) -> None:
         self._current_state = state

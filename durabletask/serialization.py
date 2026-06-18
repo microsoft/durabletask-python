@@ -30,7 +30,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from durabletask.internal import shared
+from durabletask.internal import json_codec
 
 logger = logging.getLogger("durabletask")
 
@@ -65,6 +65,20 @@ class DataConverter(ABC):
         """
         ...
 
+    @abstractmethod
+    def coerce(self, value: Any, target_type: type | None = None) -> Any:
+        """Coerce an **already-deserialized** ``value`` to ``target_type``.
+
+        Unlike :meth:`deserialize`, the input is a live Python value rather than
+        a serialized string. Used where the SDK holds a parsed value (for
+        example, durable entity state during a batch) and needs to reconstruct
+        the caller's requested type without re-serializing. When ``target_type``
+        is ``None`` the value is returned unchanged. The same coercion policy
+        (strict vs. best-effort) that an implementation applies in
+        :meth:`deserialize` should apply here.
+        """
+        ...
+
 
 class JsonDataConverter(DataConverter):
     """Default :class:`DataConverter` backed by the SDK's JSON codec.
@@ -75,34 +89,47 @@ class JsonDataConverter(DataConverter):
     classmethod used during type-directed reconstruction. This matches the
     ``to_json`` / ``from_json`` convention used by ``azure-functions-durable``.
 
-    Deserialization is **best-effort**: when a ``target_type`` is supplied and
-    the payload cannot be coerced to it, the raw deserialized value is returned
-    (and a debug message is logged) rather than raising. This keeps the core SDK
-    permissive; a stricter, validating converter can be supplied for callers who
-    want coercion failures to surface as errors.
+    Deserialization (and value-level :meth:`coerce`) is **best-effort**: when a
+    ``target_type`` is supplied and the value cannot be coerced to it, the raw
+    value is returned (and a debug message is logged) rather than raising. This
+    keeps the core SDK permissive; a stricter, validating converter can be
+    supplied for callers who want coercion failures to surface as errors.
     """
 
     def serialize(self, value: Any) -> str | None:
         if value is None:
             return None
-        return shared.to_json(value)
+        return json_codec.to_json(value)
 
     def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
         if data is None or data == "":
             return None
         if target_type is None:
-            return shared.from_json(data)
+            return json_codec.from_json(data)
         try:
-            return shared.from_json(data, target_type)
+            return json_codec.from_json(data, target_type)
         except Exception as e:
             # Best-effort: fall back to the raw deserialized value rather than
             # failing the operation. Logged so the mismatch remains discoverable.
-            logger.debug(
-                "Could not coerce payload to '%s' (%s); returning the raw "
-                "deserialized value.",
-                getattr(target_type, "__name__", target_type), e,
-            )
-            return shared.from_json(data)
+            self._log_coercion_fallback(target_type, e)
+            return json_codec.from_json(data)
+
+    def coerce(self, value: Any, target_type: type | None = None) -> Any:
+        if target_type is None or value is None:
+            return value
+        try:
+            return json_codec.coerce_to_type(value, target_type)
+        except Exception as e:
+            self._log_coercion_fallback(target_type, e)
+            return value
+
+    @staticmethod
+    def _log_coercion_fallback(target_type: type, error: Exception) -> None:
+        logger.debug(
+            "Could not coerce payload to '%s' (%s); returning the raw "
+            "deserialized value.",
+            getattr(target_type, "__name__", target_type), error,
+        )
 
 
 # Shared default instance used when no converter is supplied.

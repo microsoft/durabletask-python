@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 import durabletask.internal.orchestrator_service_pb2 as pb
-from durabletask.internal import shared
+
+if TYPE_CHECKING:
+    from durabletask.serialization import DataConverter
 
 TState = TypeVar("TState")
 
@@ -30,7 +32,8 @@ class EntityMetadata:
                  backlog_queue_size: int,
                  locked_by: str,
                  includes_state: bool,
-                 state: Any | None):
+                 state: Any | None,
+                 data_converter: "DataConverter | None" = None):
         """Initializes a new instance of the EntityMetadata class.
 
         Args:
@@ -42,13 +45,20 @@ class EntityMetadata:
         self._locked_by = locked_by
         self.includes_state = includes_state
         self._state = state
+        if data_converter is None:
+            from durabletask.serialization import JsonDataConverter
+            data_converter = JsonDataConverter()
+        self._data_converter = data_converter
 
     @staticmethod
-    def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool):
-        return EntityMetadata.from_entity_metadata(entity_response.entity, includes_state)
+    def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool,
+                             data_converter: "DataConverter | None" = None):
+        return EntityMetadata.from_entity_metadata(
+            entity_response.entity, includes_state, data_converter)
 
     @staticmethod
-    def from_entity_metadata(entity: pb.EntityMetadata, includes_state: bool):
+    def from_entity_metadata(entity: pb.EntityMetadata, includes_state: bool,
+                             data_converter: "DataConverter | None" = None):
         try:
             entity_id = EntityInstanceId.parse(entity.instanceId)
         except ValueError:
@@ -62,7 +72,8 @@ class EntityMetadata:
             backlog_queue_size=entity.backlogQueueSize,
             locked_by=entity.lockedBy.value,
             includes_state=includes_state,
-            state=entity_state
+            state=entity_state,
+            data_converter=data_converter,
         )
 
     @overload
@@ -74,11 +85,17 @@ class EntityMetadata:
         ...
 
     def get_state(self, intended_type: type[TState] | None = None) -> TState | Any | None:
-        """Get the current state of the entity, optionally converting it to a specified type."""
-        if intended_type is None or self._state is None:
-            return self._state
+        """Get the current state of the entity, optionally converting it to a specified type.
 
-        return shared.coerce_to_type(self._state, intended_type)
+        The state is stored as its raw serialized JSON payload and deserialized
+        here. When ``intended_type`` is provided the payload is reconstructed as
+        that type (dataclasses, ``from_json()``-capable types, etc.); otherwise
+        the plain deserialized JSON value is returned.
+        """
+        if self._state is None:
+            return None
+
+        return self._data_converter.deserialize(self._state, intended_type)
 
     def get_locked_by(self) -> EntityInstanceId | None:
         """Get the identifier of the worker that currently holds the lock on the entity.

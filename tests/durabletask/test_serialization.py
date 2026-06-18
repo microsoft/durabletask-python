@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Unit tests for the JSON serialization codec in durabletask.internal.shared."""
+"""Unit tests for the JSON serialization codec in durabletask.internal.json_codec."""
 
 import json
 from collections import namedtuple
@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from durabletask.internal import shared
+from durabletask.internal import json_codec
 
 
 # ----- Test fixtures -----
@@ -78,58 +78,58 @@ class StaticWidget:
 
 def test_to_json_static_hook_receives_instance():
     # type(obj).to_json(obj) must invoke the @staticmethod with the instance.
-    assert shared.to_json(StaticWidget("gizmo")) == '"gizmo"'
+    assert json_codec.to_json(StaticWidget("gizmo")) == '"gizmo"'
 
 
 def test_static_hook_round_trips_with_expected_type():
-    encoded = shared.to_json(StaticWidget("gizmo"))
-    result = shared.from_json(encoded, StaticWidget)
+    encoded = json_codec.to_json(StaticWidget("gizmo"))
+    result = json_codec.from_json(encoded, StaticWidget)
     assert isinstance(result, StaticWidget)
     assert result == StaticWidget("gizmo")
 
 
 def test_instance_to_json_hook_receives_instance():
     # The same type(obj).to_json(obj) path works for plain instance methods.
-    assert json.loads(shared.to_json(Widget("gear", 5))) == {"label": "gear", "size": 5}
+    assert json.loads(json_codec.to_json(Widget("gear", 5))) == {"label": "gear", "size": 5}
 
 
 # ----- to_json -----
 
 
 def test_to_json_builtins_are_plain_json():
-    assert shared.to_json({"a": 1, "b": [1, 2, 3]}) == json.dumps({"a": 1, "b": [1, 2, 3]})
-    assert shared.to_json("hello") == '"hello"'
-    assert shared.to_json(42) == "42"
+    assert json_codec.to_json({"a": 1, "b": [1, 2, 3]}) == json.dumps({"a": 1, "b": [1, 2, 3]})
+    assert json_codec.to_json("hello") == '"hello"'
+    assert json_codec.to_json(42) == "42"
 
 
 def test_to_json_dataclass_emits_plain_dict_without_marker():
-    encoded = shared.to_json(Address("1 Main St", "Redmond"))
+    encoded = json_codec.to_json(Address("1 Main St", "Redmond"))
     parsed = json.loads(encoded)
     assert parsed == {"street": "1 Main St", "city": "Redmond"}
-    assert shared.AUTO_SERIALIZED not in encoded
+    assert json_codec.AUTO_SERIALIZED not in encoded
 
 
 def test_to_json_nested_dataclass_has_no_marker():
-    encoded = shared.to_json(Person("Ada", 30, Address("1 Main St", "Redmond")))
-    assert shared.AUTO_SERIALIZED not in encoded
+    encoded = json_codec.to_json(Person("Ada", 30, Address("1 Main St", "Redmond")))
+    assert json_codec.AUTO_SERIALIZED not in encoded
     parsed = json.loads(encoded)
     assert parsed["address"] == {"street": "1 Main St", "city": "Redmond"}
 
 
 def test_to_json_simplenamespace_emits_plain_dict():
-    encoded = shared.to_json(SimpleNamespace(a=1, b="two"))
-    assert shared.AUTO_SERIALIZED not in encoded
+    encoded = json_codec.to_json(SimpleNamespace(a=1, b="two"))
+    assert json_codec.AUTO_SERIALIZED not in encoded
     assert json.loads(encoded) == {"a": 1, "b": "two"}
 
 
 def test_to_json_custom_object_uses_to_json_hook():
-    encoded = shared.to_json(Widget("gear", 5))
+    encoded = json_codec.to_json(Widget("gear", 5))
     assert json.loads(encoded) == {"label": "gear", "size": 5}
 
 
 def test_to_json_namedtuple_serializes_as_array():
     # Without an expected_type the field names are not preserved on the wire.
-    assert shared.to_json(Point(1, 2)) == "[1, 2]"
+    assert json_codec.to_json(Point(1, 2)) == "[1, 2]"
 
 
 def test_to_json_unserializable_raises_typeerror_with_cause():
@@ -137,7 +137,7 @@ def test_to_json_unserializable_raises_typeerror_with_cause():
         pass
 
     with pytest.raises(TypeError) as exc_info:
-        shared.to_json(NotSerializable())
+        json_codec.to_json(NotSerializable())
     assert "NotSerializable" in str(exc_info.value)
     assert exc_info.value.__cause__ is not None
 
@@ -146,24 +146,24 @@ def test_to_json_unserializable_raises_typeerror_with_cause():
 
 
 def test_from_json_returns_raw_without_expected_type():
-    assert shared.from_json('{"a": 1}') == {"a": 1}
-    assert shared.from_json("[1, 2, 3]") == [1, 2, 3]
-    assert shared.from_json("42") == 42
+    assert json_codec.from_json('{"a": 1}') == {"a": 1}
+    assert json_codec.from_json("[1, 2, 3]") == [1, 2, 3]
+    assert json_codec.from_json("42") == 42
 
 
 def test_from_json_legacy_marker_decodes_to_simplenamespace():
-    legacy = json.dumps({"a": 1, "b": 2, shared.AUTO_SERIALIZED: True})
-    result = shared.from_json(legacy)
+    legacy = json.dumps({"a": 1, "b": 2, json_codec.AUTO_SERIALIZED: True})
+    result = json_codec.from_json(legacy)
     assert isinstance(result, SimpleNamespace)
     assert result.a == 1
     assert result.b == 2
 
 
 def test_legacy_simplenamespace_reserializes_cleanly():
-    legacy = json.dumps({"a": 1, shared.AUTO_SERIALIZED: True})
-    ns = shared.from_json(legacy)
-    reencoded = shared.to_json(ns)
-    assert shared.AUTO_SERIALIZED not in reencoded
+    legacy = json.dumps({"a": 1, json_codec.AUTO_SERIALIZED: True})
+    ns = json_codec.from_json(legacy)
+    reencoded = json_codec.to_json(ns)
+    assert json_codec.AUTO_SERIALIZED not in reencoded
     assert json.loads(reencoded) == {"a": 1}
 
 
@@ -171,58 +171,58 @@ def test_legacy_simplenamespace_reserializes_cleanly():
 
 
 def test_from_json_coerces_to_dataclass():
-    encoded = shared.to_json(Address("1 Main St", "Redmond"))
-    result = shared.from_json(encoded, Address)
+    encoded = json_codec.to_json(Address("1 Main St", "Redmond"))
+    result = json_codec.from_json(encoded, Address)
     assert isinstance(result, Address)
     assert result == Address("1 Main St", "Redmond")
 
 
 def test_from_json_coerces_nested_dataclass():
-    encoded = shared.to_json(Person("Ada", 30, Address("1 Main St", "Redmond")))
-    result = shared.from_json(encoded, Person)
+    encoded = json_codec.to_json(Person("Ada", 30, Address("1 Main St", "Redmond")))
+    result = json_codec.from_json(encoded, Person)
     assert isinstance(result, Person)
     assert isinstance(result.address, Address)
     assert result.address.city == "Redmond"
 
 
 def test_from_json_coerces_optional_dataclass_when_present():
-    result = shared.from_json('{"name": "Ada", "age": 30, "address": null}', Person)
+    result = json_codec.from_json('{"name": "Ada", "age": 30, "address": null}', Person)
     assert isinstance(result, Person)
     assert result.address is None
 
 
 def test_from_json_coerces_list_of_dataclasses():
-    encoded = shared.to_json([Address("a", "b"), Address("c", "d")])
-    result = shared.from_json(encoded, list[Address])
+    encoded = json_codec.to_json([Address("a", "b"), Address("c", "d")])
+    result = json_codec.from_json(encoded, list[Address])
     assert all(isinstance(item, Address) for item in result)
     assert result[1] == Address("c", "d")
 
 
 def test_from_json_uses_from_json_hook():
-    encoded = shared.to_json(Widget("gear", 5))
-    result = shared.from_json(encoded, Widget)
+    encoded = json_codec.to_json(Widget("gear", 5))
+    result = json_codec.from_json(encoded, Widget)
     assert isinstance(result, Widget)
     assert result == Widget("gear", 5)
 
 
 def test_from_json_primitive_passthrough_with_expected_type():
-    assert shared.from_json("42", int) == 42
-    assert shared.from_json('"hi"', str) == "hi"
+    assert json_codec.from_json("42", int) == 42
+    assert json_codec.from_json('"hi"', str) == "hi"
 
 
 def test_from_json_legacy_marker_with_expected_type_strips_and_builds():
     # A payload persisted by an older SDK version (with the marker) must still
     # decode when the caller now passes an expected_type.
     legacy = json.dumps(
-        {"street": "1 Main St", "city": "Redmond", shared.AUTO_SERIALIZED: True}
+        {"street": "1 Main St", "city": "Redmond", json_codec.AUTO_SERIALIZED: True}
     )
-    result = shared.from_json(legacy, Address)
+    result = json_codec.from_json(legacy, Address)
     assert isinstance(result, Address)
     assert result == Address("1 Main St", "Redmond")
 
 
 def test_from_json_none_payload_with_expected_type():
-    assert shared.from_json("null", Address) is None
+    assert json_codec.from_json("null", Address) is None
 
 
 # ----- coerce_to_type -----
@@ -230,22 +230,22 @@ def test_from_json_none_payload_with_expected_type():
 
 def test_coerce_to_type_none_type_returns_value():
     value = {"a": 1}
-    assert shared.coerce_to_type(value, None) is value
+    assert json_codec.coerce_to_type(value, None) is value
 
 
 def test_coerce_to_type_already_correct_type():
     addr = Address("a", "b")
-    assert shared.coerce_to_type(addr, Address) is addr
+    assert json_codec.coerce_to_type(addr, Address) is addr
 
 
 def test_coerce_to_type_invalid_conversion_raises():
     with pytest.raises(TypeError):
-        shared.coerce_to_type("not-a-number", int)
+        json_codec.coerce_to_type("not-a-number", int)
 
 
 def test_coerce_optional_dataclass_coerces_member():
     from typing import Optional
-    result = shared.coerce_to_type({"street": "a", "city": "b"}, Optional[Address])
+    result = json_codec.coerce_to_type({"street": "a", "city": "b"}, Optional[Address])
     assert isinstance(result, Address)
 
 
@@ -263,4 +263,4 @@ def test_coerce_genuine_union_leaves_unmatched_value_untouched():
     # A dict matching neither A nor B by isinstance must be returned unchanged,
     # not force-coerced into the first union member.
     value = {"z": 1}
-    assert shared.coerce_to_type(value, Union[A, B]) == {"z": 1}
+    assert json_codec.coerce_to_type(value, Union[A, B]) == {"z": 1}

@@ -1308,7 +1308,8 @@ class TaskHubGrpcWorker:
             payload_helpers.deexternalize_payloads(req, self._payload_store)
 
         entity_state = StateShim(
-            self._data_converter.deserialize(req.entityState.value) if req.entityState.value else None)
+            self._data_converter.deserialize(req.entityState.value) if req.entityState.value else None,
+            self._data_converter)
 
         instance_id = req.instanceId
         try:

@@ -845,7 +845,7 @@ class TaskHubGrpcClient:
             return None
         if self._payload_store is not None:
             payload_helpers.deexternalize_payloads(res, self._payload_store)
-        return EntityMetadata.from_entity_metadata(res.entity, include_state)
+        return EntityMetadata.from_entity_metadata(res.entity, include_state, self._data_converter)
 
     def get_all_entities(self,
                          entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
@@ -862,7 +862,7 @@ class TaskHubGrpcClient:
             resp: pb.QueryEntitiesResponse = self._stub.QueryEntities(query_request)
             if self._payload_store is not None:
                 payload_helpers.deexternalize_payloads(resp, self._payload_store)
-            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
+            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState, self._data_converter) for entity in resp.entities]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
             else:
@@ -1328,7 +1328,7 @@ class AsyncTaskHubGrpcClient:
             return None
         if self._payload_store is not None:
             await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
-        return EntityMetadata.from_entity_metadata(res.entity, include_state)
+        return EntityMetadata.from_entity_metadata(res.entity, include_state, self._data_converter)
 
     async def get_all_entities(self,
                                entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
@@ -1345,7 +1345,7 @@ class AsyncTaskHubGrpcClient:
             resp: pb.QueryEntitiesResponse = await self._stub.QueryEntities(query_request)
             if self._payload_store is not None:
                 await payload_helpers.deexternalize_payloads_async(resp, self._payload_store)
-            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
+            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState, self._data_converter) for entity in resp.entities]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
             else:
