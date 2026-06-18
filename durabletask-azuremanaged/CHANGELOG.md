@@ -8,14 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 - Updates base dependency to durabletask v1.6.0.
-- Added preview `durabletask.azuremanaged.preview.sandboxes` APIs for
-  declaring Durable Task Scheduler sandbox activities, registering
-  worker profiles, and running sandbox activity workers.
-- Added optional activity versions to sandbox worker profile declarations and
-  sandbox worker registration.
-- Required sandbox workers to fail fast when `DTS_SANDBOX_ID` is missing,
-  treated `DTS_SANDBOX_PROVIDER` as optional metadata, and added context
-  manager support to `SandboxActivitiesClient`.
+- Added preview support for Durable Task Scheduler on-demand sandbox
+  activities under `durabletask.azuremanaged.preview.sandboxes`. Applications
+  can declare sandbox activities (with optional per-activity versions),
+  register sandbox worker profiles, and run a sandbox activity worker that
+  establishes a live worker session and dispatches only the activities it
+  has registered.
 
 ## v1.5.0
 
