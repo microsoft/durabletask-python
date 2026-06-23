@@ -2,12 +2,12 @@
 #  Licensed under the MIT License.
 
 from functools import wraps
+from typing import Any, Callable, Optional, Union
+
+from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
+from azure.functions.decorators.function_app import FunctionBuilder
 
 from durabletask import task
-
-from typing import Callable, Optional
-from typing import Union
-from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
 
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
@@ -40,9 +40,14 @@ class Blueprint(TriggerApi, BindingApi):
         DFApp
             New instance of a Durable Functions app
         """
-        super().__init__(auth_level=http_auth_level)
+        # The next-in-MRO base (``DecoratorApi.__init__``) is declared with
+        # untyped ``*args``/``**kwargs``, so pyright cannot see this call's type.
+        super().__init__(auth_level=http_auth_level)  # pyright: ignore[reportUnknownMemberType]
 
-    def _configure_orchestrator_callable(self, wrap) -> Callable:
+    def _configure_orchestrator_callable(
+            self,
+            wrap: Callable[[Callable[..., Any]], FunctionBuilder]
+    ) -> Callable[[task.Orchestrator[Any, Any]], FunctionBuilder]:
         """Obtain decorator to construct an Orchestrator class from a user-defined Function.
 
         Parameters
@@ -56,7 +61,7 @@ class Blueprint(TriggerApi, BindingApi):
             The function to construct an Orchestrator class from the user-defined Function,
             wrapped by the next decorator in the sequence.
         """
-        def decorator(orchestrator_func: task.Orchestrator):
+        def decorator(orchestrator_func: task.Orchestrator[Any, Any]) -> FunctionBuilder:
             # Construct an orchestrator based on the end-user code
 
             handle = Orchestrator.create(orchestrator_func)
@@ -67,7 +72,10 @@ class Blueprint(TriggerApi, BindingApi):
 
         return decorator
 
-    def _configure_entity_callable(self, wrap) -> Callable:
+    def _configure_entity_callable(
+            self,
+            wrap: Callable[[Callable[..., Any]], FunctionBuilder]
+    ) -> Callable[[task.Entity[Any, Any]], FunctionBuilder]:
         """Obtain decorator to construct an Entity class from a user-defined Function.
 
         Parameters
@@ -81,16 +89,16 @@ class Blueprint(TriggerApi, BindingApi):
             The function to construct an Entity class from the user-defined Function,
             wrapped by the next decorator in the sequence.
         """
-        def decorator(entity_func: task.Entity):
+        def decorator(entity_func: task.Entity[Any, Any]) -> FunctionBuilder:
             # Construct an orchestrator based on the end-user code
 
             # TODO: Because this handle method is the one actually exposed to the Functions SDK decorator,
             #       the parameter name will always be "context" here, even if the user specified a different name.
             #       We need to find a way to allow custom context names (like "ctx").
-            def handle(context) -> str:
-                return DurableFunctionsWorker()._execute_entity_batch(entity_func, context)
+            def handle(context: Any) -> str:
+                return DurableFunctionsWorker().execute_entity_batch_request(entity_func, context)
 
-            handle.entity_function = entity_func  # type: ignore
+            handle.entity_function = entity_func  # pyright: ignore[reportFunctionMemberAccess]
 
             # invoke next decorator, with the Entity as input
             handle.__name__ = entity_func.__name__
@@ -98,17 +106,27 @@ class Blueprint(TriggerApi, BindingApi):
 
         return decorator
 
-    def _add_rich_client(self, fb, parameter_name, client_constructor):
+    def _add_rich_client(
+            self,
+            fb: FunctionBuilder,
+            parameter_name: str,
+            client_constructor: Callable[[Any], Any]
+    ) -> None:
         # Obtain user-code and force type annotation on the client-binding parameter to be `str`.
         # This ensures a passing type-check of that specific parameter,
         # circumventing a limitation of the worker in type-checking rich DF Client objects.
         # TODO: Once rich-binding type checking is possible, remove the annotation change.
-        user_code = fb._function._func
+        # ``FunctionBuilder._function`` and ``Function._func`` are private to
+        # azure-functions with no public accessor for mutating the wrapped
+        # user function. Holding it as ``Any`` keeps the single private-access
+        # waiver here rather than spreading it across each ``._func`` use.
+        function_obj: Any = fb._function  # pyright: ignore[reportPrivateUsage]
+        user_code = function_obj._func
         user_code.__annotations__[parameter_name] = str
 
         # `wraps` This ensures we re-export the same method-signature as the decorated method
         @wraps(user_code)
-        async def df_client_middleware(*args, **kwargs):
+        async def df_client_middleware(*args: Any, **kwargs: Any) -> Any:
 
             # Obtain JSON-string currently passed as DF Client,
             # construct rich object from it,
@@ -121,13 +139,30 @@ class Blueprint(TriggerApi, BindingApi):
             return await user_code(*args, **kwargs)
 
         # TODO: Is there a better way to support retrieving the unwrapped user code?
-        df_client_middleware.client_function = fb._function._func  # type: ignore
+        df_client_middleware.client_function = function_obj._func  # pyright: ignore[reportAttributeAccessIssue]
 
-        user_code_with_rich_client = df_client_middleware
-        fb._function._func = user_code_with_rich_client
+        function_obj._func = df_client_middleware
+
+    def _build_function(
+            self,
+            wrap: Callable[[FunctionBuilder], FunctionBuilder]
+    ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
+        """Typed equivalent of the base ``_configure_function_builder``.
+
+        The inherited method is untyped, which would otherwise propagate
+        ``Unknown`` types through every decorator below. This mirrors its
+        behaviour exactly using the typed protected members it relies on.
+        """
+        def decorator(func: Callable[..., Any]) -> FunctionBuilder:
+            fb = self._validate_type(func)
+            self._function_builders.append(fb)
+            return wrap(fb)
+
+        return decorator
 
     def orchestration_trigger(self, context_name: str,
-                              orchestration: Optional[str] = None):
+                              orchestration: Optional[str] = None
+                              ) -> Callable[[task.Orchestrator[Any, Any]], FunctionBuilder]:
         """Register an Orchestrator Function.
 
         Parameters
@@ -139,10 +174,10 @@ class Blueprint(TriggerApi, BindingApi):
             The value is None by default, in which case the name of the method is used.
         """
         @self._configure_orchestrator_callable
-        @self._configure_function_builder
-        def wrap(fb):
+        @self._build_function
+        def wrap(fb: FunctionBuilder) -> FunctionBuilder:
 
-            def decorator():
+            def decorator() -> FunctionBuilder:
                 fb.add_trigger(
                     trigger=OrchestrationTrigger(name=context_name,
                                                  orchestration=orchestration))
@@ -153,7 +188,8 @@ class Blueprint(TriggerApi, BindingApi):
         return wrap
 
     def activity_trigger(self, input_name: str,
-                         activity: Optional[str] = None):
+                         activity: Optional[str] = None
+                         ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
         """Register an Activity Function.
 
         Parameters
@@ -164,9 +200,9 @@ class Blueprint(TriggerApi, BindingApi):
             Name of Activity Function.
             The value is None by default, in which case the name of the method is used.
         """
-        @self._configure_function_builder
-        def wrap(fb):
-            def decorator():
+        @self._build_function
+        def wrap(fb: FunctionBuilder) -> FunctionBuilder:
+            def decorator() -> FunctionBuilder:
                 fb.add_trigger(
                     trigger=ActivityTrigger(name=input_name,
                                             activity=activity))
@@ -178,7 +214,8 @@ class Blueprint(TriggerApi, BindingApi):
 
     def entity_trigger(self,
                        context_name: str,
-                       entity_name: Optional[str] = None):
+                       entity_name: Optional[str] = None
+                       ) -> Callable[[task.Entity[Any, Any]], FunctionBuilder]:
         """Register an Entity Function.
 
         Parameters
@@ -190,9 +227,9 @@ class Blueprint(TriggerApi, BindingApi):
             The value is None by default, in which case the name of the method is used.
         """
         @self._configure_entity_callable
-        @self._configure_function_builder
-        def wrap(fb):
-            def decorator():
+        @self._build_function
+        def wrap(fb: FunctionBuilder) -> FunctionBuilder:
+            def decorator() -> FunctionBuilder:
                 fb.add_trigger(
                     trigger=EntityTrigger(name=context_name,
                                           entity_name=entity_name))
@@ -206,7 +243,7 @@ class Blueprint(TriggerApi, BindingApi):
                              client_name: str,
                              task_hub: Optional[str] = None,
                              connection_name: Optional[str] = None
-                             ):
+                             ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
         """Register a Durable-client Function.
 
         Parameters
@@ -225,9 +262,9 @@ class Blueprint(TriggerApi, BindingApi):
             account connection string for the function app is used.
         """
 
-        @self._configure_function_builder
-        def wrap(fb):
-            def decorator():
+        @self._build_function
+        def wrap(fb: FunctionBuilder) -> FunctionBuilder:
+            def decorator() -> FunctionBuilder:
                 fb.add_binding(
                     binding=DurableClient(name=client_name,
                                           task_hub=task_hub,

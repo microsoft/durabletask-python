@@ -2,12 +2,16 @@
 # Licensed under the MIT License.
 
 import base64
-from threading import Event
-from typing import Optional
+from typing import Any, Optional
+
 from durabletask import task
-from durabletask.internal.orchestrator_service_pb2 import EntityBatchRequest, EntityBatchResult, OrchestratorRequest, OrchestratorResponse
-from durabletask.worker import _Registry, ConcurrencyOptions
-from durabletask.internal import shared
+from durabletask.internal.orchestrator_service_pb2 import (
+    EntityBatchRequest,
+    EntityBatchResult,
+    HistoryEvent,
+    OrchestratorRequest,
+    OrchestratorResponse,
+)
 from durabletask.worker import TaskHubGrpcWorker
 from .internal.azurefunctions_null_stub import AzureFunctionsNullStub
 
@@ -20,38 +24,32 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
     See TaskHubGrpcWorker for base class documentation.
     """
 
-    def __init__(self):
-        # Don't call the parent constructor - we don't actually want to start an AsyncWorkerLoop
-        # or recieve work items from anywhere but the method that is creating this worker
-        self._registry = _Registry()
-        self._host_address = ""
-        self._logger = shared.get_logger("worker")
-        self._shutdown = Event()
-        self._is_running = False
-        self._secure_channel = False
+    def __init__(self) -> None:
+        # We never start the worker loop or open a gRPC channel. The base
+        # constructor only initialises in-memory state (registry, logger,
+        # concurrency options, payload store, etc.) that the inherited
+        # ``_execute_*`` methods rely on; work items are delivered directly by
+        # the methods below rather than streamed from a sidecar.
+        super().__init__()
 
-        self._concurrency_options = ConcurrencyOptions()
-
-        self._interceptors = None
-
-    def add_named_orchestrator(self, name: str, func: task.Orchestrator):
+    def add_named_orchestrator(self, name: str, func: task.Orchestrator[Any, Any]) -> None:
         self._registry.add_named_orchestrator(name, func)
 
-    def _execute_orchestrator(self, func: task.Orchestrator, context) -> str:
+    def execute_orchestration_request(self, func: task.Orchestrator[Any, Any], context: Any) -> str:
         context_body = getattr(context, "body", None)
         if context_body is None:
             context_body = context
         orchestration_context = context_body
         request = OrchestratorRequest()
         request.ParseFromString(base64.b64decode(orchestration_context))
-        stub = AzureFunctionsNullStub()
+        stub: Any = AzureFunctionsNullStub()
         response: Optional[OrchestratorResponse] = None
 
-        def stub_complete(stub_response):
+        def stub_complete(stub_response: OrchestratorResponse) -> None:
             nonlocal response
             response = stub_response
         stub.CompleteOrchestratorTask = stub_complete
-        execution_started_events = []
+        execution_started_events: list[HistoryEvent] = []
         for e in request.pastEvents:
             if e.HasField("executionStarted"):
                 execution_started_events.append(e)
@@ -70,17 +68,17 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         # The Python worker returns the input as type "json", so double-encoding is necessary
         return base64.b64encode(response.SerializeToString()).decode('utf-8')
 
-    def _execute_entity_batch(self, func: task.Entity, context) -> str:
+    def execute_entity_batch_request(self, func: task.Entity[Any, Any], context: Any) -> str:
         context_body = getattr(context, "body", None)
         if context_body is None:
             context_body = context
         orchestration_context = context_body
         request = EntityBatchRequest()
         request.ParseFromString(base64.b64decode(orchestration_context))
-        stub = AzureFunctionsNullStub()
+        stub: Any = AzureFunctionsNullStub()
         response: Optional[EntityBatchResult] = None
 
-        def stub_complete(stub_response: EntityBatchResult):
+        def stub_complete(stub_response: EntityBatchResult) -> None:
             nonlocal response
             response = stub_response
         stub.CompleteEntityTask = stub_complete

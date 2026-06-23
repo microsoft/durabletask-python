@@ -3,13 +3,12 @@
 Responsible for orchestrating the execution of the user defined generator
 function.
 """
-from typing import Callable, Any, Generator
-
-import azure.functions as func
+from typing import Any, Callable, Generator
 
 from durabletask.task import OrchestrationContext
 
 from .worker import DurableFunctionsWorker
+
 
 class Orchestrator:
     """Durable Orchestration Class.
@@ -43,7 +42,7 @@ class Orchestrator:
             state after this invocation
         """
         self.durable_context = context
-        return DurableFunctionsWorker()._execute_orchestrator(self.fn, context)
+        return DurableFunctionsWorker().execute_orchestration_request(self.fn, context)
 
     @classmethod
     def create(cls, fn: Callable[[OrchestrationContext, Any], Generator[Any, Any, Any]]) \
@@ -61,9 +60,9 @@ class Orchestrator:
             Handle function of the newly created orchestration client
         """
 
-        def handle(context) -> str:
+        def handle(context: Any) -> str:
             return Orchestrator(fn).handle(context)
 
-        handle.orchestrator_function = fn  # type: ignore
+        handle.orchestrator_function = fn  # pyright: ignore[reportFunctionMemberAccess]
 
         return handle

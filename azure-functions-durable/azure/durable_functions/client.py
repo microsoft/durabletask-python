@@ -18,7 +18,7 @@ class DurableFunctionsClient(TaskHubGrpcClient):
     """A gRPC client passed to Durable Functions durable client bindings.
 
     Connects to the Durable Functions runtime using gRPC and provides methods
-    for creating and managing Durable orchestrations, interacting with Durable entities, 
+    for creating and managing Durable orchestrations, interacting with Durable entities,
     and creating HTTP management payloads and check status responses for use with Durable Functions invocations.
     """
     taskHubName: str
@@ -44,7 +44,7 @@ class DurableFunctionsClient(TaskHubGrpcClient):
             json.JSONDecodeError: If the provided string is not valid JSON.
         """
         self._parse_client_configuration(client_as_string)
-        if self.httpBaseUrl is None:
+        if not self.httpBaseUrl:
             # This happens when the extension has not been configured for gRPC yet. For some reason, instead of
             # the client returning with null rpcBaseUrl and httpBaseUrl, it returns rpcBaseUrl with the http url.
             self.configure_extension_for_grpc()
@@ -87,7 +87,7 @@ class DurableFunctionsClient(TaskHubGrpcClient):
 
         Makes an HTTP request to the extension's management endpoint to enable gRPC.
         """
-        
+
         # Make an HTTP request to the extension to configure gRPC
         configure_base_url = self.httpBaseUrl
         if not configure_base_url:
@@ -103,7 +103,7 @@ class DurableFunctionsClient(TaskHubGrpcClient):
         response = requests.get(url, params=params)
         if response.status_code != 200:
             raise Exception(f"Failed to configure gRPC for Durable Functions extension. Status code: {response.status_code}, Response: {response.text}")
-        
+
         # Parse the response to update client configuration - it's double-encoded so we need to load it twice
         self._parse_client_configuration(json.loads(response.text))
 
