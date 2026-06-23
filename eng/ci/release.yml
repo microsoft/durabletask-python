@@ -90,3 +90,35 @@ extends:
                   serviceendpointurl: "https://api.esrp.microsoft.com"
                   mainpublisher: "durabletask-java"
                   domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
+
+          - job: azure_functions_durable
+            displayName: "Release azure-functions-durable"
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              environment: durabletask-pypi-prod
+              inputs:
+                - input: pipelineArtifact
+                  pipeline: DurableTaskPythonBuildPipeline
+                  artifactName: drop
+                  targetPath: $(System.DefaultWorkingDirectory)/drop
+
+            steps:
+              - task: SFP.release-tasks.custom-build-release-task.EsrpRelease@9
+                displayName: "ESRP Release azure-functions-durable"
+                inputs:
+                  connectedservicename: "dtfx-internal-esrp-prod"
+                  usemanagedidentity: true
+                  keyvaultname: "durable-esrp-akv"
+                  signcertname: "dts-esrp-cert"
+                  clientid: "0b3ed1a4-0727-4a50-b82a-02c2bd9dec89"
+                  intent: "PackageDistribution"
+                  contenttype: "PyPi"
+                  contentsource: "Folder"
+                  folderlocation: "$(System.DefaultWorkingDirectory)/drop/buildoutputs/azure-functions-durable"
+                  waitforreleasecompletion: true
+                  owners: $(Build.RequestedForEmail)
+                  approvers: $(Build.RequestedForEmail)
+                  serviceendpointurl: "https://api.esrp.microsoft.com"
+                  mainpublisher: "durabletask-java"
+                  domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
