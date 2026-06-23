@@ -1,4 +1,5 @@
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 
 class ProtoTaskHubSidecarServiceStub(Protocol):
@@ -9,6 +10,7 @@ class ProtoTaskHubSidecarServiceStub(Protocol):
     StartInstance: Callable[..., Any]
     GetInstance: Callable[..., Any]
     RewindInstance: Callable[..., Any]
+    RestartInstance: Callable[..., Any]
     WaitForInstanceStart: Callable[..., Any]
     WaitForInstanceCompletion: Callable[..., Any]
     RaiseEvent: Callable[..., Any]
@@ -16,6 +18,7 @@ class ProtoTaskHubSidecarServiceStub(Protocol):
     SuspendInstance: Callable[..., Any]
     ResumeInstance: Callable[..., Any]
     QueryInstances: Callable[..., Any]
+    ListInstanceIds: Callable[..., Any]
     PurgeInstances: Callable[..., Any]
     GetWorkItems: Callable[..., Any]
     CompleteActivityTask: Callable[..., Any]
@@ -31,3 +34,4 @@ class ProtoTaskHubSidecarServiceStub(Protocol):
     AbandonTaskActivityWorkItem: Callable[..., Any]
     AbandonTaskOrchestratorWorkItem: Callable[..., Any]
     AbandonTaskEntityWorkItem: Callable[..., Any]
+    SkipGracefulOrchestrationTerminations: Callable[..., Any]

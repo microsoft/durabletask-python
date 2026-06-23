@@ -1,7 +1,6 @@
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
 import os
-from typing import Optional
 
 from azure.identity import DefaultAzureCredential
 
@@ -10,12 +9,12 @@ from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
-def counter(ctx: entities.EntityContext, input: int) -> Optional[int]:
+def counter(ctx: entities.EntityContext, input: int) -> int | None:
     if ctx.operation == "set":
         ctx.set_state(input)
     elif ctx.operation == "add":
         current_state = ctx.get_state(int, 0)
-        new_state = current_state + (input or 1)
+        new_state = current_state + (1 if input is None else input)
         ctx.set_state(new_state)
         return new_state
     elif ctx.operation == "get":
@@ -45,10 +44,8 @@ print(f"Using taskhub: {taskhub_name}")
 print(f"Using endpoint: {endpoint}")
 
 # Set credential to None for emulator, or DefaultAzureCredential for Azure
-credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
-
-# configure and start the worker - use secure_channel=False for emulator
-secure_channel = endpoint != "http://localhost:8080"
+secure_channel = endpoint.startswith("https://")
+credential = DefaultAzureCredential() if secure_channel else None
 with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
                                 taskhub=taskhub_name, token_credential=credential) as w:
     w.add_orchestrator(counter_orchestrator)

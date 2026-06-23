@@ -48,7 +48,7 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     # Orders of $1000 or more require manager approval
     yield ctx.call_activity(send_approval_request, input=order)
 
-    # Approvals must be received within 24 hours or they will be canceled.
+    # Approvals must be received within 24 hours or they will be cancelled.
     approval_event = ctx.wait_for_external_event("approval_received")
     timeout_event = ctx.create_timer(timedelta(hours=24))
     winner = yield task.when_any([approval_event, timeout_event])
@@ -79,31 +79,31 @@ if __name__ == "__main__":
             w.add_activity(place_order)
             w.start()
 
-            c = client.TaskHubGrpcClient()
+            with client.TaskHubGrpcClient() as c:
 
-            # Start a purchase order workflow using the user input
-            order = Order(args.cost, "MyProduct", 1)
-            instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
+                # Start a purchase order workflow using the user input
+                order = Order(args.cost, "MyProduct", 1)
+                instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
 
-            def prompt_for_approval():
-                input("Press [ENTER] to approve the order...\n")
-                approval_event = namedtuple("Approval", ["approver"])(args.approver)
-                c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
+                def prompt_for_approval():
+                    input("Press [ENTER] to approve the order...\n")
+                    approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                    c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
-            # Prompt the user for approval on a background thread
-            threading.Thread(target=prompt_for_approval, daemon=True).start()
+                # Prompt the user for approval on a background thread
+                threading.Thread(target=prompt_for_approval, daemon=True).start()
 
-            # Wait for the orchestration to complete
-            try:
-                state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
-                if not state:
-                    print("Workflow not found!")  # not expected
-                elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
-                    print(f'Orchestration completed! Result: {state.serialized_output}')
-                else:
-                    state.raise_if_failed()  # raises an exception
-            except TimeoutError:
-                print("*** Orchestration timed out!")
+                # Wait for the orchestration to complete
+                try:
+                    state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
+                    if not state:
+                        print("Workflow not found!")  # not expected
+                    elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
+                        print(f'Orchestration completed! Result: {state.serialized_output}')
+                    else:
+                        state.raise_if_failed()  # raises an exception
+                except TimeoutError:
+                    print("*** Orchestration timed out!")
     else:
         # Use DurableTaskScheduler
         # Use environment variables if provided, otherwise use default emulator values
@@ -114,10 +114,8 @@ if __name__ == "__main__":
         print(f"Using endpoint: {endpoint}")
 
         # Set credential to None for emulator, or DefaultAzureCredential for Azure
-        credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
-
-        # Configure and start the worker - use secure_channel=False for emulator
-        secure_channel = endpoint != "http://localhost:8080"
+        secure_channel = endpoint.startswith("https://")
+        credential = DefaultAzureCredential() if secure_channel else None
         with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
                                         taskhub=taskhub_name, token_credential=credential) as w:
             w.add_orchestrator(purchase_order_workflow)

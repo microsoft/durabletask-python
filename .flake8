@@ -1,5 +1,5 @@
 [flake8]
-ignore = E501,C901
+ignore = E501,C901,W503
 exclude = 
     .git
     *_pb2*

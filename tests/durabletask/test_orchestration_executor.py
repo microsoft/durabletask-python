@@ -143,6 +143,255 @@ def test_timer_fired_completion():
     assert complete_action.result.value == '"done"'  # results are JSON-encoded
 
 
+def test_long_timer_is_chunked_by_maximum_timer_interval():
+    """Tests that long timers are scheduled in chunks when exceeding max timer interval."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        due_time = ctx.current_utc_datetime + timedelta(days=10)
+        yield ctx.create_timer(due_time)
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    start_time = datetime(2020, 1, 1, 12, 0, 0)
+    first_chunk_fire_at = start_time + timedelta(days=3)
+
+    new_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+    actions = result.actions
+
+    assert len(actions) == 1
+    assert actions[0].HasField("createTimer")
+    assert actions[0].id == 1
+    assert actions[0].createTimer.fireAt.ToDatetime() == first_chunk_fire_at
+
+
+def test_long_timer_progresses_and_completes_on_final_chunk():
+    """Tests that long timers schedule intermediate chunks and complete on the final timerFired."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        due_time = ctx.current_utc_datetime + timedelta(days=10)
+        yield ctx.create_timer(due_time)
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+
+    start_time = datetime(2020, 1, 1, 12, 0, 0)
+    t1 = start_time + timedelta(days=3)
+    t2 = start_time + timedelta(days=6)
+    t3 = start_time + timedelta(days=9)
+    t4 = start_time + timedelta(days=10)
+
+    # 1) Initial execution schedules first chunk.
+    first = executor.execute(
+        TEST_INSTANCE_ID,
+        [],
+        [
+            helpers.new_orchestrator_started_event(start_time),
+            helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        ],
+    )
+    assert len(first.actions) == 1
+    assert first.actions[0].HasField("createTimer")
+    assert first.actions[0].id == 1
+    assert first.actions[0].createTimer.fireAt.ToDatetime() == t1
+
+    # 2) First chunk fires -> schedule second chunk.
+    second_old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_timer_created_event(1, t1),
+    ]
+    second = executor.execute(
+        TEST_INSTANCE_ID,
+        second_old_events,
+        [helpers.new_timer_fired_event(1, t1)],
+    )
+    assert len(second.actions) == 1
+    assert second.actions[0].HasField("createTimer")
+    assert second.actions[0].id == 2
+    assert second.actions[0].createTimer.fireAt.ToDatetime() == t2
+
+    # 3) Second chunk fires -> schedule third chunk.
+    third_old_events = second_old_events + [
+        helpers.new_timer_fired_event(1, t1),
+        helpers.new_timer_created_event(2, t2),
+    ]
+    third = executor.execute(
+        TEST_INSTANCE_ID,
+        third_old_events,
+        [helpers.new_timer_fired_event(2, t2)],
+    )
+    assert len(third.actions) == 1
+    assert third.actions[0].HasField("createTimer")
+    assert third.actions[0].id == 3
+    assert third.actions[0].createTimer.fireAt.ToDatetime() == t3
+
+    # 4) Third chunk fires -> schedule final short chunk.
+    fourth_old_events = third_old_events + [
+        helpers.new_timer_fired_event(2, t2),
+        helpers.new_timer_created_event(3, t3),
+    ]
+    fourth = executor.execute(
+        TEST_INSTANCE_ID,
+        fourth_old_events,
+        [helpers.new_timer_fired_event(3, t3)],
+    )
+    assert len(fourth.actions) == 1
+    assert fourth.actions[0].HasField("createTimer")
+    assert fourth.actions[0].id == 4
+    assert fourth.actions[0].createTimer.fireAt.ToDatetime() == t4
+
+    # 5) Final chunk fires -> orchestration completes.
+    fifth_old_events = fourth_old_events + [
+        helpers.new_timer_fired_event(3, t3),
+        helpers.new_timer_created_event(4, t4),
+    ]
+    fifth = executor.execute(
+        TEST_INSTANCE_ID,
+        fifth_old_events,
+        [helpers.new_timer_fired_event(4, t4)],
+    )
+    complete_action = get_and_validate_complete_orchestration_action_list(1, fifth.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == '"done"'
+
+
+def test_long_timer_can_be_cancelled_after_when_any_winner():
+    """Tests cancellation of a long timer after an external event wins when_any."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        approval = ctx.wait_for_external_event("approval")
+        timeout = ctx.create_timer(timedelta(days=10))
+        winner = yield task.when_any([approval, timeout])
+        if winner == approval:
+            timeout.cancel()
+            return "approved"
+        return "timed out"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+
+    start_time = datetime(2020, 1, 1, 12, 0, 0)
+    first_chunk_fire_at = start_time + timedelta(days=3)
+
+    # Initial execution schedules first long-timer chunk.
+    first = executor.execute(
+        TEST_INSTANCE_ID,
+        [],
+        [
+            helpers.new_orchestrator_started_event(start_time),
+            helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        ],
+    )
+    assert len(first.actions) == 1
+    assert first.actions[0].HasField("createTimer")
+    assert first.actions[0].createTimer.fireAt.ToDatetime() == first_chunk_fire_at
+
+    # External event arrives before timeout -> long timer is cancelled and orchestration completes.
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_timer_created_event(1, first_chunk_fire_at),
+    ]
+    second = executor.execute(
+        TEST_INSTANCE_ID,
+        old_events,
+        [helpers.new_event_raised_event("approval", json.dumps(True))],
+    )
+    complete_action = get_and_validate_complete_orchestration_action_list(1, second.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == '"approved"'
+
+
+def test_timer_can_be_cancelled_after_when_any_winner():
+    """Tests cancellation of an outstanding timer task after another task wins when_any."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        approval = ctx.wait_for_external_event("approval")
+        timeout = ctx.create_timer(timedelta(hours=1))
+        winner = yield task.when_any([approval, timeout])
+        if winner == approval:
+            timeout.cancel()
+            return "approved"
+        return "timed out"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+
+    start_time = datetime(2020, 1, 1, 12, 0, 0)
+    timeout_fire_at = start_time + timedelta(hours=1)
+
+    result = executor.execute(
+        TEST_INSTANCE_ID,
+        [],
+        [
+            helpers.new_orchestrator_started_event(start_time),
+            helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        ],
+    )
+    assert len(result.actions) == 1
+    assert result.actions[0].HasField("createTimer")
+    assert result.actions[0].createTimer.fireAt.ToDatetime() == timeout_fire_at
+
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_timer_created_event(1, timeout_fire_at),
+    ]
+    result = executor.execute(
+        TEST_INSTANCE_ID,
+        old_events,
+        [helpers.new_event_raised_event("approval", json.dumps(True))],
+    )
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == '"approved"'
+
+
+def test_only_cancellable_tasks_expose_cancel():
+    """Tests that only timer and external-event tasks expose cancellation state and operations."""
+
+    def dummy_activity(ctx, _):
+        pass
+
+    ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, worker._Registry())
+
+    timer_task = ctx.create_timer(timedelta(minutes=5))
+    external_event_task = ctx.wait_for_external_event("approval")
+    activity_task = ctx.call_activity(dummy_activity)
+
+    assert isinstance(timer_task, task.CancellableTask)
+    assert isinstance(external_event_task, task.CancellableTask)
+    assert not isinstance(activity_task, task.CancellableTask)
+    assert hasattr(timer_task, "cancel")
+    assert hasattr(external_event_task, "cancel")
+    assert not hasattr(activity_task, "cancel")
+    assert hasattr(timer_task, "is_cancelled")
+    assert hasattr(external_event_task, "is_cancelled")
+    assert not hasattr(activity_task, "is_cancelled")
+
+
+def test_cancelled_task_get_result_raises_task_cancelled_error():
+    """Tests that cancelled cancellable tasks raise TaskCancelledError from get_result."""
+
+    cancellable_task = task.CancellableTask()
+
+    assert cancellable_task.cancel() is True
+    assert cancellable_task.is_cancelled is True
+
+    with pytest.raises(task.TaskCancelledError):
+        cancellable_task.get_result()
+
+
 def test_schedule_activity_actions():
     """Test the actions output for the call_activity orchestrator method"""
     def dummy_activity(ctx, _):
@@ -408,6 +657,260 @@ def test_activity_retry_policies():
     assert len(actions) == 7
     assert actions[-1].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
     assert actions[-1].id == 7
+
+
+def test_activity_retry_without_max_retry_interval():
+    """Tests that retry logic works correctly when max_retry_interval is not set.
+
+    This is a regression test for a bug where compute_next_delay() returned None
+    instead of the computed delay when max_retry_interval was not specified,
+    causing retries to silently fail.
+    """
+
+    def dummy_activity(ctx, _):
+        raise ValueError("Kah-BOOOOM!!!")
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        result = yield ctx.call_activity(
+            dummy_activity,
+            retry_policy=task.RetryPolicy(
+                first_retry_interval=timedelta(seconds=1),
+                max_number_of_attempts=3,
+                backoff_coefficient=2),
+            input=orchestrator_input)
+        return result
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    current_timestamp = datetime.utcnow()
+
+    # Simulate the task failing for the first time — retry timer should be created at 1 second
+    old_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
+    expected_fire_at = current_timestamp + timedelta(seconds=1)
+
+    new_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert len(actions) == 1
+    assert actions[0].HasField("createTimer")
+    assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[0].id == 2
+
+    # Simulate the timer firing and a second failure — retry timer should be at 2 seconds (backoff)
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(2, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert len(actions) == 2
+    assert actions[1].HasField("scheduleTask")
+    assert actions[1].id == 1
+
+    expected_fire_at = current_timestamp + timedelta(seconds=2)
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert len(actions) == 3
+    assert actions[2].HasField("createTimer")
+    assert actions[2].createTimer.fireAt.ToDatetime() == expected_fire_at
+    assert actions[2].id == 3
+
+    # Simulate the timer firing and a third failure — should now fail (max_number_of_attempts=3)
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(3, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert len(actions) == 3
+    assert actions[1].HasField("scheduleTask")
+
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert len(actions) == 4
+    assert actions[-1].completeOrchestration.failureDetails.errorMessage.__contains__("Activity task #1 failed: Kah-BOOOOM!!!")
+
+
+def test_activity_retry_with_default_backoff():
+    """Tests retry with default backoff_coefficient (1.0) and no max_retry_interval.
+
+    Verifies that retry delays remain constant when backoff_coefficient defaults to 1.0.
+    """
+
+    def dummy_activity(ctx, _):
+        raise ValueError("Fail!")
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.call_activity(
+            dummy_activity,
+            retry_policy=task.RetryPolicy(
+                first_retry_interval=timedelta(seconds=5),
+                max_number_of_attempts=3))
+        return result
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    current_timestamp = datetime.utcnow()
+
+    # First failure — retry timer at 5 seconds (default backoff=1.0, so 5 * 1^0 = 5)
+    old_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
+    expected_fire_at = current_timestamp + timedelta(seconds=5)
+
+    new_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_task_failed_event(1, ValueError("Fail!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert len(actions) == 1
+    assert actions[0].HasField("createTimer")
+    assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
+
+    # Second failure — retry timer still at 5 seconds (5 * 1^1 = 5, no backoff growth)
+    current_timestamp = expected_fire_at
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_timer_fired_event(2, current_timestamp)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    expected_fire_at = current_timestamp + timedelta(seconds=5)
+    old_events = old_events + new_events
+    new_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_task_failed_event(1, ValueError("Fail!"))]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert len(actions) == 3
+    assert actions[2].HasField("createTimer")
+    assert actions[2].createTimer.fireAt.ToDatetime() == expected_fire_at
+
+
+def test_activity_retry_with_long_timer_preserves_retryable_parent():
+    """Tests that long retry timers keep retryable parent state until the final chunk fires."""
+
+    def dummy_activity(ctx, _):
+        raise ValueError("Kah-BOOOOM!!!")
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        result = yield ctx.call_activity(
+            dummy_activity,
+            retry_policy=task.RetryPolicy(
+                first_retry_interval=timedelta(days=10),
+                max_number_of_attempts=2,
+                backoff_coefficient=1,
+            ),
+            input=orchestrator_input,
+        )
+        return result
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+
+    start = datetime.utcnow()
+    t1 = start + timedelta(days=3)
+    t2 = start + timedelta(days=6)
+    t3 = start + timedelta(days=9)
+    t4 = start + timedelta(days=10)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(timestamp=start),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity)),
+    ]
+
+    # First activity failure should create the first long-timer chunk.
+    new_events = [
+        helpers.new_orchestrator_started_event(timestamp=start),
+        helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!")),
+    ]
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert actions[-1].HasField("createTimer")
+    assert actions[-1].id == 2
+    assert actions[-1].createTimer.fireAt.ToDatetime() == t1
+
+    old_events = old_events + new_events
+
+    # Intermediate chunk 1 fires -> schedule next chunk, not activity retry yet.
+    new_events = [
+        helpers.new_orchestrator_started_event(t1),
+        helpers.new_timer_fired_event(2, t1),
+    ]
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert actions[-1].HasField("createTimer")
+    assert actions[-1].id == 3
+    assert actions[-1].createTimer.fireAt.ToDatetime() == t2
+    assert not actions[-1].HasField("scheduleTask")
+
+    old_events = old_events + new_events
+
+    # Intermediate chunk 2 fires -> schedule next chunk, still no activity retry.
+    new_events = [
+        helpers.new_orchestrator_started_event(t2),
+        helpers.new_timer_fired_event(3, t2),
+    ]
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert actions[-1].HasField("createTimer")
+    assert actions[-1].id == 4
+    assert actions[-1].createTimer.fireAt.ToDatetime() == t3
+    assert not actions[-1].HasField("scheduleTask")
+
+    old_events = old_events + new_events
+
+    # Intermediate chunk 3 fires -> schedule final chunk, still no activity retry.
+    new_events = [
+        helpers.new_orchestrator_started_event(t3),
+        helpers.new_timer_fired_event(4, t3),
+    ]
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert actions[-1].HasField("createTimer")
+    assert actions[-1].id == 5
+    assert actions[-1].createTimer.fireAt.ToDatetime() == t4
+    assert not actions[-1].HasField("scheduleTask")
+
+    old_events = old_events + new_events
+
+    # Final chunk fires -> retry activity should be rescheduled with original task ID.
+    new_events = [
+        helpers.new_orchestrator_started_event(t4),
+        helpers.new_timer_fired_event(5, t4),
+    ]
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    actions = result.actions
+    assert actions[-1].HasField("scheduleTask")
+    assert actions[-1].id == 1
 
 
 def test_nondeterminism_expected_timer():
@@ -998,6 +1501,198 @@ def test_when_any():
     assert complete_action.result.value == encoded_output
 
 
+def test_replay_safe_logger_suppresses_during_replay():
+    """Validates that the replay-safe logger suppresses log messages during replay."""
+    log_calls: list[str] = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_calls.append(record.getMessage())
+
+    handler = _RecordingHandler()
+    inner_logger = logging.getLogger("test_replay_safe_logger")
+    inner_logger.setLevel(logging.DEBUG)
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
+
+    try:
+        activity_name = "say_hello"
+
+        def say_hello(_, name: str) -> str:
+            return f"Hello, {name}!"
+
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            replay_logger = ctx.create_replay_safe_logger(inner_logger)
+            replay_logger.info("Starting orchestration")
+            result = yield ctx.call_activity(say_hello, input="World")
+            replay_logger.info("Activity completed: %s", result)
+            return result
+
+        registry = worker._Registry()
+        activity_name = registry.add_activity(say_hello)
+        orchestrator_name = registry.add_orchestrator(orchestrator)
+
+        # First execution: starts the orchestration. The orchestrator runs without
+        # replay, emits the initial log message, and then schedules the activity.
+        new_events = [
+            helpers.new_orchestrator_started_event(datetime.now()),
+            helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        ]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+        assert result.actions  # should have scheduled the activity
+
+        assert log_calls == ["Starting orchestration"]
+        log_calls.clear()
+
+        # Second execution: the orchestrator replays from history and then processes the
+        # activity completion. The "Starting orchestration" message is emitted during
+        # replay and should be suppressed; "Activity completed" is emitted after replay
+        # ends and should appear exactly once.
+        old_events = new_events + [
+            helpers.new_task_scheduled_event(1, activity_name),
+        ]
+        encoded_output = json.dumps(say_hello(None, "World"))
+        new_events = [helpers.new_task_completed_event(1, encoded_output)]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+        complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+        assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+
+        assert log_calls == ["Activity completed: Hello, World!"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
+
+
+def test_replay_safe_logger_all_levels():
+    """Validates that all log levels are suppressed during replay and emitted otherwise."""
+    log_levels: list[str] = []
+
+    class _LevelRecorder(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_levels.append(record.levelname)
+
+    handler = _LevelRecorder()
+    inner_logger = logging.getLogger("test_replay_safe_logger_levels")
+    inner_logger.setLevel(logging.DEBUG)
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
+
+    try:
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            replay_logger = ctx.create_replay_safe_logger(inner_logger)
+            replay_logger.debug("debug msg")
+            replay_logger.info("info msg")
+            replay_logger.warning("warning msg")
+            replay_logger.error("error msg")
+            replay_logger.critical("critical msg")
+            return "done"
+
+        registry = worker._Registry()
+        orchestrator_name = registry.add_orchestrator(orchestrator)
+
+        new_events = [
+            helpers.new_orchestrator_started_event(datetime.now()),
+            helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        ]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+        complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+        assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+
+        assert log_levels == ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
+
+
+def test_replay_safe_logger_direct():
+    """Unit test for ReplaySafeLogger — verifies suppression based on is_replaying flag."""
+    log_calls: list[str] = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_calls.append(record.getMessage())
+
+    handler = _RecordingHandler()
+    inner_logger = logging.getLogger("test_replay_safe_logger_direct")
+    inner_logger.setLevel(logging.DEBUG)
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
+
+    try:
+        replaying = True
+        replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+
+        replay_logger.info("should be suppressed")
+        assert log_calls == []
+
+        replaying = False
+        replay_logger.info("should appear")
+        assert log_calls == ["should appear"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
+
+
+def test_replay_safe_logger_log_method():
+    """Validates the generic log() method respects the replay flag."""
+    log_calls: list[str] = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_calls.append(record.getMessage())
+
+    handler = _RecordingHandler()
+    inner_logger = logging.getLogger("test_replay_safe_logger_log_method")
+    inner_logger.setLevel(logging.DEBUG)
+    original_propagate = inner_logger.propagate
+    inner_logger.propagate = False
+    inner_logger.addHandler(handler)
+
+    try:
+        replaying = True
+        replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+
+        replay_logger.log(logging.WARNING, "suppressed warning")
+        assert log_calls == []
+
+        replaying = False
+        replay_logger.log(logging.WARNING, "visible warning")
+        assert log_calls == ["visible warning"]
+    finally:
+        inner_logger.removeHandler(handler)
+        inner_logger.propagate = original_propagate
+
+
+def test_replay_safe_logger_is_enabled_for():
+    """Validates isEnabledFor returns False during replay."""
+    inner_logger = logging.getLogger("test_replay_safe_logger_enabled")
+    inner_logger.setLevel(logging.DEBUG)
+
+    replaying = True
+    replay_logger = task.ReplaySafeLogger(inner_logger, lambda: replaying)
+
+    # During replay, isEnabledFor should always return False
+    assert replay_logger.isEnabledFor(logging.DEBUG) is False
+    assert replay_logger.isEnabledFor(logging.INFO) is False
+    assert replay_logger.isEnabledFor(logging.CRITICAL) is False
+
+    # After replay, delegates to the inner logger
+    replaying = False
+    assert replay_logger.isEnabledFor(logging.DEBUG) is True
+    assert replay_logger.isEnabledFor(logging.INFO) is True
+
+    # If a level is below the inner logger's level, should return False
+    inner_logger.setLevel(logging.WARNING)
+    assert replay_logger.isEnabledFor(logging.DEBUG) is False
+    assert replay_logger.isEnabledFor(logging.WARNING) is True
+
+
 def test_when_any_with_retry():
     """Tests that a when_any pattern works correctly with retries"""
     def dummy_activity(_, inp: str):
@@ -1159,7 +1854,7 @@ def test_when_all_with_retry():
     encoded_output = json.dumps(dummy_activity(None, "Seattle"))
     old_events = old_events + new_events
     new_events = [helpers.new_task_completed_event(2, encoded_output),
-                  helpers.new_timer_fired_event(4, current_timestamp)]
+                  helpers.new_timer_fired_event(4, expected_fire_at)]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions

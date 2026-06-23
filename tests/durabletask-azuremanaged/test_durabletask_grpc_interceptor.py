@@ -3,11 +3,18 @@
 
 import unittest
 from concurrent import futures
+from datetime import datetime, timedelta, timezone
 from importlib.metadata import version
+import threading
+import time
 
 import grpc
+from azure.core.credentials import AccessToken
 
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.internal import orchestrator_service_pb2_grpc as stubs
 
@@ -52,6 +59,10 @@ class TestDurableTaskGrpcInterceptor(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.stop(grace=None)
+
+    def setUp(self):
+        self.mock_servicer.captured_metadata = {}
+        self.mock_servicer.requests_received = 0
 
     def test_user_agent_metadata_passed_in_request(self):
         """Test that the user agent metadata is correctly passed in gRPC requests."""
@@ -98,6 +109,67 @@ class TestDurableTaskGrpcInterceptor(unittest.TestCase):
             self.mock_servicer.captured_metadata["x-user-agent"],
             "gRPC user-agent should be different from our custom x-user-agent"
         )
+        self.assertNotIn("workerid", self.mock_servicer.captured_metadata)
+
+    def test_custom_interceptor_is_combined_with_dts_interceptor(self):
+        custom_interceptor = DefaultClientInterceptorImpl([("x-custom-header", "abc")])
+        task_hub_client = DurableTaskSchedulerClient(
+            host_address=self.server_address,
+            secure_channel=False,
+            taskhub="test-taskhub",
+            token_credential=None,
+            interceptors=[custom_interceptor],
+        )
+
+        task_hub_client.get_orchestration_state("test-instance-id")
+
+        self.assertEqual(1, self.mock_servicer.requests_received)
+        self.assertEqual("abc", self.mock_servicer.captured_metadata["x-custom-header"])
+        self.assertEqual("test-taskhub", self.mock_servicer.captured_metadata["taskhub"])
+
+    def test_worker_includes_workerid_header(self):
+        worker = DurableTaskSchedulerWorker(
+            host_address=self.server_address,
+            secure_channel=False,
+            taskhub="test-taskhub",
+            token_credential=None,
+        )
+
+        interceptor = worker._interceptors[-1]
+        metadata = dict(interceptor._metadata)
+        self.assertIn("workerid", metadata)
+        self.assertTrue(metadata["workerid"])
+
+
+class _TestTokenCredential:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.calls = 0
+
+    def get_token(self, _scope):
+        with self._lock:
+            self.calls += 1
+            call_number = self.calls
+        time.sleep(0.02)
+        return AccessToken(f"token-{call_number}", int(time.time()) + 3600)
+
+
+class TestAccessTokenManagerThreadSafety(unittest.TestCase):
+    def test_concurrent_refresh_performs_single_refresh(self):
+        credential = _TestTokenCredential()
+        manager = AccessTokenManager(credential)
+        manager.expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        threads = []
+        for _ in range(8):
+            thread = threading.Thread(target=manager.get_access_token)
+            thread.start()
+            threads.append(thread)
+
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(2, credential.calls)
 
 
 if __name__ == "__main__":

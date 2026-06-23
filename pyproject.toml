@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "durabletask"
-version = "1.2.0dev0"
+version = "1.6.0"
 description = "A Durable Task Client SDK for Python"
 keywords = [
     "durable",
@@ -31,6 +31,18 @@ dependencies = [
     "packaging"
 ]
 
+[project.optional-dependencies]
+opentelemetry = [
+    "opentelemetry-api>=1.0.0",
+    "opentelemetry-sdk>=1.0.0"
+]
+azure-blob-payloads = [
+    "azure-storage-blob[aio]>=12.0.0"
+]
+history-export-azure = [
+    "azure-storage-blob[aio]>=12.0.0"
+]
+
 [project.urls]
 repository = "https://github.com/microsoft/durabletask-python"
 changelog = "https://github.com/microsoft/durabletask-python/blob/main/CHANGELOG.md"
@@ -41,6 +53,7 @@ include = ["durabletask", "durabletask.*"]
 [tool.pytest.ini_options]
 minversion = "6.0"
 testpaths = ["tests"]
+asyncio_mode = "auto"
 markers = [
-    "e2e: mark a test as an end-to-end test that requires a running sidecar"
+    "azurite: tests that require Azurite (local Azure Storage emulator)",
 ]

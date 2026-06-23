@@ -4,17 +4,27 @@
 import dataclasses
 import json
 import logging
+from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any, Optional, Sequence, Union
+from typing import Any, TypeAlias
 
 import grpc
+import grpc.aio
+from durabletask.grpc_options import GrpcChannelOptions
 
-ClientInterceptor = Union[
-    grpc.UnaryUnaryClientInterceptor,
-    grpc.UnaryStreamClientInterceptor,
-    grpc.StreamUnaryClientInterceptor,
-    grpc.StreamStreamClientInterceptor
-]
+ClientInterceptor: TypeAlias = (
+    grpc.UnaryUnaryClientInterceptor
+    | grpc.UnaryStreamClientInterceptor
+    | grpc.StreamUnaryClientInterceptor
+    | grpc.StreamStreamClientInterceptor
+)
+
+AsyncClientInterceptor: TypeAlias = (
+    grpc.aio.UnaryUnaryClientInterceptor
+    | grpc.aio.UnaryStreamClientInterceptor
+    | grpc.aio.StreamUnaryClientInterceptor
+    | grpc.aio.StreamStreamClientInterceptor
+)
 
 # Field name used to indicate that an object was automatically serialized
 # and should be deserialized as a SimpleNamespace
@@ -29,9 +39,10 @@ def get_default_host_address() -> str:
 
 
 def get_grpc_channel(
-        host_address: Optional[str],
+        host_address: str | None,
         secure_channel: bool = False,
-        interceptors: Optional[Sequence[ClientInterceptor]] = None) -> grpc.Channel:
+        interceptors: Sequence[ClientInterceptor] | None = None,
+        channel_options: GrpcChannelOptions | None = None) -> grpc.Channel:
 
     if host_address is None:
         host_address = get_default_host_address()
@@ -51,10 +62,21 @@ def get_grpc_channel(
             break
 
     # Create the base channel
+    options = channel_options.to_grpc_options() if channel_options is not None else None
     if secure_channel:
-        channel = grpc.secure_channel(host_address, grpc.ssl_channel_credentials())
+        if options is None:
+            channel = grpc.secure_channel(host_address, grpc.ssl_channel_credentials())
+        else:
+            channel = grpc.secure_channel(
+                host_address,
+                grpc.ssl_channel_credentials(),
+                options=options,
+            )
     else:
-        channel = grpc.insecure_channel(host_address)
+        if options is None:
+            channel = grpc.insecure_channel(host_address)
+        else:
+            channel = grpc.insecure_channel(host_address, options=options)
 
     # Apply interceptors ONLY if they exist
     if interceptors:
@@ -62,10 +84,63 @@ def get_grpc_channel(
     return channel
 
 
+def get_async_grpc_channel(
+        host_address: str | None,
+        secure_channel: bool = False,
+        interceptors: Sequence[AsyncClientInterceptor] | None = None,
+        channel_options: GrpcChannelOptions | None = None) -> grpc.aio.Channel:
+
+    if host_address is None:
+        host_address = get_default_host_address()
+
+    for protocol in SECURE_PROTOCOLS:
+        if host_address.lower().startswith(protocol):
+            secure_channel = True
+            host_address = host_address[len(protocol):]
+            break
+
+    for protocol in INSECURE_PROTOCOLS:
+        if host_address.lower().startswith(protocol):
+            secure_channel = False
+            host_address = host_address[len(protocol):]
+            break
+
+    options = channel_options.to_grpc_options() if channel_options is not None else None
+
+    if secure_channel:
+        if options is None:
+            channel = grpc.aio.secure_channel(
+                host_address,
+                grpc.ssl_channel_credentials(),
+                interceptors=interceptors,
+            )
+        else:
+            channel = grpc.aio.secure_channel(
+                host_address,
+                grpc.ssl_channel_credentials(),
+                interceptors=interceptors,
+                options=options,
+            )
+    else:
+        if options is None:
+            channel = grpc.aio.insecure_channel(
+                host_address,
+                interceptors=interceptors,
+            )
+        else:
+            channel = grpc.aio.insecure_channel(
+                host_address,
+                interceptors=interceptors,
+                options=options,
+            )
+
+    return channel
+
+
 def get_logger(
         name_suffix: str,
-        log_handler: Optional[logging.Handler] = None,
-        log_formatter: Optional[logging.Formatter] = None) -> logging.Logger:
+        log_handler: logging.Handler | None = None,
+        log_formatter: logging.Formatter | None = None) -> logging.Logger:
     logger = logging.Logger(f"durabletask-{name_suffix}")
 
     # Add a default log handler if none is provided
@@ -83,51 +158,49 @@ def get_logger(
     return logger
 
 
-def to_json(obj):
-    return json.dumps(obj, cls=global_json_encoder)
+def to_json(obj: Any) -> str:
+    return json.dumps(obj, cls=InternalJSONEncoder)
 
 
-def from_json(json_str):
-    return json.loads(json_str, cls=global_json_decoder)
+def from_json(json_str: str | bytes | bytearray) -> Any:
+    return json.loads(json_str, cls=InternalJSONDecoder)
 
 
 class InternalJSONEncoder(json.JSONEncoder):
     """JSON encoder that supports serializing specific Python types."""
 
-    def encode(self, obj: Any) -> str:
+    def encode(self, o: Any) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         # if the object is a namedtuple, convert it to a dict with the AUTO_SERIALIZED key added
-        if isinstance(obj, tuple) and hasattr(obj, "_fields") and hasattr(obj, "_asdict"):
-            d = obj._asdict()  # type: ignore
-            d[AUTO_SERIALIZED] = True
-            obj = d
-        return super().encode(obj)
+        if isinstance(o, tuple):
+            namedtuple_obj: Any = o  # pyright: ignore[reportUnknownVariableType]
+            if hasattr(namedtuple_obj, "_fields") and hasattr(namedtuple_obj, "_asdict"):
+                d: dict[str, Any] = namedtuple_obj._asdict()
+                d[AUTO_SERIALIZED] = True
+                o = d
+        return super().encode(o)
 
-    def default(self, obj):
-        if dataclasses.is_dataclass(obj):
+    def default(self, o: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if dataclasses.is_dataclass(o) and not isinstance(o, type):
             # Dataclasses are not serializable by default, so we convert them to a dict and mark them for
             # automatic deserialization by the receiver
-            d = dataclasses.asdict(obj)  # type: ignore
+            d: dict[str, Any] = dataclasses.asdict(o)
             d[AUTO_SERIALIZED] = True
             return d
-        elif isinstance(obj, SimpleNamespace):
+        elif isinstance(o, SimpleNamespace):
             # Most commonly used for serializing custom objects that were previously serialized using our encoder
-            d = vars(obj)
+            d = vars(o)
             d[AUTO_SERIALIZED] = True
             return d
         # This will typically raise a TypeError
-        return json.JSONEncoder.default(self, obj)
+        return json.JSONEncoder.default(self, o)
 
 
 class InternalJSONDecoder(json.JSONDecoder):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(object_hook=self.dict_to_object, *args, **kwargs)
 
-    def dict_to_object(self, d: dict[str, Any]):
+    def dict_to_object(self, d: dict[str, Any]) -> Any:
         # If the object was serialized by the InternalJSONEncoder, deserialize it as a SimpleNamespace
         if d.pop(AUTO_SERIALIZED, False):
             return SimpleNamespace(**d)
         return d
-
-
-global_json_encoder: type = InternalJSONEncoder
-global_json_decoder: type = InternalJSONDecoder

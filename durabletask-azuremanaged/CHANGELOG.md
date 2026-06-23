@@ -2,8 +2,70 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## Unreleased
+
+- Updates base dependency to durabletask v1.6.0.
+- Added preview support for Durable Task Scheduler on-demand sandbox
+  activities under `durabletask.azuremanaged.preview.sandboxes`. Applications
+  can declare sandbox activities (with optional per-activity versions),
+  register sandbox worker profiles, and run a sandbox activity worker that
+  establishes a live worker session and dispatches only the activities it
+  has registered.
+
+## v1.5.0
+
+- Updates base dependency to durabletask v1.5.0
+- Improved type coverage benefits Azure Managed users: `create_timer` now
+  returns the specific `TimerTask` type and `when_any` is generic so the
+  completing child task is type-checked through `DurableTaskSchedulerClient`,
+  `AsyncDurableTaskSchedulerClient`, and `DurableTaskSchedulerWorker` derived
+  orchestrations.
+- gRPC client interceptors in the core SDK now use the public
+  `grpc.ClientCallDetails` / `grpc.aio.ClientCallDetails` types instead of
+  private internal namedtuples. Any custom DTS auth interceptor built on the
+  same pattern as `DTSDefaultClientInterceptorImpl` should retype its
+  `_intercept_call` override parameter accordingly. This is a type-level change
+  only and does not alter runtime behavior.
+- Added optional `interceptors`, `channel`, and `channel_options` parameters to
+  `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
+  `DurableTaskSchedulerWorker` to allow combining custom gRPC interceptors with
+  DTS defaults and to support pre-configured/customized gRPC channels.
+- Added pass-through `resiliency_options` support on
+  `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
+  `DurableTaskSchedulerWorker` so Azure Managed applications can use the core
+  SDK's gRPC resiliency option types through their constructors.
+- Added `workerid` gRPC metadata on Durable Task Scheduler worker calls for
+  improved worker identity and observability.
+- Improved sync access token refresh concurrency handling to avoid duplicate
+  refresh operations under concurrent access.
+
+## v1.4.0
+
+- Updates base dependency to durabletask v1.4.0
+  - Includes restart support, batch actions, work item filtering, timer improvements,
+    distributed tracing improvements, and entity bug fixes
+- Added `AsyncDurableTaskSchedulerClient` for async/await usage with `grpc.aio`
+- Added `DTSAsyncDefaultClientInterceptorImpl` async gRPC interceptor for DTS authentication
+- Added `payload_store` parameter to `DurableTaskSchedulerWorker`,
+  `DurableTaskSchedulerClient`, and `AsyncDurableTaskSchedulerClient`
+  for large payload externalization support
+- Added `azure-blob-payloads` optional dependency that installs
+  `durabletask[azure-blob-payloads]` — install with
+  `pip install durabletask.azuremanaged[azure-blob-payloads]`
+- Improved worker timer handling to align with durabletask timer updates
+
+## v1.3.0
+
+- Updates base dependency to durabletask v1.3.0
+  - See durabletask changelog for more details
+
+## v1.2.0
+
+- Updates base dependency to durabletask v1.2.0
+  - See durabletask changelog for more details
 
 ## v1.1.0
 
@@ -29,7 +91,8 @@ CHANGED:
 ## v0.3.1
 
 - Updates base dependency to durabletask v0.4.1
-  - Fixed an issue where orchestrations would still throw non-determinism errors even when versioning logic should have prevented it
+  - Fixed an issue where orchestrations would still throw non-determinism errors,
+    even when versioning logic should have prevented it
 
 ## v0.3.0
 

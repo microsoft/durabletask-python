@@ -17,7 +17,7 @@ taskhub_name = os.getenv("TASKHUB", "default")
 endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
 
 
-def test_client_signal_entity():
+def test_client_signal_entity_and_custom_name():
     invoked = False
 
     def empty_entity(ctx: entities.EntityContext, _):
@@ -28,12 +28,12 @@ def test_client_signal_entity():
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
-        w.add_entity(empty_entity)
+        w.add_entity(empty_entity, name="EntityNameCustom")
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                        taskhub=taskhub_name, token_credential=None)
-        entity_id = entities.EntityInstanceId("empty_entity", "testEntity")
+        entity_id = entities.EntityInstanceId("EntityNameCustom", "testEntity")
         c.signal_entity(entity_id, "do_nothing")
         time.sleep(2)  # wait for the signal to be processed
 
@@ -70,7 +70,7 @@ def test_client_get_entity():
     assert invoked
 
 
-def test_orchestration_signal_entity():
+def test_orchestration_signal_entity_and_custom_name():
     invoked = False
 
     def empty_entity(ctx: entities.EntityContext, _):
@@ -79,14 +79,14 @@ def test_orchestration_signal_entity():
             invoked = True
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
-        entity_id = entities.EntityInstanceId("empty_entity", f"{ctx.instance_id}_testEntity")
+        entity_id = entities.EntityInstanceId("EntityNameCustom", f"{ctx.instance_id}_testEntity")
         ctx.signal_entity(entity_id, "do_nothing")
 
     # Start a worker, which will connect to the sidecar in a background thread
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
         w.add_orchestrator(empty_orchestrator)
-        w.add_entity(empty_entity)
+        w.add_entity(empty_entity, name="EntityNameCustom")
         w.start()
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
@@ -386,3 +386,12 @@ def test_entity_unlocks_when_user_mishandles_lock():
 #         c.wait_for_orchestration_completion(id, timeout=30)
 
 #     assert invoke_count == 6
+
+
+def test_get_entity_not_found():
+    """Test that get_entity returns None for a non-existent entity."""
+    c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+                                   taskhub=taskhub_name, token_credential=None)
+    entity_id = entities.EntityInstanceId("counter", "nonexistent")
+    metadata = c.get_entity(entity_id, include_state=True)
+    assert metadata is None

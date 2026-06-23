@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any, Optional, Type, TypeVar, Union, overload
+from typing import Any, TypeVar, overload
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -20,7 +20,7 @@ class EntityMetadata:
         backlog_queue_size (int): The size of the backlog queue for the entity.
         locked_by (str): The identifier of the worker that currently holds the lock on the entity.
         includes_state (bool): Indicates whether the metadata includes the state of the entity.
-        state (Optional[Any]): The current state of the entity, if included.
+        state (Any | None): The current state of the entity, if included.
     """
 
     def __init__(self,
@@ -29,7 +29,7 @@ class EntityMetadata:
                  backlog_queue_size: int,
                  locked_by: str,
                  includes_state: bool,
-                 state: Optional[Any]):
+                 state: Any | None):
         """Initializes a new instance of the EntityMetadata class.
 
         Args:
@@ -44,31 +44,35 @@ class EntityMetadata:
 
     @staticmethod
     def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool):
+        return EntityMetadata.from_entity_metadata(entity_response.entity, includes_state)
+
+    @staticmethod
+    def from_entity_metadata(entity: pb.EntityMetadata, includes_state: bool):
         try:
-            entity_id = EntityInstanceId.parse(entity_response.entity.instanceId)
+            entity_id = EntityInstanceId.parse(entity.instanceId)
         except ValueError:
             raise ValueError("Invalid entity instance ID in entity response.")
         entity_state = None
         if includes_state:
-            entity_state = entity_response.entity.serializedState.value
+            entity_state = entity.serializedState.value
         return EntityMetadata(
             id=entity_id,
-            last_modified=entity_response.entity.lastModifiedTime.ToDatetime(timezone.utc),
-            backlog_queue_size=entity_response.entity.backlogQueueSize,
-            locked_by=entity_response.entity.lockedBy.value,
+            last_modified=entity.lastModifiedTime.ToDatetime(timezone.utc),
+            backlog_queue_size=entity.backlogQueueSize,
+            locked_by=entity.lockedBy.value,
             includes_state=includes_state,
             state=entity_state
         )
 
     @overload
-    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+    def get_state(self, intended_type: type[TState]) -> TState | None:
         ...
 
     @overload
     def get_state(self, intended_type: None = None) -> Any:
         ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None) -> Union[None, TState, Any]:
+    def get_state(self, intended_type: type[TState] | None = None) -> TState | Any | None:
         """Get the current state of the entity, optionally converting it to a specified type."""
         if intended_type is None or self._state is None:
             return self._state
@@ -83,7 +87,7 @@ class EntityMetadata:
                 f"Could not convert state of type '{type(self._state).__name__}' to '{intended_type.__name__}'"
             ) from ex
 
-    def get_locked_by(self) -> Optional[EntityInstanceId]:
+    def get_locked_by(self) -> EntityInstanceId | None:
         """Get the identifier of the worker that currently holds the lock on the entity.
 
         Returns

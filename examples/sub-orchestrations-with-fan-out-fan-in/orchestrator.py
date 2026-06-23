@@ -11,10 +11,11 @@ print(f"Using taskhub: {taskhub_name}")
 print(f"Using endpoint: {endpoint}")
 
 # Set credential to None for emulator, or DefaultAzureCredential for Azure
-credential = None if endpoint == "http://localhost:8080" else DefaultAzureCredential()
+secure_channel = endpoint.startswith("https://")
+credential = DefaultAzureCredential() if secure_channel else None
 
 # Create a client, start an orchestration, and wait for it to finish
-c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
+c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=secure_channel,
                                taskhub=taskhub_name, token_credential=credential)
 
 instance_id = c.schedule_new_orchestration("orchestrator")
