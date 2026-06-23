@@ -52,7 +52,6 @@ Typical usage::
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections.abc import Iterator
@@ -221,12 +220,8 @@ class ExportHistoryClient:
         meta = self._client.get_entity(entity_id, include_state=True)
         if meta is None:
             return None
-        raw = meta.get_state(str)
-        if not raw:
-            return None
-        try:
-            state = json.loads(raw)
-        except (TypeError, ValueError):
+        state = meta.get_state()
+        if not state:
             return None
         if not isinstance(state, dict):
             return None
@@ -265,31 +260,24 @@ class ExportHistoryClient:
             # explicit entity-name check.
             if meta.id.entity != ENTITY_NAME.lower():
                 continue
-            raw = meta.get_state(str)
+            raw = meta.get_state()
             if not raw:
                 logger.warning(
                     "list_jobs: skipping export-job entity %r with no "
                     "persisted state", meta.id.key,
                 )
                 continue
-            try:
-                state = json.loads(raw)
-            except (TypeError, ValueError) as ex:
-                logger.warning(
-                    "list_jobs: skipping export-job entity %r; failed to "
-                    "parse state JSON (%s)", meta.id.key, ex,
-                )
-                continue
-            if not isinstance(state, dict):
+            if not isinstance(raw, dict):
                 logger.warning(
                     "list_jobs: skipping export-job entity %r; persisted "
                     "state is not a JSON object (got %s)",
-                    meta.id.key, type(state).__name__,
+                    meta.id.key, type(raw).__name__,
                 )
                 continue
+            state = cast("dict[str, Any]", raw)
             try:
                 desc = ExportJobDescription.from_state_dict(
-                    meta.id.key, cast("dict[str, Any]", state),
+                    meta.id.key, state,
                 )
             except (KeyError, ValueError) as ex:
                 logger.warning(

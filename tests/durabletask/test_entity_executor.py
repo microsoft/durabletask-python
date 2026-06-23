@@ -177,9 +177,8 @@ class TestStateShimCoercion:
         assert isinstance(result, Wrapped)
         assert result.n == 3
 
-    def test_get_state_invalid_coercion_raises_typeerror(self):
-        import pytest
-
+    def test_get_state_invalid_coercion_falls_back_to_raw(self):
+        # The default converter is best-effort: a coercion failure returns the
+        # raw value rather than raising.
         state = StateShim("not-an-int")
-        with pytest.raises(TypeError):
-            state.get_state(int)
+        assert state.get_state(int) == "not-an-int"

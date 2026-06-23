@@ -84,6 +84,10 @@ def test_custom_converter_is_a_dataconverter_subclass():
         def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
             return None if data is None else json.loads(data)
 
+        def coerce(self, value: Any, target_type: type | None = None) -> Any:
+            return value
+
     conv = UpperConverter()
     assert conv.serialize("hello") == '"HELLO"'
     assert conv.deserialize('"HELLO"') == "HELLO"
+    assert conv.coerce("HELLO") == "HELLO"
