@@ -220,7 +220,7 @@ class ExportHistoryClient:
         meta = self._client.get_entity(entity_id, include_state=True)
         if meta is None:
             return None
-        state = meta.get_state()
+        state = meta.get_typed_state()
         if not state:
             return None
         if not isinstance(state, dict):
@@ -260,7 +260,7 @@ class ExportHistoryClient:
             # explicit entity-name check.
             if meta.id.entity != ENTITY_NAME.lower():
                 continue
-            raw = meta.get_state()
+            raw = meta.get_typed_state()
             if not raw:
                 logger.warning(
                     "list_jobs: skipping export-job entity %r with no "

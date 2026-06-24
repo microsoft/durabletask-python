@@ -87,7 +87,7 @@ def _create_payload() -> dict:
 
 
 def _state_dict(metadata) -> dict:
-    state = metadata.get_state()
+    state = metadata.get_typed_state()
     assert isinstance(state, dict)
     return state
 
@@ -105,7 +105,7 @@ def _wait_for_state(
         meta = c.get_entity(entity_id, include_state=True)
         if meta is None:
             return None
-        state = meta.get_state()
+        state = meta.get_typed_state()
         if not isinstance(state, dict):
             return None
         return state if predicate(state) else None

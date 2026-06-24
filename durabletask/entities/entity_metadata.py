@@ -85,7 +85,40 @@ class EntityMetadata:
         ...
 
     def get_state(self, intended_type: type[TState] | None = None) -> TState | Any | None:
-        """Get the current state of the entity, optionally converting it to a specified type.
+        """Get the entity's raw persisted state, optionally constructor-coerced.
+
+        The state is held as the raw serialized JSON payload (a ``str``). With no
+        argument the raw payload is returned unchanged; passing ``intended_type``
+        applies the legacy constructor-based coercion (``intended_type(raw)``)
+        and raises ``TypeError`` if that fails.
+
+        This preserves the pre-existing contract. To deserialize the payload and
+        reconstruct dataclasses or ``from_json()``-capable types, use
+        :meth:`get_typed_state` instead.
+        """
+        if intended_type is None or self._state is None:
+            return self._state
+
+        if isinstance(self._state, intended_type):
+            return self._state
+
+        try:
+            return intended_type(self._state)  # type: ignore[call-arg]
+        except Exception as ex:
+            raise TypeError(
+                f"Could not convert state of type '{type(self._state).__name__}' to '{intended_type.__name__}'"
+            ) from ex
+
+    @overload
+    def get_typed_state(self, intended_type: type[TState]) -> TState | None:
+        ...
+
+    @overload
+    def get_typed_state(self, intended_type: None = None) -> Any:
+        ...
+
+    def get_typed_state(self, intended_type: type[TState] | None = None) -> TState | Any | None:
+        """Deserialize the entity's persisted state, optionally reconstructing a type.
 
         The state is stored as its raw serialized JSON payload and deserialized
         here. When ``intended_type`` is provided the payload is reconstructed as

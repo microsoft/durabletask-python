@@ -38,7 +38,22 @@ class StateShim:
         if intended_type is None:
             return self._current_state
 
-        return self._data_converter.coerce(self._current_state, intended_type)
+        coerced = self._data_converter.coerce(self._current_state, intended_type)
+
+        # An explicit ``intended_type`` is a request to receive that type. The
+        # default converter is best-effort and would silently return the raw
+        # value on a failed coercion; restore the stricter contract here by
+        # raising when a non-None state could not be coerced to a concrete type.
+        # ``intended_type`` may be a typing generic (e.g. ``list[int]``) at
+        # runtime, which is not a ``type`` instance, so the guard is required.
+        if (self._current_state is not None
+                and isinstance(intended_type, type)  # pyright: ignore[reportUnnecessaryIsInstance]
+                and not isinstance(coerced, intended_type)):
+            raise TypeError(
+                f"Could not convert state of type '{type(self._current_state).__name__}' to '{intended_type.__name__}'"
+            )
+
+        return coerced
 
     def set_state(self, state: Any) -> None:
         self._current_state = state

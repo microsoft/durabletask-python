@@ -7,6 +7,15 @@ from typing import TypeAlias
 
 import grpc
 import grpc.aio
+
+# Backwards-compatibility re-exports. The JSON codec moved to
+# ``durabletask.internal.json_codec``; these aliases keep older imports from
+# ``durabletask.internal.shared`` working.
+from durabletask.internal.json_codec import (  # noqa: F401
+    AUTO_SERIALIZED as AUTO_SERIALIZED,
+    from_json as from_json,
+    to_json as to_json,
+)
 from durabletask.grpc_options import GrpcChannelOptions
 
 ClientInterceptor: TypeAlias = (
