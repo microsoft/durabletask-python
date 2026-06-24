@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+N/A
+
+## v1.6.0
+
 ADDED
 
 - Added overridable activity-dispatch hooks `_on_activity_execution_started`
