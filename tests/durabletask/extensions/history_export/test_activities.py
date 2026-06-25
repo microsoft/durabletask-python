@@ -36,8 +36,9 @@ from durabletask.extensions.history_export.activities import (
 )
 from durabletask.testing import create_test_backend
 
+from _port_utils import find_free_port
 
-PORT = 50261
+PORT = find_free_port()
 HOST = f"localhost:{PORT}"
 
 
