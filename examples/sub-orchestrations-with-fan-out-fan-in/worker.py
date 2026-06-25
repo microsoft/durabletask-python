@@ -4,12 +4,15 @@
 import os
 import random
 import time
+from collections.abc import Generator
+from typing import Any
+
 from azure.identity import DefaultAzureCredential
 from durabletask import task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
-def get_orders(ctx, _) -> list[str]:
+def get_orders(ctx: task.ActivityContext, _: Any) -> list[str]:
     """Activity function that returns a list of work items"""
     # return a random number of work items
     count = random.randint(2, 10)
@@ -17,7 +20,7 @@ def get_orders(ctx, _) -> list[str]:
     return [f'order {i}' for i in range(count)]
 
 
-def check_and_update_inventory(ctx, order: str) -> str:
+def check_and_update_inventory(ctx: task.ActivityContext, order: str) -> bool:
     """Activity function that checks inventory for a given order"""
     print(f'checking inventory for order: {order}')
 
@@ -25,10 +28,10 @@ def check_and_update_inventory(ctx, order: str) -> str:
     time.sleep(random.random() * 2)
 
     # return a random boolean indicating if the item is in stock
-    return random.choices([True, False], weights=[9, 1])
+    return random.choices([True, False], weights=[9, 1])[0]
 
 
-def charge_payment(ctx, order: str) -> bool:
+def charge_payment(ctx: task.ActivityContext, order: str) -> bool:
     """Activity function that charges payment for a given order"""
     print(f'charging payment for order: {order}')
 
@@ -36,10 +39,10 @@ def charge_payment(ctx, order: str) -> bool:
     time.sleep(random.random() * 2)
 
     # return a random boolean indicating if the payment was successful
-    return random.choices([True, False], weights=[9, 1])
+    return random.choices([True, False], weights=[9, 1])[0]
 
 
-def ship_order(ctx, order: str) -> bool:
+def ship_order(ctx: task.ActivityContext, order: str) -> bool:
     """Activity function that ships a given order"""
     print(f'shipping order: {order}')
 
@@ -47,10 +50,10 @@ def ship_order(ctx, order: str) -> bool:
     time.sleep(random.random() * 2)
 
     # return a random boolean indicating if the shipping was successful
-    return random.choices([True, False], weights=[9, 1])
+    return random.choices([True, False], weights=[9, 1])[0]
 
 
-def notify_customer(ctx, order: str) -> bool:
+def notify_customer(ctx: task.ActivityContext, order: str) -> bool:
     """Activity function that notifies the customer about the order status"""
     print(f'notifying customer about order: {order}')
 
@@ -58,10 +61,10 @@ def notify_customer(ctx, order: str) -> bool:
     time.sleep(random.random() * 2)
 
     # return a random boolean indicating if the notification was successful
-    return random.choices([True, False], weights=[9, 1])
+    return random.choices([True, False], weights=[9, 1])[0]
 
 
-def process_order(ctx, order: str) -> dict:
+def process_order(ctx: task.OrchestrationContext, order: str) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Sub-orchestration function that processes a given order by performing all steps"""
     print(f'processing order: {order}')
 
@@ -93,7 +96,7 @@ def process_order(ctx, order: str) -> dict:
     return {'order': order, 'status': 'completed'}
 
 
-def orchestrator(ctx, _):
+def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Orchestrator function that calls the 'get_orders' and 'process_order'
     sub-orchestration functions in parallel, waits for them all to complete, and prints
     an aggregate summary of the outputs"""
@@ -101,8 +104,8 @@ def orchestrator(ctx, _):
     orders: list[str] = yield ctx.call_activity('get_orders')
 
     # Execute the orders in parallel and wait for them all to return
-    tasks = [ctx.call_sub_orchestrator(process_order, input=order) for order in orders]
-    results: list[dict] = yield task.when_all(tasks)
+    tasks: list[task.Task[Any]] = [ctx.call_sub_orchestrator(process_order, input=order) for order in orders]
+    results: list[dict[str, Any]] = yield task.when_all(tasks)
 
     # Return an aggregate summary of the results
     return {

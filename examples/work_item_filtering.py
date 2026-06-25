@@ -4,6 +4,8 @@
 """End-to-end sample that demonstrates how to use work item filters
 to control which orchestrations and activities a worker processes."""
 import os
+from collections.abc import Generator
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -26,13 +28,13 @@ def farewell(ctx: task.ActivityContext, name: str) -> str:
 
 # --- Orchestrator definitions ---
 
-def greeting_orchestrator(ctx: task.OrchestrationContext, name: str):
+def greeting_orchestrator(ctx: task.OrchestrationContext, name: str) -> Generator[task.Task[Any], Any, str]:
     """Orchestrator that calls the greet activity."""
     result = yield ctx.call_activity(greet, input=name)
     return result
 
 
-def farewell_orchestrator(ctx: task.OrchestrationContext, name: str):
+def farewell_orchestrator(ctx: task.OrchestrationContext, name: str) -> Generator[task.Task[Any], Any, str]:
     """Orchestrator that calls the farewell activity."""
     result = yield ctx.call_activity(farewell, input=name)
     return result

@@ -7,6 +7,8 @@ to complete, and prints an aggregate summary of the outputs."""
 import os
 import random
 import time
+from collections.abc import Generator
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -15,7 +17,7 @@ from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
-def get_work_items(ctx: task.ActivityContext, _) -> list[str]:
+def get_work_items(ctx: task.ActivityContext, _: Any) -> list[str]:
     """Activity function that returns a list of work items"""
     # return a random number of work items
     count = random.randint(2, 10)
@@ -34,7 +36,7 @@ def process_work_item(ctx: task.ActivityContext, item: str) -> int:
     return random.randint(0, 10)
 
 
-def orchestrator(ctx: task.OrchestrationContext, _):
+def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Orchestrator function that calls the 'get_work_items' and 'process_work_item'
     activity functions in parallel, waits for them all to complete, and prints
     an aggregate summary of the outputs"""
@@ -42,7 +44,7 @@ def orchestrator(ctx: task.OrchestrationContext, _):
     work_items: list[str] = yield ctx.call_activity(get_work_items)
 
     # execute the work-items in parallel and wait for them all to return
-    tasks = [ctx.call_activity(process_work_item, input=item) for item in work_items]
+    tasks: list[task.Task[int]] = [ctx.call_activity(process_work_item, input=item) for item in work_items]
     results: list[int] = yield task.when_all(tasks)
 
     # return an aggregate summary of the results

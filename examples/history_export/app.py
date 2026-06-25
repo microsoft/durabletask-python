@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from durabletask import client, task, worker
 from durabletask.extensions.history_export import (
@@ -50,7 +52,7 @@ def square(_: task.ActivityContext, n: int) -> int:
     return n * n
 
 
-def sample_orchestrator(ctx: task.OrchestrationContext, n: int):
+def sample_orchestrator(ctx: task.OrchestrationContext, n: int) -> Generator[task.Task[Any], Any, int]:
     result = yield ctx.call_activity(square, input=n)
     return result
 

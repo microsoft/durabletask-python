@@ -16,8 +16,10 @@ Activities that receive complex inputs should therefore use dict-style
 access (``item["quantity"]``) for nested data.
 """
 
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from durabletask import task
 
@@ -50,7 +52,7 @@ class Order:
 # ---------------------------------------------------------------------------
 
 
-def validate_order(ctx: task.ActivityContext, order) -> None:
+def validate_order(ctx: task.ActivityContext, order: Any) -> None:
     """Validate that the order has items and all quantities/prices are valid.
 
     Raises ``ValueError`` on invalid input.
@@ -66,7 +68,7 @@ def validate_order(ctx: task.ActivityContext, order) -> None:
                 f"Invalid price for '{item['name']}': {item['unit_price']}")
 
 
-def calculate_total(ctx: task.ActivityContext, items: list) -> float:
+def calculate_total(ctx: task.ActivityContext, items: list[Any]) -> float:
     """Return the total cost for a list of item dicts."""
     return sum(item["quantity"] * item["unit_price"] for item in items)
 
@@ -95,7 +97,7 @@ def ship_item(ctx: task.ActivityContext, item_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def process_order(ctx: task.OrchestrationContext, order):
+def process_order(ctx: task.OrchestrationContext, order: Any) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Process a complete order: validate, pay, ship items in parallel, confirm.
 
     Demonstrates:
@@ -135,7 +137,7 @@ def process_order(ctx: task.OrchestrationContext, order):
     }
 
 
-def order_with_approval(ctx: task.OrchestrationContext, order):
+def order_with_approval(ctx: task.OrchestrationContext, order: Any) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Order workflow that requires manager approval for high-value orders.
 
     Demonstrates:
