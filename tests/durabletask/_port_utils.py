@@ -15,22 +15,15 @@ import socket
 
 
 def find_free_port() -> int:
-    """Return a TCP port number that is currently free.
+    """Return a free TCP port by binding to port 0 and reading the assignment.
 
-    Binds a socket to port 0 so the OS assigns an available port, then
-    releases it and returns the chosen number. There is an inherent race
-    between releasing the socket and the caller binding the port, but in
-    practice it is reliable for tests and far safer than fixed ports.
-
-    The in-memory backend binds the IPv6 wildcard (``[::]``), so the probe
-    uses an IPv6 socket to mirror that bind and avoid returning a port that
-    is free on IPv4 but already in use on IPv6. If IPv6 is unavailable, it
-    falls back to IPv4.
+    Probes IPv6 loopback first to match the backend's ``[::]`` bind (so an
+    IPv6-occupied port isn't wrongly reported free), falling back to IPv4.
     """
     if socket.has_ipv6:
         try:
             with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
-                s.bind(("::", 0))
+                s.bind(("::1", 0))
                 return s.getsockname()[1]
         except OSError:
             pass  # IPv6 not usable on this host; fall back to IPv4.
