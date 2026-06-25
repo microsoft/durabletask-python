@@ -1,6 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
 import os
+from collections.abc import Generator
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -13,7 +18,7 @@ class Counter(entities.DurableEntity):
     def set(self, input: int):
         self.set_state(input)
 
-    def add(self, input: int):
+    def add(self, input: int | None = None):
         current_state = self.get_state(int, 0)
         new_state = current_state + (1 if input is None else input)
         self.set_state(new_state)
@@ -32,7 +37,7 @@ class Counter(entities.DurableEntity):
         return self.get_state(int, 0)
 
 
-def counter_orchestrator(ctx: task.OrchestrationContext, _):
+def counter_orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, Any]:
     """Orchestrator function that demonstrates the behavior of the counter entity"""
 
     entity_id = task.EntityInstanceId("Counter", "myCounter")
@@ -51,7 +56,7 @@ def counter_orchestrator(ctx: task.OrchestrationContext, _):
     return (yield ctx.call_entity(parent_entity_id, "get"))
 
 
-def hello_orchestrator(ctx: task.OrchestrationContext, _):
+def hello_orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
     return "Hello world!"
 
 

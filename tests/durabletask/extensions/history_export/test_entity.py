@@ -30,9 +30,9 @@ from durabletask.extensions.history_export.entity import (
 from durabletask.testing import create_test_backend
 
 from ._test_helpers import wait_until
+from tests.durabletask._port_utils import find_free_port
 
-
-PORT = 50260
+PORT = find_free_port()
 HOST = f"localhost:{PORT}"
 
 _WINDOW_START = datetime(2025, 1, 1, tzinfo=timezone.utc)

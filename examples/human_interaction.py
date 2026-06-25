@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """End-to-end sample that demonstrates how to configure an orchestrator
 that waits for an "approval" event before proceding to the next step. If
 the approval isn't received within a specified timeout, the order that is
@@ -6,8 +9,10 @@ represented by the orchestration is automatically cancelled."""
 import os
 import threading
 import time
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -44,7 +49,7 @@ def place_order(_: task.ActivityContext, order: Order) -> None:
     print(f'*** Placing order: {order}')
 
 
-def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
+def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order) -> Generator[task.Task[Any], Any, str]:
     """Orchestrator function that represents a purchase order workflow"""
     # Orders under $1000 are auto-approved
     if order.Cost < 1000:
@@ -57,7 +62,8 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     # Passing ``data_type`` reconstructs the event payload as an ``Approval``.
     approval_event = ctx.wait_for_external_event("approval_received", data_type=Approval)
     timeout_event = ctx.create_timer(timedelta(hours=24))
-    winner = yield task.when_any([approval_event, timeout_event])
+    pending: list[task.Task[Any]] = [approval_event, timeout_event]
+    winner = yield task.when_any(pending)
     if winner == timeout_event:
         return "Cancelled"
 

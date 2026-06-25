@@ -24,6 +24,8 @@ Usage (Azure):
 """
 
 import os
+from collections.abc import Generator
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -48,7 +50,7 @@ def summarize(ctx: task.ActivityContext, report: str) -> str:
 
 # --------------- Orchestrator ---------------
 
-def large_payload_orchestrator(ctx: task.OrchestrationContext, num_records: int):
+def large_payload_orchestrator(ctx: task.OrchestrationContext, num_records: int) -> Generator[task.Task[Any], Any, str]:
     """Orchestrator that generates a large report and then summarizes it.
 
     Both the report (activity output) and the orchestration input are

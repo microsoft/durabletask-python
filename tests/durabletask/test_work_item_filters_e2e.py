@@ -18,13 +18,16 @@ from durabletask.worker import (
 )
 from durabletask.testing import create_test_backend
 
-HOST = "localhost:50060"
+from tests.durabletask._port_utils import find_free_port
+
+PORT = find_free_port()
+HOST = f"localhost:{PORT}"
 
 
 @pytest.fixture(autouse=True)
 def backend():
     """Create an in-memory backend for testing."""
-    b = create_test_backend(port=50060)
+    b = create_test_backend(port=PORT)
     yield b
     b.stop()
     b.reset()

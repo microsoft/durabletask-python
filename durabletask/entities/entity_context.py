@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 import uuid

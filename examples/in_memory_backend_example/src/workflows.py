@@ -17,8 +17,10 @@ fields), so the functions below use attribute access (``order.items``,
 ``dict`` / ``list`` values and would need dict-style access instead.
 """
 
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from durabletask import task
 
@@ -96,7 +98,7 @@ def ship_item(ctx: task.ActivityContext, item_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def process_order(ctx: task.OrchestrationContext, order: Order):
+def process_order(ctx: task.OrchestrationContext, order: Order) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Process a complete order: validate, pay, ship items in parallel, confirm.
 
     Demonstrates:
@@ -136,7 +138,7 @@ def process_order(ctx: task.OrchestrationContext, order: Order):
     }
 
 
-def order_with_approval(ctx: task.OrchestrationContext, order: Order):
+def order_with_approval(ctx: task.OrchestrationContext, order: Order) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Order workflow that requires manager approval for high-value orders.
 
     Demonstrates:

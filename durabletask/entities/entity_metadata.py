@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 from durabletask.entities.entity_instance_id import EntityInstanceId
