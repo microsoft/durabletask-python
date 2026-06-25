@@ -36,6 +36,21 @@ Examples:
 - Follow PEP 8 conventions.
 - Use `autopep8` for Python formatting.
 
+## Copyright Headers
+
+Every new Python (`.py`) source file MUST begin with the following copyright
+header as the first two lines, followed by a blank line before any code,
+docstring, or imports:
+
+```python
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+```
+
+This applies to all hand-written Python files, including `__init__.py` files,
+tests, and examples. The only exceptions are auto-generated protobuf files
+(`*_pb2.py` and `*_pb2_grpc.py`), which carry their own generated header.
+
 ## Python Type Checking
 
 Before linting, check for and fix any Pylance errors in the files you

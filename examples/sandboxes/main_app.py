@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Declarer app for the Durable Task Scheduler sandbox activities sample."""
 
 import os

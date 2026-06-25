@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from durabletask.internal.orchestrator_service_pb2 import TaskFailureDetails
 from durabletask.entities.entity_instance_id import EntityInstanceId
 

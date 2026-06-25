@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from typing import Any, TypeVar, overload
 
 from durabletask.entities.entity_context import EntityContext

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """End-to-end sample that demonstrates how to use work item filters
 to control which orchestrations and activities a worker processes."""
 import os
