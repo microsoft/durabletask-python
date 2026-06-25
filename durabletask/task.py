@@ -181,6 +181,7 @@ class OrchestrationContext(ABC):
                     entity: EntityInstanceId,
                     operation: str,
                     input: Any = ...,
+                    *,
                     return_type: None = ...) -> CompletableTask[Any]:
         ...
 
@@ -189,6 +190,7 @@ class OrchestrationContext(ABC):
                     entity: EntityInstanceId,
                     operation: str,
                     input: Any = None,
+                    *,
                     return_type: type | None = None) -> CompletableTask[Any]:
         """Schedule entity function for execution.
 

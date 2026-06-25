@@ -1376,7 +1376,7 @@ class TaskHubGrpcWorker:
         batch_result = pb.EntityBatchResult(
             results=results,
             actions=entity_state.get_operation_actions(),
-            entityState=helpers.get_string_value(self._data_converter.serialize(entity_state._current_state)) if entity_state._current_state else None,  # pyright: ignore[reportPrivateUsage]
+            entityState=helpers.get_string_value(self._data_converter.serialize(entity_state._current_state)) if entity_state._current_state is not None else None,  # pyright: ignore[reportPrivateUsage]
             failureDetails=None,
             completionToken=completionToken,
             operationInfos=operation_infos,
@@ -1716,6 +1716,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             entity: EntityInstanceId,
             operation: str,
             input: Any = ...,
+            *,
             return_type: None = ...,
     ) -> task.CompletableTask[Any]:
         ...
@@ -1725,6 +1726,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             entity: EntityInstanceId,
             operation: str,
             input: Any = None,
+            *,
             return_type: type | None = None,
     ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()

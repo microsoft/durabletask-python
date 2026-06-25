@@ -61,6 +61,13 @@ CHANGED
 - JSON serialization failures now raise a `TypeError` that chains the original
   error (`__cause__`) and names the offending type.
 
+FIXED
+
+- Falsy entity states (`0`, `""`, `[]`, `{}`) are no longer dropped when an
+  entity batch is persisted. Previously a falsy current state was treated as
+  "no state" and written as `None`, effectively deleting it; only an actual
+  `None` state now clears the persisted entity state.
+
 BREAKING CHANGES (type-level only — no runtime impact for typical users)
 
 These changes do not alter runtime behavior, but because the package ships
