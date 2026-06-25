@@ -6,15 +6,21 @@ represented by the orchestration is automatically cancelled."""
 import os
 import threading
 import time
-from collections import namedtuple
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any, NamedTuple
 
 from azure.identity import DefaultAzureCredential
 
 from durabletask import client, task, worker
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+
+class Approval(NamedTuple):
+    """Represents an approval event payload"""
+    approver: str
 
 
 @dataclass
@@ -39,7 +45,7 @@ def place_order(_: task.ActivityContext, order: Order) -> None:
     print(f'*** Placing order: {order}')
 
 
-def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
+def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order) -> Generator[task.Task[Any], Any, str]:
     """Orchestrator function that represents a purchase order workflow"""
     # Orders under $1000 are auto-approved
     if order.Cost < 1000:
@@ -87,7 +93,7 @@ if __name__ == "__main__":
 
                 def prompt_for_approval():
                     input("Press [ENTER] to approve the order...\n")
-                    approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                    approval_event = Approval(args.approver)
                     c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
                 # Prompt the user for approval on a background thread
@@ -133,7 +139,7 @@ if __name__ == "__main__":
 
             def prompt_for_approval():
                 input("Press [ENTER] to approve the order...\n")
-                approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                approval_event = Approval(args.approver)
                 c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
             # Prompt the user for approval on a background thread

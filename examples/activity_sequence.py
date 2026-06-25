@@ -2,6 +2,8 @@
 that calls an activity function in a sequence and prints the outputs."""
 import logging
 import os
+from collections.abc import Generator
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -17,7 +19,7 @@ def hello(ctx: task.ActivityContext, name: str) -> str:
     return f'Hello {name}!'
 
 
-def sequence(ctx: task.OrchestrationContext, _):
+def sequence(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, list[str]]:
     """Orchestrator function that calls the 'hello' activity function in a sequence"""
     # Create a replay-safe logger to avoid duplicate log messages during replay
     replay_logger = ctx.create_replay_safe_logger(logger)

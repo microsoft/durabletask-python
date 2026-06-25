@@ -1,7 +1,8 @@
 {
   "include": [
     "durabletask",
-    "durabletask-azuremanaged"
+    "durabletask-azuremanaged",
+    "examples"
   ],
   "exclude": [
     "**/__pycache__",
