@@ -31,7 +31,7 @@ from durabletask.extensions.history_export.entity import (
 from durabletask.testing import create_test_backend
 
 from ._test_helpers import wait_until
-from _port_utils import find_free_port
+from tests.durabletask._port_utils import find_free_port
 
 PORT = find_free_port()
 HOST = f"localhost:{PORT}"

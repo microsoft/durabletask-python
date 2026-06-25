@@ -15,7 +15,7 @@ from durabletask.client import TaskHubGrpcClient
 from durabletask.testing import create_test_backend
 from durabletask.worker import TaskHubGrpcWorker
 
-from _port_utils import find_free_port
+from tests.durabletask._port_utils import find_free_port
 
 BATCH_TEST_PORT = find_free_port()
 HOST = f"localhost:{BATCH_TEST_PORT}"

@@ -22,7 +22,7 @@ import pytest
 from durabletask import client, task, worker
 from durabletask.testing import create_test_backend
 
-from _port_utils import find_free_port
+from tests.durabletask._port_utils import find_free_port
 
 # Skip the entire module if azure-storage-blob is not installed.
 azure_blob = pytest.importorskip("azure.storage.blob")
