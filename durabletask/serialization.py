@@ -101,6 +101,30 @@ class DataConverter(ABC):
         """
         ...
 
+    def is_reconstructable(self, target_type: Any) -> bool:
+        """Return True if this converter can rebuild ``target_type`` from a payload.
+
+        Inbound type-discovery calls this to decide whether a function's
+        annotated *input* type (or an activity's *return* annotation) should be
+        passed to :meth:`deserialize` / :meth:`coerce`. When it returns ``False``
+        the SDK passes the raw deserialized payload through unchanged -- this
+        gate is what stops the SDK from invoking an arbitrary constructor on a
+        builtin or otherwise unrecognized annotation.
+
+        The default recognizes the types the built-in codec can rebuild --
+        dataclasses and ``from_json()``-capable types, plus ``Optional`` /
+        ``list`` / ``Sequence`` hints wrapping them -- and excludes builtins
+        (``int``, ``str``, ``dict``, ...) and unknown annotations.
+
+        Override this to teach the SDK about a custom converter's own types (for
+        example ``pydantic.BaseModel`` subclasses) so that inputs annotated with
+        them are reconstructed instead of arriving as raw JSON. The default
+        implementation recurses through ``self.is_reconstructable``, so an
+        override is also consulted for the element types of ``Optional`` /
+        ``list`` hints (e.g. ``list[MyModel]``).
+        """
+        return _is_reconstructable(self, target_type)
+
 
 class JsonDataConverter(DataConverter):
     """Default :class:`DataConverter` backed by the SDK's JSON codec.
@@ -185,6 +209,32 @@ DEFAULT_DATA_CONVERTER: DataConverter = JsonDataConverter()
 # is also used internally by entity state accessors that already hold a parsed
 # value.
 # ---------------------------------------------------------------------------
+
+
+def _is_reconstructable(converter: DataConverter, target_type: Any) -> bool:
+    """Default :meth:`DataConverter.is_reconstructable` policy.
+
+    Recognizes dataclasses and ``from_json()``-capable types, plus ``Optional``
+    / ``list`` / ``Sequence`` hints wrapping them; builtins and unknown
+    annotations are excluded. Recurses through ``converter.is_reconstructable``
+    (not itself) so a subclass override participates in the element-type checks
+    of ``Optional`` / ``list`` hints.
+    """
+    origin = typing.get_origin(target_type)
+    if origin is not None:
+        args = typing.get_args(target_type)
+        if origin is typing.Union or origin is types.UnionType:
+            return any(
+                converter.is_reconstructable(a) for a in args if a is not type(None)
+            )
+        if origin in (list, Sequence):
+            return any(converter.is_reconstructable(a) for a in args)
+        return False
+    if not isinstance(target_type, type):
+        return False
+    if dataclasses.is_dataclass(target_type):
+        return True
+    return callable(getattr(cast(Any, target_type), "from_json", None))
 
 
 def _to_json(obj: Any) -> str:

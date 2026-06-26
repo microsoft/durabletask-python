@@ -169,6 +169,12 @@ python activity_sequence.py
 > account and an additional install step. See the
 > [large payload README](./large_payload/README.md) for details.
 
+> [!NOTE]
+> The `custom_data_converter/` example is a self-contained subproject that
+> shows how to plug a third-party serialization library (pydantic) into the
+> SDK via a custom `DataConverter`, with in-process tests that need no backend.
+> See the [custom DataConverter README](./custom_data_converter/README.md).
+
 ### Review Orchestration History and Status
 
 To access the Durable Task Scheduler Dashboard, follow these steps:

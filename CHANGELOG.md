@@ -46,6 +46,14 @@ ADDED
   `DataConverter` as a second parameter (`from_json(cls, value, converter)`),
   letting it reconstruct nested typed values via `converter.coerce(...)` /
   `converter.deserialize(...)`. The single-argument form remains supported.
+- `DataConverter` now exposes an overridable `is_reconstructable(target_type)`
+  method that controls which annotated input/return types the SDK reconstructs
+  on the inbound path. A custom converter can override it to recognize its own
+  types (for example `pydantic.BaseModel` subclasses), so that orchestrator /
+  activity / entity inputs annotated with those types are reconstructed by the
+  converter instead of arriving as raw JSON. The default behavior is unchanged
+  (dataclasses and `from_json()`-capable types, plus `Optional` / `list`
+  wrappers, are reconstructable; builtins are not).
 - Added `EntityMetadata.get_typed_state(intended_type=...)`, which deserializes
   the entity's persisted state and reconstructs dataclasses and
   `from_json()`-capable types. The existing `get_state()` is unchanged: with no

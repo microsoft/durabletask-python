@@ -1692,7 +1692,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # converter decides how a coercion failure is handled (the default is
         # best-effort).
         if return_type is None and not isinstance(activity, str):
-            return_type = type_discovery.activity_output_type(activity)
+            return_type = type_discovery.activity_output_type(activity, self._data_converter)
 
         self.call_activity_function_helper(
             id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False, tags=tags,
@@ -2211,7 +2211,7 @@ class _OrchestrationExecutor:
                 if (
                         event.executionStarted.HasField("input") and event.executionStarted.input.value != ""
                 ):
-                    input_type = type_discovery.orchestrator_input_type(fn)
+                    input_type = type_discovery.orchestrator_input_type(fn, self._data_converter)
                     input = self._data_converter.deserialize(
                         event.executionStarted.input.value, input_type)
 
@@ -2856,7 +2856,7 @@ class _ActivityExecutor:
                 f"Activity function named '{name}' was not registered!"
             )
 
-        input_type = type_discovery.activity_input_type(fn) if encoded_input else None
+        input_type = type_discovery.activity_input_type(fn, self._data_converter) if encoded_input else None
         activity_input = self._data_converter.deserialize(encoded_input, input_type)
         ctx = task.ActivityContext(orchestration_id, task_id)
 
@@ -2897,7 +2897,7 @@ class _EntityExecutor:
                 f"Entity function named '{entity_id.entity}' was not registered!"
             )
 
-        input_type = type_discovery.entity_input_type(fn, operation) if encoded_input else None
+        input_type = type_discovery.entity_input_type(fn, operation, self._data_converter) if encoded_input else None
         entity_input = self._data_converter.deserialize(encoded_input, input_type)
         ctx = EntityContext(orchestration_id, operation, state, entity_id, self._data_converter)
 
