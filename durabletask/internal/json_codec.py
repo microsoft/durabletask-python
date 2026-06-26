@@ -76,18 +76,25 @@ def _encode_custom_object(o: Any) -> Any:
     namedtuples are handled natively by the encoder (serialized as JSON arrays)
     and never reach this hook.
     """
-    if dataclasses.is_dataclass(o) and not isinstance(o, type):
-        return dataclasses.asdict(o)
-    if isinstance(o, SimpleNamespace):
-        return vars(o)
     # Custom objects may opt in via a ``to_json`` hook. It is resolved off the
     # type and called with the instance (``type(o).to_json(o)``) so that both
     # instance methods and ``@staticmethod`` hooks work -- matching the calling
     # convention used by ``azure-functions-durable``. The hook returns a
     # JSON-serializable value (a structure or a string), not a JSON document.
+    #
+    # The hook is checked before the dataclass / ``SimpleNamespace`` branches so
+    # a type may override the default structural encoding -- mirroring the read
+    # path, where :func:`coerce_to_type` consults ``from_json`` before its
+    # dataclass branch. This matters for dataclasses whose fields are not
+    # JSON-native (e.g. ``timedelta`` / ``datetime``), which ``asdict`` alone
+    # cannot serialize.
     to_json_hook = getattr(cast(Any, type(o)), "to_json", None)
     if callable(to_json_hook):
         return to_json_hook(o)
+    if dataclasses.is_dataclass(o) and not isinstance(o, type):
+        return dataclasses.asdict(o)
+    if isinstance(o, SimpleNamespace):
+        return vars(o)
     # This will raise a TypeError describing the unsupported type.
     raise TypeError(f"Object of type '{type(o).__name__}' is not JSON serializable")
 
