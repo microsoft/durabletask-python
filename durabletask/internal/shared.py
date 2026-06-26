@@ -2,21 +2,57 @@
 # Licensed under the MIT License.
 
 import logging
+import warnings
 from collections.abc import Sequence
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import grpc
 import grpc.aio
 
-# Backwards-compatibility re-exports. The JSON codec moved to
-# ``durabletask.internal.json_codec``; these aliases keep older imports from
-# ``durabletask.internal.shared`` working.
-from durabletask.internal.json_codec import (  # noqa: F401
-    AUTO_SERIALIZED as AUTO_SERIALIZED,
-    from_json as from_json,
-    to_json as to_json,
-)
+# Backwards-compatibility shims. The JSON codec moved into
+# ``durabletask.serialization`` and its functions are now private; the supported
+# surface is the pluggable ``DataConverter`` (and the default
+# ``JsonDataConverter``). These thin wrappers keep older imports from
+# ``durabletask.internal.shared`` working while steering callers to the new API.
+# They deliberately reach into the now-private serialization mechanism.
+from durabletask import serialization as _serialization
 from durabletask.grpc_options import GrpcChannelOptions
+
+# Legacy marker constant, re-exported for backwards compatibility.
+AUTO_SERIALIZED = _serialization._AUTO_SERIALIZED  # pyright: ignore[reportPrivateUsage]
+
+_SERIALIZATION_DEPRECATION = (
+    "durabletask.internal.shared.{name} is deprecated and will be removed in a "
+    "future release. Use a durabletask.serialization.DataConverter (e.g. the "
+    "default JsonDataConverter) instead."
+)
+
+
+def to_json(obj: Any) -> str:
+    """Deprecated. Use a ``durabletask.serialization.DataConverter`` instead."""
+    warnings.warn(
+        _SERIALIZATION_DEPRECATION.format(name="to_json"),
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _serialization._to_json(obj)  # pyright: ignore[reportPrivateUsage]
+
+
+def from_json(json_str: str | bytes | bytearray, expected_type: type | None = None) -> Any:
+    """Deprecated. Use a ``durabletask.serialization.DataConverter`` instead.
+
+    This legacy shim does not thread a ``DataConverter`` into reconstruction, so
+    a converter-aware ``from_json(cls, value, converter)`` hook is invoked
+    without the converter (its single-argument form). Call
+    ``JsonDataConverter().deserialize(...)`` to get the converter-aware path.
+    """
+    warnings.warn(
+        _SERIALIZATION_DEPRECATION.format(name="from_json"),
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _serialization._from_json(json_str, expected_type)  # pyright: ignore[reportPrivateUsage]
+
 
 ClientInterceptor: TypeAlias = (
     grpc.UnaryUnaryClientInterceptor

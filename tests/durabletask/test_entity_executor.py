@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 """Unit tests for the _EntityExecutor class in durabletask.worker."""
+import json
 import logging
 
 from durabletask import entities
@@ -188,3 +189,102 @@ class TestStateShimCoercion:
         state = StateShim("not-an-int")
         with pytest.raises(TypeError):
             state.get_state(int)
+
+
+class TestStateShimDeferredDeserialization:
+    """Tests for StateShim deferring deserialization of the raw wire payload."""
+
+    def test_constructor_does_not_deserialize_serialized_state(self):
+        # A serialized payload is held verbatim until read, not eagerly parsed.
+        state = StateShim('{"value": 7}', is_serialized=True)
+        assert state._current_state == '{"value": 7}'
+
+    def test_get_state_defers_deserialization_with_type(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class Counter:
+            value: int
+
+        state = StateShim('{"value": 7}', is_serialized=True)
+        result = state.get_state(Counter)
+        assert isinstance(result, Counter)
+        assert result.value == 7
+
+    def test_get_state_no_type_returns_parsed_value(self):
+        state = StateShim('{"value": 7}', is_serialized=True)
+        assert state.get_state() == {"value": 7}
+
+    def test_deferred_deserialization_passes_raw_string_to_converter(self):
+        # A custom converter receives the original serialized string together
+        # with the requested type, rather than a pre-parsed value.
+        from typing import Any
+
+        from durabletask.serialization import DataConverter
+
+        seen: dict[str, Any] = {}
+
+        class RecordingConverter(DataConverter):
+            def serialize(self, value: Any) -> str | None:
+                return None if value is None else json.dumps(value)
+
+            def deserialize(self, data, target_type=None):
+                seen["data"] = data
+                seen["target_type"] = target_type
+                return {"parsed": True}
+
+            def coerce(self, value, target_type=None):
+                seen["coerced"] = True
+                return value
+
+        state = StateShim('{"x": 1}', RecordingConverter(), is_serialized=True)
+        state.get_state(dict)
+        assert seen["data"] == '{"x": 1}'
+        assert seen["target_type"] is dict
+        assert "coerced" not in seen
+
+    def test_encode_state_passes_through_unmodified_payload(self):
+        # An unread/unmodified serialized payload is returned verbatim, never
+        # re-serialized (which would double-encode the JSON string).
+        state = StateShim('{"value": 7}', is_serialized=True)
+        assert state.encode_state() == '{"value": 7}'
+
+    def test_reading_does_not_trigger_double_encoding(self):
+        state = StateShim('{"value": 7}', is_serialized=True)
+        # Reading (even with a type) must not turn the payload into a live value
+        # that would be re-serialized into a JSON-encoded string.
+        state.get_state()
+        state.get_state(dict)
+        encoded = state.encode_state()
+        assert encoded == '{"value": 7}'
+        assert json.loads(encoded) == {"value": 7}
+
+    def test_encode_state_serializes_live_value_after_set_state(self):
+        state = StateShim('{"value": 7}', is_serialized=True)
+        state.set_state({"value": 8})
+        encoded = state.encode_state()
+        assert json.loads(encoded) == {"value": 8}
+
+    def test_encode_state_none_when_state_is_none(self):
+        state = StateShim(None, is_serialized=True)
+        assert state.encode_state() is None
+
+    def test_commit_preserves_serialized_flag(self):
+        state = StateShim('{"value": 7}', is_serialized=True)
+        state.commit()
+        # After commit, the (unmodified) state still round-trips without
+        # double-encoding.
+        assert state.encode_state() == '{"value": 7}'
+
+    def test_rollback_restores_serialized_flag(self):
+        state = StateShim('{"value": 7}', is_serialized=True)
+        state.commit()
+        state.set_state({"value": 99})
+        state.rollback()
+        assert state.encode_state() == '{"value": 7}'
+
+    def test_falsy_serialized_state_is_not_dropped(self):
+        # A serialized falsy value (e.g. 0) is preserved, not treated as cleared.
+        state = StateShim("0", is_serialized=True)
+        assert state.get_state(int) == 0
+        assert state.encode_state() == "0"

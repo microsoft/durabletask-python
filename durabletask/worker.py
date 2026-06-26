@@ -1317,8 +1317,9 @@ class TaskHubGrpcWorker:
             payload_helpers.deexternalize_payloads(req, self._payload_store)
 
         entity_state = StateShim(
-            self._data_converter.deserialize(req.entityState.value) if req.entityState.value else None,
-            self._data_converter)
+            req.entityState.value if req.entityState.value else None,
+            self._data_converter,
+            is_serialized=True)
 
         instance_id = req.instanceId
         try:
@@ -1376,7 +1377,7 @@ class TaskHubGrpcWorker:
         batch_result = pb.EntityBatchResult(
             results=results,
             actions=entity_state.get_operation_actions(),
-            entityState=helpers.get_string_value(self._data_converter.serialize(entity_state._current_state)) if entity_state._current_state is not None else None,  # pyright: ignore[reportPrivateUsage]
+            entityState=helpers.get_string_value(entity_state.encode_state()),
             failureDetails=None,
             completionToken=completionToken,
             operationInfos=operation_infos,
@@ -2772,12 +2773,12 @@ class _OrchestrationExecutor:
         if not ph.is_empty(event.eventRaised.input):
             # TODO: Investigate why the event result is wrapped in a dict with "result" key
             # The expected type applies to the unwrapped result value, not the
-            # transport wrapper. Unwrap first, then route the inner value back
-            # through the converter so custom converters and the expected type
-            # both apply.
+            # transport wrapper. Unwrap first, then coerce the already-parsed
+            # inner value to the expected type via the converter (no redundant
+            # re-serialization round-trip).
             unwrapped = self._data_converter.deserialize(event.eventRaised.input.value)["result"]
-            result = self._data_converter.deserialize(
-                self._data_converter.serialize(unwrapped),
+            result = self._data_converter.coerce(
+                unwrapped,
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
             )
         if is_lock_event:

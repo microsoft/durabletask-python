@@ -20,10 +20,10 @@ ADDED
   `call_entity` accept an optional `return_type`, and `wait_for_external_event`
   accepts an optional `data_type`. When provided, the result/event payload is
   reconstructed as that type (dataclasses — including nested dataclass,
-  `Optional`, and `list` fields — and `from_json()`-capable types) and the
-  returned task is typed accordingly (e.g. `call_activity(..., return_type=Foo)`
-  yields `CompletableTask[Foo]`). When omitted, the raw deserialized JSON is
-  returned as before.
+  `Optional`, `list`, `dict`/`Mapping`, and `tuple` fields — and
+  `from_json()`-capable types) and the returned task is typed accordingly (e.g.
+  `call_activity(..., return_type=Foo)` yields `CompletableTask[Foo]`). When
+  omitted, the raw deserialized JSON is returned as before.
 - Inbound payloads are reconstructed from function type annotations. When an
   orchestrator, activity, or entity operation annotates its input parameter (or
   an activity its return value) with a dataclass or `from_json()`-capable type,
@@ -37,6 +37,15 @@ ADDED
   retained.
 - Objects exposing a `to_json()` method are now JSON-serializable when passed as
   activity/orchestrator inputs or outputs.
+- `enum.Enum` values now serialize (to their underlying `.value`) and, when a
+  target type is supplied, deserialize back to the enum member. This covers
+  string-valued and other non-`int` enums as activity/orchestrator/entity inputs
+  and outputs, including as dataclass fields and inside `list` / `dict` /
+  `tuple` containers. (`IntEnum` / `IntFlag` already serialized as integers.)
+- A `from_json()` classmethod may now optionally accept the active
+  `DataConverter` as a second parameter (`from_json(cls, value, converter)`),
+  letting it reconstruct nested typed values via `converter.coerce(...)` /
+  `converter.deserialize(...)`. The single-argument form remains supported.
 - Added `EntityMetadata.get_typed_state(intended_type=...)`, which deserializes
   the entity's persisted state and reconstructs dataclasses and
   `from_json()`-capable types. The existing `get_state()` is unchanged: with no
@@ -63,10 +72,34 @@ CHANGED
 
 FIXED
 
+- A dataclass or `SimpleNamespace` that defines a `to_json()` hook now uses it
+  when serialized. Previously the built-in dataclass / `SimpleNamespace`
+  handling ran first, so the hook was ignored — and a dataclass with a field
+  that was not JSON-serializable on its own would fail to serialize even when it
+  provided a `to_json()` hook to handle that field. The serialize side now
+  prefers `to_json()`, mirroring the deserialize side, which already prefers
+  `from_json()`.
+- Nested `to_json()` hooks are now honored when an object is serialized inside a
+  dataclass. Custom objects (including nested dataclasses with their own
+  `to_json()`) are now encoded recursively instead of being flattened to their
+  raw fields, so values that reshape themselves via `to_json()` round-trip
+  correctly.
+- Type-directed deserialization now recurses into `dict`/`Mapping` values and
+  `tuple` elements, in addition to the existing `list`, `Optional`/`Union`, and
+  dataclass-field recursion. A `dict[str, Foo]` or `tuple[Foo, ...]` hint now
+  reconstructs the contained `Foo` values.
 - Falsy entity states (`0`, `""`, `[]`, `{}`) are no longer dropped when an
   entity batch is persisted. Previously a falsy current state was treated as
   "no state" and written as `None`, effectively deleting it; only an actual
   `None` state now clears the persisted entity state.
+
+DEPRECATED
+
+- `durabletask.internal.shared.to_json` and `durabletask.internal.shared.from_json`
+  are deprecated and now emit a `DeprecationWarning`. Use a
+  `durabletask.serialization.DataConverter` (for example the default
+  `JsonDataConverter`) instead. The functions continue to work for backwards
+  compatibility.
 
 BREAKING CHANGES (type-level only — no runtime impact for typical users)
 
