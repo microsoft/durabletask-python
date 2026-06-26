@@ -75,6 +75,7 @@ def main() -> None:
         if state and state.runtime_status == client.OrchestrationStatus.COMPLETED:
             # ``get_output(Receipt)`` reconstructs the typed, validated result.
             receipt = state.get_output(Receipt)
+            assert receipt is not None
             print("Orchestration completed. Typed receipt:")
             print(f"  customer        = {receipt.customer}")
             print(f"  total           = {receipt.total}")

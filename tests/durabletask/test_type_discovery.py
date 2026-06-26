@@ -279,7 +279,7 @@ def test_function_entity_input_coerced_to_dataclass():
     registry.add_entity(store)
     executor = worker._EntityExecutor(registry, TEST_LOGGER, JsonDataConverter())
     entity_id = entities.EntityInstanceId("store", "k1")
-    state = StateShim(None)
+    state = StateShim(None, JsonDataConverter())
     executor.execute("orch1", entity_id, "save", state, json.dumps({"item": "book", "quantity": 2}))
     assert seen["type"] == "Order"
     assert seen["item"] == "book"
@@ -297,7 +297,7 @@ def test_class_entity_input_coerced_per_operation():
     registry.add_entity(Store)
     executor = worker._EntityExecutor(registry, TEST_LOGGER, JsonDataConverter())
     entity_id = entities.EntityInstanceId("store", "k1")
-    state = StateShim(None)
+    state = StateShim(None, JsonDataConverter())
     executor.execute("orch1", entity_id, "save", state, json.dumps({"item": "book", "quantity": 2}))
     assert seen["type"] == "Order"
     assert seen["item"] == "book"

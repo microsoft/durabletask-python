@@ -65,16 +65,23 @@ DEPRECATED
   `JsonDataConverter`) instead. The functions continue to work for backwards
   compatibility.
 
-BREAKING CHANGES (type-level only — no runtime impact for typical users)
+BREAKING CHANGES (no runtime impact for typical users)
 
-These changes do not alter runtime behavior, but because the package ships
-`py.typed`, consumers running strict type checkers (pyright/mypy) — or
-subclassing the public abstract types — may need to update their code:
+Most of these are type-level only: because the package ships `py.typed`,
+consumers running strict type checkers (pyright/mypy) — or subclassing the
+public abstract types — may need to update their code. The constructor change
+below also affects callers who *directly* construct the named classes, which is
+uncommon since they are normally handed to you by the SDK.
 
 - `OrchestrationContext.call_activity`, `call_sub_orchestrator`, `call_entity`,
   and `wait_for_external_event` gained new keyword-only parameters
   (`return_type` / `data_type`). Subclasses overriding these methods should add
   the parameter to match the base signature.
+- `EntityContext` and `EntityMetadata` (and its `from_entity_metadata` /
+  `from_entity_response` factories) now require a `data_converter` argument.
+  These objects are normally constructed by the SDK — you receive an
+  `EntityContext` in an entity function and an `EntityMetadata` from the client —
+  so this only affects code that constructs them directly.
 
 ## v1.6.0
 

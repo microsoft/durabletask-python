@@ -16,14 +16,11 @@ TState = TypeVar("TState")
 
 class EntityContext:
     def __init__(self, orchestration_id: str, operation: str, state: StateShim,
-                 entity_id: EntityInstanceId, data_converter: "DataConverter | None" = None):
+                 entity_id: EntityInstanceId, data_converter: "DataConverter"):
         self._orchestration_id = orchestration_id
         self._operation = operation
         self._state = state
         self._entity_id = entity_id
-        if data_converter is None:
-            from durabletask.serialization import JsonDataConverter
-            data_converter = JsonDataConverter()
         self._data_converter = data_converter
 
     @property

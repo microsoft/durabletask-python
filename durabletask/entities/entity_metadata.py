@@ -36,7 +36,7 @@ class EntityMetadata:
                  locked_by: str,
                  includes_state: bool,
                  state: Any | None,
-                 data_converter: "DataConverter | None" = None):
+                 data_converter: "DataConverter"):
         """Initializes a new instance of the EntityMetadata class.
 
         Args:
@@ -48,20 +48,17 @@ class EntityMetadata:
         self._locked_by = locked_by
         self.includes_state = includes_state
         self._state = state
-        if data_converter is None:
-            from durabletask.serialization import JsonDataConverter
-            data_converter = JsonDataConverter()
         self._data_converter = data_converter
 
     @staticmethod
     def from_entity_response(entity_response: pb.GetEntityResponse, includes_state: bool,
-                             data_converter: "DataConverter | None" = None):
+                             data_converter: "DataConverter"):
         return EntityMetadata.from_entity_metadata(
             entity_response.entity, includes_state, data_converter)
 
     @staticmethod
     def from_entity_metadata(entity: pb.EntityMetadata, includes_state: bool,
-                             data_converter: "DataConverter | None" = None):
+                             data_converter: "DataConverter"):
         try:
             entity_id = EntityInstanceId.parse(entity.instanceId)
         except ValueError:

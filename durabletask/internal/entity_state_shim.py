@@ -36,11 +36,8 @@ class StateShim:
     is written back with :meth:`set_state`.
     """
 
-    def __init__(self, start_state: Any, data_converter: "DataConverter | None" = None,
+    def __init__(self, start_state: Any, data_converter: "DataConverter",
                  *, is_serialized: bool = False):
-        if data_converter is None:
-            from durabletask.serialization import JsonDataConverter
-            data_converter = JsonDataConverter()
         self._data_converter = data_converter
         # The state is normalized to its serialized string form. ``is_serialized``
         # marks ``start_state`` as a raw payload already off the wire (stored

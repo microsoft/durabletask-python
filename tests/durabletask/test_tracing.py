@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
+from durabletask.serialization import JsonDataConverter
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.tracing as tracing
@@ -263,10 +264,10 @@ class TestOrchestrationExecutorStoresTraceContext:
         registry = worker._Registry()
         registry.add_orchestrator(simple_orchestrator)
 
-        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry)
+        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry, JsonDataConverter())
         assert ctx._parent_trace_context is None
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
 
         # Create an executionStarted event with parentTraceContext
         event = pb.HistoryEvent(
@@ -290,8 +291,8 @@ class TestOrchestrationExecutorStoresTraceContext:
         registry = worker._Registry()
         registry.add_orchestrator(simple_orchestrator)
 
-        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry)
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry, JsonDataConverter())
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
 
         event = pb.HistoryEvent(
             eventId=-1,
@@ -320,10 +321,10 @@ class TestOrchestrationExecutorStoresTraceContext:
         registry = worker._Registry()
         registry.add_orchestrator(simple_orchestrator)
 
-        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry)
+        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry, JsonDataConverter())
         assert ctx._orchestration_trace_context is None
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         event = pb.HistoryEvent(
             eventId=-1,
             executionStarted=pb.ExecutionStartedEvent(
@@ -359,9 +360,10 @@ class TestOrchestrationExecutorStoresTraceContext:
         registry = worker._Registry()
         registry.add_orchestrator(simple_orchestrator)
 
-        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry)
+        ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, registry, JsonDataConverter())
         executor = worker._OrchestrationExecutor(
             registry, TEST_LOGGER,
+            data_converter=JsonDataConverter(),
             persisted_orch_span_id=persisted_span_id,
         )
 
@@ -867,7 +869,7 @@ class TestReplayDoesNotEmitSpans:
             helpers.new_task_completed_event(2, json.dumps(20)),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = self._get_client_spans(otel_setup)
@@ -904,7 +906,7 @@ class TestReplayDoesNotEmitSpans:
             helpers.new_task_completed_event(2, json.dumps("ok")),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = self._get_client_spans(otel_setup)
@@ -942,7 +944,7 @@ class TestReplayDoesNotEmitSpans:
             helpers.new_timer_fired_event(2, fire_at_2),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = self._get_client_spans(otel_setup)
@@ -976,7 +978,7 @@ class TestReplayDoesNotEmitSpans:
             helpers.new_sub_orchestration_completed_event(2, encoded_output=json.dumps("r2")),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = self._get_client_spans(otel_setup)
@@ -1013,7 +1015,7 @@ class TestReplayDoesNotEmitSpans:
             helpers.new_sub_orchestration_completed_event(2, encoded_output=json.dumps("ok")),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = self._get_client_spans(otel_setup)
@@ -1732,7 +1734,7 @@ class TestDeferredClientSpanIntegration:
             self._make_traced_task_completed_event(1, json.dumps("result"), timestamp_seconds=200),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = [
@@ -1783,7 +1785,7 @@ class TestDeferredClientSpanIntegration:
             self._make_traced_task_failed_event(1, "boom", timestamp_seconds=250),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = [
@@ -1848,7 +1850,7 @@ class TestDeferredClientSpanIntegration:
             ),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = [
@@ -1895,7 +1897,7 @@ class TestDeferredClientSpanIntegration:
             helpers.new_task_completed_event(2, json.dumps(20)),
         ]
 
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
         client_spans = [
