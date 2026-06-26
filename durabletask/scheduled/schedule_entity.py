@@ -35,17 +35,6 @@ def _ensure_aware(value: datetime | None) -> datetime | None:
     return value
 
 
-def _coerce_options(input: Any, cls: type) -> Any:
-    """Coerce a round-tripped input (dict/SimpleNamespace) into the given options dataclass."""
-    if input is None or isinstance(input, cls):
-        return input
-    if isinstance(input, SimpleNamespace):
-        input = vars(input)
-    if isinstance(input, dict):
-        return cls.from_dict(input)
-    return input
-
-
 class Schedule(DurableEntity):
     """Entity that manages the state and execution of a scheduled task.
 
@@ -74,15 +63,8 @@ class Schedule(DurableEntity):
                            target_status: ScheduleStatus) -> bool:
         return transitions.is_valid_transition(operation_name, state.status, target_status)
 
-    # NOTE: the input is intentionally annotated ``Any`` rather than
-    # ``ScheduleCreationOptions``. The worker reconstructs an entity operation's
-    # input from its parameter annotation; a dataclass annotation would map the
-    # wire dict by field name and drop our JSON-friendly fields (e.g.
-    # ``interval_seconds``). Keeping ``Any`` lets the raw dict reach
-    # ``_coerce_options``, which rebuilds the options via ``from_dict``.
-    def create_schedule(self, options: Any) -> None:
+    def create_schedule(self, options: ScheduleCreationOptions) -> None:
         """Create a new schedule. If one already exists, update it in place."""
-        options = _coerce_options(options, ScheduleCreationOptions)
         state = self._load_state()
 
         if not self._can_transition_to(state, transitions.CREATE_SCHEDULE, ScheduleStatus.ACTIVE):
@@ -111,10 +93,8 @@ class Schedule(DurableEntity):
             state.execution_token,
         )
 
-    # NOTE: input annotated ``Any`` for the same reason as ``create_schedule``.
-    def update_schedule(self, options: Any) -> None:
+    def update_schedule(self, options: ScheduleUpdateOptions) -> None:
         """Update an existing schedule's configuration."""
-        options = _coerce_options(options, ScheduleUpdateOptions)
         state = self._load_state()
 
         if not self._can_transition_to(state, transitions.UPDATE_SCHEDULE, state.status):

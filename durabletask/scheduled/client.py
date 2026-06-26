@@ -71,11 +71,11 @@ class ScheduleClient:
 
     def create(self, options: ScheduleCreationOptions) -> None:
         """Create or update this schedule with the given configuration."""
-        self._run_operation(transitions.CREATE_SCHEDULE, options.to_dict())
+        self._run_operation(transitions.CREATE_SCHEDULE, options.to_json())
 
     def update(self, options: ScheduleUpdateOptions) -> None:
         """Update this schedule's configuration."""
-        self._run_operation(transitions.UPDATE_SCHEDULE, options.to_dict())
+        self._run_operation(transitions.UPDATE_SCHEDULE, options.to_json())
 
     def pause(self) -> None:
         """Pause this schedule."""

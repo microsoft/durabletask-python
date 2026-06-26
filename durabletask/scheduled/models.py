@@ -55,7 +55,7 @@ class ScheduleCreationOptions:
             raise ValueError("orchestration_name cannot be empty.")
         _validate_interval(self.interval)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         return {
             "schedule_id": self.schedule_id,
             "orchestration_name": self.orchestration_name,
@@ -67,9 +67,9 @@ class ScheduleCreationOptions:
             "start_immediately_if_late": self.start_immediately_if_late,
         }
 
-    @staticmethod
-    def from_dict(data: dict[str, Any]) -> "ScheduleCreationOptions":
-        return ScheduleCreationOptions(
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "ScheduleCreationOptions":
+        return cls(
             schedule_id=data["schedule_id"],
             orchestration_name=data["orchestration_name"],
             interval=timedelta(seconds=data["interval_seconds"]),
@@ -97,7 +97,7 @@ class ScheduleUpdateOptions:
         if self.interval is not None:
             _validate_interval(self.interval)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         return {
             "orchestration_name": self.orchestration_name,
             "orchestration_input": self.orchestration_input,
@@ -108,9 +108,9 @@ class ScheduleUpdateOptions:
             "start_immediately_if_late": self.start_immediately_if_late,
         }
 
-    @staticmethod
-    def from_dict(data: dict[str, Any]) -> "ScheduleUpdateOptions":
-        return ScheduleUpdateOptions(
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "ScheduleUpdateOptions":
+        return cls(
             orchestration_name=data.get("orchestration_name"),
             orchestration_input=data.get("orchestration_input"),
             orchestration_instance_id=data.get("orchestration_instance_id"),

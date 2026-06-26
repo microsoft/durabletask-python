@@ -59,7 +59,7 @@ def _start_actions(actions):
 def _creation_options(**kwargs):
     base = dict(schedule_id=SCHEDULE_ID, orchestration_name="my_orch", interval=timedelta(seconds=30))
     base.update(kwargs)
-    return ScheduleCreationOptions(**base).to_dict()
+    return ScheduleCreationOptions(**base)
 
 
 class TestCreate:
@@ -110,7 +110,7 @@ class TestUpdate:
         h = Harness()
         h.run("create_schedule", _creation_options())
         _, actions = h.run("update_schedule",
-                           ScheduleUpdateOptions(interval=timedelta(seconds=120)).to_dict())
+                           ScheduleUpdateOptions(interval=timedelta(seconds=120)))
         assert abs(h.state_dict["schedule_configuration"]["interval_seconds"] - 120) < 0.001
         assert len(_signal_actions(actions)) == 1
 
@@ -118,7 +118,7 @@ class TestUpdate:
         h = Harness()
         h.run("create_schedule", _creation_options())
         _, actions = h.run("update_schedule",
-                           ScheduleUpdateOptions(orchestration_name="my_orch").to_dict())
+                           ScheduleUpdateOptions(orchestration_name="my_orch"))
         assert len(_signal_actions(actions)) == 0
 
 

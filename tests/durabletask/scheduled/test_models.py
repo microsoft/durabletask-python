@@ -51,8 +51,8 @@ class TestCreationOptionsSerialization:
             orchestration_input={"key": "value"}, orchestration_instance_id="inst-1",
             start_at=start, end_at=end, start_immediately_if_late=True)
 
-        encoded = shared.to_json(options.to_dict())
-        decoded = ScheduleCreationOptions.from_dict(shared.from_json(encoded))
+        encoded = shared.to_json(options)
+        decoded = shared.from_json(encoded, ScheduleCreationOptions)
 
         assert decoded.schedule_id == "s1"
         assert decoded.orchestration_name == "orch"
@@ -71,7 +71,7 @@ class TestUpdateOptions:
 
     def test_round_trip_through_json(self):
         options = ScheduleUpdateOptions(orchestration_name="orch2", interval=timedelta(seconds=10))
-        decoded = ScheduleUpdateOptions.from_dict(shared.from_json(shared.to_json(options.to_dict())))
+        decoded = shared.from_json(shared.to_json(options), ScheduleUpdateOptions)
         assert decoded.orchestration_name == "orch2"
         assert decoded.interval == timedelta(seconds=10)
         assert decoded.start_at is None
