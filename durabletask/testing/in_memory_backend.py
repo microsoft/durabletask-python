@@ -919,9 +919,14 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 try:
                     if action.HasField("sendSignal"):
                         signal = action.sendSignal
+                        scheduled_time = (
+                            signal.scheduledTime.ToDatetime(tzinfo=timezone.utc)
+                            if signal.HasField("scheduledTime") else None
+                        )
                         self._signal_entity_internal(
                             signal.instanceId, signal.name,
-                            signal.input.value if signal.input else None
+                            signal.input.value if signal.input else None,
+                            scheduled_time=scheduled_time,
                         )
                     elif action.HasField("startNewOrchestration"):
                         start_orch = action.startNewOrchestration
@@ -945,6 +950,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
     def SignalEntity(self, request: pb.SignalEntityRequest, context: grpc.ServicerContext) -> pb.SignalEntityResponse:
         """Signals an entity, queueing an operation for processing."""
+        scheduled_time = (
+            request.scheduledTime.ToDatetime(tzinfo=timezone.utc)
+            if request.HasField("scheduledTime") else None
+        )
         with self._lock:
             entity_id = request.instanceId
             entity = self._entities.get(entity_id)
@@ -967,8 +976,11 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     targetInstanceId=wrappers_pb2.StringValue(value=entity_id),
                 )
             )
-            entity.pending_operations.append(event)
-            self._enqueue_entity(entity_id)
+            if scheduled_time is not None and scheduled_time > datetime.now(timezone.utc):
+                self._schedule_delayed_entity_operation(entity_id, event, scheduled_time)
+            else:
+                entity.pending_operations.append(event)
+                self._enqueue_entity(entity_id)
 
         self._logger.info(f"Signaled entity '{entity_id}' operation '{request.name}'")
         return pb.SignalEntityResponse()
@@ -1604,11 +1616,19 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             instance.history.append(history_event)
 
             if target_id:
-                self._queue_entity_operation(target_id, pb.HistoryEvent(
+                operation_event = pb.HistoryEvent(
                     eventId=-1,
                     timestamp=timestamp_pb2.Timestamp(),
                     entityOperationSignaled=signaled,
-                ))
+                )
+                scheduled_time = (
+                    signaled.scheduledTime.ToDatetime(tzinfo=timezone.utc)
+                    if signaled.HasField("scheduledTime") else None
+                )
+                if scheduled_time is not None and scheduled_time > datetime.now(timezone.utc):
+                    self._schedule_delayed_entity_operation(target_id, operation_event, scheduled_time)
+                else:
+                    self._queue_entity_operation(target_id, operation_event)
 
         elif msg.HasField("entityOperationCalled"):
             called = msg.entityOperationCalled
@@ -1748,8 +1768,13 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._enqueue_entity(entity_id)
 
     def _signal_entity_internal(self, entity_id: str, operation: str,
-                                input_value: str | None = None):
-        """Internal method to signal an entity (from entity side-effect actions)."""
+                                input_value: str | None = None,
+                                scheduled_time: datetime | None = None):
+        """Internal method to signal an entity (from entity side-effect actions).
+
+        If ``scheduled_time`` is set and in the future, the operation is delayed
+        until that time (mirroring delayed-signal delivery on a real backend).
+        """
         event = pb.HistoryEvent(
             eventId=-1,
             timestamp=timestamp_pb2.Timestamp(),
@@ -1760,7 +1785,30 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 targetInstanceId=wrappers_pb2.StringValue(value=entity_id),
             )
         )
-        self._queue_entity_operation(entity_id, event)
+        if scheduled_time is not None and scheduled_time > datetime.now(timezone.utc):
+            self._schedule_delayed_entity_operation(entity_id, event, scheduled_time)
+        else:
+            self._queue_entity_operation(entity_id, event)
+
+    def _schedule_delayed_entity_operation(self, entity_id: str, event: pb.HistoryEvent,
+                                           fire_at: datetime):
+        """Schedules an entity operation to be enqueued at a future time.
+
+        Uses a background timer thread, mirroring the timer-firing mechanism used
+        for orchestration timers, so that delayed entity signals are honored by the
+        in-memory backend.
+        """
+        delay = max(0.0, (fire_at - datetime.now(timezone.utc)).total_seconds())
+
+        def fire() -> None:
+            time.sleep(delay)
+            with self._lock:
+                if self._shutdown_event.is_set():
+                    return
+                self._queue_entity_operation(entity_id, event)
+
+        timer_thread = threading.Thread(target=fire, daemon=True)
+        timer_thread.start()
 
     def _enqueue_entity(self, entity_id: str):
         """Enqueues an entity for processing."""

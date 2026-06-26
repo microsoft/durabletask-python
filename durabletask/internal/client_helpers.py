@@ -192,14 +192,16 @@ def build_terminate_req(
 def build_signal_entity_req(
         entity_instance_id: EntityInstanceId,
         operation_name: str,
-        input: Any | None = None) -> pb.SignalEntityRequest:
+        input: Any | None = None,
+        signal_time: datetime | None = None) -> pb.SignalEntityRequest:
     """Build a SignalEntityRequest for signaling an entity."""
+    scheduled_time = helpers.new_timestamp(signal_time) if signal_time is not None else None
     return pb.SignalEntityRequest(
         instanceId=str(entity_instance_id),
         name=operation_name,
         input=helpers.get_string_value(shared.to_json(input) if input is not None else None),
         requestId=str(uuid.uuid4()),
-        scheduledTime=None,
+        scheduledTime=scheduled_time,
         parentTraceContext=None,
         requestTime=helpers.new_timestamp(datetime.now(timezone.utc))
     )

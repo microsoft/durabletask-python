@@ -1677,12 +1677,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self,
             entity_id: EntityInstanceId,
             operation_name: str,
-            input: Any = None
+            input: Any = None,
+            signal_time: datetime | None = None
     ) -> None:
         id = self.next_sequence_number()
 
         self.signal_entity_function_helper(
-            id, entity_id, operation_name, input
+            id, entity_id, operation_name, input, signal_time
         )
 
     def lock_entities(self, entities: list[EntityInstanceId]) -> task.CompletableTask[EntityLock]:
@@ -1822,7 +1823,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             id: int | None,
             entity_id: EntityInstanceId,
             operation: str,
-            input: Any = None
+            input: Any = None,
+            signal_time: datetime | None = None
     ) -> None:
         if id is None:
             id = self.next_sequence_number()
@@ -1834,7 +1836,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         encoded_input = shared.to_json(input) if input is not None else None
 
-        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid())
+        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid(), signal_time)
         self._pending_actions[id] = action
 
     def lock_entities_function_helper(self, id: int | None, entities: list[EntityInstanceId]) -> None:

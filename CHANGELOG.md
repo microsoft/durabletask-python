@@ -7,7 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-N/A
+ADDED
+
+- Added `durabletask.scheduled`, a recurring schedule feature built on durable
+  entities. Use `configure_scheduled_tasks(worker)` to enable it on a worker,
+  then manage schedules from the client via `ScheduledTaskClient` (and the
+  per-schedule `ScheduleClient`). Supports creating, describing, listing,
+  updating, pausing, resuming, and deleting schedules with configurable
+  `interval`, `start_at`, `end_at`, and `start_immediately_if_late` options.
+- Added an optional `signal_time` parameter to `EntityContext.signal_entity`
+  and `DurableEntity.signal_entity`, allowing an entity signal to be scheduled
+  for future delivery.
+- Added an optional `signal_time` parameter to `OrchestrationContext.signal_entity`
+  and to the client `signal_entity` methods (sync and async), allowing entity
+  signals to be scheduled for future delivery from orchestrations and clients.
 
 ## v1.6.0
 

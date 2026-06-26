@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from typing import Any, TypeVar, overload
+from datetime import datetime
 
 from durabletask.entities.entity_context import EntityContext
 from durabletask.entities.entity_instance_id import EntityInstanceId
@@ -52,7 +53,9 @@ class DurableEntity:
         """
         self.entity_context.set_state(state)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Any | None = None) -> None:
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str,
+                      input: Any | None = None,
+                      signal_time: datetime | None = None) -> None:
         """Signal another entity to perform an operation.
 
         Parameters
@@ -63,8 +66,12 @@ class DurableEntity:
             The operation to perform on the entity.
         input : Any, optional
             The input to provide to the entity for the operation.
+        signal_time : datetime, optional
+            The time at which the signal should be delivered. If None, the signal is
+            delivered as soon as possible. Use this to schedule a future operation,
+            for example to have an entity wake itself up at a later time.
         """
-        self.entity_context.signal_entity(entity_instance_id, operation, input)
+        self.entity_context.signal_entity(entity_instance_id, operation, input, signal_time)
 
     def schedule_new_orchestration(self, orchestration_name: str, input: Any | None = None, instance_id: str | None = None) -> str:
         """Schedule a new orchestration instance.
