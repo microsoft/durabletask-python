@@ -12,98 +12,46 @@ ADDED
 - Added a pluggable `DataConverter` (`durabletask.serialization`) accepted by
   `TaskHubGrpcWorker`, `TaskHubGrpcClient`, and `AsyncTaskHubGrpcClient` via a
   `data_converter` argument. Every payload boundary (inputs, outputs, events,
-  custom status, entity state) routes through it. The default
+  custom status, entity state) routes through it, so one converter controls how
+  Python values become JSON and how they are reconstructed. The default
   `JsonDataConverter` preserves existing behavior, so a custom converter (for
-  example one backed by pydantic) is opt-in. Custom objects can opt in via a
-  `to_json()` hook and a `from_json(value)` classmethod.
-- `OrchestrationContext.call_activity`, `call_sub_orchestrator`, and
-  `call_entity` accept an optional `return_type`, and `wait_for_external_event`
-  accepts an optional `data_type`. When provided, the result/event payload is
-  reconstructed as that type (dataclasses — including nested dataclass,
-  `Optional`, `list`, `dict`/`Mapping`, and `tuple` fields — and
-  `from_json()`-capable types) and the returned task is typed accordingly (e.g.
-  `call_activity(..., return_type=Foo)` yields `CompletableTask[Foo]`). When
-  omitted, the raw deserialized JSON is returned as before.
-- Inbound payloads are reconstructed from function type annotations. When an
-  orchestrator, activity, or entity operation annotates its input parameter (or
-  an activity its return value) with a dataclass or `from_json()`-capable type,
-  the payload is reconstructed as that type. Builtins and unannotated/unknown
-  types are passed through unchanged. An explicit `return_type` takes precedence
-  over a discovered annotation.
-- Added typed accessors to `client.OrchestrationState`: `get_input()`,
-  `get_output()`, and `get_custom_status()` each accept an optional
-  `expected_type` and deserialize the corresponding payload, reconstructing
-  dataclasses and `from_json()`-capable types. The raw `serialized_*` fields are
-  retained.
-- Objects exposing a `to_json()` method are now JSON-serializable when passed as
-  activity/orchestrator inputs or outputs.
-- `enum.Enum` values now serialize (to their underlying `.value`) and, when a
-  target type is supplied, deserialize back to the enum member. This covers
-  string-valued and other non-`int` enums as activity/orchestrator/entity inputs
-  and outputs, including as dataclass fields and inside `list` / `dict` /
-  `tuple` containers. (`IntEnum` / `IntFlag` already serialized as integers.)
-- A `from_json()` classmethod may now optionally accept the active
-  `DataConverter` as a second parameter (`from_json(cls, value, converter)`),
-  letting it reconstruct nested typed values via `converter.coerce(...)` /
-  `converter.deserialize(...)`. The single-argument form remains supported.
-- `DataConverter` now exposes an overridable `can_reconstruct(target_type)`
-  method that controls which annotated input/return types the SDK reconstructs
-  on the inbound path. A custom converter can override it to recognize its own
-  types (for example `pydantic.BaseModel` subclasses), so that orchestrator /
-  activity / entity inputs annotated with those types are reconstructed by the
-  converter instead of arriving as raw JSON. The default behavior is unchanged
-  (dataclasses and `from_json()`-capable types, plus `Optional` / `list`
-  wrappers, are reconstructable; builtins are not).
-- Added `EntityMetadata.get_typed_state(intended_type=...)`, which deserializes
-  the entity's persisted state and reconstructs dataclasses and
-  `from_json()`-capable types. The existing `get_state()` is unchanged: with no
-  argument it returns the raw serialized JSON payload, and `get_state(some_type)`
-  applies constructor-based coercion (`some_type(raw)`).
-- Entity runtime state retrieval (`EntityContext.get_state(intended_type=...)` /
-  `DurableEntity.get_state(...)`) now also reconstructs dataclasses and
-  `from_json()`-capable types, in addition to the existing constructor-based
-  coercion.
+  example one backed by pydantic) is fully opt-in.
+- Custom objects can participate in serialization by exposing a `to_json()`
+  method and a `from_json(value)` classmethod. Both are honored recursively, so
+  nested custom objects round-trip through their own hooks.
+- Payloads are reconstructed into a caller-supplied type — dataclasses
+  (including nested fields), `from_json()`-capable types, and `enum.Enum`
+  members, recursing through `list`, `dict`, `tuple`, and `Optional`/`Union`
+  hints. The type comes from a function's annotations, from an explicit
+  `return_type` on `call_activity` / `call_sub_orchestrator` / `call_entity`
+  (or `data_type` on `wait_for_external_event`), or from the typed accessors
+  `get_input()` / `get_output()` / `get_custom_status()` on
+  `client.OrchestrationState` and `EntityMetadata.get_typed_state(...)`. It is
+  never inferred from the payload. Which annotated types are eligible is decided
+  by the converter via the overridable `DataConverter.can_reconstruct(...)`; a
+  custom converter can override it to recognize its own types (for example
+  `pydantic.BaseModel` subclasses).
 
 CHANGED
 
 - Custom objects (dataclasses, `SimpleNamespace`, namedtuples) are now
   serialized as plain JSON. Decoding such a payload *without* a type hint now
   yields a plain `dict` (previously a `SimpleNamespace`; a namedtuple now
-  round-trips as a JSON array). To get the original type back, pass the new
-  `return_type` / `data_type` arguments, annotate the consuming function's
-  parameter or return type, or use the typed client accessors. Payloads produced
-  by older SDK versions still deserialize — including into a `SimpleNamespace`
-  when no type is supplied — so in-flight orchestrations continue to replay
-  across an upgrade.
+  round-trips as a JSON array). To get the original type back, supply a type via
+  one of the mechanisms above. Payloads produced by older SDK versions still
+  deserialize — including into a `SimpleNamespace` when no type is supplied — so
+  in-flight orchestrations continue to replay across an upgrade.
 - JSON serialization failures now raise a `TypeError` that chains the original
   error (`__cause__`) and names the offending type.
 - `EntityContext.get_state()` / `DurableEntity.get_state()` now return a freshly
   reconstructed value on every call rather than a reference to a single cached
-  object. As a result, mutating a value returned by `get_state()` in place no
-  longer affects the persisted entity state — write the change back with
-  `set_state()` to persist it. The entity's state is also serialized eagerly at
-  `set_state()` time, so a value that cannot be serialized surfaces the error
-  inside the failing operation (which rolls back) instead of after the batch has
-  run.
+  object, so mutating the returned value in place no longer affects persisted
+  state — write it back with `set_state()`. State is also serialized eagerly at
+  `set_state()` time, so a non-serializable value fails inside the operation
+  (which rolls back) instead of after the batch has run.
 
 FIXED
 
-- A dataclass or `SimpleNamespace` that defines a `to_json()` hook now uses it
-  when serialized. Previously the built-in dataclass / `SimpleNamespace`
-  handling ran first, so the hook was ignored — and a dataclass with a field
-  that was not JSON-serializable on its own would fail to serialize even when it
-  provided a `to_json()` hook to handle that field. The serialize side now
-  prefers `to_json()`, mirroring the deserialize side, which already prefers
-  `from_json()`.
-- Nested `to_json()` hooks are now honored when an object is serialized inside a
-  dataclass. Custom objects (including nested dataclasses with their own
-  `to_json()`) are now encoded recursively instead of being flattened to their
-  raw fields, so values that reshape themselves via `to_json()` round-trip
-  correctly.
-- Type-directed deserialization now recurses into `dict`/`Mapping` values and
-  `tuple` elements, in addition to the existing `list`, `Optional`/`Union`, and
-  dataclass-field recursion. A `dict[str, Foo]` or `tuple[Foo, ...]` hint now
-  reconstructs the contained `Foo` values.
 - Falsy entity states (`0`, `""`, `[]`, `{}`) are no longer dropped when an
   entity batch is persisted. Previously a falsy current state was treated as
   "no state" and written as `None`, effectively deleting it; only an actual
@@ -127,9 +75,6 @@ subclassing the public abstract types — may need to update their code:
   and `wait_for_external_event` gained new keyword-only parameters
   (`return_type` / `data_type`). Subclasses overriding these methods should add
   the parameter to match the base signature.
-- `client.OrchestrationState` gained a non-public `_data_converter` field
-  (excluded from equality and `repr`). Code constructing `OrchestrationState`
-  positionally should pass it via the new field or rely on its default.
 
 ## v1.6.0
 
