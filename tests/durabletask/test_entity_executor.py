@@ -132,3 +132,59 @@ class TestFunctionBasedEntityDispatch:
 
         result = executor.execute("test-orch", entity_id, "get", state, None)
         assert result == "42"
+
+
+class TestStateShimCoercion:
+    """Tests for StateShim.get_state type coercion via the data converter."""
+
+    def test_get_state_none_returns_default(self):
+        state = StateShim(None)
+        assert state.get_state(int, 0) == 0
+
+    def test_get_state_none_without_default_returns_none(self):
+        state = StateShim(None)
+        assert state.get_state(int) is None
+
+    def test_get_state_passes_through_matching_type(self):
+        state = StateShim(5)
+        assert state.get_state(int) == 5
+
+    def test_get_state_constructor_coercion(self):
+        state = StateShim("5")
+        assert state.get_state(int) == 5
+
+    def test_get_state_coerces_dataclass(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class Counter:
+            value: int
+
+        # State is stored as a plain dict (as it would be after from_json).
+        state = StateShim({"value": 7})
+        result = state.get_state(Counter)
+        assert isinstance(result, Counter)
+        assert result.value == 7
+
+    def test_get_state_uses_from_json_hook(self):
+        class Wrapped:
+            def __init__(self, n: int):
+                self.n = n
+
+            @classmethod
+            def from_json(cls, data):
+                return cls(data["n"])
+
+        state = StateShim({"n": 3})
+        result = state.get_state(Wrapped)
+        assert isinstance(result, Wrapped)
+        assert result.n == 3
+
+    def test_get_state_invalid_coercion_raises(self):
+        # An explicit intended_type that the state cannot be coerced to raises,
+        # restoring the pre-existing strict contract for entity state access.
+        import pytest
+
+        state = StateShim("not-an-int")
+        with pytest.raises(TypeError):
+            state.get_state(int)

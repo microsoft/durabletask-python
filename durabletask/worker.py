@@ -38,6 +38,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.orchestrator_service_pb2_grpc as stubs
 import durabletask.internal.shared as shared
 import durabletask.internal.tracing as tracing
+import durabletask.internal.type_discovery as type_discovery
 from durabletask.internal.grpc_resiliency import (
     FailureTracker,
     get_full_jitter_delay_seconds,
@@ -47,9 +48,11 @@ from durabletask.payload import helpers as payload_helpers
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
 from durabletask.payload.store import PayloadStore
+from durabletask.serialization import DataConverter, JsonDataConverter
 
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
+T = TypeVar("T")
 DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
 _STREAM_CLOSED_SENTINEL = object()
@@ -528,6 +531,7 @@ class TaskHubGrpcWorker:
             concurrency_options: ConcurrencyOptions | None = None,
             maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
             payload_store: PayloadStore | None = None,
+            data_converter: DataConverter | None = None,
     ):
         self._registry = _Registry()
         self._host_address = (
@@ -537,6 +541,7 @@ class TaskHubGrpcWorker:
         self._shutdown = Event()
         self._is_running = False
         self._channel = channel
+        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
         # The SDK owns (and may recreate) the gRPC channel only when the caller
         # did not provide one. Mirrors ``TaskHubGrpcClient._owns_channel`` so
         # both files use the same name for the same concept.
@@ -1111,7 +1116,8 @@ class TaskHubGrpcWorker:
             executor = _OrchestrationExecutor(
                 self._registry, self._logger,
                 persisted_orch_span_id=persisted_orch_span_id,
-                maximum_timer_interval=self.maximum_timer_interval)
+                maximum_timer_interval=self.maximum_timer_interval,
+                data_converter=self._data_converter)
             result = executor.execute(instance_id, req.pastEvents, req.newEvents)
 
             # Determine completion status for span
@@ -1236,7 +1242,7 @@ class TaskHubGrpcWorker:
             if self._payload_store is not None:
                 payload_helpers.deexternalize_payloads(req, self._payload_store)
             try:
-                executor = _ActivityExecutor(self._registry, self._logger)
+                executor = _ActivityExecutor(self._registry, self._logger, self._data_converter)
                 with tracing.start_span(
                     tracing.create_span_name("activity", req.name),
                     trace_context=req.parentTraceContext,
@@ -1310,7 +1316,9 @@ class TaskHubGrpcWorker:
         if self._payload_store is not None:
             payload_helpers.deexternalize_payloads(req, self._payload_store)
 
-        entity_state = StateShim(shared.from_json(req.entityState.value) if req.entityState.value else None)
+        entity_state = StateShim(
+            self._data_converter.deserialize(req.entityState.value) if req.entityState.value else None,
+            self._data_converter)
 
         instance_id = req.instanceId
         try:
@@ -1321,7 +1329,7 @@ class TaskHubGrpcWorker:
         results: list[pb.OperationResult] = []
         for operation in req.operations:
             start_time = datetime.now(timezone.utc)
-            executor = _EntityExecutor(self._registry, self._logger)
+            executor = _EntityExecutor(self._registry, self._logger, self._data_converter)
 
             operation_result = None
 
@@ -1368,7 +1376,7 @@ class TaskHubGrpcWorker:
         batch_result = pb.EntityBatchResult(
             results=results,
             actions=entity_state.get_operation_actions(),
-            entityState=helpers.get_string_value(shared.to_json(entity_state._current_state)) if entity_state._current_state else None,  # pyright: ignore[reportPrivateUsage]
+            entityState=helpers.get_string_value(self._data_converter.serialize(entity_state._current_state)) if entity_state._current_state is not None else None,  # pyright: ignore[reportPrivateUsage]
             failureDetails=None,
             completionToken=completionToken,
             operationInfos=operation_infos,
@@ -1412,6 +1420,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                  instance_id: str,
                  registry: _Registry,
                  maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+                 data_converter: DataConverter | None = None,
                  ):
         self._generator = None
         self._is_replaying = True
@@ -1432,7 +1441,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._entity_context = OrchestrationEntityContext(instance_id)
         self._version: str | None = None
         self._completion_status: pb.OrchestrationStatus | None = None
-        self._received_events: dict[str, list[Any]] = {}
+        self._received_events: dict[str, list[str | None]] = {}
         self._pending_events: dict[str, list[task.CancellableTask[Any]]] = {}
         self._new_input: Any | None = None
         self._save_events = False
@@ -1440,6 +1449,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._parent_trace_context: pb.TraceContext | None = None
         self._orchestration_trace_context: pb.TraceContext | None = None
         self._maximum_timer_interval = maximum_timer_interval
+        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
 
     def run(self, generator: Generator[task.Task[Any], Any, Any]) -> None:
         self._generator = generator
@@ -1497,7 +1507,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         result_json: str | None = None
         if result is not None:
             try:
-                result_json = result if is_result_encoded else shared.to_json(result)
+                result_json = result if is_result_encoded else self._data_converter.serialize(result)
             except (ValueError, TypeError):
                 self._is_complete = False
                 self._result = None
@@ -1557,18 +1567,15 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 # replayed when the new instance starts.
                 for event_name, values in self._received_events.items():
                     for event_value in values:
-                        encoded_value = (
-                            shared.to_json(event_value) if event_value else None
-                        )
+                        # Buffered events are stored as their raw JSON payload
+                        # (or None), so carry them over as-is without re-encoding.
                         carryover_events.append(
-                            ph.new_event_raised_event(event_name, encoded_value)
+                            ph.new_event_raised_event(event_name, event_value)
                         )
             action = ph.new_complete_orchestration_action(
                 self.next_sequence_number(),
                 pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW,
-                result=shared.to_json(self._new_input)
-                if self._new_input is not None
-                else None,
+                result=self._data_converter.serialize(self._new_input),
                 failure_details=None,
                 carryover_events=carryover_events,
             )
@@ -1602,7 +1609,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def set_custom_status(self, custom_status: Any) -> None:
         self._encoded_custom_status = (
-            shared.to_json(custom_status) if custom_status is not None else None
+            self._data_converter.serialize(custom_status) if custom_status is not None else None
         )
 
     def create_timer(self, fire_at: datetime | timedelta) -> task.TimerTask:
@@ -1644,6 +1651,30 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._pending_tasks[id] = timer_task
         return timer_task
 
+    @overload
+    def call_activity(
+            self,
+            activity: task.Activity[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            tags: dict[str, str] | None = ...,
+            return_type: type[T],
+    ) -> task.CompletableTask[T]:
+        ...
+
+    @overload
+    def call_activity(
+            self,
+            activity: task.Activity[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            tags: dict[str, str] | None = ...,
+            return_type: None = ...,
+    ) -> task.CompletableTask[TOutput]:
+        ...
+
     def call_activity(
             self,
             activity: task.Activity[TInput, TOutput] | str,
@@ -1651,24 +1682,57 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             input: TInput | None = None,
             retry_policy: task.RetryPolicy | None = None,
             tags: dict[str, str] | None = None,
-    ) -> task.CompletableTask[TOutput]:
+            return_type: type | None = None,
+    ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
 
+        # An explicit return_type takes precedence; otherwise, when an activity
+        # function reference is supplied, discover its return annotation. The
+        # converter decides how a coercion failure is handled (the default is
+        # best-effort).
+        if return_type is None and not isinstance(activity, str):
+            return_type = type_discovery.activity_output_type(activity)
+
         self.call_activity_function_helper(
-            id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False, tags=tags
+            id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False, tags=tags,
+            return_type=return_type,
         )
-        return cast(task.CompletableTask[TOutput], self._pending_tasks.get(id, task.CompletableTask[TOutput]()))
+        return self._pending_tasks.get(id, task.CompletableTask[Any]())
+
+    @overload
+    def call_entity(
+            self,
+            entity: EntityInstanceId,
+            operation: str,
+            input: Any = ...,
+            *,
+            return_type: type[T],
+    ) -> task.CompletableTask[T]:
+        ...
+
+    @overload
+    def call_entity(
+            self,
+            entity: EntityInstanceId,
+            operation: str,
+            input: Any = ...,
+            *,
+            return_type: None = ...,
+    ) -> task.CompletableTask[Any]:
+        ...
 
     def call_entity(
             self,
             entity: EntityInstanceId,
             operation: str,
             input: Any = None,
+            *,
+            return_type: type | None = None,
     ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
 
         self.call_entity_function_helper(
-            id, entity, operation, input=input
+            id, entity, operation, input=input, return_type=return_type
         )
 
         return self._pending_tasks.get(id, task.CompletableTask[Any]())
@@ -1694,6 +1758,32 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         )
         return cast(task.CompletableTask[EntityLock], self._pending_tasks.get(id, task.CompletableTask[EntityLock]()))
 
+    @overload
+    def call_sub_orchestrator(
+            self,
+            orchestrator: task.Orchestrator[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            instance_id: str | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            version: str | None = ...,
+            return_type: type[T],
+    ) -> task.CompletableTask[T]:
+        ...
+
+    @overload
+    def call_sub_orchestrator(
+            self,
+            orchestrator: task.Orchestrator[TInput, TOutput] | str,
+            *,
+            input: TInput | None = ...,
+            instance_id: str | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            version: str | None = ...,
+            return_type: None = ...,
+    ) -> task.CompletableTask[TOutput]:
+        ...
+
     def call_sub_orchestrator(
             self,
             orchestrator: task.Orchestrator[TInput, TOutput] | str,
@@ -1702,7 +1792,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             instance_id: str | None = None,
             retry_policy: task.RetryPolicy | None = None,
             version: str | None = None,
-    ) -> task.CompletableTask[TOutput]:
+            return_type: type | None = None,
+    ) -> task.CompletableTask[Any]:
         id = self.next_sequence_number()
         if isinstance(orchestrator, str):
             orchestrator_name = orchestrator
@@ -1717,9 +1808,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             retry_policy=retry_policy,
             is_sub_orch=True,
             instance_id=instance_id,
-            version=orchestrator_version
+            version=orchestrator_version,
+            return_type=return_type,
         )
-        return cast(task.CompletableTask[TOutput], self._pending_tasks.get(id, task.CompletableTask[TOutput]()))
+        return self._pending_tasks.get(id, task.CompletableTask[Any]())
 
     def call_activity_function_helper(
             self,
@@ -1733,12 +1825,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             instance_id: str | None = None,
             fn_task: task.CompletableTask[TOutput] | None = None,
             version: str | None = None,
+            return_type: type | None = None,
     ):
         if id is None:
             id = self.next_sequence_number()
 
         if fn_task is None:
-            encoded_input = shared.to_json(input) if input is not None else None
+            encoded_input = self._data_converter.serialize(input)
         else:
             # Here, we don't need to convert the input to JSON because it is already converted.
             # We just need to take string representation of it.
@@ -1786,13 +1879,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         if fn_task is None:
             if retry_policy is None:
-                fn_task = task.CompletableTask[TOutput]()
+                fn_task = task.CompletableTask[TOutput](expected_type=return_type)
             else:
                 fn_task = task.RetryableTask[TOutput](
                     retry_policy=retry_policy,
                     action=action,
                     start_time=self.current_utc_datetime,
                     is_sub_orch=is_sub_orch,
+                    expected_type=return_type,
                 )
         self._pending_tasks[id] = fn_task
 
@@ -1803,6 +1897,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             operation: str,
             *,
             input: Any = None,
+            return_type: type | None = None,
     ) -> None:
         if id is None:
             id = self.next_sequence_number()
@@ -1811,11 +1906,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if not transition_valid:
             raise RuntimeError(error_message)
 
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input = self._data_converter.serialize(input)
         action = ph.new_call_entity_action(id, self.instance_id, entity_id, operation, encoded_input, self.new_uuid())
         self._pending_actions[id] = action
 
-        fn_task = task.CompletableTask[Any]()
+        fn_task = task.CompletableTask[Any](expected_type=return_type)
         self._pending_tasks[id] = fn_task
 
     def signal_entity_function_helper(
@@ -1834,7 +1929,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if not transition_valid:
             raise RuntimeError(error_message)
 
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input = self._data_converter.serialize(input)
 
         action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid(), signal_time)
         self._pending_actions[id] = action
@@ -1871,20 +1966,31 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)
             self._pending_actions[task_id] = action
 
-    def wait_for_external_event(self, name: str) -> task.CancellableTask[Any]:
+    @overload
+    def wait_for_external_event(self, name: str, *,
+                                data_type: type[T]) -> task.CancellableTask[T]:
+        ...
+
+    @overload
+    def wait_for_external_event(self, name: str, *,
+                                data_type: None = ...) -> task.CancellableTask[Any]:
+        ...
+
+    def wait_for_external_event(self, name: str, *,
+                                data_type: type | None = None) -> task.CancellableTask[Any]:
         # Check to see if this event has already been received, in which case we
         # can return it immediately. Otherwise, record out intent to receive an
         # event with the given name so that we can resume the generator when it
         # arrives. If there are multiple events with the same name, we return
         # them in the order they were received.
-        external_event_task: task.CancellableTask[Any] = task.CancellableTask()
+        external_event_task: task.CancellableTask[Any] = task.CancellableTask(expected_type=data_type)
         event_name = name.casefold()
         event_list = self._received_events.get(event_name, None)
         if event_list:
             event_data = event_list.pop(0)
             if not event_list:
                 del self._received_events[event_name]
-            external_event_task.complete(event_data)
+            external_event_task.complete(self._data_converter.deserialize(event_data, data_type))
         else:
             task_list = self._pending_events.get(event_name, None)
             if not task_list:
@@ -1947,9 +2053,11 @@ class _OrchestrationExecutor:
         logger: logging.Logger,
         persisted_orch_span_id: str | None = None,
         maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+        data_converter: DataConverter | None = None,
     ):
         self._registry = registry
         self._logger = logger
+        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
         self._maximum_timer_interval = maximum_timer_interval
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
@@ -1988,6 +2096,7 @@ class _OrchestrationExecutor:
             instance_id,
             self._registry,
             maximum_timer_interval=self._maximum_timer_interval,
+            data_converter=self._data_converter,
         )
         try:
             # Rebuild local state by replaying old history into the orchestrator function
@@ -2103,7 +2212,9 @@ class _OrchestrationExecutor:
                 if (
                         event.executionStarted.HasField("input") and event.executionStarted.input.value != ""
                 ):
-                    input = shared.from_json(event.executionStarted.input.value)
+                    input_type = type_discovery.orchestrator_input_type(fn)
+                    input = self._data_converter.deserialize(
+                        event.executionStarted.input.value, input_type)
 
                 result = fn(
                     ctx, input
@@ -2252,7 +2363,9 @@ class _OrchestrationExecutor:
                         )
                 result = None
                 if not ph.is_empty(event.taskCompleted.result):
-                    result = shared.from_json(event.taskCompleted.result.value)
+                    result = self._data_converter.deserialize(
+                        event.taskCompleted.result.value, activity_task._expected_type  # pyright: ignore[reportPrivateUsage]
+                    )
                 activity_task.complete(result)
                 ctx.resume()
             elif event.HasField("taskFailed"):
@@ -2361,8 +2474,9 @@ class _OrchestrationExecutor:
                         )
                 result = None
                 if not ph.is_empty(event.subOrchestrationInstanceCompleted.result):
-                    result = shared.from_json(
-                        event.subOrchestrationInstanceCompleted.result.value
+                    result = self._data_converter.deserialize(
+                        event.subOrchestrationInstanceCompleted.result.value,
+                        sub_orch_task._expected_type,  # pyright: ignore[reportPrivateUsage]
                     )
                 sub_orch_task.complete(result)
                 ctx.resume()
@@ -2431,20 +2545,27 @@ class _OrchestrationExecutor:
                     if task_list:
                         event_task = task_list.pop(0)
                         if not ph.is_empty(event.eventRaised.input):
-                            decoded_result = shared.from_json(event.eventRaised.input.value)
+                            decoded_result = self._data_converter.deserialize(
+                                event.eventRaised.input.value, event_task._expected_type  # pyright: ignore[reportPrivateUsage]
+                            )
                         event_task.complete(decoded_result)
                         if not task_list:
                             del ctx._pending_events[event_name]  # pyright: ignore[reportPrivateUsage]
                         ctx.resume()
                     else:
-                        # buffer the event
+                        # Buffer the raw event payload (the JSON string). It is
+                        # deserialized -- with the waiter's expected type, if any
+                        # -- when ``wait_for_external_event`` later consumes it,
+                        # so buffered and non-buffered events flow through the
+                        # same converter path.
                         event_list = ctx._received_events.get(event_name, None)  # pyright: ignore[reportPrivateUsage]
                         if not event_list:
                             event_list = []
                             ctx._received_events[event_name] = event_list  # pyright: ignore[reportPrivateUsage]
+                        buffered_payload: str | None = None
                         if not ph.is_empty(event.eventRaised.input):
-                            decoded_result = shared.from_json(event.eventRaised.input.value)
-                        event_list.append(decoded_result)
+                            buffered_payload = event.eventRaised.input.value
+                        event_list.append(buffered_payload)
                         if not ctx.is_replaying:
                             self._logger.info(
                                 f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it."
@@ -2568,7 +2689,10 @@ class _OrchestrationExecutor:
                     return
                 result = None
                 if not ph.is_empty(event.entityOperationCompleted.output):
-                    result = shared.from_json(event.entityOperationCompleted.output.value)
+                    result = self._data_converter.deserialize(
+                        event.entityOperationCompleted.output.value,
+                        entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
+                    )
                 ctx._entity_context.recover_lock_after_call(entity_id)  # pyright: ignore[reportPrivateUsage]
                 entity_task.complete(result)
                 ctx.resume()
@@ -2649,7 +2773,15 @@ class _OrchestrationExecutor:
         result = None
         if not ph.is_empty(event.eventRaised.input):
             # TODO: Investigate why the event result is wrapped in a dict with "result" key
-            result = shared.from_json(event.eventRaised.input.value)["result"]
+            # The expected type applies to the unwrapped result value, not the
+            # transport wrapper. Unwrap first, then route the inner value back
+            # through the converter so custom converters and the expected type
+            # both apply.
+            unwrapped = self._data_converter.deserialize(event.eventRaised.input.value)["result"]
+            result = self._data_converter.deserialize(
+                self._data_converter.serialize(unwrapped),
+                entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
+            )
         if is_lock_event:
             ctx._entity_context.complete_acquire(event.eventRaised.name)  # pyright: ignore[reportPrivateUsage]
             entity_task.complete(EntityLock(ctx))
@@ -2702,9 +2834,11 @@ class _OrchestrationExecutor:
 
 
 class _ActivityExecutor:
-    def __init__(self, registry: _Registry, logger: logging.Logger):
+    def __init__(self, registry: _Registry, logger: logging.Logger,
+                 data_converter: DataConverter | None = None):
         self._registry = registry
         self._logger = logger
+        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
 
     def execute(
             self,
@@ -2723,15 +2857,14 @@ class _ActivityExecutor:
                 f"Activity function named '{name}' was not registered!"
             )
 
-        activity_input = shared.from_json(encoded_input) if encoded_input else None
+        input_type = type_discovery.activity_input_type(fn) if encoded_input else None
+        activity_input = self._data_converter.deserialize(encoded_input, input_type)
         ctx = task.ActivityContext(orchestration_id, task_id)
 
         # Execute the activity function
         activity_output = fn(ctx, activity_input)
 
-        encoded_output = (
-            shared.to_json(activity_output) if activity_output is not None else None
-        )
+        encoded_output = self._data_converter.serialize(activity_output)
         chars = len(encoded_output) if encoded_output else 0
         self._logger.debug(
             f"{orchestration_id}/{task_id}: Activity '{name}' completed successfully with {chars} char(s) of encoded output."
@@ -2740,9 +2873,11 @@ class _ActivityExecutor:
 
 
 class _EntityExecutor:
-    def __init__(self, registry: _Registry, logger: logging.Logger):
+    def __init__(self, registry: _Registry, logger: logging.Logger,
+                 data_converter: DataConverter | None = None):
         self._registry = registry
         self._logger = logger
+        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
         self._entity_method_cache: dict[tuple[type, str], bool] = {}
 
     def execute(
@@ -2763,8 +2898,9 @@ class _EntityExecutor:
                 f"Entity function named '{entity_id.entity}' was not registered!"
             )
 
-        entity_input = shared.from_json(encoded_input) if encoded_input else None
-        ctx = EntityContext(orchestration_id, operation, state, entity_id)
+        input_type = type_discovery.entity_input_type(fn, operation) if encoded_input else None
+        entity_input = self._data_converter.deserialize(encoded_input, input_type)
+        ctx = EntityContext(orchestration_id, operation, state, entity_id, self._data_converter)
 
         if isinstance(fn, type) and issubclass(fn, DurableEntity):
             entity_instance = fn()
@@ -2794,9 +2930,7 @@ class _EntityExecutor:
             # Execute the entity function
             entity_output = fn(ctx, entity_input)
 
-        encoded_output = (
-            shared.to_json(entity_output) if entity_output is not None else None
-        )
+        encoded_output = self._data_converter.serialize(entity_output)
         chars = len(encoded_output) if encoded_output else 0
         self._logger.debug(
             f"{orchestration_id}: Entity '{entity_id}' completed successfully with {chars} char(s) of encoded output."

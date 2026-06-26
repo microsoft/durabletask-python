@@ -9,7 +9,7 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
@@ -115,11 +115,28 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @overload
+    def call_activity(self, activity: Activity[TInput, TOutput] | str, *,
+                      input: TInput | None = ...,
+                      retry_policy: RetryPolicy | None = ...,
+                      tags: dict[str, str] | None = ...,
+                      return_type: type[T]) -> CompletableTask[T]:
+        ...
+
+    @overload
+    def call_activity(self, activity: Activity[TInput, TOutput] | str, *,
+                      input: TInput | None = ...,
+                      retry_policy: RetryPolicy | None = ...,
+                      tags: dict[str, str] | None = ...,
+                      return_type: None = ...) -> CompletableTask[TOutput]:
+        ...
+
     @abstractmethod
     def call_activity(self, activity: Activity[TInput, TOutput] | str, *,
                       input: TInput | None = None,
                       retry_policy: RetryPolicy | None = None,
-                      tags: dict[str, str] | None = None) -> CompletableTask[TOutput]:
+                      tags: dict[str, str] | None = None,
+                      return_type: type | None = None) -> CompletableTask[Any]:
         """Schedule an activity for execution.
 
         Parameters
@@ -132,6 +149,16 @@ class OrchestrationContext(ABC):
             The retry policy to use for this activity call.
         tags: dict[str, str] | None
             Optional tags to associate with the activity invocation.
+        return_type: type | None
+            Optional type used to deserialize the activity's result. When
+            provided, the result is coerced to this type (dataclasses are
+            constructed from their dict payloads, types exposing a
+            ``from_json()`` classmethod are reconstructed via that hook), and
+            the returned task is typed as ``CompletableTask[return_type]``.
+            When omitted, the return type is discovered from the activity
+            function's return annotation (if a function reference is passed and
+            it is annotated with a reconstructable type); otherwise the raw
+            deserialized JSON is returned.
 
         Returns
         -------
@@ -140,11 +167,31 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @overload
+    def call_entity(self,
+                    entity: EntityInstanceId,
+                    operation: str,
+                    input: Any = ...,
+                    *,
+                    return_type: type[T]) -> CompletableTask[T]:
+        ...
+
+    @overload
+    def call_entity(self,
+                    entity: EntityInstanceId,
+                    operation: str,
+                    input: Any = ...,
+                    *,
+                    return_type: None = ...) -> CompletableTask[Any]:
+        ...
+
     @abstractmethod
     def call_entity(self,
                     entity: EntityInstanceId,
                     operation: str,
-                    input: Any = None) -> CompletableTask[Any]:
+                    input: Any = None,
+                    *,
+                    return_type: type | None = None) -> CompletableTask[Any]:
         """Schedule entity function for execution.
 
         Parameters
@@ -155,6 +202,11 @@ class OrchestrationContext(ABC):
             The name of the operation to invoke on the entity.
         input: TInput | None
             The optional JSON-serializable input to pass to the entity function.
+        return_type: type | None
+            Optional type used to deserialize the operation's result. When
+            provided, the result is coerced to this type and the returned task
+            is typed as ``CompletableTask[return_type]``; when omitted, the raw
+            deserialized JSON is returned.
 
         Returns
         -------
@@ -208,12 +260,31 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @overload
+    def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput] | str, *,
+                              input: TInput | None = ...,
+                              instance_id: str | None = ...,
+                              retry_policy: RetryPolicy | None = ...,
+                              version: str | None = ...,
+                              return_type: type[T]) -> CompletableTask[T]:
+        ...
+
+    @overload
+    def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput] | str, *,
+                              input: TInput | None = ...,
+                              instance_id: str | None = ...,
+                              retry_policy: RetryPolicy | None = ...,
+                              version: str | None = ...,
+                              return_type: None = ...) -> CompletableTask[TOutput]:
+        ...
+
     @abstractmethod
     def call_sub_orchestrator(self, orchestrator: Orchestrator[TInput, TOutput] | str, *,
                               input: TInput | None = None,
                               instance_id: str | None = None,
                               retry_policy: RetryPolicy | None = None,
-                              version: str | None = None) -> CompletableTask[TOutput]:
+                              version: str | None = None,
+                              return_type: type | None = None) -> CompletableTask[Any]:
         """Schedule sub-orchestrator function for execution.
 
         Parameters
@@ -227,6 +298,11 @@ class OrchestrationContext(ABC):
             random UUID will be used.
         retry_policy: RetryPolicy | None
             The retry policy to use for this sub-orchestrator call.
+        return_type: type | None
+            Optional type used to deserialize the sub-orchestrator's result. When
+            provided, the result is coerced to this type and the returned task is
+            typed as ``CompletableTask[return_type]``; when omitted, the raw
+            deserialized JSON is returned.
 
         Returns
         -------
@@ -237,14 +313,30 @@ class OrchestrationContext(ABC):
 
     # TOOD: Add a timeout parameter, which allows the task to be cancelled if the event is
     # not received within the specified timeout. This requires support for task cancellation.
+    @overload
+    def wait_for_external_event(self, name: str, *,
+                                data_type: type[T]) -> CancellableTask[T]:
+        ...
+
+    @overload
+    def wait_for_external_event(self, name: str, *,
+                                data_type: None = ...) -> CancellableTask[Any]:
+        ...
+
     @abstractmethod
-    def wait_for_external_event(self, name: str) -> CancellableTask[Any]:
+    def wait_for_external_event(self, name: str, *,
+                                data_type: type | None = None) -> CancellableTask[Any]:
         """Wait asynchronously for an event to be raised with the name `name`.
 
         Parameters
         ----------
         name : str
             The event name of the event that the task is waiting for.
+        data_type : type | None
+            Optional type used to deserialize the event payload. When provided,
+            the payload is coerced to this type and the returned task is typed
+            as ``CancellableTask[data_type]``; when omitted, the raw
+            deserialized JSON is returned.
 
         Returns
         -------
@@ -479,9 +571,10 @@ class WhenAllTask(CompositeTask[list[T]]):
 
 class CompletableTask(Task[T]):
 
-    def __init__(self) -> None:
+    def __init__(self, expected_type: type | None = None) -> None:
         super().__init__()
         self._retryable_parent: RetryableTask[Any] | None = None
+        self._expected_type = expected_type
 
     def complete(self, result: T):
         if self._is_complete:
@@ -503,8 +596,8 @@ class CompletableTask(Task[T]):
 class CancellableTask(CompletableTask[T]):
     """A completable task that can be cancelled before it finishes."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, expected_type: type | None = None) -> None:
+        super().__init__(expected_type)
         self._is_cancelled = False
         self._cancel_handler: Callable[[], None] | None = None
 
@@ -546,8 +639,9 @@ class RetryableTask(CompletableTask[T]):
     """A task that can be retried according to a retry policy."""
 
     def __init__(self, retry_policy: RetryPolicy, action: pb.OrchestratorAction,
-                 start_time: datetime, is_sub_orch: bool) -> None:
-        super().__init__()
+                 start_time: datetime, is_sub_orch: bool,
+                 expected_type: type | None = None) -> None:
+        super().__init__(expected_type)
         self._action = action
         self._retry_policy = retry_policy
         self._attempt_count = 1

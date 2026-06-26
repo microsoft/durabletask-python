@@ -74,7 +74,13 @@ class Schedule(DurableEntity):
                            target_status: ScheduleStatus) -> bool:
         return transitions.is_valid_transition(operation_name, state.status, target_status)
 
-    def create_schedule(self, options: ScheduleCreationOptions) -> None:
+    # NOTE: the input is intentionally annotated ``Any`` rather than
+    # ``ScheduleCreationOptions``. The worker reconstructs an entity operation's
+    # input from its parameter annotation; a dataclass annotation would map the
+    # wire dict by field name and drop our JSON-friendly fields (e.g.
+    # ``interval_seconds``). Keeping ``Any`` lets the raw dict reach
+    # ``_coerce_options``, which rebuilds the options via ``from_dict``.
+    def create_schedule(self, options: Any) -> None:
         """Create a new schedule. If one already exists, update it in place."""
         options = _coerce_options(options, ScheduleCreationOptions)
         state = self._load_state()
@@ -105,7 +111,8 @@ class Schedule(DurableEntity):
             state.execution_token,
         )
 
-    def update_schedule(self, options: ScheduleUpdateOptions) -> None:
+    # NOTE: input annotated ``Any`` for the same reason as ``create_schedule``.
+    def update_schedule(self, options: Any) -> None:
         """Update an existing schedule's configuration."""
         options = _coerce_options(options, ScheduleUpdateOptions)
         state = self._load_state()

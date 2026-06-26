@@ -7,10 +7,10 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast, overload
 
 import grpc
 import grpc.aio
@@ -50,10 +50,12 @@ from durabletask.internal.client_helpers import (
 )
 from durabletask.payload import helpers as payload_helpers
 from durabletask.payload.store import PayloadStore
+from durabletask.serialization import DEFAULT_DATA_CONVERTER, DataConverter, JsonDataConverter
 
 TInput = TypeVar('TInput')
 TOutput = TypeVar('TOutput')
 TItem = TypeVar('TItem')
+T = TypeVar('T')
 
 
 class OrchestrationStatus(Enum):
@@ -81,6 +83,102 @@ class OrchestrationState:
     serialized_output: str | None
     serialized_custom_status: str | None
     failure_details: task.FailureDetails | None
+    # Converter used by the typed accessors below. Defaults to the SDK's JSON
+    # converter; the client populates it with its own converter so custom
+    # serialization applies on the read side too. Excluded from equality/repr so
+    # two states with equal payloads remain equal regardless of converter.
+    _data_converter: DataConverter = field(
+        default=DEFAULT_DATA_CONVERTER, compare=False, repr=False)
+
+    @overload
+    def get_input(self, expected_type: type[T]) -> T | None:
+        ...
+
+    @overload
+    def get_input(self, expected_type: None = ...) -> Any:
+        ...
+
+    def get_input(self, expected_type: type | None = None) -> Any:
+        """Deserialize the orchestration's input.
+
+        Parameters
+        ----------
+        expected_type : type | None
+            Optional type used to reconstruct the input. When provided, the
+            payload is coerced to this type (dataclasses are constructed from
+            their dict payloads, types exposing a ``from_json()`` classmethod
+            are reconstructed via that hook) and the return value is typed as
+            ``expected_type | None``. When omitted, the raw deserialized JSON is
+            returned.
+
+        Returns
+        -------
+        Any
+            The deserialized input, or None if there is no input.
+        """
+        if self.serialized_input is None:
+            return None
+        return self._data_converter.deserialize(self.serialized_input, expected_type)
+
+    @overload
+    def get_output(self, expected_type: type[T]) -> T | None:
+        ...
+
+    @overload
+    def get_output(self, expected_type: None = ...) -> Any:
+        ...
+
+    def get_output(self, expected_type: type | None = None) -> Any:
+        """Deserialize the orchestration's output.
+
+        Parameters
+        ----------
+        expected_type : type | None
+            Optional type used to reconstruct the output. When provided, the
+            payload is coerced to this type (dataclasses are constructed from
+            their dict payloads, types exposing a ``from_json()`` classmethod
+            are reconstructed via that hook) and the return value is typed as
+            ``expected_type | None``. When omitted, the raw deserialized JSON is
+            returned.
+
+        Returns
+        -------
+        Any
+            The deserialized output, or None if there is no output.
+        """
+        if self.serialized_output is None:
+            return None
+        return self._data_converter.deserialize(self.serialized_output, expected_type)
+
+    @overload
+    def get_custom_status(self, expected_type: type[T]) -> T | None:
+        ...
+
+    @overload
+    def get_custom_status(self, expected_type: None = ...) -> Any:
+        ...
+
+    def get_custom_status(self, expected_type: type | None = None) -> Any:
+        """Deserialize the orchestration's custom status.
+
+        Parameters
+        ----------
+        expected_type : type | None
+            Optional type used to reconstruct the custom status. When provided,
+            the payload is coerced to this type (dataclasses are constructed
+            from their dict payloads, types exposing a ``from_json()``
+            classmethod are reconstructed via that hook) and the return value is
+            typed as ``expected_type | None``. When omitted, the raw
+            deserialized JSON is returned.
+
+        Returns
+        -------
+        Any
+            The deserialized custom status, or None if there is no custom status.
+        """
+        if self.serialized_custom_status is None:
+            return None
+        return self._data_converter.deserialize(self.serialized_custom_status, expected_type)
 
     def raise_if_failed(self):
         if self.failure_details is not None:
@@ -138,18 +236,22 @@ class OrchestrationFailedError(Exception):
         return self._failure_details
 
 
-def new_orchestration_state(instance_id: str, res: pb.GetInstanceResponse) -> OrchestrationState | None:
+def new_orchestration_state(
+        instance_id: str, res: pb.GetInstanceResponse,
+        data_converter: DataConverter | None = None) -> OrchestrationState | None:
     if not res.exists:
         return None
 
     state = res.orchestrationState
 
-    new_state = parse_orchestration_state(state)
+    new_state = parse_orchestration_state(state, data_converter)
     new_state.instance_id = instance_id  # Override instance_id with the one from the request, to match old behavior
     return new_state
 
 
-def parse_orchestration_state(state: pb.OrchestrationState) -> OrchestrationState:
+def parse_orchestration_state(
+        state: pb.OrchestrationState,
+        data_converter: DataConverter | None = None) -> OrchestrationState:
     failure_details = None
     if state.failureDetails.errorMessage != '' or state.failureDetails.errorType != '':
         failure_details = task.FailureDetails(
@@ -166,7 +268,8 @@ def parse_orchestration_state(state: pb.OrchestrationState) -> OrchestrationStat
         state.input.value if not helpers.is_empty(state.input) else None,
         state.output.value if not helpers.is_empty(state.output) else None,
         state.customStatus.value if not helpers.is_empty(state.customStatus) else None,
-        failure_details)
+        failure_details,
+        data_converter if data_converter is not None else DEFAULT_DATA_CONVERTER)
 
 
 # Grace period before a retired SDK-owned channel is force-closed. Long enough
@@ -309,9 +412,11 @@ class TaskHubGrpcClient:
                  channel_options: GrpcChannelOptions | None = None,
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
-                 payload_store: PayloadStore | None = None):
+                 payload_store: PayloadStore | None = None,
+                 data_converter: DataConverter | None = None):
 
         self._owns_channel = channel is None
+        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
         self._host_address = (
             host_address if host_address else shared.get_default_host_address()
         )
@@ -514,7 +619,8 @@ class TaskHubGrpcClient:
             req = build_schedule_new_orchestration_req(
                 orchestrator, input=input, instance_id=instance_id, start_at=start_at,
                 reuse_id_policy=reuse_id_policy, tags=tags,
-                version=version if version else self.default_version)
+                version=version if version else self.default_version,
+                data_converter=self._data_converter)
 
             # Inject the active PRODUCER span context into the request so the sidecar
             # stores it in the executionStarted event and the worker can parent all
@@ -538,7 +644,7 @@ class TaskHubGrpcClient:
         # De-externalize any large-payload tokens in the response
         if self._payload_store is not None and res.exists:
             payload_helpers.deexternalize_payloads(res, self._payload_store)
-        return new_orchestration_state(req.instanceId, res)
+        return new_orchestration_state(req.instanceId, res, self._data_converter)
 
     def get_orchestration_history(self,
                                   instance_id: str, *,
@@ -594,7 +700,7 @@ class TaskHubGrpcClient:
             resp: pb.QueryInstancesResponse = self._stub.QueryInstances(req)
             if self._payload_store is not None:
                 payload_helpers.deexternalize_payloads(resp, self._payload_store)
-            states += [parse_orchestration_state(res) for res in resp.orchestrationState]
+            states += [parse_orchestration_state(res, self._data_converter) for res in resp.orchestrationState]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
             else:
@@ -614,7 +720,7 @@ class TaskHubGrpcClient:
             )
             if self._payload_store is not None and res.exists:
                 payload_helpers.deexternalize_payloads(res, self._payload_store)
-            return new_orchestration_state(req.instanceId, res)
+            return new_orchestration_state(req.instanceId, res, self._data_converter)
         except grpc.RpcError as rpc_error:
             if rpc_error.code() == grpc.StatusCode.DEADLINE_EXCEEDED:  # type: ignore
                 # Replace gRPC error with the built-in TimeoutError
@@ -634,7 +740,7 @@ class TaskHubGrpcClient:
             )
             if self._payload_store is not None and res.exists:
                 payload_helpers.deexternalize_payloads(res, self._payload_store)
-            state = new_orchestration_state(req.instanceId, res)
+            state = new_orchestration_state(req.instanceId, res, self._data_converter)
             log_completion_state(self._logger, instance_id, state)
             return state
         except grpc.RpcError as rpc_error:
@@ -646,7 +752,7 @@ class TaskHubGrpcClient:
     def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                   data: Any | None = None) -> None:
         with tracing.start_raise_event_span(event_name, instance_id):
-            req = build_raise_event_req(instance_id, event_name, data)
+            req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
             self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
             if self._payload_store is not None:
                 payload_helpers.externalize_payloads(
@@ -657,7 +763,7 @@ class TaskHubGrpcClient:
     def terminate_orchestration(self, instance_id: str, *,
                                 output: Any | None = None,
                                 recursive: bool = True) -> None:
-        req = build_terminate_req(instance_id, output, recursive)
+        req = build_terminate_req(instance_id, output, recursive, self._data_converter)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
         if self._payload_store is not None:
@@ -721,7 +827,8 @@ class TaskHubGrpcClient:
                       operation_name: str,
                       input: Any | None = None,
                       signal_time: datetime | None = None) -> None:
-        req = build_signal_entity_req(entity_instance_id, operation_name, input, signal_time)
+        req = build_signal_entity_req(
+            entity_instance_id, operation_name, input, signal_time, self._data_converter)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
         if self._payload_store is not None:
             payload_helpers.externalize_payloads(
@@ -740,7 +847,7 @@ class TaskHubGrpcClient:
             return None
         if self._payload_store is not None:
             payload_helpers.deexternalize_payloads(res, self._payload_store)
-        return EntityMetadata.from_entity_metadata(res.entity, include_state)
+        return EntityMetadata.from_entity_metadata(res.entity, include_state, self._data_converter)
 
     def get_all_entities(self,
                          entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
@@ -757,7 +864,7 @@ class TaskHubGrpcClient:
             resp: pb.QueryEntitiesResponse = self._stub.QueryEntities(query_request)
             if self._payload_store is not None:
                 payload_helpers.deexternalize_payloads(resp, self._payload_store)
-            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
+            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState, self._data_converter) for entity in resp.entities]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
             else:
@@ -806,9 +913,11 @@ class AsyncTaskHubGrpcClient:
                  channel_options: GrpcChannelOptions | None = None,
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
-                 payload_store: PayloadStore | None = None):
+                 payload_store: PayloadStore | None = None,
+                 data_converter: DataConverter | None = None):
 
         self._owns_channel = channel is None
+        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
         self._host_address = (
             host_address if host_address else shared.get_default_host_address()
         )
@@ -999,7 +1108,8 @@ class AsyncTaskHubGrpcClient:
             req = build_schedule_new_orchestration_req(
                 orchestrator, input=input, instance_id=instance_id, start_at=start_at,
                 reuse_id_policy=reuse_id_policy, tags=tags,
-                version=version if version else self.default_version)
+                version=version if version else self.default_version,
+                data_converter=self._data_converter)
 
             parent_trace_ctx = tracing.get_current_trace_context()
             if parent_trace_ctx is not None:
@@ -1020,7 +1130,7 @@ class AsyncTaskHubGrpcClient:
         res: pb.GetInstanceResponse = await self._stub.GetInstance(req)
         if self._payload_store is not None and res.exists:
             await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
-        return new_orchestration_state(req.instanceId, res)
+        return new_orchestration_state(req.instanceId, res, self._data_converter)
 
     async def get_orchestration_history(self,
                                         instance_id: str, *,
@@ -1076,7 +1186,7 @@ class AsyncTaskHubGrpcClient:
             resp: pb.QueryInstancesResponse = await self._stub.QueryInstances(req)
             if self._payload_store is not None:
                 await payload_helpers.deexternalize_payloads_async(resp, self._payload_store)
-            states += [parse_orchestration_state(res) for res in resp.orchestrationState]
+            states += [parse_orchestration_state(res, self._data_converter) for res in resp.orchestrationState]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
             else:
@@ -1096,7 +1206,7 @@ class AsyncTaskHubGrpcClient:
             )
             if self._payload_store is not None and res.exists:
                 await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
-            return new_orchestration_state(req.instanceId, res)
+            return new_orchestration_state(req.instanceId, res, self._data_converter)
         except grpc.aio.AioRpcError as rpc_error:
             if rpc_error.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
                 raise TimeoutError("Timed-out waiting for the orchestration to start")
@@ -1115,7 +1225,7 @@ class AsyncTaskHubGrpcClient:
             )
             if self._payload_store is not None and res.exists:
                 await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
-            state = new_orchestration_state(req.instanceId, res)
+            state = new_orchestration_state(req.instanceId, res, self._data_converter)
             log_completion_state(self._logger, instance_id, state)
             return state
         except grpc.aio.AioRpcError as rpc_error:
@@ -1127,7 +1237,7 @@ class AsyncTaskHubGrpcClient:
     async def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                         data: Any | None = None) -> None:
         with tracing.start_raise_event_span(event_name, instance_id):
-            req = build_raise_event_req(instance_id, event_name, data)
+            req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
             self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
             if self._payload_store is not None:
                 await payload_helpers.externalize_payloads_async(
@@ -1138,7 +1248,7 @@ class AsyncTaskHubGrpcClient:
     async def terminate_orchestration(self, instance_id: str, *,
                                       output: Any | None = None,
                                       recursive: bool = True) -> None:
-        req = build_terminate_req(instance_id, output, recursive)
+        req = build_terminate_req(instance_id, output, recursive, self._data_converter)
 
         self._logger.info(f"Terminating instance '{instance_id}'.")
         if self._payload_store is not None:
@@ -1202,7 +1312,8 @@ class AsyncTaskHubGrpcClient:
                             operation_name: str,
                             input: Any | None = None,
                             signal_time: datetime | None = None) -> None:
-        req = build_signal_entity_req(entity_instance_id, operation_name, input, signal_time)
+        req = build_signal_entity_req(
+            entity_instance_id, operation_name, input, signal_time, self._data_converter)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
         if self._payload_store is not None:
             await payload_helpers.externalize_payloads_async(
@@ -1221,7 +1332,7 @@ class AsyncTaskHubGrpcClient:
             return None
         if self._payload_store is not None:
             await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
-        return EntityMetadata.from_entity_metadata(res.entity, include_state)
+        return EntityMetadata.from_entity_metadata(res.entity, include_state, self._data_converter)
 
     async def get_all_entities(self,
                                entity_query: EntityQuery | None = None) -> list[EntityMetadata]:
@@ -1238,7 +1349,7 @@ class AsyncTaskHubGrpcClient:
             resp: pb.QueryEntitiesResponse = await self._stub.QueryEntities(query_request)
             if self._payload_store is not None:
                 await payload_helpers.deexternalize_payloads_async(resp, self._payload_store)
-            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState) for entity in resp.entities]
+            entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState, self._data_converter) for entity in resp.entities]
             if check_continuation_token(resp.continuationToken, _continuation_token, self._logger):
                 _continuation_token = resp.continuationToken
             else:

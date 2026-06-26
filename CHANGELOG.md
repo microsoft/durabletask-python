@@ -21,6 +21,78 @@ ADDED
 - Added an optional `signal_time` parameter to `OrchestrationContext.signal_entity`
   and to the client `signal_entity` methods (sync and async), allowing entity
   signals to be scheduled for future delivery from orchestrations and clients.
+- Added a pluggable `DataConverter` (`durabletask.serialization`) accepted by
+  `TaskHubGrpcWorker`, `TaskHubGrpcClient`, and `AsyncTaskHubGrpcClient` via a
+  `data_converter` argument. Every payload boundary (inputs, outputs, events,
+  custom status, entity state) routes through it. The default
+  `JsonDataConverter` preserves existing behavior, so a custom converter (for
+  example one backed by pydantic) is opt-in. Custom objects can opt in via a
+  `to_json()` hook and a `from_json(value)` classmethod.
+- `OrchestrationContext.call_activity`, `call_sub_orchestrator`, and
+  `call_entity` accept an optional `return_type`, and `wait_for_external_event`
+  accepts an optional `data_type`. When provided, the result/event payload is
+  reconstructed as that type (dataclasses — including nested dataclass,
+  `Optional`, and `list` fields — and `from_json()`-capable types) and the
+  returned task is typed accordingly (e.g. `call_activity(..., return_type=Foo)`
+  yields `CompletableTask[Foo]`). When omitted, the raw deserialized JSON is
+  returned as before.
+- Inbound payloads are reconstructed from function type annotations. When an
+  orchestrator, activity, or entity operation annotates its input parameter (or
+  an activity its return value) with a dataclass or `from_json()`-capable type,
+  the payload is reconstructed as that type. Builtins and unannotated/unknown
+  types are passed through unchanged. An explicit `return_type` takes precedence
+  over a discovered annotation.
+- Added typed accessors to `client.OrchestrationState`: `get_input()`,
+  `get_output()`, and `get_custom_status()` each accept an optional
+  `expected_type` and deserialize the corresponding payload, reconstructing
+  dataclasses and `from_json()`-capable types. The raw `serialized_*` fields are
+  retained.
+- Objects exposing a `to_json()` method are now JSON-serializable when passed as
+  activity/orchestrator inputs or outputs.
+- Added `EntityMetadata.get_typed_state(intended_type=...)`, which deserializes
+  the entity's persisted state and reconstructs dataclasses and
+  `from_json()`-capable types. The existing `get_state()` is unchanged: with no
+  argument it returns the raw serialized JSON payload, and `get_state(some_type)`
+  applies constructor-based coercion (`some_type(raw)`).
+- Entity runtime state retrieval (`EntityContext.get_state(intended_type=...)` /
+  `DurableEntity.get_state(...)`) now also reconstructs dataclasses and
+  `from_json()`-capable types, in addition to the existing constructor-based
+  coercion.
+
+CHANGED
+
+- Custom objects (dataclasses, `SimpleNamespace`, namedtuples) are now
+  serialized as plain JSON. Decoding such a payload *without* a type hint now
+  yields a plain `dict` (previously a `SimpleNamespace`; a namedtuple now
+  round-trips as a JSON array). To get the original type back, pass the new
+  `return_type` / `data_type` arguments, annotate the consuming function's
+  parameter or return type, or use the typed client accessors. Payloads produced
+  by older SDK versions still deserialize — including into a `SimpleNamespace`
+  when no type is supplied — so in-flight orchestrations continue to replay
+  across an upgrade.
+- JSON serialization failures now raise a `TypeError` that chains the original
+  error (`__cause__`) and names the offending type.
+
+FIXED
+
+- Falsy entity states (`0`, `""`, `[]`, `{}`) are no longer dropped when an
+  entity batch is persisted. Previously a falsy current state was treated as
+  "no state" and written as `None`, effectively deleting it; only an actual
+  `None` state now clears the persisted entity state.
+
+BREAKING CHANGES (type-level only — no runtime impact for typical users)
+
+These changes do not alter runtime behavior, but because the package ships
+`py.typed`, consumers running strict type checkers (pyright/mypy) — or
+subclassing the public abstract types — may need to update their code:
+
+- `OrchestrationContext.call_activity`, `call_sub_orchestrator`, `call_entity`,
+  and `wait_for_external_event` gained new keyword-only parameters
+  (`return_type` / `data_type`). Subclasses overriding these methods should add
+  the parameter to match the base signature.
+- `client.OrchestrationState` gained a non-public `_data_converter` field
+  (excluded from equality and `repr`). Code constructing `OrchestrationState`
+  positionally should pass it via the new field or rely on its default.
 
 ## v1.6.0
 
