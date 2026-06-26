@@ -364,6 +364,20 @@ def test_from_json_coerces_homogeneous_tuple():
     assert result[1] == Address("c", "d")
 
 
+def test_coerce_to_type_fixed_length_tuple_too_long_raises():
+    # A JSON array longer than the fixed-length tuple type must fail fast rather
+    # than silently dropping the trailing element(s).
+    with pytest.raises(TypeError):
+        coerce_to_type([1, 2, 3], tuple[int, int])
+
+
+def test_coerce_to_type_fixed_length_tuple_too_short_raises():
+    # A JSON array shorter than the fixed-length tuple type must fail fast rather
+    # than silently producing a short tuple.
+    with pytest.raises(TypeError):
+        coerce_to_type([1], tuple[int, int])
+
+
 # ----- coerce_to_type -----
 
 

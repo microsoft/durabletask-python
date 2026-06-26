@@ -417,10 +417,13 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
         if len(args) == 2 and args[1] is Ellipsis:
             return tuple(_coerce_to_type(item, args[0], converter) for item in cast(list[Any], value))
         # Fixed-length ``tuple[T1, T2, ...]`` -- coerce element-wise by position.
-        return tuple(
-            _coerce_to_type(item, t, converter)
-            for item, t in zip(cast(list[Any], value), args)
-        )
+        arr = cast(list[Any], value)
+        if len(arr) != len(args):
+            raise TypeError(
+                f"Could not coerce JSON array of length {len(arr)} to "
+                f"tuple of length {len(args)}"
+            )
+        return tuple(_coerce_to_type(item, t, converter) for item, t in zip(arr, args))
     # Other generics are returned as parsed JSON.
     return value
 

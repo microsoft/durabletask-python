@@ -69,6 +69,14 @@ CHANGED
   across an upgrade.
 - JSON serialization failures now raise a `TypeError` that chains the original
   error (`__cause__`) and names the offending type.
+- `EntityContext.get_state()` / `DurableEntity.get_state()` now return a freshly
+  reconstructed value on every call rather than a reference to a single cached
+  object. As a result, mutating a value returned by `get_state()` in place no
+  longer affects the persisted entity state — write the change back with
+  `set_state()` to persist it. The entity's state is also serialized eagerly at
+  `set_state()` time, so a value that cannot be serialized surfaces the error
+  inside the failing operation (which rolls back) instead of after the batch has
+  run.
 
 FIXED
 

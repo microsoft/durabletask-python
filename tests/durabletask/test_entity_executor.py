@@ -269,14 +269,14 @@ class TestStateShimDeferredDeserialization:
         state = StateShim(None, is_serialized=True)
         assert state.encode_state() is None
 
-    def test_commit_preserves_serialized_flag(self):
+    def test_commit_preserves_unmodified_payload(self):
         state = StateShim('{"value": 7}', is_serialized=True)
         state.commit()
         # After commit, the (unmodified) state still round-trips without
         # double-encoding.
         assert state.encode_state() == '{"value": 7}'
 
-    def test_rollback_restores_serialized_flag(self):
+    def test_rollback_restores_unmodified_payload(self):
         state = StateShim('{"value": 7}', is_serialized=True)
         state.commit()
         state.set_state({"value": 99})
