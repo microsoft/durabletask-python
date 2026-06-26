@@ -10,7 +10,7 @@ an explicit type.
 
 Discovery is intentionally conservative: it only returns an annotation when the
 active :class:`~durabletask.serialization.DataConverter` reports it as
-*reconstructable* via :meth:`DataConverter.is_reconstructable`. The default
+*reconstructable* via :meth:`DataConverter.can_reconstruct`. The default
 converter recognizes dataclasses, ``from_json()``-capable types, and ``Optional``
 / ``list`` hints wrapping them; a custom converter can recognize its own types
 (e.g. ``pydantic.BaseModel``). Primitive and unknown annotations resolve to

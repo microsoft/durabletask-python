@@ -61,6 +61,18 @@ class PydanticDataConverter(DataConverter):
     (with full validation) via ``model_validate_json()`` / ``model_validate()``
     whenever the SDK supplies the model type. Every other value falls through to
     the default :class:`JsonDataConverter`.
+
+    > [!NOTE]
+    > For simplicity this converter only intercepts when a pydantic model is the
+    > *top-level* ``target_type``. A model nested **inside another model** (like
+    > ``Order.items: list[OrderItem]`` below) round-trips fine because pydantic
+    > handles that recursion itself. But a model nested in a *top-level generic*
+    > the SDK is asked to rebuild directly -- e.g. ``return_type=list[OrderItem]``
+    > or an input annotated ``dict[str, OrderItem]`` -- is **not** intercepted
+    > here; it falls to the default codec, which cannot construct a pydantic
+    > model from a positional ``dict`` and so leaves the elements as raw dicts. A
+    > production converter would recurse into such generics (for example via
+    > ``pydantic.TypeAdapter``); this example keeps the surface minimal.
     """
 
     def __init__(self) -> None:

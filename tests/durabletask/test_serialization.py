@@ -488,6 +488,27 @@ def test_coerce_to_type_without_converter_calls_single_arg_hook():
     assert result == Widget("gear", 5)
 
 
+def test_from_json_hook_unrelated_second_param_is_not_treated_as_converter():
+    # A ``from_json`` whose second parameter is *not* named ``converter`` (here a
+    # ``strict`` flag with a default) must not be mistaken for a converter-aware
+    # hook -- otherwise the DataConverter would be bound to ``strict``.
+    from durabletask.serialization import JsonDataConverter
+
+    @dataclass
+    class Flagged:
+        label: str
+
+        @classmethod
+        def from_json(cls, value, strict=False):
+            # If the converter were passed here, ``strict`` would be truthy.
+            assert strict is False
+            return cls(value["label"])
+
+    conv = JsonDataConverter()
+    result = conv.deserialize('{"label": "ok"}', Flagged)
+    assert result == Flagged("ok")
+
+
 # ----- forward-reference resolution (Python 3.10 get_type_hints parity) -----
 #
 # On Python 3.10, ``typing.get_type_hints`` does not deep-resolve forward

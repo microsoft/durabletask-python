@@ -403,7 +403,12 @@ def _invoke_from_json(hook: Any, value: Any, converter: DataConverter | None) ->
     > ``from_json`` must be a ``@classmethod`` or ``@staticmethod`` -- the hook
     > is resolved off the *type* (no instance exists yet during reconstruction).
     > A plain instance method would have ``self`` consume the value and is
-    > unsupported regardless of the converter-arity detection below.
+    > unsupported regardless of the converter detection below.
+    >
+    > The converter is passed positionally as the second argument, so a hook
+    > opts in only by naming that parameter exactly ``converter``. This reserved
+    > name avoids misreading an unrelated second parameter (e.g.
+    > ``from_json(cls, value, strict=False)``) as converter-aware.
     """
     if converter is not None and _hook_accepts_converter(hook):
         return hook(value, converter)
@@ -412,26 +417,27 @@ def _invoke_from_json(hook: Any, value: Any, converter: DataConverter | None) ->
 
 @functools.lru_cache(maxsize=2048)
 def _hook_accepts_converter(hook: Any) -> bool:
-    """Return True if a bound ``from_json`` hook can accept a second argument.
+    """Return True if a bound ``from_json`` hook opts in to receiving the converter.
 
     The hook is inspected as accessed off the type (``cls``/``self`` already
     bound), so a classmethod ``from_json(cls, value, converter)`` presents as
-    ``(value, converter)``. Results are cached because reconstruction runs on
-    hot paths; bound classmethods hash equal across attribute accesses, so the
-    cache stays effective and bounded.
+    ``(value, converter)``. A hook is treated as converter-aware only when its
+    second positional parameter is named exactly ``converter`` -- the reserved
+    name for this argument -- so an unrelated second parameter such as
+    ``strict=False`` is not mistaken for it. Results are cached because
+    reconstruction runs on hot paths; bound classmethods hash equal across
+    attribute accesses, so the cache stays effective and bounded.
     """
     try:
         sig = inspect.signature(hook)
     except (TypeError, ValueError):
         return False
-    positional = 0
-    for param in sig.parameters.values():
+    positional = [
+        param for param in sig.parameters.values()
         if param.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                          inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            positional += 1
-        elif param.kind is inspect.Parameter.VAR_POSITIONAL:
-            return True
-    return positional >= 2
+                          inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    return len(positional) >= 2 and positional[1].name == "converter"
 
 
 def _coerce_generic(value: Any, expected_type: Any, origin: Any,

@@ -48,8 +48,18 @@ A `DataConverter` implements three methods:
 The converter in [src/converter.py](src/converter.py) recognizes
 `pydantic.BaseModel` subclasses and uses pydantic for them, **delegating
 everything else** to the default `JsonDataConverter`. This "handle my types,
-delegate the rest" shape is the recommended pattern for a real converter — it
+delegate the rest" shape is a good starting point for a real converter — it
 costs nothing for non-pydantic payloads.
+
+> [!NOTE]
+> To stay focused on the seam, this example only intercepts when a model is the
+> *top-level* type. A model nested inside another model (like `Order.items`)
+> round-trips because pydantic recurses on its own, but a model nested in a
+> *top-level generic* the SDK rebuilds directly — e.g. `return_type=list[OrderItem]`
+> or an input annotated `dict[str, OrderItem]` — is not intercepted and falls to
+> the default codec, which leaves the elements as raw dicts. A production
+> converter would recurse into such generics (for example via
+> `pydantic.TypeAdapter`).
 
 ## Inbound inputs: `can_reconstruct`
 
