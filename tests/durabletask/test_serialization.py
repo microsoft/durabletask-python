@@ -298,3 +298,121 @@ def test_coerce_genuine_union_leaves_unmatched_value_untouched():
     # not force-coerced into the first union member.
     value = {"z": 1}
     assert json_codec.coerce_to_type(value, Union[A, B]) == {"z": 1}
+
+
+# ----- nested to_json hooks via shallow encode -----
+
+
+@dataclass
+class Container:
+    """A plain dataclass (no hooks) holding a hook-using child."""
+
+    name: str
+    widget: Widget
+
+
+def test_to_json_plain_dataclass_recurses_into_child_hook():
+    # The container has no to_json; the nested Widget must still serialize via
+    # its own hook (not be flattened by a deep asdict that ignores hooks).
+    encoded = json_codec.to_json(Container("c", Widget("gear", 5)))
+    assert json.loads(encoded) == {"name": "c", "widget": {"label": "gear", "size": 5}}
+
+
+def test_to_json_list_of_hooked_children_uses_hooks():
+    encoded = json_codec.to_json([Widget("a", 1), Widget("b", 2)])
+    assert json.loads(encoded) == [{"label": "a", "size": 1}, {"label": "b", "size": 2}]
+
+
+def test_round_trip_plain_dataclass_with_hooked_child():
+    original = Container("c", Widget("gear", 5))
+    restored = json_codec.from_json(json_codec.to_json(original), Container)
+    assert isinstance(restored, Container)
+    assert restored.widget == Widget("gear", 5)
+
+
+# ----- converter-aware from_json hooks -----
+
+
+@dataclass
+class Leaf:
+    """Child whose ``value`` is encoded as a string, requiring its own hook."""
+
+    value: int
+
+    def to_json(self) -> dict:
+        return {"value": str(self.value)}
+
+    @classmethod
+    def from_json(cls, data: dict) -> "Leaf":
+        return cls(int(data["value"]))
+
+
+class Branch:
+    """Parent with its own hook that reconstructs a nested ``Leaf`` via the converter."""
+
+    def __init__(self, tag: str, leaf: Leaf):
+        self.tag = tag
+        self.leaf = leaf
+
+    def to_json(self) -> dict:
+        return {"tag": self.tag, "leaf": self.leaf}
+
+    @classmethod
+    def from_json(cls, data: dict, converter) -> "Branch":
+        return cls(data["tag"], converter.coerce(data["leaf"], Leaf))
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, Branch)
+                and other.tag == self.tag and other.leaf == self.leaf)
+
+
+def test_converter_aware_from_json_reconstructs_nested_child():
+    from durabletask.serialization import JsonDataConverter
+
+    original = Branch("root", Leaf(7))
+    converter = JsonDataConverter()
+    encoded = converter.serialize(original)
+    # The nested Leaf is encoded via its own hook.
+    assert json.loads(encoded) == {"tag": "root", "leaf": {"value": "7"}}
+
+    restored = converter.deserialize(encoded, Branch)
+    assert isinstance(restored, Branch)
+    assert isinstance(restored.leaf, Leaf)
+    assert restored == Branch("root", Leaf(7))
+
+
+def test_converter_aware_from_json_resolves_default_converter_when_none():
+    # Calling json_codec directly (no converter threaded) must still supply one
+    # to a converter-aware hook via the lazy default.
+    encoded = json_codec.to_json(Branch("root", Leaf(3)))
+    restored = json_codec.from_json(encoded, Branch)
+    assert restored == Branch("root", Leaf(3))
+
+
+def test_one_arg_from_json_hook_still_supported():
+    # A legacy single-parameter from_json hook continues to work unchanged.
+    encoded = json_codec.to_json(Widget("gear", 5))
+    assert json_codec.from_json(encoded, Widget) == Widget("gear", 5)
+
+
+# ----- Any handling -----
+
+
+def test_coerce_any_returns_value_unchanged():
+    from typing import Any as TAny
+    value = {"anything": [1, 2, 3]}
+    assert json_codec.coerce_to_type(value, TAny) is value
+
+
+def test_coerce_optional_any_field_does_not_raise():
+    from typing import Any as TAny
+
+    @dataclass
+    class HasAny:
+        name: str
+        payload: TAny | None = None
+
+    result = json_codec.from_json(
+        json_codec.to_json(HasAny("x", {"k": "v"})), HasAny)
+    assert isinstance(result, HasAny)
+    assert result.payload == {"k": "v"}

@@ -108,7 +108,7 @@ class TestScheduleConfiguration:
             ScheduleCreationOptions(schedule_id="s1", orchestration_name="orch",
                                     interval=timedelta(seconds=5),
                                     start_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
-        restored = ScheduleConfiguration.from_dict(shared.from_json(shared.to_json(config.to_dict())))
+        restored = shared.from_json(shared.to_json(config), ScheduleConfiguration)
         assert restored.schedule_id == "s1"
         assert restored.interval == timedelta(seconds=5)
         assert restored.start_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -123,9 +123,12 @@ class TestScheduleState:
             ScheduleCreationOptions(schedule_id="s1", orchestration_name="orch",
                                     interval=timedelta(seconds=5)))
 
-        restored = ScheduleState.from_dict(shared.from_json(shared.to_json(state.to_dict())))
+        # The nested ``ScheduleConfiguration`` round-trips automatically.
+        restored = shared.from_json(shared.to_json(state), ScheduleState)
         assert restored.status == ScheduleStatus.ACTIVE
         assert restored.schedule_created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert restored.schedule_configuration is not None
+        assert restored.schedule_configuration.interval == timedelta(seconds=5)
 
         description = restored.to_description()
         assert description.schedule_id == "s1"

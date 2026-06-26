@@ -2,13 +2,10 @@
 # Licensed under the MIT License.
 
 import logging
-from dataclasses import asdict
-from typing import Any
 
 from durabletask.client import (EntityQuery, OrchestrationStatus,
                                 TaskHubGrpcClient)
 from durabletask.entities import EntityInstanceId
-from durabletask.internal import shared
 from durabletask.scheduled import transitions
 from durabletask.scheduled.exceptions import ScheduleNotFoundError
 from durabletask.scheduled.models import (ScheduleCreationOptions,
@@ -20,20 +17,6 @@ from durabletask.scheduled.schedule_entity import (DELETE_OPERATION,
                                                    ENTITY_NAME)
 
 logger = logging.getLogger("durabletask.scheduled")
-
-
-def _parse_state(serialized_state: Any) -> ScheduleState | None:
-    if serialized_state is None:
-        return None
-    data = serialized_state
-    if isinstance(data, str):
-        if not data.strip():
-            # A deleted (or never-initialized) entity reports empty state.
-            return None
-        data = shared.from_json(data)
-    if isinstance(data, dict):
-        return ScheduleState.from_dict(data)
-    return None
 
 
 class ScheduleClient:
@@ -53,14 +36,14 @@ class ScheduleClient:
         """Gets the ID of this schedule."""
         return self._schedule_id
 
-    def _run_operation(self, operation_name: str, input: Any | None = None) -> None:
+    def _run_operation(self, operation_name: str, input: object | None = None) -> None:
         request = ScheduleOperationRequest(
             entity_id=str(self._entity_id),
             operation_name=operation_name,
             input=input,
         )
         instance_id = self._client.schedule_new_orchestration(
-            execute_schedule_operation_orchestrator, input=asdict(request))
+            execute_schedule_operation_orchestrator, input=request)
         state = self._client.wait_for_orchestration_completion(
             instance_id, timeout=self._operation_timeout)
         if state is None or state.runtime_status != OrchestrationStatus.COMPLETED:
@@ -71,11 +54,11 @@ class ScheduleClient:
 
     def create(self, options: ScheduleCreationOptions) -> None:
         """Create or update this schedule with the given configuration."""
-        self._run_operation(transitions.CREATE_SCHEDULE, options.to_json())
+        self._run_operation(transitions.CREATE_SCHEDULE, options)
 
     def update(self, options: ScheduleUpdateOptions) -> None:
         """Update this schedule's configuration."""
-        self._run_operation(transitions.UPDATE_SCHEDULE, options.to_json())
+        self._run_operation(transitions.UPDATE_SCHEDULE, options)
 
     def pause(self) -> None:
         """Pause this schedule."""
@@ -94,7 +77,7 @@ class ScheduleClient:
         metadata = self._client.get_entity(self._entity_id, include_state=True)
         if metadata is None:
             raise ScheduleNotFoundError(self._schedule_id)
-        state = _parse_state(metadata.get_state())
+        state = metadata.get_typed_state(ScheduleState)
         if state is None:
             raise ScheduleNotFoundError(self._schedule_id)
         return state.to_description()
@@ -136,7 +119,7 @@ class ScheduledTaskClient:
         )
         results: list[ScheduleDescription] = []
         for metadata in self._client.get_all_entities(query):
-            state = _parse_state(metadata.get_state())
+            state = metadata.get_typed_state(ScheduleState)
             if state is None or state.schedule_configuration is None:
                 continue
             if not self._matches_filter(state, filter):

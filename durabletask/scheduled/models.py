@@ -220,7 +220,7 @@ class ScheduleConfiguration:
         if self.start_at is not None and self.end_at is not None and self.start_at > self.end_at:
             raise ValueError("start_at cannot be later than end_at.")
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         return {
             "schedule_id": self.schedule_id,
             "orchestration_name": self.orchestration_name,
@@ -232,9 +232,9 @@ class ScheduleConfiguration:
             "start_immediately_if_late": self.start_immediately_if_late,
         }
 
-    @staticmethod
-    def from_dict(data: dict[str, Any]) -> "ScheduleConfiguration":
-        config = ScheduleConfiguration(
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "ScheduleConfiguration":
+        config = cls(
             data["schedule_id"],
             data["orchestration_name"],
             timedelta(seconds=data["interval_seconds"]),
@@ -262,7 +262,10 @@ class ScheduleState:
     def refresh_execution_token(self):
         self.execution_token = _new_token()
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
+        # ``schedule_configuration`` is returned as the object itself; the
+        # serializer recurses into it and fires its own ``to_json`` hook. Only
+        # this type's non-JSON-native leaves (datetimes) are converted here.
         return {
             "status": self.status.value,
             "execution_token": self.execution_token,
@@ -270,21 +273,24 @@ class ScheduleState:
             "next_run_at": _to_iso(self.next_run_at),
             "schedule_created_at": _to_iso(self.schedule_created_at),
             "schedule_last_modified_at": _to_iso(self.schedule_last_modified_at),
-            "schedule_configuration":
-                self.schedule_configuration.to_dict() if self.schedule_configuration else None,
+            "schedule_configuration": self.schedule_configuration,
         }
 
-    @staticmethod
-    def from_dict(data: dict[str, Any]) -> "ScheduleState":
-        state = ScheduleState()
+    @classmethod
+    def from_json(cls, data: dict[str, Any], converter: Any) -> "ScheduleState":
+        # The nested configuration is reconstructed through the converter, which
+        # routes it to ``ScheduleConfiguration``'s own ``from_json`` hook (and
+        # honors a custom converter). Only this type's datetime leaves are
+        # rebuilt by hand.
+        state = cls()
         state.status = ScheduleStatus(data["status"])
         state.execution_token = data["execution_token"]
         state.last_run_at = _from_iso(data.get("last_run_at"))
         state.next_run_at = _from_iso(data.get("next_run_at"))
         state.schedule_created_at = _from_iso(data.get("schedule_created_at"))
         state.schedule_last_modified_at = _from_iso(data.get("schedule_last_modified_at"))
-        config_data = data.get("schedule_configuration")
-        state.schedule_configuration = ScheduleConfiguration.from_dict(config_data) if config_data else None
+        state.schedule_configuration = converter.coerce(
+            data.get("schedule_configuration"), ScheduleConfiguration)
         return state
 
     def to_description(self) -> ScheduleDescription:

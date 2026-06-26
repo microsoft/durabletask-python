@@ -36,6 +36,13 @@ class Harness:
         encoded = shared.to_json(input) if input is not None else None
         result = self.executor.execute("orch-1", self.entity_id, operation, self.state, encoded)
         self.state.commit()
+        # Mimic the wire round-trip: the worker serializes the entity state at
+        # the end of each batch, and the next batch receives it as deserialized
+        # JSON (a plain dict). This exercises the state ``to_json``/``from_json``
+        # hooks between operations and keeps assertions dict-based.
+        current = self.state._current_state  # pyright: ignore[reportPrivateUsage]
+        if current is not None:
+            self.state._current_state = shared.from_json(shared.to_json(current))  # pyright: ignore[reportPrivateUsage]
         actions = self.state.get_operation_actions()[before:]
         return result, actions
 

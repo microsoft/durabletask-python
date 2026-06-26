@@ -14,6 +14,7 @@ also used directly by entity state accessors that already hold a parsed value.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import types
 import typing
@@ -47,7 +48,8 @@ def to_json(obj: Any) -> str:
         ) from e
 
 
-def from_json(json_str: str | bytes | bytearray, expected_type: type | None = None) -> Any:
+def from_json(json_str: str | bytes | bytearray, expected_type: type | None = None,
+              converter: Any | None = None) -> Any:
     """Deserialize a JSON string, optionally coercing the result to a type.
 
     When ``expected_type`` is ``None`` (the default) the raw parsed JSON is
@@ -62,11 +64,15 @@ def from_json(json_str: str | bytes | bytearray, expected_type: type | None = No
     classmethod are reconstructed via that hook, and ``Optional``/``Union`` and
     ``list`` type hints are honored recursively. The destination type is always
     supplied by the caller; it is never read from the payload.
+
+    ``converter`` is the active :class:`~durabletask.serialization.DataConverter`.
+    It is forwarded to ``from_json`` hooks that opt in (see :func:`coerce_to_type`)
+    so they can reconstruct nested typed values via ``converter.coerce(...)``.
     """
     if expected_type is None:
         return json.loads(json_str, object_hook=_legacy_object_hook)
     raw = json.loads(json_str, object_hook=_strip_legacy_marker)
-    return coerce_to_type(raw, expected_type)
+    return coerce_to_type(raw, expected_type, converter)
 
 
 def _encode_custom_object(o: Any) -> Any:
@@ -92,7 +98,13 @@ def _encode_custom_object(o: Any) -> Any:
     if callable(to_json_hook):
         return to_json_hook(o)
     if dataclasses.is_dataclass(o) and not isinstance(o, type):
-        return dataclasses.asdict(o)
+        # Shallow-convert to a dict whose *values are the original field objects*
+        # (unlike ``dataclasses.asdict``, which deep-recurses and would convert a
+        # nested dataclass via ``asdict`` -- bypassing that child's ``to_json``
+        # hook). ``json.dumps`` then recurses into each value and re-enters this
+        # hook for any nested custom object, so nested ``to_json`` hooks fire at
+        # every depth (including inside lists/dicts).
+        return {f.name: getattr(o, f.name) for f in dataclasses.fields(o)}
     if isinstance(o, SimpleNamespace):
         return vars(o)
     # This will raise a TypeError describing the unsupported type.
@@ -112,20 +124,31 @@ def _strip_legacy_marker(d: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
-def coerce_to_type(value: Any, expected_type: Any) -> Any:
+def coerce_to_type(value: Any, expected_type: Any, converter: Any | None = None) -> Any:
     """Coerce an already-parsed JSON value to ``expected_type``.
 
     Handles ``None``/``Optional``/``Union`` and ``list`` type hints recursively,
     types exposing a ``from_json()`` classmethod, and dataclasses (including
     nested dataclass fields). The destination type is always caller-supplied and
     never derived from the payload, keeping deserialization secure.
+
+    ``converter`` is the active :class:`~durabletask.serialization.DataConverter`.
+    A ``from_json`` hook may opt in to receiving it (by accepting a second
+    positional parameter) and delegate nested reconstruction back to the
+    converter, e.g. ``converter.coerce(child, ChildType)``. This keeps hooks free
+    of manual nested deserialization and routes children through the same policy.
     """
     if expected_type is None or value is None:
         return value
 
+    # ``Any`` imposes no constraint -- and ``isinstance(x, Any)`` raises -- so
+    # short-circuit before any type inspection below.
+    if expected_type is typing.Any:
+        return value
+
     origin = typing.get_origin(expected_type)
     if origin is not None:
-        return _coerce_generic(value, expected_type, origin)
+        return _coerce_generic(value, expected_type, origin, converter)
 
     if not isinstance(expected_type, type):
         # Not a concrete, instantiable type (e.g. a typing special form we don't
@@ -137,10 +160,10 @@ def coerce_to_type(value: Any, expected_type: Any) -> Any:
 
     from_json_hook = getattr(expected_type, "from_json", None)
     if callable(from_json_hook):
-        return from_json_hook(value)
+        return _invoke_from_json(from_json_hook, value, converter)
 
     if dataclasses.is_dataclass(expected_type) and isinstance(value, dict):
-        return _build_dataclass(expected_type, cast(dict[str, Any], value))
+        return _build_dataclass(expected_type, cast(dict[str, Any], value), converter)
 
     type_ctor = cast(Any, expected_type)
     try:
@@ -153,12 +176,52 @@ def coerce_to_type(value: Any, expected_type: Any) -> Any:
         ) from e
 
 
-def _coerce_generic(value: Any, expected_type: Any, origin: Any) -> Any:
+def _invoke_from_json(from_json_hook: Any, value: Any, converter: Any | None) -> Any:
+    """Invoke a ``from_json`` hook, passing the converter if the hook accepts it.
+
+    Hooks may be declared as ``from_json(cls, value)`` (the original contract) or
+    ``from_json(cls, value, converter)`` to opt into managed nested
+    reconstruction. Arity is detected from the bound hook's signature, so the
+    extra parameter is fully backwards compatible. When a converter-aware hook is
+    found but no converter was threaded (e.g. a direct ``json_codec`` call), the
+    shared default converter is resolved lazily so the hook always receives one.
+    """
+    wants_converter = False
+    try:
+        params = [
+            p for p in inspect.signature(from_json_hook).parameters.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                          inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        wants_converter = len(params) >= 2
+    except (TypeError, ValueError):
+        wants_converter = False
+
+    if wants_converter:
+        if converter is None:
+            converter = _default_converter()
+        return from_json_hook(value, converter)
+    return from_json_hook(value)
+
+
+def _default_converter() -> Any:
+    # Lazy import to avoid a load-time cycle: ``serialization`` imports this
+    # module at import time, but by the time a hook actually runs both modules
+    # are fully initialized.
+    from durabletask.serialization import DEFAULT_DATA_CONVERTER
+    return DEFAULT_DATA_CONVERTER
+
+
+def _coerce_generic(value: Any, expected_type: Any, origin: Any, converter: Any | None = None) -> Any:
     args = typing.get_args(expected_type)
     if origin is typing.Union or origin is types.UnionType:
         # If the value already matches a member type, keep it as-is.
         non_none = [a for a in args if a is not type(None)]
         for arg in non_none:
+            # An ``Any`` member imposes no constraint (and ``isinstance(x, Any)``
+            # raises), so the value is acceptable as-is.
+            if arg is typing.Any:
+                return value
             if isinstance(arg, type) and isinstance(value, arg):
                 return value
         # ``Optional[T]`` (exactly one non-None member): coerce to that member.
@@ -166,16 +229,16 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any) -> Any:
         # the members, leave it untouched rather than guessing the first arg --
         # forcing a coercion there can silently mis-construct the wrong type.
         if len(non_none) == 1:
-            return coerce_to_type(value, non_none[0])
+            return coerce_to_type(value, non_none[0], converter)
         return value
     if origin in (list, Sequence) and isinstance(value, list):
         elem_type = args[0] if args else None
-        return [coerce_to_type(item, elem_type) for item in cast(list[Any], value)]
+        return [coerce_to_type(item, elem_type, converter) for item in cast(list[Any], value)]
     # Other generics (dict, tuple, ...) are returned as parsed JSON.
     return value
 
 
-def _build_dataclass(cls: Any, data: dict[str, Any]) -> Any:
+def _build_dataclass(cls: Any, data: dict[str, Any], converter: Any | None = None) -> Any:
     """Construct a dataclass from its dict payload, recursing into typed fields."""
     try:
         hints = typing.get_type_hints(cls)
@@ -186,5 +249,5 @@ def _build_dataclass(cls: Any, data: dict[str, Any]) -> Any:
         if field.name not in data:
             continue
         field_type = hints.get(field.name)
-        kwargs[field.name] = coerce_to_type(data[field.name], field_type)
+        kwargs[field.name] = coerce_to_type(data[field.name], field_type, converter)
     return cls(**kwargs)

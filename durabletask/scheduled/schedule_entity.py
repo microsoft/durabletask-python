@@ -3,7 +3,6 @@
 
 import logging
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from typing import Any
 
 from durabletask.entities import DurableEntity, EntityInstanceId
@@ -44,17 +43,14 @@ class Schedule(DurableEntity):
     """
 
     def _load_state(self) -> ScheduleState:
-        raw = self.get_state()
-        if raw is None:
-            return ScheduleState()
-        if isinstance(raw, SimpleNamespace):
-            raw = vars(raw)
-        if isinstance(raw, dict):
-            return ScheduleState.from_dict(raw)
-        raise TypeError(f"Unexpected schedule state type: {type(raw).__name__}")
+        # The serializer reconstructs the persisted ``ScheduleState`` via its
+        # ``from_json`` hook; a missing/uninitialized entity yields a fresh one.
+        return self.get_state(ScheduleState, ScheduleState())
 
     def _save_state(self, state: ScheduleState) -> None:
-        self.set_state(state.to_dict())
+        # Store the object as-is; the serializer persists it via its ``to_json``
+        # hook when the entity batch is committed.
+        self.set_state(state)
 
     def _entity_id(self, schedule_id: str) -> EntityInstanceId:
         return EntityInstanceId(ENTITY_NAME, schedule_id)
@@ -212,10 +208,6 @@ class Schedule(DurableEntity):
             state.execution_token,
             signal_time=state.next_run_at,
         )
-
-    def delete(self, _: Any = None) -> None:
-        """Delete the schedule entity."""
-        self.set_state(None)
 
     def _start_orchestration(self, config: ScheduleConfiguration, scheduled_run_time: datetime) -> None:
         instance_id = config.orchestration_instance_id

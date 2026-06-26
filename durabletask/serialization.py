@@ -107,7 +107,7 @@ class JsonDataConverter(DataConverter):
         if target_type is None:
             return json_codec.from_json(data)
         try:
-            return json_codec.from_json(data, target_type)
+            return json_codec.from_json(data, target_type, converter=self)
         except Exception as e:
             # Best-effort: fall back to the raw deserialized value rather than
             # failing the operation. Logged so the mismatch remains discoverable.
@@ -118,7 +118,7 @@ class JsonDataConverter(DataConverter):
         if target_type is None or value is None:
             return value
         try:
-            return json_codec.coerce_to_type(value, target_type)
+            return json_codec.coerce_to_type(value, target_type, converter=self)
         except Exception as e:
             self._log_coercion_fallback(target_type, e)
             return value

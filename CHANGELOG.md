@@ -27,7 +27,12 @@ ADDED
   custom status, entity state) routes through it. The default
   `JsonDataConverter` preserves existing behavior, so a custom converter (for
   example one backed by pydantic) is opt-in. Custom objects can opt in via a
-  `to_json()` hook and a `from_json(value)` classmethod.
+  `to_json()` hook and a `from_json(value)` classmethod. Objects that contain
+  other hook-using objects round-trip automatically: nested `to_json()` hooks
+  fire at any depth during serialization, and a `from_json` hook may declare an
+  optional second parameter (`from_json(cls, value, converter)`) to reconstruct
+  nested typed values via `converter.coerce(child, ChildType)` instead of by
+  hand.
 - `OrchestrationContext.call_activity`, `call_sub_orchestrator`, and
   `call_entity` accept an optional `return_type`, and `wait_for_external_event`
   accepts an optional `data_type`. When provided, the result/event payload is
