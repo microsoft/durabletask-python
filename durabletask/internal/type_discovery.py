@@ -88,7 +88,7 @@ def _input_annotation(fn: Callable[..., Any], position: int,
 
     if annotation is inspect.Parameter.empty or annotation is Any:
         return None
-    return annotation if _resolve_converter(converter).is_reconstructable(annotation) else None
+    return annotation if _resolve_converter(converter).can_reconstruct(annotation) else None
 
 
 def orchestrator_input_type(fn: Callable[..., Any],
@@ -129,7 +129,7 @@ def activity_output_type(fn: Any, converter: DataConverter | None = None) -> Any
 
     if annotation is inspect.Signature.empty or annotation is Any or annotation is None:
         return None
-    return annotation if _resolve_converter(converter).is_reconstructable(annotation) else None
+    return annotation if _resolve_converter(converter).can_reconstruct(annotation) else None
 
 
 def entity_input_type(fn: Any, operation: str,

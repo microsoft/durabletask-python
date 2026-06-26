@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from durabletask import task, worker
+from durabletask.serialization import JsonDataConverter
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
@@ -53,5 +54,5 @@ def test_activity_not_registered():
 def _get_activity_executor(fn: task.Activity) -> tuple[worker._ActivityExecutor, str]:
     registry = worker._Registry()
     name = registry.add_activity(fn)
-    executor = worker._ActivityExecutor(registry, TEST_LOGGER)
+    executor = worker._ActivityExecutor(registry, TEST_LOGGER, JsonDataConverter())
     return executor, name

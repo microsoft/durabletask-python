@@ -51,28 +51,29 @@ everything else** to the default `JsonDataConverter`. This "handle my types,
 delegate the rest" shape is the recommended pattern for a real converter — it
 costs nothing for non-pydantic payloads.
 
-## Inbound inputs: `is_reconstructable`
+## Inbound inputs: `can_reconstruct`
 
 There is one extra detail for reconstructing **inbound** orchestrator/activity
 *inputs*. Before the SDK hands an input to your converter, it asks the converter
 whether the function's annotated input type is something it can rebuild, via
-`DataConverter.is_reconstructable(target_type)`. The default implementation
+`DataConverter.can_reconstruct(target_type)`. The default implementation
 recognizes dataclasses and `from_json()`-capable types (and `Optional` / `list`
 wrappers) — it does **not** know about pydantic models, so without an override an
 input annotated `order: Order` would arrive as a plain `dict`.
 
-The converter overrides `is_reconstructable` to also recognize
-`pydantic.BaseModel` subclasses:
+The converter overrides `can_reconstruct` to also recognize
+`pydantic.BaseModel` subclasses, deferring everything else to the same
+`JsonDataConverter` fallback it uses for serialization:
 
 ```python
-def is_reconstructable(self, target_type):
+def can_reconstruct(self, target_type):
     if _is_model_type(target_type):
         return True
-    return super().is_reconstructable(target_type)  # keep the defaults
+    return self._fallback.can_reconstruct(target_type)  # dataclasses, from_json, ...
 ```
 
-Because the base implementation recurses through `self.is_reconstructable`,
-`list[OrderItem]` and `Optional[Order]` are recognized too. Outbound values,
+The base `DataConverter.can_reconstruct` is conservative — it returns `False`,
+so a converter only claims the types it actually rebuilds. Outbound values,
 `return_type=` arguments, and typed client accessors (`state.get_output(Receipt)`)
 don't depend on this hook — they pass the type to the converter directly.
 

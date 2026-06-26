@@ -37,7 +37,7 @@ class Money:
         return cls(data["amount"])
 
 
-# ----- DataConverter.is_reconstructable -----
+# ----- DataConverter.can_reconstruct -----
 
 
 class TestIsReconstructable:
@@ -49,24 +49,24 @@ class TestIsReconstructable:
         return JsonDataConverter()
 
     def test_dataclass_is_reconstructable(self):
-        assert self.conv.is_reconstructable(Order) is True
+        assert self.conv.can_reconstruct(Order) is True
 
     def test_from_json_type_is_reconstructable(self):
-        assert self.conv.is_reconstructable(Money) is True
+        assert self.conv.can_reconstruct(Money) is True
 
     def test_builtins_are_not_reconstructable(self):
-        assert self.conv.is_reconstructable(int) is False
-        assert self.conv.is_reconstructable(str) is False
-        assert self.conv.is_reconstructable(dict) is False
+        assert self.conv.can_reconstruct(int) is False
+        assert self.conv.can_reconstruct(str) is False
+        assert self.conv.can_reconstruct(dict) is False
 
     def test_optional_dataclass_is_reconstructable(self):
-        assert self.conv.is_reconstructable(Optional[Order]) is True
+        assert self.conv.can_reconstruct(Optional[Order]) is True
 
     def test_list_of_dataclass_is_reconstructable(self):
-        assert self.conv.is_reconstructable(list[Order]) is True
+        assert self.conv.can_reconstruct(list[Order]) is True
 
     def test_list_of_builtin_is_not_reconstructable(self):
-        assert self.conv.is_reconstructable(list[int]) is False
+        assert self.conv.can_reconstruct(list[int]) is False
 
 
 class TestCustomConverterReconstructable:
@@ -78,29 +78,29 @@ class TestCustomConverterReconstructable:
             pass
 
         class WidgetConverter(JsonDataConverter):
-            def is_reconstructable(self, target_type: Any) -> bool:
+            def can_reconstruct(self, target_type: Any) -> bool:
                 if isinstance(target_type, type) and issubclass(target_type, Widget):
                     return True
-                return super().is_reconstructable(target_type)
+                return super().can_reconstruct(target_type)
 
         conv = WidgetConverter()
-        assert conv.is_reconstructable(Widget) is True
+        assert conv.can_reconstruct(Widget) is True
         # The base Optional/list recursion goes through ``self``, so the override
         # is consulted for the element type.
-        assert conv.is_reconstructable(list[Widget]) is True
-        assert conv.is_reconstructable(Optional[Widget]) is True
+        assert conv.can_reconstruct(list[Widget]) is True
+        assert conv.can_reconstruct(Optional[Widget]) is True
         # Builtins remain excluded.
-        assert conv.is_reconstructable(int) is False
+        assert conv.can_reconstruct(int) is False
 
     def test_discovery_uses_supplied_converter(self):
         class Widget:
             pass
 
         class WidgetConverter(JsonDataConverter):
-            def is_reconstructable(self, target_type: Any) -> bool:
+            def can_reconstruct(self, target_type: Any) -> bool:
                 if isinstance(target_type, type) and issubclass(target_type, Widget):
                     return True
-                return super().is_reconstructable(target_type)
+                return super().can_reconstruct(target_type)
 
         def act(ctx, w: Widget):
             ...
@@ -205,7 +205,7 @@ class TestActivityOutputTypeDiscovery:
 def _activity_executor(fn) -> tuple[worker._ActivityExecutor, str]:
     registry = worker._Registry()
     name = registry.add_activity(fn)
-    return worker._ActivityExecutor(registry, TEST_LOGGER), name
+    return worker._ActivityExecutor(registry, TEST_LOGGER, JsonDataConverter()), name
 
 
 def test_activity_input_coerced_to_dataclass():
@@ -277,7 +277,7 @@ def test_function_entity_input_coerced_to_dataclass():
 
     registry = worker._Registry()
     registry.add_entity(store)
-    executor = worker._EntityExecutor(registry, TEST_LOGGER)
+    executor = worker._EntityExecutor(registry, TEST_LOGGER, JsonDataConverter())
     entity_id = entities.EntityInstanceId("store", "k1")
     state = StateShim(None)
     executor.execute("orch1", entity_id, "save", state, json.dumps({"item": "book", "quantity": 2}))
@@ -295,7 +295,7 @@ def test_class_entity_input_coerced_per_operation():
 
     registry = worker._Registry()
     registry.add_entity(Store)
-    executor = worker._EntityExecutor(registry, TEST_LOGGER)
+    executor = worker._EntityExecutor(registry, TEST_LOGGER, JsonDataConverter())
     entity_id = entities.EntityInstanceId("store", "k1")
     state = StateShim(None)
     executor.execute("orch1", entity_id, "save", state, json.dumps({"item": "book", "quantity": 2}))

@@ -1420,8 +1420,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def __init__(self,
                  instance_id: str,
                  registry: _Registry,
+                 data_converter: DataConverter,
                  maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
-                 data_converter: DataConverter | None = None,
                  ):
         self._generator = None
         self._is_replaying = True
@@ -1450,7 +1450,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._parent_trace_context: pb.TraceContext | None = None
         self._orchestration_trace_context: pb.TraceContext | None = None
         self._maximum_timer_interval = maximum_timer_interval
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
 
     def run(self, generator: Generator[task.Task[Any], Any, Any]) -> None:
         self._generator = generator
@@ -2050,13 +2050,13 @@ class _OrchestrationExecutor:
         self,
         registry: _Registry,
         logger: logging.Logger,
+        data_converter: DataConverter,
         persisted_orch_span_id: str | None = None,
         maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
-        data_converter: DataConverter | None = None,
     ):
         self._registry = registry
         self._logger = logger
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
         self._maximum_timer_interval = maximum_timer_interval
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
@@ -2834,10 +2834,10 @@ class _OrchestrationExecutor:
 
 class _ActivityExecutor:
     def __init__(self, registry: _Registry, logger: logging.Logger,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter):
         self._registry = registry
         self._logger = logger
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
 
     def execute(
             self,
@@ -2873,10 +2873,10 @@ class _ActivityExecutor:
 
 class _EntityExecutor:
     def __init__(self, registry: _Registry, logger: logging.Logger,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter):
         self._registry = registry
         self._logger = logger
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
         self._entity_method_cache: dict[tuple[type, str], bool] = {}
 
     def execute(

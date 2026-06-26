@@ -46,7 +46,7 @@ ADDED
   `DataConverter` as a second parameter (`from_json(cls, value, converter)`),
   letting it reconstruct nested typed values via `converter.coerce(...)` /
   `converter.deserialize(...)`. The single-argument form remains supported.
-- `DataConverter` now exposes an overridable `is_reconstructable(target_type)`
+- `DataConverter` now exposes an overridable `can_reconstruct(target_type)`
   method that controls which annotated input/return types the SDK reconstructs
   on the inbound path. A custom converter can override it to recognize its own
   types (for example `pydantic.BaseModel` subclasses), so that orchestrator /

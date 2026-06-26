@@ -26,7 +26,7 @@ A converter implements three methods:
 
 It may also override one hook:
 
-* ``is_reconstructable(t)``  -- tells the SDK's inbound type-discovery that an
+* ``can_reconstruct(t)``  -- tells the SDK's inbound type-discovery that an
   *input* annotated with type ``t`` should be handed to ``deserialize`` /
   ``coerce`` (rather than passed through as raw JSON). The default recognizes
   dataclasses and ``from_json()``-capable types; override it to add your own
@@ -92,15 +92,15 @@ class PydanticDataConverter(DataConverter):
             return target_type.model_validate(value)  # type: ignore[union-attr]
         return self._fallback.coerce(value, target_type)
 
-    def is_reconstructable(self, target_type: Any) -> bool:
+    def can_reconstruct(self, target_type: Any) -> bool:
         # Teach the SDK's inbound type-discovery that pydantic models are
         # reconstructable, so an orchestrator/activity input annotated with a
         # model type is rebuilt (and validated) by this converter instead of
-        # arriving as a plain ``dict``. Delegating to ``super()`` keeps the
-        # default behavior (dataclasses, ``from_json`` types, ``Optional`` /
-        # ``list`` wrappers, builtins excluded) for everything else; because the
-        # base recurses through ``self.is_reconstructable``, ``list[OrderItem]``
-        # and ``Optional[Order]`` are recognized too.
+        # arriving as a plain ``dict``. For everything else, defer to the same
+        # ``JsonDataConverter`` fallback this converter uses for serialization,
+        # so its reconstruction claims match what it actually handles
+        # (dataclasses, ``from_json`` types, ``Optional`` / ``list`` wrappers;
+        # builtins excluded).
         if _is_model_type(target_type):
             return True
-        return super().is_reconstructable(target_type)
+        return self._fallback.can_reconstruct(target_type)

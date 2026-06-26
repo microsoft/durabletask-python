@@ -27,7 +27,7 @@ from durabletask import task
 # ---------------------------------------------------------------------------
 # These are plain ``pydantic.BaseModel`` subclasses -- no special hooks. The
 # custom ``PydanticDataConverter`` both serializes them and (because it
-# overrides ``is_reconstructable``) teaches the SDK to reconstruct them for
+# overrides ``can_reconstruct``) teaches the SDK to reconstruct them for
 # inbound orchestrator/activity inputs.
 
 

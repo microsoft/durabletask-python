@@ -101,29 +101,26 @@ class DataConverter(ABC):
         """
         ...
 
-    def is_reconstructable(self, target_type: Any) -> bool:
+    def can_reconstruct(self, target_type: Any) -> bool:
         """Return True if this converter can rebuild ``target_type`` from a payload.
 
         Inbound type-discovery calls this to decide whether a function's
         annotated *input* type (or an activity's *return* annotation) should be
         passed to :meth:`deserialize` / :meth:`coerce`. When it returns ``False``
         the SDK passes the raw deserialized payload through unchanged -- this
-        gate is what stops the SDK from invoking an arbitrary constructor on a
-        builtin or otherwise unrecognized annotation.
+        gate is what stops the SDK from invoking reconstruction on a type the
+        converter does not actually handle.
 
-        The default recognizes the types the built-in codec can rebuild --
-        dataclasses and ``from_json()``-capable types, plus ``Optional`` /
-        ``list`` / ``Sequence`` hints wrapping them -- and excludes builtins
-        (``int``, ``str``, ``dict``, ...) and unknown annotations.
-
-        Override this to teach the SDK about a custom converter's own types (for
+        The base implementation is conservative and returns ``False``: a
+        converter makes no reconstruction claims unless it opts in.
+        :class:`JsonDataConverter` overrides this to recognize the types its
+        codec can rebuild (dataclasses and ``from_json()``-capable types, plus
+        ``Optional`` / ``list`` / ``Sequence`` hints wrapping them). Override
+        this in a custom converter to teach the SDK about its own types (for
         example ``pydantic.BaseModel`` subclasses) so that inputs annotated with
-        them are reconstructed instead of arriving as raw JSON. The default
-        implementation recurses through ``self.is_reconstructable``, so an
-        override is also consulted for the element types of ``Optional`` /
-        ``list`` hints (e.g. ``list[MyModel]``).
+        them are reconstructed instead of arriving as raw JSON.
         """
-        return _is_reconstructable(self, target_type)
+        return False
 
 
 class JsonDataConverter(DataConverter):
@@ -187,6 +184,9 @@ class JsonDataConverter(DataConverter):
             self._log_coercion_fallback(target_type, e)
             return value
 
+    def can_reconstruct(self, target_type: Any) -> bool:
+        return _can_reconstruct(self, target_type)
+
     @staticmethod
     def _log_coercion_fallback(target_type: type, error: Exception) -> None:
         logger.debug(
@@ -211,24 +211,25 @@ DEFAULT_DATA_CONVERTER: DataConverter = JsonDataConverter()
 # ---------------------------------------------------------------------------
 
 
-def _is_reconstructable(converter: DataConverter, target_type: Any) -> bool:
-    """Default :meth:`DataConverter.is_reconstructable` policy.
+def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
+    """:class:`JsonDataConverter`'s reconstruction policy.
 
     Recognizes dataclasses and ``from_json()``-capable types, plus ``Optional``
     / ``list`` / ``Sequence`` hints wrapping them; builtins and unknown
-    annotations are excluded. Recurses through ``converter.is_reconstructable``
-    (not itself) so a subclass override participates in the element-type checks
-    of ``Optional`` / ``list`` hints.
+    annotations are excluded. Recurses through ``converter.can_reconstruct``
+    (not itself) so a :class:`JsonDataConverter` subclass that overrides
+    ``can_reconstruct`` still participates in the element-type checks of
+    ``Optional`` / ``list`` hints.
     """
     origin = typing.get_origin(target_type)
     if origin is not None:
         args = typing.get_args(target_type)
         if origin is typing.Union or origin is types.UnionType:
             return any(
-                converter.is_reconstructable(a) for a in args if a is not type(None)
+                converter.can_reconstruct(a) for a in args if a is not type(None)
             )
         if origin in (list, Sequence):
-            return any(converter.is_reconstructable(a) for a in args)
+            return any(converter.can_reconstruct(a) for a in args)
         return False
     if not isinstance(target_type, type):
         return False

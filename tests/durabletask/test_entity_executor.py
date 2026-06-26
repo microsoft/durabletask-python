@@ -7,6 +7,7 @@ import logging
 
 from durabletask import entities
 from durabletask.internal.entity_state_shim import StateShim
+from durabletask.serialization import JsonDataConverter
 from durabletask.worker import _EntityExecutor, _Registry
 
 
@@ -15,7 +16,7 @@ def _make_executor(*entity_args) -> _EntityExecutor:
     registry = _Registry()
     for entity in entity_args:
         registry.add_entity(entity)
-    return _EntityExecutor(registry, logging.getLogger("test"))
+    return _EntityExecutor(registry, logging.getLogger("test"), JsonDataConverter())
 
 
 def _execute(executor, entity_name, operation, encoded_input=None):
