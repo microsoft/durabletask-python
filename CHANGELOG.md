@@ -45,10 +45,11 @@ CHANGED
   error (`__cause__`) and names the offending type.
 - `EntityContext.get_state()` / `DurableEntity.get_state()` now return a freshly
   reconstructed value on every call rather than a reference to a single cached
-  object, so mutating the returned value in place no longer affects persisted
-  state — write it back with `set_state()`. State is also serialized eagerly at
-  `set_state()` time, so a non-serializable value fails inside the operation
-  (which rolls back) instead of after the batch has run.
+  object. This changes v1.6.0 behavior: mutating the returned value in place no
+  longer affects persisted state — write it back with `set_state()`. State is
+  also serialized eagerly at `set_state()` time, so a non-serializable value
+  fails inside the operation (which rolls back) instead of after the batch has
+  run.
 
 FIXED
 
