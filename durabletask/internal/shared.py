@@ -1,15 +1,21 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import dataclasses
-import json
 import logging
 from collections.abc import Sequence
-from types import SimpleNamespace
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 import grpc
 import grpc.aio
+
+# Backwards-compatibility re-exports. The JSON codec moved to
+# ``durabletask.internal.json_codec``; these aliases keep older imports from
+# ``durabletask.internal.shared`` working.
+from durabletask.internal.json_codec import (  # noqa: F401
+    AUTO_SERIALIZED as AUTO_SERIALIZED,
+    from_json as from_json,
+    to_json as to_json,
+)
 from durabletask.grpc_options import GrpcChannelOptions
 
 ClientInterceptor: TypeAlias = (
@@ -25,10 +31,6 @@ AsyncClientInterceptor: TypeAlias = (
     | grpc.aio.StreamUnaryClientInterceptor
     | grpc.aio.StreamStreamClientInterceptor
 )
-
-# Field name used to indicate that an object was automatically serialized
-# and should be deserialized as a SimpleNamespace
-AUTO_SERIALIZED = "__durabletask_autoobject__"
 
 SECURE_PROTOCOLS = ["https://", "grpcs://"]
 INSECURE_PROTOCOLS = ["http://", "grpc://"]
@@ -156,51 +158,3 @@ def get_logger(
             datefmt='%Y-%m-%d %H:%M:%S')
     log_handler.setFormatter(log_formatter)
     return logger
-
-
-def to_json(obj: Any) -> str:
-    return json.dumps(obj, cls=InternalJSONEncoder)
-
-
-def from_json(json_str: str | bytes | bytearray) -> Any:
-    return json.loads(json_str, cls=InternalJSONDecoder)
-
-
-class InternalJSONEncoder(json.JSONEncoder):
-    """JSON encoder that supports serializing specific Python types."""
-
-    def encode(self, o: Any) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
-        # if the object is a namedtuple, convert it to a dict with the AUTO_SERIALIZED key added
-        if isinstance(o, tuple):
-            namedtuple_obj: Any = o  # pyright: ignore[reportUnknownVariableType]
-            if hasattr(namedtuple_obj, "_fields") and hasattr(namedtuple_obj, "_asdict"):
-                d: dict[str, Any] = namedtuple_obj._asdict()
-                d[AUTO_SERIALIZED] = True
-                o = d
-        return super().encode(o)
-
-    def default(self, o: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
-        if dataclasses.is_dataclass(o) and not isinstance(o, type):
-            # Dataclasses are not serializable by default, so we convert them to a dict and mark them for
-            # automatic deserialization by the receiver
-            d: dict[str, Any] = dataclasses.asdict(o)
-            d[AUTO_SERIALIZED] = True
-            return d
-        elif isinstance(o, SimpleNamespace):
-            # Most commonly used for serializing custom objects that were previously serialized using our encoder
-            d = vars(o)
-            d[AUTO_SERIALIZED] = True
-            return d
-        # This will typically raise a TypeError
-        return json.JSONEncoder.default(self, o)
-
-
-class InternalJSONDecoder(json.JSONDecoder):
-    def __init__(self, *args: Any, **kwargs: Any):
-        super().__init__(object_hook=self.dict_to_object, *args, **kwargs)
-
-    def dict_to_object(self, d: dict[str, Any]) -> Any:
-        # If the object was serialized by the InternalJSONEncoder, deserialize it as a SimpleNamespace
-        if d.pop(AUTO_SERIALIZED, False):
-            return SimpleNamespace(**d)
-        return d

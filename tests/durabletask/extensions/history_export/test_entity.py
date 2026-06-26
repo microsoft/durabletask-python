@@ -10,7 +10,6 @@ job ID so there is no cross-test interference.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
@@ -88,9 +87,9 @@ def _create_payload() -> dict:
 
 
 def _state_dict(metadata) -> dict:
-    raw = metadata.get_state(str)
-    assert raw is not None
-    return json.loads(raw)
+    state = metadata.get_typed_state()
+    assert isinstance(state, dict)
+    return state
 
 
 def _wait_for_state(
@@ -106,12 +105,8 @@ def _wait_for_state(
         meta = c.get_entity(entity_id, include_state=True)
         if meta is None:
             return None
-        raw = meta.get_state(str)
-        if not raw:
-            return None
-        try:
-            state = json.loads(raw)
-        except (TypeError, ValueError):
+        state = meta.get_typed_state()
+        if not isinstance(state, dict):
             return None
         return state if predicate(state) else None
 

@@ -12,18 +12,13 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, NamedTuple
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
 from durabletask import client, task, worker
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-
-
-class Approval(NamedTuple):
-    """Represents an approval event payload"""
-    approver: str
 
 
 @dataclass
@@ -35,6 +30,12 @@ class Order:
 
     def __str__(self):
         return f'{self.Product} ({self.Quantity})'
+
+
+@dataclass
+class Approval:
+    """Represents an approval decision raised as an external event."""
+    approver: str
 
 
 def send_approval_request(_: task.ActivityContext, order: Order) -> None:
@@ -58,9 +59,11 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order) -> Gen
     yield ctx.call_activity(send_approval_request, input=order)
 
     # Approvals must be received within 24 hours or they will be cancelled.
-    approval_event = ctx.wait_for_external_event("approval_received")
+    # Passing ``data_type`` reconstructs the event payload as an ``Approval``.
+    approval_event = ctx.wait_for_external_event("approval_received", data_type=Approval)
     timeout_event = ctx.create_timer(timedelta(hours=24))
-    winner = yield task.when_any([approval_event, timeout_event])
+    pending: list[task.Task[Any]] = [approval_event, timeout_event]
+    winner = yield task.when_any(pending)
     if winner == timeout_event:
         return "Cancelled"
 
@@ -96,7 +99,7 @@ if __name__ == "__main__":
 
                 def prompt_for_approval():
                     input("Press [ENTER] to approve the order...\n")
-                    approval_event = Approval(args.approver)
+                    approval_event = Approval(approver=args.approver)
                     c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
                 # Prompt the user for approval on a background thread
@@ -142,7 +145,7 @@ if __name__ == "__main__":
 
             def prompt_for_approval():
                 input("Press [ENTER] to approve the order...\n")
-                approval_event = Approval(args.approver)
+                approval_event = Approval(approver=args.approver)
                 c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
             # Prompt the user for approval on a background thread

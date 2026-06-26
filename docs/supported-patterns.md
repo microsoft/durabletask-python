@@ -68,7 +68,8 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     yield ctx.call_activity(send_approval_request, input=order)
 
     # Approvals must be received within 24 hours or they will be cancelled.
-    approval_event = ctx.wait_for_external_event("approval_received")
+    # Passing ``data_type`` reconstructs the event payload as an ``Approval``.
+    approval_event = ctx.wait_for_external_event("approval_received", data_type=Approval)
     timeout_event = ctx.create_timer(timedelta(hours=24))
     winner = yield task.when_any([approval_event, timeout_event])
     if winner == timeout_event:
@@ -81,9 +82,11 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
 ```
 
 As an aside, you'll also notice that the example orchestration above works with custom business
-objects. Support for custom business objects includes support for custom classes, custom data
-classes, and named tuples. Serialization and deserialization of these objects is handled
-automatically by the SDK.
+objects. Custom classes, data classes, and named tuples are serialized to plain JSON automatically.
+To reconstruct the original type on the receiving side, supply the type — for example via the
+`data_type` argument to `wait_for_external_event` (shown above), the `return_type` argument to
+`call_activity` / `call_sub_orchestrator` / `call_entity`, or by annotating the consuming function's
+input parameter. Without a type, the payload is returned as plain JSON (a `dict` or `list`).
 
 See the full [human interaction sample](../examples/human_interaction.py).
 
