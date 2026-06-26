@@ -7,7 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-N/A
+ADDED
+
+- `DurableTaskSchedulerWorker`, `DurableTaskSchedulerClient`, and the async
+  client now accept a `data_converter` argument and forward it to the base
+  worker/client, so a custom `durabletask.serialization.DataConverter` (for
+  example a pydantic-backed one) can be used with the Durable Task Scheduler.
 
 ## v1.6.0
 

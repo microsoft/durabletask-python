@@ -10,6 +10,7 @@ import pytest
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask import task, worker, entities
+from durabletask.serialization import JsonDataConverter
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
@@ -36,7 +37,7 @@ def test_orchestrator_inputs():
         helpers.new_orchestrator_started_event(start_time),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=json.dumps(test_input)),
     ]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
@@ -58,7 +59,7 @@ def test_complete_orchestration_actions():
     name = registry.add_orchestrator(empty_orchestrator)
 
     new_events = [helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
@@ -73,7 +74,7 @@ def test_orchestrator_not_registered():
     registry = worker._Registry()
     name = "Bogus"
     new_events = [helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
@@ -100,7 +101,7 @@ def test_create_timer_actions():
     new_events = [
         helpers.new_orchestrator_started_event(start_time),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
@@ -133,7 +134,7 @@ def test_timer_fired_completion():
     new_events = [
         helpers.new_timer_fired_event(1, expected_fire_at)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -160,7 +161,7 @@ def test_long_timer_is_chunked_by_maximum_timer_interval():
     new_events = [
         helpers.new_orchestrator_started_event(start_time),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
@@ -180,7 +181,7 @@ def test_long_timer_progresses_and_completes_on_final_chunk():
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
 
     start_time = datetime(2020, 1, 1, 12, 0, 0)
     t1 = start_time + timedelta(days=3)
@@ -277,7 +278,7 @@ def test_long_timer_can_be_cancelled_after_when_any_winner():
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
 
     start_time = datetime(2020, 1, 1, 12, 0, 0)
     first_chunk_fire_at = start_time + timedelta(days=3)
@@ -325,7 +326,7 @@ def test_timer_can_be_cancelled_after_when_any_winner():
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
 
     start_time = datetime(2020, 1, 1, 12, 0, 0)
     timeout_fire_at = start_time + timedelta(hours=1)
@@ -363,7 +364,7 @@ def test_only_cancellable_tasks_expose_cancel():
     def dummy_activity(ctx, _):
         pass
 
-    ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, worker._Registry())
+    ctx = worker._RuntimeOrchestrationContext(TEST_INSTANCE_ID, worker._Registry(), JsonDataConverter())
 
     timer_task = ctx.create_timer(timedelta(minutes=5))
     external_event_task = ctx.wait_for_external_event("approval")
@@ -408,7 +409,7 @@ def test_schedule_activity_actions():
     new_events = [
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
@@ -441,7 +442,7 @@ def test_activity_task_completion():
     encoded_output = json.dumps("done!")
     new_events = [helpers.new_task_completed_event(1, encoded_output)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -479,7 +480,7 @@ def test_activity_task_completion_with_return_type():
 
     new_events = [helpers.new_task_completed_event(1, json.dumps({"message": "hi"}))]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
@@ -517,7 +518,7 @@ def test_activity_return_type_discovered_from_annotation():
 
     new_events = [helpers.new_task_completed_event(1, json.dumps({"message": "hi"}))]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     assert captured["type"] == "Result"
@@ -556,7 +557,7 @@ def test_explicit_return_type_overrides_discovered_annotation():
 
     new_events = [helpers.new_task_completed_event(1, json.dumps({"value": "x"}))]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     assert captured["type"] == "Override"
@@ -587,7 +588,7 @@ def test_orchestrator_input_type_discovery():
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=encoded_input)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     executor.execute(TEST_INSTANCE_ID, [], new_events)
 
     assert captured["type"] == "StartArgs"
@@ -615,7 +616,7 @@ def test_activity_task_failed():
     ex = Exception("Kah-BOOOOM!!!")
     new_events = [helpers.new_task_failed_event(1, ex)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -661,7 +662,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 1
@@ -675,7 +676,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(2, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 2
@@ -688,7 +689,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -702,7 +703,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(3, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -715,7 +716,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 4
@@ -729,7 +730,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(4, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 4
@@ -742,7 +743,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 5
@@ -756,7 +757,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(5, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 5
@@ -770,7 +771,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 6
@@ -784,7 +785,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(6, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 6
@@ -796,7 +797,7 @@ def test_activity_retry_policies():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 7
@@ -840,7 +841,7 @@ def test_activity_retry_without_max_retry_interval():
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 1
@@ -854,7 +855,7 @@ def test_activity_retry_without_max_retry_interval():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(2, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 2
@@ -866,7 +867,7 @@ def test_activity_retry_without_max_retry_interval():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -880,7 +881,7 @@ def test_activity_retry_without_max_retry_interval():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(3, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -890,7 +891,7 @@ def test_activity_retry_without_max_retry_interval():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 4
@@ -929,7 +930,7 @@ def test_activity_retry_with_default_backoff():
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Fail!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 1
@@ -942,7 +943,7 @@ def test_activity_retry_with_default_backoff():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(2, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
 
     expected_fire_at = current_timestamp + timedelta(seconds=5)
@@ -950,7 +951,7 @@ def test_activity_retry_with_default_backoff():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Fail!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -978,7 +979,7 @@ def test_activity_retry_with_long_timer_preserves_retryable_parent():
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
 
     start = datetime.utcnow()
     t1 = start + timedelta(days=3)
@@ -1077,7 +1078,7 @@ def test_nondeterminism_expected_timer():
         helpers.new_timer_created_event(1, fire_at)]
     new_events = [helpers.new_timer_fired_event(timer_id=1, fire_at=fire_at)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1105,7 +1106,7 @@ def test_nondeterminism_expected_activity_call_no_task_id():
 
     new_events = [helpers.new_task_completed_event(1)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1135,7 +1136,7 @@ def test_nondeterminism_expected_activity_call_wrong_task_type():
 
     new_events = [helpers.new_task_completed_event(1)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1166,7 +1167,7 @@ def test_nondeterminism_wrong_activity_name():
 
     new_events = [helpers.new_task_completed_event(1)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1200,7 +1201,7 @@ def test_sub_orchestration_task_completion():
     new_events = [
         helpers.new_sub_orchestration_completed_event(1, encoded_output="42")]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1230,7 +1231,7 @@ def test_sub_orchestration_task_failed():
     ex = Exception("Kah-BOOOOM!!!")
     new_events = [helpers.new_sub_orchestration_failed_event(1, ex)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1261,7 +1262,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_no_task():
     new_events = [
         helpers.new_sub_orchestration_completed_event(1, encoded_output="42")]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1291,7 +1292,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_wrong_task_ty
     new_events = [
         helpers.new_sub_orchestration_completed_event(1, encoded_output="42")]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1318,7 +1319,7 @@ def test_raise_event():
 
     # Execute the orchestration until it is waiting for an external event. The result
     # should be an empty list of actions because the orchestration didn't schedule any work.
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 0
@@ -1327,7 +1328,7 @@ def test_raise_event():
     # the orchestration should complete.
     old_events = new_events
     new_events = [helpers.new_event_raised_event("my_event", encoded_input="42")]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
@@ -1352,7 +1353,7 @@ def test_raise_event_buffered():
         helpers.new_event_raised_event("my_event", encoded_input="42")]
 
     # Execute the orchestration. It should be in a running state waiting for the timer to fire
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 1
@@ -1363,7 +1364,7 @@ def test_raise_event_buffered():
     timer_due_time = datetime.utcnow() + timedelta(days=1)
     old_events = new_events + [helpers.new_timer_created_event(1, timer_due_time)]
     new_events = [helpers.new_timer_fired_event(1, timer_due_time)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
@@ -1390,7 +1391,7 @@ def test_suspend_resume():
 
     # Execute the orchestration. It should remain in a running state because it was suspended prior
     # to processing the event raised event.
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 0
@@ -1398,7 +1399,7 @@ def test_suspend_resume():
     # Resume the orchestration. It should complete successfully.
     old_events = old_events + new_events
     new_events = [helpers.new_resume_event()]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
@@ -1424,7 +1425,7 @@ def test_terminate():
         helpers.new_event_raised_event("my_event", encoded_input="42")]
 
     # Execute the orchestration. It should be in a running state waiting for an external event
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
@@ -1453,7 +1454,7 @@ def test_continue_as_new(save_events: bool):
         helpers.new_timer_fired_event(1, datetime.utcnow() + timedelta(days=1))]
 
     # Execute the orchestration. It should be in a running state waiting for the timer to fire
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
@@ -1489,7 +1490,7 @@ def test_fan_out():
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input="10")]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1531,13 +1532,13 @@ def test_fan_in():
 
     # First, test with only the first 5 events. We expect the orchestration to be running
     # but return zero actions since its still waiting for the other 5 tasks to complete.
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events[:5])
     actions = result.actions
     assert len(actions) == 0
 
     # Now test with the full set of new events. We expect the orchestration to complete.
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1579,7 +1580,7 @@ def test_fan_in_with_single_failure():
     new_events.append(helpers.new_task_failed_event(6, ex))
 
     # Now test with the full set of new events. We expect the orchestration to complete.
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -1611,7 +1612,7 @@ def test_when_any():
     # to return two actions: one to schedule the "Tokyo" task and one to schedule the "Seattle" task.
     old_events = []
     new_events = [helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 2
@@ -1628,7 +1629,7 @@ def test_when_any():
     # Test 2: Complete the "Tokyo" task. We expect the orchestration to complete with output "Hello, Tokyo!"
     encoded_output = json.dumps(hello(None, "Tokyo"))
     new_events = [helpers.new_task_completed_event(1, encoded_output)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
@@ -1638,7 +1639,7 @@ def test_when_any():
     # Test 3: Complete the "Seattle" task. We expect the orchestration to complete with output "Hello, Seattle!"
     encoded_output = json.dumps(hello(None, "Seattle"))
     new_events = [helpers.new_task_completed_event(2, encoded_output)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
@@ -1684,7 +1685,7 @@ def test_replay_safe_logger_suppresses_during_replay():
             helpers.new_orchestrator_started_event(datetime.now()),
             helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
         ]
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         result = executor.execute(TEST_INSTANCE_ID, [], new_events)
         assert result.actions  # should have scheduled the activity
 
@@ -1700,7 +1701,7 @@ def test_replay_safe_logger_suppresses_during_replay():
         ]
         encoded_output = json.dumps(say_hello(None, "World"))
         new_events = [helpers.new_task_completed_event(1, encoded_output)]
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
         complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
         assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
@@ -1743,7 +1744,7 @@ def test_replay_safe_logger_all_levels():
             helpers.new_orchestrator_started_event(datetime.now()),
             helpers.new_execution_started_event(orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
         ]
-        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
         result = executor.execute(TEST_INSTANCE_ID, [], new_events)
         complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
         assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
@@ -1877,7 +1878,7 @@ def test_when_any_with_retry():
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 1
@@ -1891,7 +1892,7 @@ def test_when_any_with_retry():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(3, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 2
@@ -1904,7 +1905,7 @@ def test_when_any_with_retry():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -1915,7 +1916,7 @@ def test_when_any_with_retry():
     # Complete the "Seattle" task. We expect the orchestration to complete with output "Hello, Seattle!"
     encoded_output = json.dumps(dummy_activity(None, "Seattle"))
     new_events = [helpers.new_task_completed_event(2, encoded_output)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(3, actions)
@@ -1959,7 +1960,7 @@ def test_when_all_with_retry():
     new_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 1
@@ -1973,7 +1974,7 @@ def test_when_all_with_retry():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_timer_fired_event(3, current_timestamp)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 2
@@ -1986,7 +1987,7 @@ def test_when_all_with_retry():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -2000,7 +2001,7 @@ def test_when_all_with_retry():
     old_events = old_events + new_events
     new_events = [helpers.new_task_completed_event(2, encoded_output),
                   helpers.new_timer_fired_event(4, expected_fire_at)]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     assert len(actions) == 3
@@ -2014,7 +2015,7 @@ def test_when_all_with_retry():
     new_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!"))]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(4, actions)
@@ -2038,7 +2039,7 @@ def test_orchestrator_completed_no_effect():
         helpers.new_orchestrator_started_event(),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input),
         helpers.new_orchestrator_completed_event()]
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result.actions
 
@@ -2066,7 +2067,7 @@ def test_entity_lock_created_as_event():
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, None),
     ]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result1 = executor.execute(TEST_INSTANCE_ID, [], new_events)
     actions = result1.actions
     assert len(actions) == 1

@@ -1317,8 +1317,9 @@ class TaskHubGrpcWorker:
             payload_helpers.deexternalize_payloads(req, self._payload_store)
 
         entity_state = StateShim(
-            self._data_converter.deserialize(req.entityState.value) if req.entityState.value else None,
-            self._data_converter)
+            req.entityState.value if req.entityState.value else None,
+            self._data_converter,
+            is_serialized=True)
 
         instance_id = req.instanceId
         try:
@@ -1376,7 +1377,7 @@ class TaskHubGrpcWorker:
         batch_result = pb.EntityBatchResult(
             results=results,
             actions=entity_state.get_operation_actions(),
-            entityState=helpers.get_string_value(self._data_converter.serialize(entity_state._current_state)) if entity_state._current_state is not None else None,  # pyright: ignore[reportPrivateUsage]
+            entityState=helpers.get_string_value(entity_state.encode_state()),
             failureDetails=None,
             completionToken=completionToken,
             operationInfos=operation_infos,
@@ -1419,8 +1420,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def __init__(self,
                  instance_id: str,
                  registry: _Registry,
+                 data_converter: DataConverter,
                  maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
-                 data_converter: DataConverter | None = None,
                  ):
         self._generator = None
         self._is_replaying = True
@@ -1449,7 +1450,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._parent_trace_context: pb.TraceContext | None = None
         self._orchestration_trace_context: pb.TraceContext | None = None
         self._maximum_timer_interval = maximum_timer_interval
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
 
     def run(self, generator: Generator[task.Task[Any], Any, Any]) -> None:
         self._generator = generator
@@ -1691,7 +1692,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # converter decides how a coercion failure is handled (the default is
         # best-effort).
         if return_type is None and not isinstance(activity, str):
-            return_type = type_discovery.activity_output_type(activity)
+            return_type = type_discovery.activity_output_type(activity, self._data_converter)
 
         self.call_activity_function_helper(
             id, activity, input=input, retry_policy=retry_policy, is_sub_orch=False, tags=tags,
@@ -2049,13 +2050,13 @@ class _OrchestrationExecutor:
         self,
         registry: _Registry,
         logger: logging.Logger,
+        data_converter: DataConverter,
         persisted_orch_span_id: str | None = None,
         maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
-        data_converter: DataConverter | None = None,
     ):
         self._registry = registry
         self._logger = logger
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
         self._maximum_timer_interval = maximum_timer_interval
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
@@ -2210,7 +2211,7 @@ class _OrchestrationExecutor:
                 if (
                         event.executionStarted.HasField("input") and event.executionStarted.input.value != ""
                 ):
-                    input_type = type_discovery.orchestrator_input_type(fn)
+                    input_type = type_discovery.orchestrator_input_type(fn, self._data_converter)
                     input = self._data_converter.deserialize(
                         event.executionStarted.input.value, input_type)
 
@@ -2772,12 +2773,12 @@ class _OrchestrationExecutor:
         if not ph.is_empty(event.eventRaised.input):
             # TODO: Investigate why the event result is wrapped in a dict with "result" key
             # The expected type applies to the unwrapped result value, not the
-            # transport wrapper. Unwrap first, then route the inner value back
-            # through the converter so custom converters and the expected type
-            # both apply.
+            # transport wrapper. Unwrap first, then coerce the already-parsed
+            # inner value to the expected type via the converter (no redundant
+            # re-serialization round-trip).
             unwrapped = self._data_converter.deserialize(event.eventRaised.input.value)["result"]
-            result = self._data_converter.deserialize(
-                self._data_converter.serialize(unwrapped),
+            result = self._data_converter.coerce(
+                unwrapped,
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
             )
         if is_lock_event:
@@ -2833,10 +2834,10 @@ class _OrchestrationExecutor:
 
 class _ActivityExecutor:
     def __init__(self, registry: _Registry, logger: logging.Logger,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter):
         self._registry = registry
         self._logger = logger
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
 
     def execute(
             self,
@@ -2855,7 +2856,7 @@ class _ActivityExecutor:
                 f"Activity function named '{name}' was not registered!"
             )
 
-        input_type = type_discovery.activity_input_type(fn) if encoded_input else None
+        input_type = type_discovery.activity_input_type(fn, self._data_converter) if encoded_input else None
         activity_input = self._data_converter.deserialize(encoded_input, input_type)
         ctx = task.ActivityContext(orchestration_id, task_id)
 
@@ -2872,10 +2873,10 @@ class _ActivityExecutor:
 
 class _EntityExecutor:
     def __init__(self, registry: _Registry, logger: logging.Logger,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter):
         self._registry = registry
         self._logger = logger
-        self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
+        self._data_converter = data_converter
         self._entity_method_cache: dict[tuple[type, str], bool] = {}
 
     def execute(
@@ -2896,7 +2897,7 @@ class _EntityExecutor:
                 f"Entity function named '{entity_id.entity}' was not registered!"
             )
 
-        input_type = type_discovery.entity_input_type(fn, operation) if encoded_input else None
+        input_type = type_discovery.entity_input_type(fn, operation, self._data_converter) if encoded_input else None
         entity_input = self._data_converter.deserialize(encoded_input, input_type)
         ctx = EntityContext(orchestration_id, operation, state, entity_id, self._data_converter)
 

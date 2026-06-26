@@ -20,6 +20,7 @@ from durabletask.grpc_options import (
 )
 import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
+from durabletask.serialization import DataConverter
 
 
 # Client class used for Durable Task Scheduler (DTS)
@@ -35,6 +36,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
                  payload_store: PayloadStore | None = None,
+                 data_converter: DataConverter | None = None,
                  log_handler: logging.Handler | None = None,
                  log_formatter: logging.Formatter | None = None):
 
@@ -59,7 +61,8 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
             channel_options=channel_options,
             resiliency_options=resiliency_options,
             default_version=default_version,
-            payload_store=payload_store)
+            payload_store=payload_store,
+            data_converter=data_converter)
 
 
 # Async client class used for Durable Task Scheduler (DTS)
@@ -113,6 +116,7 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
                  payload_store: PayloadStore | None = None,
+                 data_converter: DataConverter | None = None,
                  log_handler: logging.Handler | None = None,
                  log_formatter: logging.Formatter | None = None):
 
@@ -137,4 +141,5 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
             channel_options=channel_options,
             resiliency_options=resiliency_options,
             default_version=default_version,
-            payload_store=payload_store)
+            payload_store=payload_store,
+            data_converter=data_converter)
