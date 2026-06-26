@@ -12,13 +12,14 @@ import json
 from collections import namedtuple
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Optional, Union
+from typing import List, Optional, Union, get_args
 
 import pytest
 
 from durabletask.serialization import _AUTO_SERIALIZED as AUTO_SERIALIZED
 from durabletask.serialization import _coerce_to_type as coerce_to_type
 from durabletask.serialization import _from_json as from_json
+from durabletask.serialization import _resolve_forward_refs as resolve_forward_refs
 from durabletask.serialization import _to_json as to_json
 
 
@@ -485,3 +486,40 @@ def test_coerce_to_type_without_converter_calls_single_arg_hook():
     # the hook could accept it (defensive: no converter available).
     result = coerce_to_type({"label": "gear", "size": 5}, Widget)
     assert result == Widget("gear", 5)
+
+
+# ----- forward-reference resolution (Python 3.10 get_type_hints parity) -----
+#
+# On Python 3.10, ``typing.get_type_hints`` does not deep-resolve forward
+# references nested inside container args (e.g. the element type of
+# ``list["TreeNode"]`` on a self-referential dataclass), leaving a bare string
+# or ``ForwardRef``. ``_resolve_forward_refs`` restores the 3.11+ behavior so
+# nested coercion still fires. These tests run on every supported version.
+
+
+def test_resolve_forward_refs_resolves_string_element_type():
+    # ``list["Address"]`` evaluates to a generic whose arg is the raw string
+    # "Address" -- exactly what 3.10 leaves behind.
+    resolved = resolve_forward_refs(list["Address"], {"Address": Address})
+    assert get_args(resolved) == (Address,)
+
+
+def test_resolve_forward_refs_resolves_forwardref_element_type():
+    resolved = resolve_forward_refs(List["Address"], {"Address": Address})
+    assert get_args(resolved) == (Address,)
+
+
+def test_resolve_forward_refs_then_coerce_reconstructs_nested_dataclass():
+    # The full 3.10 path: resolve the unresolved element type, then coerce the
+    # contained dicts into the target dataclass.
+    field_type = resolve_forward_refs(list["Address"], {"Address": Address})
+    result = coerce_to_type([{"street": "a", "city": "b"}], field_type)
+    assert isinstance(result[0], Address)
+    assert result[0].city == "b"
+
+
+def test_resolve_forward_refs_leaves_unresolvable_name_untouched():
+    # An unknown name is left as a string so coercion harmlessly falls back to
+    # the parsed JSON rather than raising.
+    resolved = resolve_forward_refs(list["DoesNotExist"], {})
+    assert get_args(resolved) == ("DoesNotExist",)

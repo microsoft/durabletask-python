@@ -38,6 +38,7 @@ import functools
 import inspect
 import json
 import logging
+import sys
 import types
 import typing
 from abc import ABC, abstractmethod
@@ -435,10 +436,67 @@ def _build_dataclass(cls: Any, data: dict[str, Any],
         hints = typing.get_type_hints(cls)
     except Exception:
         hints = {}
+    globalns = _type_namespace(cls)
     kwargs: dict[str, Any] = {}
     for field in dataclasses.fields(cls):
         if field.name not in data:
             continue
-        field_type = hints.get(field.name)
+        # ``get_type_hints`` on Python 3.10 does not deep-resolve forward
+        # references nested inside container args (e.g. the ``"TreeNode"`` in
+        # ``list["TreeNode"]`` on a self-referential dataclass), leaving a bare
+        # string or ``ForwardRef`` that the coercion below would skip. Resolve
+        # them against the class's defining module so reconstruction behaves the
+        # same as it does on 3.11+.
+        field_type = _resolve_forward_refs(hints.get(field.name), globalns)
         kwargs[field.name] = _coerce_to_type(data[field.name], field_type, converter)
     return cls(**kwargs)
+
+
+def _type_namespace(cls: Any) -> dict[str, Any]:
+    """Build the namespace used to resolve forward references in ``cls``'s hints.
+
+    Forward references in a class's annotations are resolved against the
+    module in which the class is defined, plus the class's own name (so a
+    self-referential type like ``list["TreeNode"]`` resolves).
+    """
+    module = sys.modules.get(getattr(cls, "__module__", None) or "")
+    ns: dict[str, Any] = dict(getattr(module, "__dict__", {}))
+    name = getattr(cls, "__name__", None)
+    if name:
+        ns.setdefault(name, cls)
+    return ns
+
+
+def _resolve_forward_refs(tp: Any, globalns: dict[str, Any]) -> Any:
+    """Resolve string / ``ForwardRef`` leaves in a type hint, recursing into args.
+
+    Returns ``tp`` unchanged when it (or a nested name) cannot be resolved, so an
+    unresolvable hint simply falls back to "leave the value as parsed JSON"
+    rather than raising. Only the supported generic shapes (``Union``, ``list``,
+    ``dict``, ``tuple``, etc.) are rebuilt; the destination type is still
+    entirely caller-supplied, so this does not weaken the security model.
+    """
+    if isinstance(tp, str):
+        try:
+            tp = eval(tp, globalns)  # noqa: S307 - resolves caller-authored annotations
+        except Exception:
+            return tp
+    elif isinstance(tp, typing.ForwardRef):
+        try:
+            tp = eval(tp.__forward_arg__, globalns)  # noqa: S307
+        except Exception:
+            return tp
+
+    origin = typing.get_origin(tp)
+    if origin is None:
+        return tp
+    args = typing.get_args(tp)
+    if not args:
+        return tp
+    resolved = [_resolve_forward_refs(a, globalns) for a in args]
+    if origin is typing.Union or origin is types.UnionType:
+        return typing.Union[tuple(resolved)]
+    try:
+        return origin[tuple(resolved) if len(resolved) > 1 else resolved[0]]
+    except TypeError:
+        return tp
