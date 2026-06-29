@@ -11,11 +11,11 @@ trigger:
 pr: none
 
 schedules:
-  # Build nightly to catch any new CVEs and report SDL often.
+  # Build weekly to catch any new CVEs and report SDL often.
   # We are also required to generate CodeQL reports weekly, so this
   # helps us meet that.
-  - cron: "0 5 * * *"
-    displayName: Nightly Build
+  - cron: "0 5 * * 0"
+    displayName: Weekly Build
     branches:
       include:
         - main
