@@ -6,7 +6,6 @@
 from datetime import datetime, timedelta, timezone
 
 import durabletask.internal.orchestrator_service_pb2 as pb
-from durabletask.scheduled import configure_scheduled_tasks
 from durabletask.scheduled.client import ScheduledTaskClient
 from durabletask.scheduled.models import (ScheduleConfiguration,
                                           ScheduleCreationOptions, ScheduleQuery,
@@ -69,7 +68,7 @@ class TestMatchesFilter:
 class TestScheduledTasksCapability:
     def test_configure_advertises_scheduled_tasks_capability(self):
         worker = TaskHubGrpcWorker()
-        configure_scheduled_tasks(worker)
+        worker.configure_scheduled_tasks()
         assert pb.WORKER_CAPABILITY_SCHEDULED_TASKS in worker._capabilities  # pyright: ignore[reportPrivateUsage]
 
     def test_capability_absent_by_default(self):
