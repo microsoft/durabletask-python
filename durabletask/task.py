@@ -220,7 +220,8 @@ class OrchestrationContext(ABC):
             self,
             entity_id: EntityInstanceId,
             operation_name: str,
-            input: Any = None
+            input: Any = None,
+            signal_time: datetime | None = None
     ) -> None:
         """Signal an entity function for execution.
 
@@ -232,6 +233,10 @@ class OrchestrationContext(ABC):
             The name of the operation to invoke on the entity.
         input: TInput | None
             The optional JSON-serializable input to pass to the entity function.
+        signal_time: datetime | None
+            The optional time at which the signal should be delivered. If None, the
+            signal is delivered as soon as possible. Use this to schedule a future
+            operation on the entity.
         """
         pass
 

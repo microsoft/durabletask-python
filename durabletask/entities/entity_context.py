@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 import uuid
+from google.protobuf import timestamp_pb2
 from durabletask.entities.entity_instance_id import EntityInstanceId
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
@@ -88,7 +90,9 @@ class EntityContext:
         """
         self._state.set_state(new_state)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Any | None = None) -> None:
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str,
+                      input: Any | None = None,
+                      signal_time: datetime | None = None) -> None:
         """Signal another entity to perform an operation.
 
         Parameters
@@ -99,15 +103,23 @@ class EntityContext:
             The operation to perform on the entity.
         input : Any, optional
             The input to provide to the entity for the operation.
+        signal_time : datetime, optional
+            The time at which the signal should be delivered. If None, the signal is
+            delivered as soon as possible. Use this to schedule a future operation,
+            for example to have an entity wake itself up at a later time.
         """
         encoded_input: str | None = self._data_converter.serialize(input)
+        scheduled_time: timestamp_pb2.Timestamp | None = None
+        if signal_time is not None:
+            scheduled_time = timestamp_pb2.Timestamp()
+            scheduled_time.FromDatetime(signal_time)
         self._state.add_operation_action(
             pb.OperationAction(
                 sendSignal=pb.SendSignalAction(
                     instanceId=str(entity_instance_id),
                     name=operation,
                     input=helpers.get_string_value(encoded_input),
-                    scheduledTime=None,
+                    scheduledTime=scheduled_time,
                     requestTime=None,
                     parentTraceContext=None,
                 )

@@ -12,7 +12,7 @@ import json
 from collections import namedtuple
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import List, Optional, Union, get_args
+from typing import Any, List, Optional, Union, get_args
 
 import pytest
 
@@ -420,6 +420,33 @@ def test_coerce_genuine_union_leaves_unmatched_value_untouched():
 def test_coerce_dict_values_recursively():
     result = coerce_to_type({"home": {"street": "a", "city": "b"}}, dict[str, Address])
     assert isinstance(result["home"], Address)
+
+
+def test_coerce_bare_any_returns_value_unchanged():
+    # ``Any`` carries no type info; the parsed value is already the result.
+    value = {"k": "v"}
+    assert coerce_to_type(value, Any) is value
+
+
+def test_coerce_optional_any_returns_value_unchanged():
+    # ``Any | None`` must pass the value through rather than raising on the
+    # ``isinstance(value, Any)`` check inside the union loop.
+    value = {"k": "v"}
+    assert coerce_to_type(value, Optional[Any]) == {"k": "v"}
+
+
+def test_coerce_dataclass_with_any_field_round_trips():
+    # A plain dataclass whose field is annotated ``Any | None`` must reconstruct
+    # with that field left as the raw parsed JSON, not crash.
+    @dataclass
+    class Envelope:
+        name: str
+        payload: Any | None = None
+
+    restored = from_json(to_json(Envelope("x", {"nested": [1, 2]})), Envelope)
+    assert isinstance(restored, Envelope)
+    assert restored.name == "x"
+    assert restored.payload == {"nested": [1, 2]}
 
 
 # ----- from_json converter hook (PR #154 follow-up) -----

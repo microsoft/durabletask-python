@@ -825,8 +825,10 @@ class TaskHubGrpcClient:
     def signal_entity(self,
                       entity_instance_id: EntityInstanceId,
                       operation_name: str,
-                      input: Any | None = None) -> None:
-        req = build_signal_entity_req(entity_instance_id, operation_name, input, self._data_converter)
+                      input: Any | None = None,
+                      signal_time: datetime | None = None) -> None:
+        req = build_signal_entity_req(
+            entity_instance_id, operation_name, input, signal_time, self._data_converter)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
         if self._payload_store is not None:
             payload_helpers.externalize_payloads(
@@ -1308,8 +1310,10 @@ class AsyncTaskHubGrpcClient:
     async def signal_entity(self,
                             entity_instance_id: EntityInstanceId,
                             operation_name: str,
-                            input: Any | None = None) -> None:
-        req = build_signal_entity_req(entity_instance_id, operation_name, input, self._data_converter)
+                            input: Any | None = None,
+                            signal_time: datetime | None = None) -> None:
+        req = build_signal_entity_req(
+            entity_instance_id, operation_name, input, signal_time, self._data_converter)
         self._logger.info(f"Signaling entity '{entity_instance_id}' operation '{operation_name}'.")
         if self._payload_store is not None:
             await payload_helpers.externalize_payloads_async(

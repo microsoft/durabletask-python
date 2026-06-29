@@ -577,6 +577,11 @@ class TaskHubGrpcWorker:
         self._work_item_filters: WorkItemFilters | None = None
         self._auto_generate_work_item_filters: bool = False
         self._runLoop: Thread | None = None
+        # Extra worker capabilities advertised to the backend in
+        # GetWorkItemsRequest (in addition to ones derived from worker state such
+        # as LARGE_PAYLOADS). Feature-enablement helpers like
+        # durabletask.scheduled.configure_scheduled_tasks register theirs here.
+        self._capabilities: set[int] = set()
 
     @property
     def concurrency_options(self) -> ConcurrencyOptions:
@@ -635,6 +640,20 @@ class TaskHubGrpcWorker:
                 "Entities cannot be added while the worker is running."
             )
         return self._registry.add_entity(fn, name)
+
+    def add_capability(self, capability: int) -> None:
+        """Advertise a worker capability to the backend in ``GetWorkItemsRequest``.
+
+        Most users do not call this directly; feature-enablement helpers such as
+        :func:`durabletask.scheduled.configure_scheduled_tasks` use it to
+        advertise the capabilities (``pb.WORKER_CAPABILITY_*``) their feature
+        relies on.
+        """
+        if self._is_running:
+            raise RuntimeError(
+                "Capabilities cannot be added while the worker is running."
+            )
+        self._capabilities.add(capability)
 
     def use_versioning(self, version: VersioningOptions) -> None:
         """Initializes versioning options for sub-orchestrators and activities."""
@@ -861,6 +880,7 @@ class TaskHubGrpcWorker:
                 capabilities: list[Any] = []
                 if self._payload_store is not None:
                     capabilities.append(pb.WORKER_CAPABILITY_LARGE_PAYLOADS)
+                capabilities.extend(sorted(self._capabilities))
                 get_work_items_request = pb.GetWorkItemsRequest(
                     maxConcurrentOrchestrationWorkItems=self._concurrency_options.maximum_concurrent_orchestration_work_items,
                     maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items,
@@ -1742,12 +1762,13 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self,
             entity_id: EntityInstanceId,
             operation_name: str,
-            input: Any = None
+            input: Any = None,
+            signal_time: datetime | None = None
     ) -> None:
         id = self.next_sequence_number()
 
         self.signal_entity_function_helper(
-            id, entity_id, operation_name, input
+            id, entity_id, operation_name, input, signal_time
         )
 
     def lock_entities(self, entities: list[EntityInstanceId]) -> task.CompletableTask[EntityLock]:
@@ -1918,7 +1939,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             id: int | None,
             entity_id: EntityInstanceId,
             operation: str,
-            input: Any = None
+            input: Any = None,
+            signal_time: datetime | None = None
     ) -> None:
         if id is None:
             id = self.next_sequence_number()
@@ -1930,7 +1952,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         encoded_input = self._data_converter.serialize(input)
 
-        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid())
+        action = ph.new_signal_entity_action(id, entity_id, operation, encoded_input, self.new_uuid(), signal_time)
         self._pending_actions[id] = action
 
     def lock_entities_function_helper(self, id: int | None, entities: list[EntityInstanceId]) -> None:
