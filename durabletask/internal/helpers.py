@@ -255,16 +255,11 @@ def new_signal_entity_action(id: int,
                              entity_id: EntityInstanceId,
                              operation: str,
                              encoded_input: str | None,
-                             request_id: str,
-                             scheduled_time: datetime | None = None) -> pb.OrchestratorAction:
-    scheduled_timestamp: timestamp_pb2.Timestamp | None = None
-    if scheduled_time is not None:
-        scheduled_timestamp = timestamp_pb2.Timestamp()
-        scheduled_timestamp.FromDatetime(scheduled_time)
+                             request_id: str) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
         requestId=request_id,
         operation=operation,
-        scheduledTime=scheduled_timestamp,
+        scheduledTime=None,
         input=get_string_value(encoded_input),
         targetInstanceId=get_string_value(str(entity_id)),
     )))

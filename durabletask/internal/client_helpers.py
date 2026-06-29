@@ -205,16 +205,14 @@ def build_signal_entity_req(
         entity_instance_id: EntityInstanceId,
         operation_name: str,
         input: Any | None = None,
-        signal_time: datetime | None = None,
         data_converter: DataConverter | None = None) -> pb.SignalEntityRequest:
     """Build a SignalEntityRequest for signaling an entity."""
-    scheduled_time = helpers.new_timestamp(signal_time) if signal_time is not None else None
     return pb.SignalEntityRequest(
         instanceId=str(entity_instance_id),
         name=operation_name,
         input=helpers.get_string_value(_serialize(input, data_converter)),
         requestId=str(uuid.uuid4()),
-        scheduledTime=scheduled_time,
+        scheduledTime=None,
         parentTraceContext=None,
         requestTime=helpers.new_timestamp(datetime.now(timezone.utc))
     )
