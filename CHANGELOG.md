@@ -10,7 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ADDED
 
 - Added `durabletask.scheduled`, a recurring schedule feature built on durable
-  entities. Use `configure_scheduled_tasks(worker)` to enable it on a worker,
+  entities. Use `worker.configure_scheduled_tasks()` to enable it on a worker,
   then manage schedules from the client via `ScheduledTaskClient` (and the
   per-schedule `ScheduleClient`). Supports creating, describing, listing,
   updating, pausing, resuming, and deleting schedules with configurable

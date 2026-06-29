@@ -579,8 +579,8 @@ class TaskHubGrpcWorker:
         self._runLoop: Thread | None = None
         # Extra worker capabilities advertised to the backend in
         # GetWorkItemsRequest (in addition to ones derived from worker state such
-        # as LARGE_PAYLOADS). Feature-enablement helpers like
-        # durabletask.scheduled.configure_scheduled_tasks register theirs here.
+        # as LARGE_PAYLOADS). A feature-enablement helper like
+        # TaskHubGrpcWorker.configure_scheduled_tasks registers its own here.
         self._capabilities: set[int] = set()
 
     @property
@@ -645,15 +645,37 @@ class TaskHubGrpcWorker:
         """Advertise a worker capability to the backend in ``GetWorkItemsRequest``.
 
         Most users do not call this directly; feature-enablement helpers such as
-        :func:`durabletask.scheduled.configure_scheduled_tasks` use it to
-        advertise the capabilities (``pb.WORKER_CAPABILITY_*``) their feature
-        relies on.
+        :meth:`TaskHubGrpcWorker.configure_scheduled_tasks` use it to advertise
+        the capabilities (``pb.WORKER_CAPABILITY_*``) their feature relies on.
         """
         if self._is_running:
             raise RuntimeError(
                 "Capabilities cannot be added while the worker is running."
             )
         self._capabilities.add(capability)
+
+    def configure_scheduled_tasks(self) -> None:
+        """Enable scheduled tasks support on this worker.
+
+        Registers the schedule entity and operation orchestrator and advertises
+        the scheduled-tasks capability to the backend. Call this before starting
+        the worker. Schedules are then managed from the client via
+        :class:`durabletask.scheduled.ScheduledTaskClient`.
+        """
+        if self._is_running:
+            raise RuntimeError(
+                "Scheduled tasks cannot be configured while the worker is running."
+            )
+        # Imported lazily to avoid a circular import: durabletask.scheduled
+        # imports from durabletask.worker.
+        from durabletask.scheduled.orchestrator import (
+            execute_schedule_operation_orchestrator,
+        )
+        from durabletask.scheduled.schedule_entity import ENTITY_NAME, Schedule
+
+        self.add_entity(Schedule, ENTITY_NAME)
+        self.add_orchestrator(execute_schedule_operation_orchestrator)
+        self.add_capability(pb.WORKER_CAPABILITY_SCHEDULED_TASKS)
 
     def use_versioning(self, version: VersioningOptions) -> None:
         """Initializes versioning options for sub-orchestrators and activities."""

@@ -17,8 +17,7 @@ from azure.identity import DefaultAzureCredential
 from durabletask import task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-from durabletask.scheduled import (ScheduledTaskClient, ScheduleCreationOptions,
-                                   configure_scheduled_tasks)
+from durabletask.scheduled import ScheduledTaskClient, ScheduleCreationOptions
 
 
 def greet_orchestrator(ctx: task.OrchestrationContext, name: str) -> Generator[task.Task[Any], Any, Any]:
@@ -41,7 +40,7 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_cha
                                 taskhub=taskhub_name, token_credential=credential) as worker:
     worker.add_orchestrator(greet_orchestrator)
     # Register the schedule entity and operation orchestrator.
-    configure_scheduled_tasks(worker)
+    worker.configure_scheduled_tasks()
     worker.start()
 
     client = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=secure_channel,

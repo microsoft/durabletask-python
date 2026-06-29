@@ -12,8 +12,7 @@ import pytest
 from durabletask import client, task, worker
 from durabletask.scheduled import (ScheduledTaskClient, ScheduleCreationOptions,
                                    ScheduleQuery, ScheduleStatus,
-                                   ScheduleUpdateOptions,
-                                   configure_scheduled_tasks)
+                                   ScheduleUpdateOptions)
 from durabletask.testing import create_test_backend
 
 from tests.durabletask._port_utils import find_free_port
@@ -63,7 +62,7 @@ def target_orchestrator(ctx: task.OrchestrationContext, value):
 def _make_worker() -> worker.TaskHubGrpcWorker:
     w = worker.TaskHubGrpcWorker(host_address=HOST)
     w.add_orchestrator(target_orchestrator)
-    configure_scheduled_tasks(w)
+    w.configure_scheduled_tasks()
     return w
 
 

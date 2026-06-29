@@ -19,8 +19,7 @@ from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.scheduled import (ScheduledTaskClient, ScheduleCreationOptions,
                                    ScheduleQuery, ScheduleStatus,
-                                   ScheduleUpdateOptions,
-                                   configure_scheduled_tasks)
+                                   ScheduleUpdateOptions)
 
 import os
 
@@ -61,7 +60,7 @@ def _make_worker() -> DurableTaskSchedulerWorker:
     w = DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_channel,
                                    taskhub=taskhub_name, token_credential=None)
     w.add_orchestrator(target_orchestrator)
-    configure_scheduled_tasks(w)
+    w.configure_scheduled_tasks()
     return w
 
 
