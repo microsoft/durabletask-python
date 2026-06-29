@@ -579,8 +579,8 @@ class TaskHubGrpcWorker:
         self._runLoop: Thread | None = None
         # Extra worker capabilities advertised to the backend in
         # GetWorkItemsRequest (in addition to ones derived from worker state such
-        # as LARGE_PAYLOADS). Feature-enablement helpers like
-        # TaskHubGrpcWorker.configure_scheduled_tasks register theirs here.
+        # as LARGE_PAYLOADS). A feature-enablement helper like
+        # TaskHubGrpcWorker.configure_scheduled_tasks registers its own here.
         self._capabilities: set[int] = set()
 
     @property
@@ -645,8 +645,8 @@ class TaskHubGrpcWorker:
         """Advertise a worker capability to the backend in ``GetWorkItemsRequest``.
 
         Most users do not call this directly; feature-enablement helpers such as
-        :meth:`configure_scheduled_tasks` use it to advertise the capabilities
-        (``pb.WORKER_CAPABILITY_*``) their feature relies on.
+        :meth:`TaskHubGrpcWorker.configure_scheduled_tasks` use it to advertise
+        the capabilities (``pb.WORKER_CAPABILITY_*``) their feature relies on.
         """
         if self._is_running:
             raise RuntimeError(
@@ -668,8 +668,9 @@ class TaskHubGrpcWorker:
             )
         # Imported lazily to avoid a circular import: durabletask.scheduled
         # imports from durabletask.worker.
-        from durabletask.scheduled.orchestrator import \
-            execute_schedule_operation_orchestrator
+        from durabletask.scheduled.orchestrator import (
+            execute_schedule_operation_orchestrator,
+        )
         from durabletask.scheduled.schedule_entity import ENTITY_NAME, Schedule
 
         self.add_entity(Schedule, ENTITY_NAME)
