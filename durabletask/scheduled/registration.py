@@ -2,8 +2,7 @@
 # Licensed under the MIT License.
 
 from durabletask.worker import TaskHubGrpcWorker
-from durabletask.scheduled.orchestrator import \
-    execute_schedule_operation_orchestrator
+from durabletask.scheduled.orchestrator import execute_schedule_operation_orchestrator
 from durabletask.scheduled.schedule_entity import ENTITY_NAME, Schedule
 
 

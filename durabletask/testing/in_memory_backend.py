@@ -153,6 +153,13 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         self._logger = logging.getLogger(__name__)
         self._shutdown_event = threading.Event()
         self._work_available = threading.Event()
+        # Monotonic lifecycle counter, bumped on every stop()/reset(). Background
+        # timers (e.g. delayed entity signals) capture it when scheduled and bail
+        # if it has changed by the time they fire, so a timer created before a
+        # stop/reset cannot mutate a subsequently-restarted or cleared backend.
+        # Unlike ``_shutdown_event`` (which reset() clears to allow restart), this
+        # only ever moves forward, so it reliably invalidates stale timers.
+        self._generation = 0
 
     def start(self) -> str:
         """
@@ -183,6 +190,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         """
         self._shutdown_event.set()
         self._work_available.set()  # Unblock GetWorkItems loops
+        self._generation += 1
         if self._server:
             stop_future = self._server.stop(grace)
             stop_future.wait()
@@ -208,6 +216,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             self._state_waiters.clear()
             self._shutdown_event.clear()
             self._work_available.clear()
+            self._generation += 1
 
     # gRPC Service Methods
 
@@ -1799,11 +1808,14 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         in-memory backend.
         """
         delay = max(0.0, (fire_at - datetime.now(timezone.utc)).total_seconds())
+        # Capture the lifecycle generation so a timer outliving a stop()/reset()
+        # does not enqueue into a restarted or cleared backend.
+        scheduled_generation = self._generation
 
         def fire() -> None:
             time.sleep(delay)
             with self._lock:
-                if self._shutdown_event.is_set():
+                if self._shutdown_event.is_set() or self._generation != scheduled_generation:
                     return
                 self._queue_entity_operation(entity_id, event)
 

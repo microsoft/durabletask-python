@@ -108,10 +108,11 @@ class ScheduledTaskClient:
         except ScheduleNotFoundError:
             return None
 
-    def list_schedules(self, filter: ScheduleQuery | None = None) -> list[ScheduleDescription]:
+    def list_schedules(self, schedule_query: ScheduleQuery | None = None) -> list[ScheduleDescription]:
         """List schedules matching the given filter criteria."""
-        prefix = filter.schedule_id_prefix if filter and filter.schedule_id_prefix else ""
-        page_size = filter.page_size if filter and filter.page_size else ScheduleQuery.DEFAULT_PAGE_SIZE
+        prefix = schedule_query.schedule_id_prefix if schedule_query and schedule_query.schedule_id_prefix else ""
+        page_size = (schedule_query.page_size if schedule_query and schedule_query.page_size
+                     else ScheduleQuery.DEFAULT_PAGE_SIZE)
         query = EntityQuery(
             instance_id_starts_with=f"@{ENTITY_NAME}@{prefix}",
             include_state=True,
@@ -122,20 +123,20 @@ class ScheduledTaskClient:
             state = metadata.get_typed_state(ScheduleState)
             if state is None or state.schedule_configuration is None:
                 continue
-            if not self._matches_filter(state, filter):
+            if not self._matches_filter(state, schedule_query):
                 continue
             results.append(state.to_description())
         return results
 
     @staticmethod
-    def _matches_filter(state: ScheduleState, filter: ScheduleQuery | None) -> bool:
-        if filter is None:
+    def _matches_filter(state: ScheduleState, schedule_query: ScheduleQuery | None) -> bool:
+        if schedule_query is None:
             return True
-        if filter.status is not None and state.status != filter.status:
+        if schedule_query.status is not None and state.status != schedule_query.status:
             return False
         created_at = state.schedule_created_at
-        if filter.created_from is not None and not (created_at and created_at > filter.created_from):
+        if schedule_query.created_from is not None and not (created_at and created_at > schedule_query.created_from):
             return False
-        if filter.created_to is not None and not (created_at and created_at < filter.created_to):
+        if schedule_query.created_to is not None and not (created_at and created_at < schedule_query.created_to):
             return False
         return True
