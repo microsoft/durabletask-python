@@ -20,7 +20,8 @@ extends:
       os: linux
 
     stages:
-      - stage: release
+      - stage: release_durabletask
+        displayName: "Release durabletask"
         jobs:
           - job: durabletask
             displayName: "Release durabletask"
@@ -59,6 +60,13 @@ extends:
                   mainpublisher: "durabletask-java"
                   domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
 
+      - stage: release_durabletask_azuremanaged
+        displayName: "Release durabletask-azuremanaged"
+        # Wait for the core durabletask stage to finish before publishing the
+        # dependent provider package. If the durabletask stage is de-selected
+        # at queue time, ADO skips it and this stage runs on its own.
+        dependsOn: release_durabletask
+        jobs:
           - job: durabletask_azuremanaged
             displayName: "Release durabletask-azuremanaged"
             templateContext:
