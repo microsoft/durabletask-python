@@ -18,6 +18,7 @@ from durabletask.grpc_options import (
 )
 import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
+from durabletask.serialization import DataConverter
 from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 
 
@@ -81,6 +82,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  resiliency_options: GrpcWorkerResiliencyOptions | None = None,
                  concurrency_options: ConcurrencyOptions | None = None,
                  payload_store: PayloadStore | None = None,
+                 data_converter: DataConverter | None = None,
                  log_handler: logging.Handler | None = None,
                  log_formatter: logging.Formatter | None = None):
 
@@ -110,5 +112,6 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             concurrency_options=concurrency_options,
             # DTS natively supports long timers so chunking is unnecessary
             maximum_timer_interval=None,
-            payload_store=payload_store
+            payload_store=payload_store,
+            data_converter=data_converter
         )
