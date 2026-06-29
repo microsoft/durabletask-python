@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.7.0
+
 ADDED
 
 - `DurableTaskSchedulerWorker`, `DurableTaskSchedulerClient`, and the async
