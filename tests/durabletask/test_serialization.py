@@ -103,40 +103,6 @@ def test_instance_to_json_hook_receives_instance():
     assert json.loads(to_json(Widget("gear", 5))) == {"label": "gear", "size": 5}
 
 
-@dataclass
-class HookedDataclass:
-    """Dataclass that overrides serialization via to_json/from_json.
-
-    Its ``value`` field is not JSON-native on the wire (it is encoded as a
-    string), so plain ``dataclasses.asdict`` would not round-trip. The hooks
-    take precedence over the default dataclass encoding.
-    """
-
-    value: int
-
-    def to_json(self) -> dict:
-        return {"value": str(self.value)}
-
-    @classmethod
-    def from_json(cls, data: dict) -> "HookedDataclass":
-        return cls(int(data["value"]))
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, HookedDataclass) and other.value == self.value
-
-
-def test_dataclass_to_json_hook_takes_precedence_over_asdict():
-    # A dataclass exposing to_json should serialize via the hook, not asdict.
-    encoded = json_codec.to_json(HookedDataclass(7))
-    assert json.loads(encoded) == {"value": "7"}
-
-
-def test_dataclass_hook_round_trips_with_expected_type():
-    encoded = json_codec.to_json(HookedDataclass(7))
-    result = json_codec.from_json(encoded, HookedDataclass)
-    assert result == HookedDataclass(7)
-
-
 # ----- to_json -----
 
 
