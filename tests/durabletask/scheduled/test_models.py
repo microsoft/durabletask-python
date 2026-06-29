@@ -9,7 +9,7 @@ import pytest
 
 from durabletask.serialization import JsonDataConverter
 from durabletask.scheduled.models import (ScheduleConfiguration,
-                                          ScheduleCreationOptions,
+                                          ScheduleCreationOptions, ScheduleQuery,
                                           ScheduleState, ScheduleUpdateOptions)
 from durabletask.scheduled.schedule_status import ScheduleStatus
 
@@ -142,3 +142,26 @@ class TestScheduleState:
         original = state.execution_token
         state.refresh_execution_token()
         assert state.execution_token != original
+
+
+class TestScheduleQueryNormalization:
+    def test_naive_bounds_are_coerced_to_aware_utc(self):
+        q = ScheduleQuery(
+            created_from=datetime(2026, 1, 1, 0, 0, 0),
+            created_to=datetime(2026, 2, 1, 0, 0, 0),
+        )
+        assert q.created_from is not None and q.created_to is not None
+        assert q.created_from == datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert q.created_to == datetime(2026, 2, 1, tzinfo=timezone.utc)
+        assert q.created_from.tzinfo is timezone.utc
+        assert q.created_to.tzinfo is timezone.utc
+
+    def test_aware_bounds_are_preserved(self):
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        q = ScheduleQuery(created_from=start)
+        assert q.created_from == start
+
+    def test_none_bounds_stay_none(self):
+        q = ScheduleQuery()
+        assert q.created_from is None
+        assert q.created_to is None

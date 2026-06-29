@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from durabletask.internal.helpers import ensure_aware
 from durabletask.scheduled.schedule_status import ScheduleStatus
 
 MINIMUM_INTERVAL = timedelta(seconds=1)
@@ -132,6 +133,14 @@ class ScheduleQuery:
     created_from: datetime | None = None
     created_to: datetime | None = None
     page_size: int | None = None
+
+    def __post_init__(self):
+        # Coerce the time-window bounds to timezone-aware UTC. Schedule
+        # timestamps are always stored as aware UTC, so normalizing here ensures
+        # a naive bound supplied by a caller can never reach the filter
+        # comparison and raise "can't compare offset-naive and offset-aware".
+        self.created_from = ensure_aware(self.created_from)
+        self.created_to = ensure_aware(self.created_to)
 
 
 @dataclass

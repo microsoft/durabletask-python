@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from durabletask.entities import DurableEntity, EntityInstanceId
+from durabletask.internal.helpers import ensure_aware
 from durabletask.scheduled import transitions
 from durabletask.scheduled.exceptions import ScheduleInvalidTransitionError
 from durabletask.scheduled.models import (ScheduleConfiguration,
@@ -24,14 +25,6 @@ logger = logging.getLogger("durabletask.scheduled")
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _ensure_aware(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value
 
 
 class Schedule(DurableEntity):
@@ -184,7 +177,7 @@ class Schedule(DurableEntity):
         if state.status != ScheduleStatus.ACTIVE:
             raise ValueError("Schedule must be in Active status to run.")
 
-        end_at = _ensure_aware(config.end_at)
+        end_at = ensure_aware(config.end_at)
         if end_at is not None and _now() > end_at:
             logger.info(f"Schedule '{config.schedule_id}' has passed its end time; deleting.")
             state.next_run_at = None
@@ -225,10 +218,10 @@ class Schedule(DurableEntity):
 
     def _determine_next_run_time(self, state: ScheduleState, config: ScheduleConfiguration) -> datetime:
         if state.next_run_at is not None:
-            return _ensure_aware(state.next_run_at)  # type: ignore[return-value]
+            return ensure_aware(state.next_run_at)  # type: ignore[return-value]
 
         now = _now()
-        start_time = _ensure_aware(config.start_at) or _ensure_aware(state.schedule_created_at) or now
+        start_time = ensure_aware(config.start_at) or ensure_aware(state.schedule_created_at) or now
         time_since_start = now - start_time
 
         # Next run is in the future relative to the start time.

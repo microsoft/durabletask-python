@@ -577,6 +577,11 @@ class TaskHubGrpcWorker:
         self._work_item_filters: WorkItemFilters | None = None
         self._auto_generate_work_item_filters: bool = False
         self._runLoop: Thread | None = None
+        # Extra worker capabilities advertised to the backend in
+        # GetWorkItemsRequest (in addition to ones derived from worker state such
+        # as LARGE_PAYLOADS). Feature-enablement helpers like
+        # durabletask.scheduled.configure_scheduled_tasks register theirs here.
+        self._capabilities: set[int] = set()
 
     @property
     def concurrency_options(self) -> ConcurrencyOptions:
@@ -635,6 +640,20 @@ class TaskHubGrpcWorker:
                 "Entities cannot be added while the worker is running."
             )
         return self._registry.add_entity(fn, name)
+
+    def add_capability(self, capability: int) -> None:
+        """Advertise a worker capability to the backend in ``GetWorkItemsRequest``.
+
+        Most users do not call this directly; feature-enablement helpers such as
+        :func:`durabletask.scheduled.configure_scheduled_tasks` use it to
+        advertise the capabilities (``pb.WORKER_CAPABILITY_*``) their feature
+        relies on.
+        """
+        if self._is_running:
+            raise RuntimeError(
+                "Capabilities cannot be added while the worker is running."
+            )
+        self._capabilities.add(capability)
 
     def use_versioning(self, version: VersioningOptions) -> None:
         """Initializes versioning options for sub-orchestrators and activities."""
@@ -861,6 +880,7 @@ class TaskHubGrpcWorker:
                 capabilities: list[Any] = []
                 if self._payload_store is not None:
                     capabilities.append(pb.WORKER_CAPABILITY_LARGE_PAYLOADS)
+                capabilities.extend(sorted(self._capabilities))
                 get_work_items_request = pb.GetWorkItemsRequest(
                     maxConcurrentOrchestrationWorkItems=self._concurrency_options.maximum_concurrent_orchestration_work_items,
                     maxConcurrentActivityWorkItems=self._concurrency_options.maximum_concurrent_activity_work_items,

@@ -6,6 +6,7 @@ import logging
 from durabletask.client import (EntityQuery, OrchestrationStatus,
                                 TaskHubGrpcClient)
 from durabletask.entities import EntityInstanceId
+from durabletask.internal.helpers import ensure_aware
 from durabletask.scheduled import transitions
 from durabletask.scheduled.exceptions import ScheduleNotFoundError
 from durabletask.scheduled.models import (ScheduleCreationOptions,
@@ -109,7 +110,14 @@ class ScheduledTaskClient:
             return None
 
     def list_schedules(self, schedule_query: ScheduleQuery | None = None) -> list[ScheduleDescription]:
-        """List schedules matching the given filter criteria."""
+        """List schedules matching the given filter criteria.
+
+        > [!NOTE]
+        > The ``status`` and ``created_from``/``created_to`` filters are applied
+        > client-side after each page of entities is fetched, so an individual
+        > page may contain fewer than ``page_size`` matches (or none) even when
+        > more matching schedules exist. This mirrors the .NET implementation.
+        """
         prefix = schedule_query.schedule_id_prefix if schedule_query and schedule_query.schedule_id_prefix else ""
         page_size = (schedule_query.page_size if schedule_query and schedule_query.page_size
                      else ScheduleQuery.DEFAULT_PAGE_SIZE)
@@ -134,7 +142,11 @@ class ScheduledTaskClient:
             return True
         if schedule_query.status is not None and state.status != schedule_query.status:
             return False
-        created_at = state.schedule_created_at
+        # ``ScheduleQuery`` normalizes its bounds to aware UTC; defensively
+        # normalize the stored timestamp too (a payload could in principle carry
+        # a naive value) so the comparison can never raise on naive-vs-aware.
+        # Bounds are exclusive, matching the .NET ScheduledTasks implementation.
+        created_at = ensure_aware(state.schedule_created_at)
         if schedule_query.created_from is not None and not (created_at and created_at > schedule_query.created_from):
             return False
         if schedule_query.created_to is not None and not (created_at and created_at < schedule_query.created_to):

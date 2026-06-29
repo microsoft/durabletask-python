@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -300,6 +300,21 @@ def new_timestamp(dt: datetime) -> timestamp_pb2.Timestamp:
     ts = timestamp_pb2.Timestamp()
     ts.FromDatetime(dt)
     return ts
+
+
+def ensure_aware(value: datetime | None) -> datetime | None:
+    """Return ``value`` as a timezone-aware datetime, assuming UTC when naive.
+
+    A naive datetime is tagged as UTC; an already-aware datetime is returned
+    unchanged. Useful before comparing user-supplied datetimes against the
+    SDK's always-aware-UTC timestamps to avoid "can't compare offset-naive and
+    offset-aware datetimes".
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def new_create_sub_orchestration_action(
