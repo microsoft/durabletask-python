@@ -277,11 +277,12 @@ class ScheduleState:
         }
 
     @classmethod
-    def from_json(cls, data: dict[str, Any], converter: Any) -> "ScheduleState":
-        # The nested configuration is reconstructed through the converter, which
-        # routes it to ``ScheduleConfiguration``'s own ``from_json`` hook (and
-        # honors a custom converter). Only this type's datetime leaves are
-        # rebuilt by hand.
+    def from_json(cls, data: dict[str, Any]) -> "ScheduleState":
+        # The nested configuration is reconstructed by calling its own
+        # ``from_json`` hook directly. ``ScheduleConfiguration`` is an internal
+        # type, so there is no need to route it through a (possibly custom)
+        # converter -- keeping this hook converter-free means it round-trips
+        # under any code path, not only the worker's threaded converter.
         state = cls()
         state.status = ScheduleStatus(data["status"])
         state.execution_token = data["execution_token"]
@@ -289,8 +290,9 @@ class ScheduleState:
         state.next_run_at = _from_iso(data.get("next_run_at"))
         state.schedule_created_at = _from_iso(data.get("schedule_created_at"))
         state.schedule_last_modified_at = _from_iso(data.get("schedule_last_modified_at"))
-        state.schedule_configuration = converter.coerce(
-            data.get("schedule_configuration"), ScheduleConfiguration)
+        config_data = data.get("schedule_configuration")
+        state.schedule_configuration = (
+            ScheduleConfiguration.from_json(config_data) if config_data is not None else None)
         return state
 
     def to_description(self) -> ScheduleDescription:

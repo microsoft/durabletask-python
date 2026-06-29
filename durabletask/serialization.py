@@ -360,6 +360,9 @@ def _coerce_to_type(value: Any, expected_type: Any, converter: DataConverter | N
     if expected_type is None or value is None:
         return value
 
+    if expected_type is typing.Any:
+        return value
+
     origin = typing.get_origin(expected_type)
     if origin is not None:
         return _coerce_generic(value, expected_type, origin, converter)
@@ -447,6 +450,11 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
         # If the value already matches a member type, keep it as-is.
         non_none = [a for a in args if a is not type(None)]
         for arg in non_none:
+            # ``Any`` imposes no constraint, so the value already satisfies the
+            # union. (Checked explicitly because ``isinstance(value, Any)`` would
+            # raise -- ``typing.Any`` is a class on 3.11+ but not isinstance-able.)
+            if arg is typing.Any:
+                return value
             if isinstance(arg, type) and isinstance(value, arg):
                 return value
         # ``Optional[T]`` (exactly one non-None member): coerce to that member.

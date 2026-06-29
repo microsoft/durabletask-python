@@ -13,10 +13,10 @@ from durabletask.entities import EntityInstanceId
 class ScheduleOperationRequest:
     """Request describing an operation to execute against a schedule entity.
 
-    A plain dataclass: the serializer round-trips it (and its ``input`` payload)
-    automatically. ``input`` stays an ``Any`` here -- it is reconstructed into the
-    concrete options type at the entity-method boundary from that method's
-    parameter annotation.
+    A plain dataclass: the serializer round-trips it automatically. ``input`` is
+    typed ``Any``, so it is reconstructed as the raw deserialized payload; the
+    concrete options type is rebuilt later, at the entity-method boundary, from
+    that method's parameter annotation.
     """
 
     entity_id: str

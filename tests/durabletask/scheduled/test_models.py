@@ -7,11 +7,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from durabletask.internal import shared
+from durabletask.serialization import JsonDataConverter
 from durabletask.scheduled.models import (ScheduleConfiguration,
                                           ScheduleCreationOptions,
                                           ScheduleState, ScheduleUpdateOptions)
 from durabletask.scheduled.schedule_status import ScheduleStatus
+
+converter = JsonDataConverter()
 
 
 class TestCreationOptionsValidation:
@@ -51,8 +53,8 @@ class TestCreationOptionsSerialization:
             orchestration_input={"key": "value"}, orchestration_instance_id="inst-1",
             start_at=start, end_at=end, start_immediately_if_late=True)
 
-        encoded = shared.to_json(options)
-        decoded = shared.from_json(encoded, ScheduleCreationOptions)
+        encoded = converter.serialize(options)
+        decoded = converter.deserialize(encoded, ScheduleCreationOptions)
 
         assert decoded.schedule_id == "s1"
         assert decoded.orchestration_name == "orch"
@@ -71,7 +73,7 @@ class TestUpdateOptions:
 
     def test_round_trip_through_json(self):
         options = ScheduleUpdateOptions(orchestration_name="orch2", interval=timedelta(seconds=10))
-        decoded = shared.from_json(shared.to_json(options), ScheduleUpdateOptions)
+        decoded = converter.deserialize(converter.serialize(options), ScheduleUpdateOptions)
         assert decoded.orchestration_name == "orch2"
         assert decoded.interval == timedelta(seconds=10)
         assert decoded.start_at is None
@@ -108,7 +110,7 @@ class TestScheduleConfiguration:
             ScheduleCreationOptions(schedule_id="s1", orchestration_name="orch",
                                     interval=timedelta(seconds=5),
                                     start_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
-        restored = shared.from_json(shared.to_json(config), ScheduleConfiguration)
+        restored = converter.deserialize(converter.serialize(config), ScheduleConfiguration)
         assert restored.schedule_id == "s1"
         assert restored.interval == timedelta(seconds=5)
         assert restored.start_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -124,7 +126,7 @@ class TestScheduleState:
                                     interval=timedelta(seconds=5)))
 
         # The nested ``ScheduleConfiguration`` round-trips automatically.
-        restored = shared.from_json(shared.to_json(state), ScheduleState)
+        restored = converter.deserialize(converter.serialize(state), ScheduleState)
         assert restored.status == ScheduleStatus.ACTIVE
         assert restored.schedule_created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
         assert restored.schedule_configuration is not None
