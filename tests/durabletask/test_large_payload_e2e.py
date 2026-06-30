@@ -22,6 +22,8 @@ import pytest
 from durabletask import client, task, worker
 from durabletask.testing import create_test_backend
 
+from tests.durabletask._port_utils import find_free_port
+
 # Skip the entire module if azure-storage-blob is not installed.
 azure_blob = pytest.importorskip("azure.storage.blob")
 
@@ -30,8 +32,8 @@ from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPay
 # Azurite well-known connection string
 AZURITE_CONN_STR = "UseDevelopmentStorage=true"
 
-HOST = "localhost:50070"
-BACKEND_PORT = 50070
+BACKEND_PORT = find_free_port()
+HOST = f"localhost:{BACKEND_PORT}"
 
 # Use a unique container per test run to avoid collisions.
 TEST_CONTAINER = f"e2e-payloads-{uuid.uuid4().hex[:8]}"

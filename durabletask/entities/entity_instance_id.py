@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 class EntityInstanceId:
     def __init__(self, entity: str, key: str):
         EntityInstanceId.validate_entity_name(entity)

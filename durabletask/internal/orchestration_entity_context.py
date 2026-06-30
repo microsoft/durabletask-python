@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from collections.abc import Generator
 from datetime import datetime
 from typing import Any

@@ -1,6 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Declarer app for the Durable Task Scheduler sandbox activities sample."""
 
 import os
+from collections.abc import Generator
+from typing import Any
 
 from azure.core.credentials import TokenCredential
 from azure.identity import DefaultAzureCredential
@@ -9,6 +14,7 @@ from durabletask import client, task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.preview.sandboxes import SandboxActivitiesClient
 from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfile
+from durabletask.azuremanaged.preview.sandboxes import SandboxWorkerProfileOptions
 from durabletask.azuremanaged.preview.sandboxes import sandbox_worker_profile
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
@@ -17,7 +23,7 @@ from activities import REMOTE_HELLO
 WORKER_PROFILE_ID = "remote-hello-profile"
 
 
-def hello_orchestrator(ctx: task.OrchestrationContext, name: str):
+def hello_orchestrator(ctx: task.OrchestrationContext, name: str) -> Generator[task.Task[Any], Any, Any]:
     """Orchestrator that calls an activity executed by the remote worker image."""
     return (yield ctx.call_activity(REMOTE_HELLO.name, input=name))
 
@@ -78,7 +84,7 @@ sample_timeout_seconds = int(os.getenv("DTS_SAMPLE_TIMEOUT_SECONDS", "300"))
 class RemoteWorkerProfile(SandboxWorkerProfile):
     """Sandbox worker profile used by the sample remote activity."""
 
-    def configure(self, options) -> None:
+    def configure(self, options: SandboxWorkerProfileOptions) -> None:
         options.image.image_ref = container_image
         options.image.managed_identity_client_id = image_pull_managed_identity_client_id
         options.scheduler_managed_identity_client_id = scheduler_managed_identity_client_id

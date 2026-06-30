@@ -15,7 +15,9 @@ from durabletask.client import TaskHubGrpcClient
 from durabletask.testing import create_test_backend
 from durabletask.worker import TaskHubGrpcWorker
 
-BATCH_TEST_PORT = 50058
+from tests.durabletask._port_utils import find_free_port
+
+BATCH_TEST_PORT = find_free_port()
 HOST = f"localhost:{BATCH_TEST_PORT}"
 
 
@@ -381,6 +383,41 @@ def test_get_all_entities(backend):
             assert len([e for e in all_entities_with_state if e.id == entity_id]) == 1
             entity_with_state = [e for e in all_entities_with_state if e.id == entity_id][0]
             assert entity_with_state.get_state(int) == 5
+    finally:
+        worker.stop()
+
+
+def test_entity_falsy_state_is_persisted(backend):
+    """A falsy entity state (e.g. 0) must be persisted, not dropped as None.
+
+    Regression test: the batch result previously persisted state only when it
+    was truthy, so a valid falsy state such as ``0`` was written as ``None`` and
+    effectively deleted. Only an actual ``None`` should clear the state.
+    """
+    def counter_entity(ctx: entities.EntityContext, input):
+        if ctx.operation == "set":
+            ctx.set_state(input)
+        elif ctx.operation == "get":
+            return ctx.get_state(int)
+
+    worker = TaskHubGrpcWorker(host_address=HOST)
+
+    worker.add_entity(counter_entity)
+    worker.start()
+
+    try:
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            entity_id = entities.EntityInstanceId("counter_entity", "falsyCounter")
+            # Set the state to a falsy-but-valid value.
+            c.signal_entity(entity_id, "set", input=0)
+            time.sleep(3)  # Wait for the signal to be processed
+
+            query = client.EntityQuery(include_state=True)
+            all_entities = c.get_all_entities(query)
+            matches = [e for e in all_entities if e.id == entity_id]
+            # The entity must still exist with its falsy state intact.
+            assert len(matches) == 1
+            assert matches[0].get_state(int) == 0
     finally:
         worker.stop()
 

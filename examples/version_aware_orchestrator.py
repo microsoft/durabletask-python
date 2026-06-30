@@ -1,7 +1,12 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """End-to-end sample that demonstrates how to configure an orchestrator
 that a dynamic number activity functions in parallel, waits for them all
 to complete, and prints an aggregate summary of the outputs."""
 import os
+from collections.abc import Generator
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -22,16 +27,16 @@ def activity_v2(ctx: task.ActivityContext, input: str) -> str:
     return "Success from activity v2"
 
 
-def orchestrator(ctx: task.OrchestrationContext, _):
+def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Orchestrator function that checks the orchestration version and has version-aware behavior
     Use case: Updating an orchestrator with new logic while maintaining compatibility with previously
     started orchestrations"""
     if ctx.version == "1.0.0":
         # For version 1.0.0, we use the original logic
-        result: int = yield ctx.call_activity(activity_v1, input="input for v1")
+        result = yield ctx.call_activity(activity_v1, input="input for v1")
     elif ctx.version == "2.0.0":
         # For version 2.0.0, we use the updated logic
-        result: int = yield ctx.call_activity(activity_v2, input="input for v2")
+        result = yield ctx.call_activity(activity_v2, input="input for v2")
     else:
         raise ValueError(f"Unsupported version: {ctx.version}")
     return {

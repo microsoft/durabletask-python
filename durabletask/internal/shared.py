@@ -1,16 +1,58 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import dataclasses
-import json
 import logging
+import warnings
 from collections.abc import Sequence
-from types import SimpleNamespace
 from typing import Any, TypeAlias
 
 import grpc
 import grpc.aio
+
+# Backwards-compatibility shims. The JSON codec moved into
+# ``durabletask.serialization`` and its functions are now private; the supported
+# surface is the pluggable ``DataConverter`` (and the default
+# ``JsonDataConverter``). These thin wrappers keep older imports from
+# ``durabletask.internal.shared`` working while steering callers to the new API.
+# They deliberately reach into the now-private serialization mechanism.
+from durabletask import serialization as _serialization
 from durabletask.grpc_options import GrpcChannelOptions
+
+# Legacy marker constant, re-exported for backwards compatibility.
+AUTO_SERIALIZED = _serialization._AUTO_SERIALIZED  # pyright: ignore[reportPrivateUsage]
+
+_SERIALIZATION_DEPRECATION = (
+    "durabletask.internal.shared.{name} is deprecated and will be removed in a "
+    "future release. Use a durabletask.serialization.DataConverter (e.g. the "
+    "default JsonDataConverter) instead."
+)
+
+
+def to_json(obj: Any) -> str:
+    """Deprecated. Use a ``durabletask.serialization.DataConverter`` instead."""
+    warnings.warn(
+        _SERIALIZATION_DEPRECATION.format(name="to_json"),
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _serialization._to_json(obj)  # pyright: ignore[reportPrivateUsage]
+
+
+def from_json(json_str: str | bytes | bytearray, expected_type: type | None = None) -> Any:
+    """Deprecated. Use a ``durabletask.serialization.DataConverter`` instead.
+
+    This legacy shim does not thread a ``DataConverter`` into reconstruction, so
+    a converter-aware ``from_json(cls, value, converter)`` hook is invoked
+    without the converter (its single-argument form). Call
+    ``JsonDataConverter().deserialize(...)`` to get the converter-aware path.
+    """
+    warnings.warn(
+        _SERIALIZATION_DEPRECATION.format(name="from_json"),
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _serialization._from_json(json_str, expected_type)  # pyright: ignore[reportPrivateUsage]
+
 
 ClientInterceptor: TypeAlias = (
     grpc.UnaryUnaryClientInterceptor
@@ -25,10 +67,6 @@ AsyncClientInterceptor: TypeAlias = (
     | grpc.aio.StreamUnaryClientInterceptor
     | grpc.aio.StreamStreamClientInterceptor
 )
-
-# Field name used to indicate that an object was automatically serialized
-# and should be deserialized as a SimpleNamespace
-AUTO_SERIALIZED = "__durabletask_autoobject__"
 
 SECURE_PROTOCOLS = ["https://", "grpcs://"]
 INSECURE_PROTOCOLS = ["http://", "grpc://"]
@@ -156,51 +194,3 @@ def get_logger(
             datefmt='%Y-%m-%d %H:%M:%S')
     log_handler.setFormatter(log_formatter)
     return logger
-
-
-def to_json(obj: Any) -> str:
-    return json.dumps(obj, cls=InternalJSONEncoder)
-
-
-def from_json(json_str: str | bytes | bytearray) -> Any:
-    return json.loads(json_str, cls=InternalJSONDecoder)
-
-
-class InternalJSONEncoder(json.JSONEncoder):
-    """JSON encoder that supports serializing specific Python types."""
-
-    def encode(self, o: Any) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
-        # if the object is a namedtuple, convert it to a dict with the AUTO_SERIALIZED key added
-        if isinstance(o, tuple):
-            namedtuple_obj: Any = o  # pyright: ignore[reportUnknownVariableType]
-            if hasattr(namedtuple_obj, "_fields") and hasattr(namedtuple_obj, "_asdict"):
-                d: dict[str, Any] = namedtuple_obj._asdict()
-                d[AUTO_SERIALIZED] = True
-                o = d
-        return super().encode(o)
-
-    def default(self, o: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
-        if dataclasses.is_dataclass(o) and not isinstance(o, type):
-            # Dataclasses are not serializable by default, so we convert them to a dict and mark them for
-            # automatic deserialization by the receiver
-            d: dict[str, Any] = dataclasses.asdict(o)
-            d[AUTO_SERIALIZED] = True
-            return d
-        elif isinstance(o, SimpleNamespace):
-            # Most commonly used for serializing custom objects that were previously serialized using our encoder
-            d = vars(o)
-            d[AUTO_SERIALIZED] = True
-            return d
-        # This will typically raise a TypeError
-        return json.JSONEncoder.default(self, o)
-
-
-class InternalJSONDecoder(json.JSONDecoder):
-    def __init__(self, *args: Any, **kwargs: Any):
-        super().__init__(object_hook=self.dict_to_object, *args, **kwargs)
-
-    def dict_to_object(self, d: dict[str, Any]) -> Any:
-        # If the object was serialized by the InternalJSONEncoder, deserialize it as a SimpleNamespace
-        if d.pop(AUTO_SERIALIZED, False):
-            return SimpleNamespace(**d)
-        return d

@@ -31,8 +31,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e ".[azure-blob-payloads,opentelemetry]"
-          pip install -e ./durabletask-azuremanaged
+          # Install third-party dependencies declared by the examples so they
+          # type-check cleanly. Each example's requirements.txt is the single
+          # source of truth for its dependencies.
+          for req in examples/requirements.txt examples/*/requirements.txt; do
+            pip install -r "$req"
+          done
+          # Install the packages under test from local source last (non-editable
+          # so the durabletask / durabletask.azuremanaged namespace packages are
+          # physically merged in site-packages, which pyright can resolve). This
+          # overrides any PyPI copy pulled in by the example requirements above.
+          pip install --force-reinstall --no-deps . ./durabletask-azuremanaged
+          pip install ".[azure-blob-payloads,opentelemetry]"
           pip install pyright
 
       - name: Run pyright (strict, Python 3.10)
