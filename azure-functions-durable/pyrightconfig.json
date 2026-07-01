@@ -1,0 +1,16 @@
+{
+  "include": [
+    "azure"
+  ],
+  "extraPaths": [
+    ".."
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv*",
+    ".venv*",
+    "build"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict"
+}

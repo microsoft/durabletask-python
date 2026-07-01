@@ -5,6 +5,7 @@ pytest
 pytest-asyncio
 pytest-cov
 azure-identity
+azure-functions
 asyncio
 packaging
 opentelemetry-api

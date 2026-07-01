@@ -1434,8 +1434,7 @@ class TaskHubGrpcWorker:
             stub.CompleteEntityTask(batch_result)
         except Exception as ex:
             self._logger.exception(
-                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}"
-            )
+                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}")
 
         # TODO: Reset context
 
@@ -2821,6 +2820,16 @@ class _OrchestrationExecutor:
             # inner value to the expected type via the converter (no redundant
             # re-serialization round-trip).
             unwrapped = self._data_converter.deserialize(event.eventRaised.input.value)["result"]
+            # The result here is double-encoded somewhere, so we need to decode it again. This does not happen
+            # with entityOperationCompleted, so it's either part of the event entity messaging protocol in Core,
+            # or something done by the WebJobs extension.
+            if unwrapped and isinstance(unwrapped, str):
+                try:
+                    unwrapped = self._data_converter.deserialize(unwrapped)
+                except Exception as ex:
+                    self._logger.warning(f"{ctx.instance_id}: Could not deserialize entity operation result to object "
+                                         f"for entity '{entity_id}', defaulting to encoded string."
+                                         f"Decode error: {ex}")
             result = self._data_converter.coerce(
                 unwrapped,
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]

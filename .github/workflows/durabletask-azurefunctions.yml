@@ -1,0 +1,67 @@
+name: Durable Task Scheduler SDK (azure-functions-durable)
+
+on:
+  push:
+    branches: 
+      - "main"
+    tags:
+      - "azurefunctions-v*"  # Only run for tags starting with "azurefunctions-v"
+  pull_request:
+    branches: 
+      - "main"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.14
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.14
+    - name: Install dependencies
+      working-directory: azure-functions-durable
+      run: |
+        python -m pip install --upgrade pip
+        pip install setuptools wheel tox
+        pip install flake8
+    - name: Run flake8 Linter
+      working-directory: azure-functions-durable
+      run: flake8 .
+    - name: Run flake8 Linter
+      working-directory: tests/azure-functions-durable
+      run: flake8 .
+
+  run-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install durabletask locally
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install . --force-reinstall
+
+      - name: Install azure-functions-durable locally
+        run: |
+          pip install ./azure-functions-durable --force-reinstall
+
+      - name: Run unit tests
+        working-directory: tests/azure-functions-durable
+        run: |
+          pytest -m "not dts and not azurite" --verbose

@@ -13,9 +13,9 @@ jobs:
       - checkout: self
 
       - task: UsePythonVersion@0
-        displayName: "Use Python 3.12"
+        displayName: "Use Python 3.13"
         inputs:
-          versionSpec: "3.12"
+          versionSpec: "3.13"
           addToPath: true
 
       # The 1ES pool is network-isolated, so direct pypi.org access is blocked.
@@ -45,6 +45,11 @@ jobs:
         displayName: "flake8: durabletask-azuremanaged"
         workingDirectory: durabletask-azuremanaged
 
+      # Lint azurefunctions provider
+      - script: flake8 .
+        displayName: "flake8: azure-functions-durable"
+        workingDirectory: azure-functions-durable
+
       # Build sdist + wheel for durabletask (core SDK)
       - script: |
           python -m build --sdist --wheel --outdir $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask .
@@ -55,10 +60,16 @@ jobs:
           python -m build --sdist --wheel --outdir $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged ./durabletask-azuremanaged
         displayName: "Build durabletask-azuremanaged (sdist + wheel)"
 
+      # Build sdist + wheel for azure-functions-durable
+      - script: |
+          python -m build --sdist --wheel --outdir $(Build.ArtifactStagingDirectory)/buildoutputs/azure-functions-durable ./azure-functions-durable
+        displayName: "Build azure-functions-durable (sdist + wheel)"
+
       # List staged outputs for visibility in logs
       - script: |
           ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask
           ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged
+          ls -la $(Build.ArtifactStagingDirectory)/buildoutputs/azure-functions-durable
         displayName: "List build outputs"
 
       # Install the built wheels with all declared optional extras and let
@@ -89,8 +100,10 @@ jobs:
           # append the extras correctly.
           DT_WHEEL=$(ls $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask/*.whl)
           DT_AM_WHEEL=$(ls $(Build.ArtifactStagingDirectory)/buildoutputs/durabletask-azuremanaged/*.whl)
+          AF_WHEEL=$(ls $(Build.ArtifactStagingDirectory)/buildoutputs/azure-functions-durable/*.whl)
           python -m pip install "${DT_WHEEL}[opentelemetry,azure-blob-payloads]"
           python -m pip install "${DT_AM_WHEEL}[azure-blob-payloads]"
+          python -m pip install "${AF_WHEEL}"
         displayName: "Install built wheels"
 
       - script: pytest -m "not dts and not azurite" --verbose
@@ -104,3 +117,12 @@ jobs:
           set -e
           python -P -c "import durabletask.azuremanaged; from durabletask.azuremanaged.client import DurableTaskSchedulerClient; from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker; print('durabletask.azuremanaged smoke import OK')"
         displayName: "smoke import: durabletask-azuremanaged"
+
+      # azure-functions-durable unit tests run here. Integration tests that
+      # require Azurite or the Azure Functions host emulator are marked
+      # (azurite / dts) and excluded since those external services aren't
+      # provisioned in this network-isolated pool. The full suite runs in
+      # GitHub Actions on PRs to main and main itself.
+      - script: pytest -m "not dts and not azurite" --verbose
+        displayName: "pytest: azure-functions-durable (unit tests, no emulators)"
+        workingDirectory: tests/azure-functions-durable
