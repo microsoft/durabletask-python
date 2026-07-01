@@ -78,8 +78,8 @@ python app.py
 The example schedules two orchestrations:
 
 - **Small payload** — The input and output stay inline in the gRPC
-  messages (below the 1 KB threshold configured in the example).
-- **Large payload** — The activity output (~70 KB) exceeds the
+  messages (below the 256 KiB threshold configured in the example).
+- **Large payload** — The activity output (~342 KB) exceeds the
   threshold and is automatically externalized to blob storage and
   retrieved transparently.
 
@@ -106,7 +106,7 @@ The `BlobPayloadStoreOptions` class supports the following settings:
 
 | Option | Default | Description |
 |---|---|---|
-| `threshold_bytes` | 900,000 (900 KB) | Payloads larger than this are externalized |
+| `threshold_bytes` | 262,144 (256 KiB) | Payloads larger than this are externalized |
 | `max_stored_payload_bytes` | 10,485,760 (10 MB) | Maximum externalized payload size |
 | `enable_compression` | `True` | GZip-compress before uploading |
 | `container_name` | `"durabletask-payloads"` | Blob container name |
