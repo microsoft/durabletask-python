@@ -79,7 +79,7 @@ The example schedules two orchestrations:
 
 - **Small payload** — The input and output stay inline in the gRPC
   messages (below the 256 KiB threshold configured in the example).
-- **Large payload** — The activity output (~342 KB) exceeds the
+- **Large payload** — The activity output (~342 KiB) exceeds the
   threshold and is automatically externalized to blob storage and
   retrieved transparently.
 
