@@ -9,6 +9,7 @@ from urllib.parse import urlparse, quote
 
 from durabletask.client import TaskHubGrpcClient
 from .internal.azurefunctions_grpc_interceptor import AzureFunctionsDefaultClientInterceptorImpl
+from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http import HttpManagementPayload
 
 
@@ -52,7 +53,8 @@ class DurableFunctionsClient(TaskHubGrpcClient):
             host_address=self.rpcBaseUrl,
             secure_channel=False,
             metadata=None,
-            interceptors=interceptors)
+            interceptors=interceptors,
+            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
 
     def _parse_client_configuration(self, client_as_string: str) -> None:
         """Parses the client configuration JSON string and sets instance variables.

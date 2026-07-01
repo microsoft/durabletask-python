@@ -14,6 +14,7 @@ from durabletask.internal.orchestrator_service_pb2 import (
 )
 from durabletask.worker import TaskHubGrpcWorker
 from .internal.azurefunctions_null_stub import AzureFunctionsNullStub
+from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 
 
 # Worker class used for Durable Task Scheduler (DTS)
@@ -30,7 +31,11 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         # concurrency options, payload store, etc.) that the inherited
         # ``_execute_*`` methods rely on; work items are delivered directly by
         # the methods below rather than streamed from a sidecar.
-        super().__init__()
+        #
+        # The Functions converter routes payload serialization through the
+        # azure-functions codec (df_dumps/df_loads) so user types round-trip in
+        # the wire format the Durable Functions host extension expects.
+        super().__init__(data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
 
     def add_named_orchestrator(self, name: str, func: task.Orchestrator[Any, Any]) -> None:
         self._registry.add_named_orchestrator(name, func)

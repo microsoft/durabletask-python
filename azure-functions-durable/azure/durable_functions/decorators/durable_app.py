@@ -4,6 +4,7 @@
 from functools import wraps
 from typing import Any, Callable, Optional, Union
 
+import azure.functions as func
 from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
 from azure.functions.decorators.function_app import FunctionBuilder
 
@@ -95,7 +96,12 @@ class Blueprint(TriggerApi, BindingApi):
             # TODO: Because this handle method is the one actually exposed to the Functions SDK decorator,
             #       the parameter name will always be "context" here, even if the user specified a different name.
             #       We need to find a way to allow custom context names (like "ctx").
-            def handle(context: Any) -> str:
+            # The generated handle is what the Azure Functions host registers,
+            # so its ``context`` parameter must be annotated with
+            # ``azure.functions.EntityContext`` for the host's entityTrigger
+            # binding converter to accept it; at runtime the host passes that
+            # transport context (exposing ``.body``).
+            def handle(context: func.EntityContext) -> str:
                 return DurableFunctionsWorker().execute_entity_batch_request(entity_func, context)
 
             handle.entity_function = entity_func  # pyright: ignore[reportFunctionMemberAccess]
