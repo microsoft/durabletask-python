@@ -81,8 +81,8 @@ def main():
     # Configure the blob payload store
     store = BlobPayloadStore(BlobPayloadStoreOptions(
         connection_string=storage_conn_str,
-        # Use a low threshold so that we can see externalization in action
-        threshold_bytes=1_024,
+        # 256 KiB, matching the SDK default; larger payloads are externalized
+        threshold_bytes=262_144,
     ))
 
     secure_channel = endpoint.startswith("https://")
@@ -120,7 +120,7 @@ def main():
         # (the report will be externalized to blob storage automatically)
         print("\n--- Large payload (externalized to blob storage) ---")
         instance_id = c.schedule_new_orchestration(
-            large_payload_orchestrator, input=10_000)
+            large_payload_orchestrator, input=50_000)
         state = c.wait_for_orchestration_completion(instance_id, timeout=60)
         if state and state.runtime_status == client.OrchestrationStatus.COMPLETED:
             print(f"Result: {state.serialized_output}")

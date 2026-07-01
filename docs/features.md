@@ -285,7 +285,7 @@ pip install durabletask[azure-blob-payloads]
 #### How it works
 
 1. When the worker or client sends a payload that exceeds the
-   configured threshold (default 900 KB), the payload is
+   configured threshold (default 256 KiB), the payload is
    compressed (GZip, enabled by default) and uploaded to the
    external store.
 2. The original payload in the gRPC message is replaced with a
@@ -307,7 +307,7 @@ from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPay
 store = BlobPayloadStore(BlobPayloadStoreOptions(
     connection_string="DefaultEndpointsProtocol=https;...",
     container_name="durabletask-payloads",  # default
-    threshold_bytes=900_000,                # default (900 KB)
+    threshold_bytes=262_144,                # default (256 KiB)
     max_stored_payload_bytes=10_485_760,    # default (10 MB)
     enable_compression=True,                # default
 ))
@@ -351,7 +351,7 @@ store = BlobPayloadStore(BlobPayloadStoreOptions(
 
 | Option | Default | Description |
 |---|---|---|
-| `threshold_bytes` | 900,000 (900 KB) | Payloads larger than this are externalized |
+| `threshold_bytes` | 262,144 (256 KiB) | Payloads larger than this are externalized |
 | `max_stored_payload_bytes` | 10,485,760 (10 MB) | Maximum size for externalized payloads |
 | `enable_compression` | `True` | GZip-compress payloads before uploading |
 | `container_name` | `"durabletask-payloads"` | Azure Blob container name |

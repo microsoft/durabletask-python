@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+CHANGED
+
+- Changed the default large-payload externalization threshold (`LargePayloadStorageOptions.threshold_bytes`) from 900,000 bytes to 262,144 bytes (256 KiB), matching the .NET SDK default. Behavioral change (not source/binary breaking): payloads larger than 256 KiB are now externalized by default.
+
 ## v1.7.0
 
 ADDED
