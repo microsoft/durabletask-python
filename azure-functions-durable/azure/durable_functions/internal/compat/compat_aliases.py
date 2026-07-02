@@ -8,7 +8,7 @@ from typing_extensions import deprecated
 from durabletask.entities import EntityContext
 from durabletask.task import OrchestrationContext
 
-from .client import DurableFunctionsClient
+from ...client import DurableFunctionsClient
 from .token_source import TokenSource
 
 

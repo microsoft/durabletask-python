@@ -18,10 +18,10 @@ from durabletask.entities import EntityInstanceId
 from .internal.azurefunctions_grpc_interceptor import AzureFunctionsAsyncDefaultClientInterceptorImpl
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http import HttpManagementPayload
-from .durable_orchestration_status import DurableOrchestrationStatus
-from .entity_state_response import EntityStateResponse
-from .orchestration_runtime_status import OrchestrationRuntimeStatus, to_durabletask_statuses
-from .purge_history_result import PurgeHistoryResult
+from .internal.compat.durable_orchestration_status import DurableOrchestrationStatus
+from .internal.compat.entity_state_response import EntityStateResponse
+from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus, to_durabletask_statuses
+from .internal.compat.purge_history_result import PurgeHistoryResult
 
 
 # Client class used for Durable Functions

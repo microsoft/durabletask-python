@@ -9,14 +9,14 @@ from durabletask.task import RetryPolicy
 from .decorators.durable_app import Blueprint, DFApp
 from .client import DurableFunctionsClient
 from .orchestrator import Orchestrator
-from .retry_options import RetryOptions
-from .orchestration_runtime_status import OrchestrationRuntimeStatus
-from .durable_orchestration_status import DurableOrchestrationStatus
-from .purge_history_result import PurgeHistoryResult
-from .entity_state_response import EntityStateResponse
-from .entity_id import EntityId
-from .token_source import ManagedIdentityTokenSource, TokenSource
-from .compat_aliases import (
+from .internal.compat.retry_options import RetryOptions
+from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus
+from .internal.compat.durable_orchestration_status import DurableOrchestrationStatus
+from .internal.compat.purge_history_result import PurgeHistoryResult
+from .internal.compat.entity_state_response import EntityStateResponse
+from .internal.compat.entity_id import EntityId
+from .internal.compat.token_source import ManagedIdentityTokenSource, TokenSource
+from .internal.compat.compat_aliases import (
     DurableEntityContext,
     DurableOrchestrationClient,
     DurableOrchestrationContext,

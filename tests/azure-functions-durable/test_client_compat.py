@@ -11,7 +11,7 @@ import pytest
 
 import azure.durable_functions as df
 from azure.durable_functions import RetryOptions
-from azure.durable_functions.orchestration_runtime_status import (
+from azure.durable_functions.internal.compat.orchestration_runtime_status import (
     from_durabletask_status,
     to_durabletask_status,
     to_durabletask_statuses,
