@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import inspect
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Generator, Optional, cast
 from uuid import UUID
 
@@ -61,8 +61,15 @@ class DurableOrchestrationContext:
 
     @property
     def current_utc_datetime(self) -> datetime:
-        """Get the replay-safe current UTC date/time."""
-        return self._ctx.current_utc_datetime
+        """Get the replay-safe current UTC date/time.
+
+        Returned as a timezone-aware (UTC) datetime for v1 compatibility;
+        durabletask exposes a naive UTC datetime.
+        """
+        value = self._ctx.current_utc_datetime
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
     @property
     def custom_status(self) -> Any:

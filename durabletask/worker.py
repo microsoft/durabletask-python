@@ -1668,6 +1668,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         else:
             final_fire_at = fire_at
 
+        # Normalize timezone-aware datetimes to naive UTC so they can be safely
+        # compared against and combined with the orchestration's naive UTC clock.
+        if final_fire_at.tzinfo is not None:
+            final_fire_at = final_fire_at.astimezone(timezone.utc).replace(tzinfo=None)
+
         next_fire_at: datetime = final_fire_at
 
         if (

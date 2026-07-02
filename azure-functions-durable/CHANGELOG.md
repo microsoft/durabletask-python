@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- `durable_client_input` now injects a rich `DurableFunctionsClient` into the
+  decorated function's client parameter (the binding's JSON string is converted
+  to a client object). Previously the client parameter received the raw string.
+- `DurableFunctionsClient` now applies the host-provided
+  `maxGrpcMessageSizeInBytes` to the gRPC channel's send/receive message limits
+  (when provided), allowing large orchestration payloads to be retrieved. When
+  the host does not supply a value, the gRPC library defaults are left in place.
+- `DurableOrchestrationContext.current_utc_datetime` is now timezone-aware
+  (UTC), matching v1, so comparisons against timezone-aware datetimes (e.g. a
+  parsed scheduled-start time) no longer raise.
+- `DurableOrchestrationStatus.to_json()` now emits orchestration payloads
+  (`output`, `input`, `customStatus`) as their raw JSON representation instead
+  of reconstructed Python objects, so the result is always JSON-serializable
+  even when payloads are custom types.
+
 ### Added
 
+- The `orchestration_trigger` decorator now accepts an `input_type` argument
+  (v1 parity). When set, a v1-style `context.get_input()` decodes the input to
+  that type; a call-site `expected_type` on `get_input` takes precedence.
 - One-argument (Azure Functions / v1-style) entity functions
   (``def entity(context):``) are now supported. The worker detects the entity's
   shape and, for single-argument functions, delivers a functional

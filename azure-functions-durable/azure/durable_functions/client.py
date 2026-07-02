@@ -15,6 +15,7 @@ from durabletask.client import (
     OrchestrationStatus,
 )
 from durabletask.entities import EntityInstanceId
+from durabletask.grpc_options import GrpcChannelOptions
 from .internal.azurefunctions_grpc_interceptor import AzureFunctionsAsyncDefaultClientInterceptorImpl
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http import HttpManagementPayload
@@ -58,6 +59,15 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
 
         interceptors = [AzureFunctionsAsyncDefaultClientInterceptorImpl(self.taskHubName, self.requiredQueryStringParameters)]
 
+        # Only override the gRPC message size limits when the host explicitly
+        # provides a value. When unset (0), we leave the gRPC library defaults
+        # in place rather than applying a large default of our own.
+        channel_options: GrpcChannelOptions | None = None
+        if self.maxGrpcMessageSizeInBytes > 0:
+            channel_options = GrpcChannelOptions(
+                max_receive_message_length=self.maxGrpcMessageSizeInBytes,
+                max_send_message_length=self.maxGrpcMessageSizeInBytes)
+
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
@@ -65,6 +75,7 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             secure_channel=False,
             metadata=None,
             interceptors=interceptors,
+            channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
 
     def _parse_client_configuration(self, client_as_string: str) -> None:

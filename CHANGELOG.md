@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added a `result` property to `Task` as a convenience alias for `get_result()`.
+
+FIXED
+
+- `OrchestrationContext.create_timer` now accepts timezone-aware `datetime`
+  values, normalizing them to UTC instead of raising when compared against the
+  orchestration's internal clock.
+
 ## v1.7.0
 
 ADDED

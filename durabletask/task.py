@@ -503,6 +503,11 @@ class Task(ABC, Generic[T]):
         """Returns True if the task has failed, False otherwise."""
         return self._exception is not None
 
+    @property
+    def result(self) -> T:
+        """Returns the result of the task (alias for :meth:`get_result`)."""
+        return self.get_result()
+
     def get_result(self) -> T:
         """Returns the result of the task."""
         if not self._is_complete:

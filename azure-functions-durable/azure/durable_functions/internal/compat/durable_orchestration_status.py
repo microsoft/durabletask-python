@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import json
 from datetime import datetime
 from typing import Any, Optional
 
@@ -94,7 +95,13 @@ class DurableOrchestrationStatus:
         return None
 
     def to_json(self) -> dict[str, Any]:
-        """Convert this status into a v1-compatible JSON dictionary."""
+        """Convert this status into a v1-compatible JSON dictionary.
+
+        Payload fields (``output``, ``input``, ``customStatus``) are emitted as
+        their raw JSON representation rather than the reconstructed Python
+        objects, so the result is always JSON-serializable even when the
+        orchestration payloads are custom types.
+        """
         result: dict[str, Any] = {}
         if self.name is not None:
             result["name"] = self.name
@@ -104,12 +111,32 @@ class DurableOrchestrationStatus:
             result["createdTime"] = self.created_time.isoformat()
         if self.last_updated_time is not None:
             result["lastUpdatedTime"] = self.last_updated_time.isoformat()
-        if self.output is not None:
-            result["output"] = self.output
-        if self.input_ is not None:
-            result["input"] = self.input_
+        output = self._raw_payload(
+            self._state.serialized_output if self._state is not None else None)
+        if output is not None:
+            result["output"] = output
+        input_ = self._raw_payload(
+            self._state.serialized_input if self._state is not None else None)
+        if input_ is not None:
+            result["input"] = input_
         if self.runtime_status is not None:
             result["runtimeStatus"] = self.runtime_status.name
-        if self.custom_status is not None:
-            result["customStatus"] = self.custom_status
+        custom_status = self._raw_payload(
+            self._state.serialized_custom_status if self._state is not None else None)
+        if custom_status is not None:
+            result["customStatus"] = custom_status
         return result
+
+    @staticmethod
+    def _raw_payload(serialized: Optional[str]) -> Any:
+        """Parse a serialized payload as plain JSON without reconstructing types.
+
+        Returns the parsed JSON value (which is always JSON-serializable), or the
+        original string if it is not valid JSON, or ``None`` when absent.
+        """
+        if serialized is None:
+            return None
+        try:
+            return json.loads(serialized)
+        except (TypeError, ValueError):
+            return serialized
