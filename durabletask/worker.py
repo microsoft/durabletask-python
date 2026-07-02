@@ -2229,10 +2229,13 @@ class _OrchestrationExecutor:
 
                 # Store the parent orchestration instance ID (set for
                 # sub-orchestrations; absent for top-level orchestrations)
-                if event.executionStarted.HasField("parentInstance") and \
-                        event.executionStarted.parentInstance.HasField("orchestrationInstance"):
+                if (
+                        event.executionStarted.HasField("parentInstance")
+                        and event.executionStarted.parentInstance.HasField("orchestrationInstance")
+                ):
                     ctx._parent_instance_id = (  # pyright: ignore[reportPrivateUsage]
-                        event.executionStarted.parentInstance.orchestrationInstance.instanceId)
+                        event.executionStarted.parentInstance.orchestrationInstance.instanceId
+                    )
 
                 # Store the parent trace context for propagation to child tasks
                 if event.executionStarted.HasField("parentTraceContext"):
