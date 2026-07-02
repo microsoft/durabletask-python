@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Two-argument (durabletask-native) orchestrators continue to work unchanged.
   `DurableOrchestrationContext.call_http` raises `NotImplementedError` pending a
   durabletask durable-HTTP implementation.
+- `DurableOrchestrationContext` also exposes `custom_status` (reflecting the
+  value set via `set_custom_status`) and `will_continue_as_new` (True once
+  `continue_as_new` has been called). `parent_instance_id`, `function_context`,
+  and `histories` raise `NotImplementedError` because durabletask does not
+  surface that information on the orchestration context.
 
 - Backwards-compatible, deprecated aliases on `DurableFunctionsClient` for the
   v1 `DurableOrchestrationClient` method names: `start_new`, `get_status`,

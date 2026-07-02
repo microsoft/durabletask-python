@@ -27,6 +27,8 @@ class DurableOrchestrationContext:
     def __init__(self, ctx: OrchestrationContext, orchestration_input: Any = None):
         self._ctx = ctx
         self._input = orchestration_input
+        self._custom_status: Any = None
+        self._will_continue_as_new = False
 
     # -- input ---------------------------------------------------------------
     def get_input(self) -> Any:
@@ -48,6 +50,47 @@ class DurableOrchestrationContext:
     def current_utc_datetime(self) -> datetime:
         """Get the replay-safe current UTC date/time."""
         return self._ctx.current_utc_datetime
+
+    @property
+    def custom_status(self) -> Any:
+        """Get the custom status set during this execution (or ``None``)."""
+        return self._custom_status
+
+    @property
+    def will_continue_as_new(self) -> bool:
+        """Whether :meth:`continue_as_new` has been called in this execution."""
+        return self._will_continue_as_new
+
+    @property
+    def parent_instance_id(self) -> str:
+        """Get the ID of the parent orchestration.
+
+        Not available: durabletask does not currently surface the parent
+        instance ID on the orchestration context.
+        """
+        raise NotImplementedError(
+            "parent_instance_id is not currently exposed by durabletask.")
+
+    @property
+    def function_context(self) -> Any:
+        """Get the Azure Functions-level context.
+
+        Not available: durabletask does not provide the v1 ``FunctionContext``
+        binding metadata.
+        """
+        raise NotImplementedError(
+            "function_context is not available in this SDK.")
+
+    @property
+    def histories(self) -> Any:
+        """Get the running history of scheduled tasks.
+
+        Not available: durabletask manages orchestration history internally and
+        does not expose it on the context.
+        """
+        raise NotImplementedError(
+            "histories is not exposed by durabletask; use the client's "
+            "get_orchestration_history instead.")
 
     # -- activities ----------------------------------------------------------
     def call_activity(self, name: Callable[..., Any] | str, input_: Any = None) -> Task[Any]:
@@ -92,10 +135,12 @@ class DurableOrchestrationContext:
     # -- control -------------------------------------------------------------
     def continue_as_new(self, input_: Any) -> None:
         """Restart the orchestration with a new input."""
+        self._will_continue_as_new = True
         self._ctx.continue_as_new(input_)
 
     def set_custom_status(self, status: Any) -> None:
         """Set the orchestration's custom status payload."""
+        self._custom_status = status
         self._ctx.set_custom_status(status)
 
     # -- deterministic IDs ---------------------------------------------------

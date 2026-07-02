@@ -117,6 +117,44 @@ def test_call_http_raises_not_implemented():
 
 
 # ---------------------------------------------------------------------------
+# Additional context members
+# ---------------------------------------------------------------------------
+
+def test_custom_status_tracks_set_custom_status():
+    adapter, fake = _adapter()
+    assert adapter.custom_status is None
+    adapter.set_custom_status({"progress": 50})
+    assert adapter.custom_status == {"progress": 50}
+    fake.set_custom_status.assert_called_once_with({"progress": 50})
+
+
+def test_will_continue_as_new_tracks_continue_as_new():
+    adapter, fake = _adapter()
+    assert adapter.will_continue_as_new is False
+    adapter.continue_as_new({"next": 1})
+    assert adapter.will_continue_as_new is True
+    fake.continue_as_new.assert_called_once_with({"next": 1})
+
+
+def test_parent_instance_id_raises_not_implemented():
+    adapter, _ = _adapter()
+    with pytest.raises(NotImplementedError):
+        _ = adapter.parent_instance_id
+
+
+def test_function_context_raises_not_implemented():
+    adapter, _ = _adapter()
+    with pytest.raises(NotImplementedError):
+        _ = adapter.function_context
+
+
+def test_histories_raises_not_implemented():
+    adapter, _ = _adapter()
+    with pytest.raises(NotImplementedError):
+        _ = adapter.histories
+
+
+# ---------------------------------------------------------------------------
 # Arity detection and wrapping
 # ---------------------------------------------------------------------------
 
