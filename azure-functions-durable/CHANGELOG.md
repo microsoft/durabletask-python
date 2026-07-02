@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- One-argument (Azure Functions / v1-style) entity functions
+  (``def entity(context):``) are now supported. The worker detects the entity's
+  shape and, for single-argument functions, delivers a functional
+  `DurableEntityContext` that wraps the durabletask `EntityContext` and exposes
+  the v1 entity API: `entity_name`, `entity_key`, `operation_name`,
+  `get_input()`, `get_state()` (with `initializer`), `set_state()`,
+  `set_result()`, and `destruct_on_exit()`. The operation result is taken from
+  `set_result(...)`, falling back to the function's return value.
+  durabletask-native two-argument entity functions and class-based
+  (`DurableEntity`) entities continue to work unchanged.
+- One-argument (Azure Functions / v1-style) orchestrator functions
+  (``def orchestrator(context):``) are now supported. The worker detects the
+  orchestrator's arity and, for single-argument functions, delivers a
+  functional `DurableOrchestrationContext` that wraps the durabletask
+  `OrchestrationContext` and exposes the v1 context API: `get_input()`,
+  `call_activity`/`call_activity_with_retry`,
+  `call_sub_orchestrator`/`call_sub_orchestrator_with_retry`, `create_timer`,
+  `wait_for_external_event`, `continue_as_new`, `set_custom_status`,
+  `task_all`/`task_any`, `call_entity`/`signal_entity`, and `new_uuid`/`new_guid`.
+  Two-argument (durabletask-native) orchestrators continue to work unchanged.
+  `DurableOrchestrationContext.call_http` raises `NotImplementedError` pending a
+  durabletask durable-HTTP implementation.
+
 - Backwards-compatible, deprecated aliases on `DurableFunctionsClient` for the
   v1 `DurableOrchestrationClient` method names: `start_new`, `get_status`,
   `get_status_all`, `get_status_by`, `raise_event`, `terminate`,

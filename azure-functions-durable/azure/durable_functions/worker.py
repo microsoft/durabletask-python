@@ -14,6 +14,8 @@ from durabletask.internal.orchestrator_service_pb2 import (
 )
 from durabletask.worker import TaskHubGrpcWorker
 from .internal.azurefunctions_null_stub import AzureFunctionsNullStub
+from .internal.compat.entity_context import wrap_entity
+from .internal.compat.orchestration_context import wrap_orchestrator
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 
 
@@ -65,7 +67,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             raise Exception("No ExecutionStarted event found in orchestration request.")
 
         function_name = execution_started_events[-1].executionStarted.name
-        self.add_named_orchestrator(function_name, func)
+        self.add_named_orchestrator(function_name, wrap_orchestrator(func))
         super()._execute_orchestrator(request, stub, None)
 
         if response is None:
@@ -88,7 +90,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             response = stub_response
         stub.CompleteEntityTask = stub_complete
 
-        self.add_entity(func)
+        self.add_entity(wrap_entity(func))
         super()._execute_entity_batch(request, stub, None)
 
         if response is None:

@@ -388,13 +388,6 @@ def test_entity_class_raises_not_implemented():
             df.Entity(lambda ctx: None)
 
 
-def test_context_aliases_are_subclasses():
-    from durabletask.entities import EntityContext
-    from durabletask.task import OrchestrationContext
-    assert issubclass(df.DurableOrchestrationContext, OrchestrationContext)
-    assert issubclass(df.DurableEntityContext, EntityContext)
-
-
 # ---------------------------------------------------------------------------
 # Return-type shims: DurableOrchestrationStatus
 # ---------------------------------------------------------------------------
