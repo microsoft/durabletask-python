@@ -3,6 +3,7 @@
 
 import traceback
 from datetime import datetime, timezone
+from typing import Any, cast
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -134,6 +135,37 @@ def new_failure_details(ex: Exception, _visited: set[int] | None = None) -> pb.T
         stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__))),
         innerFailure=new_failure_details(inner, _visited) if inner else None
     )
+
+
+def _failure_details_from_core_dict(fd: dict[str, Any]) -> pb.TaskFailureDetails:
+    """Convert a serialized DurableTask.Core ``FailureDetails`` dict to protobuf."""
+    inner = fd.get("InnerFailure")
+    stack_trace = fd.get("StackTrace")
+    return pb.TaskFailureDetails(
+        errorType=str(fd.get("ErrorType") or ""),
+        errorMessage=str(fd.get("ErrorMessage") or ""),
+        stackTrace=get_string_value(str(stack_trace) if stack_trace is not None else None),
+        innerFailure=_failure_details_from_core_dict(cast(dict[str, Any], inner)) if isinstance(inner, dict) else None,
+        isNonRetriable=bool(fd.get("IsNonRetriable", False)),
+    )
+
+
+def entity_response_failure_details(response: dict[str, Any]) -> pb.TaskFailureDetails | None:
+    """Extract failure details from a legacy-protocol entity ``ResponseMessage``.
+
+    The legacy entity protocol (used when the Durable WebJobs extension
+    translates entity operations) delivers operation results as a
+    ``ResponseMessage`` whose ``exceptionType`` (error message) or
+    ``failureDetails`` field is populated when the operation failed. Returns
+    ``None`` when the response represents a successful operation.
+    """
+    failure_details = response.get("failureDetails")
+    if isinstance(failure_details, dict):
+        return _failure_details_from_core_dict(cast(dict[str, Any], failure_details))
+    error_message = response.get("exceptionType")
+    if error_message is not None:
+        return pb.TaskFailureDetails(errorType="", errorMessage=str(error_message))
+    return None
 
 
 def new_event_sent_event(event_id: int, instance_id: str, input: str):

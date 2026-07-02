@@ -2574,7 +2574,7 @@ class _OrchestrationExecutor:
             elif event.HasField("eventRaised"):
                 if event.eventRaised.name in ctx._entity_task_id_map:  # pyright: ignore[reportPrivateUsage]
                     entity_id, operation, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None, None))  # pyright: ignore[reportPrivateUsage]
-                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, False)
+                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, False, operation)
                 elif event.eventRaised.name in ctx._entity_lock_task_id_map:  # pyright: ignore[reportPrivateUsage]
                     entity_id, task_id = ctx._entity_lock_task_id_map.get(event.eventRaised.name, (None, None))  # pyright: ignore[reportPrivateUsage]
                     self._handle_entity_event_raised(ctx, event, entity_id, task_id, True)
@@ -2803,7 +2803,8 @@ class _OrchestrationExecutor:
                                     event: pb.HistoryEvent,
                                     entity_id: EntityInstanceId | None,
                                     task_id: int | None,
-                                    is_lock_event: bool):
+                                    is_lock_event: bool,
+                                    operation: str | None = None):
         # This eventRaised represents the result of an entity operation after being translated to the old
         # entity protocol by the Durable WebJobs extension
         if entity_id is None:
@@ -2813,14 +2814,31 @@ class _OrchestrationExecutor:
         entity_task = ctx._pending_tasks.pop(task_id, None)  # pyright: ignore[reportPrivateUsage]
         if not entity_task:
             raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
-        result = None
+        response: Any | None = None
         if not ph.is_empty(event.eventRaised.input):
+            response = self._data_converter.deserialize(event.eventRaised.input.value)
+
+        # For entity operation calls (lock acquisitions never fail this way), the legacy-protocol
+        # ResponseMessage signals a failed operation via its "exceptionType" (error message) or
+        # "failureDetails" field. Propagate that as a task failure so an awaiting call_entity raises,
+        # matching the new entity protocol and the .NET SDK.
+        if not is_lock_event and isinstance(response, dict):
+            failure_details = ph.entity_response_failure_details(cast(dict[str, Any], response))
+            if failure_details is not None:
+                failure = EntityOperationFailedException(entity_id, operation or "", failure_details)
+                ctx._entity_context.recover_lock_after_call(entity_id)  # pyright: ignore[reportPrivateUsage]
+                entity_task.fail(str(failure), failure)
+                ctx.resume()
+                return
+
+        result = None
+        if response is not None:
             # TODO: Investigate why the event result is wrapped in a dict with "result" key
             # The expected type applies to the unwrapped result value, not the
             # transport wrapper. Unwrap first, then coerce the already-parsed
             # inner value to the expected type via the converter (no redundant
             # re-serialization round-trip).
-            unwrapped = self._data_converter.deserialize(event.eventRaised.input.value)["result"]
+            unwrapped: Any = cast(Any, response)["result"]
             result = self._data_converter.coerce(
                 unwrapped,
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]

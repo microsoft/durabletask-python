@@ -2095,6 +2095,131 @@ def test_entity_lock_created_as_event():
     assert actions[0].sendEntityMessage.entityOperationCalled.targetInstanceId.value == str(test_entity_id)
 
 
+def test_entity_call_failure_propagated_over_old_protocol():
+    """A failed entity operation delivered via the legacy protocol (an eventRaised
+    ResponseMessage with failureDetails) must surface as a TaskFailedError to the caller."""
+    test_entity_id = entities.EntityInstanceId("Counter", "myCounter")
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        try:
+            yield ctx.call_entity(test_entity_id, "set", 1)
+        except task.TaskFailedError as e:
+            return e.details.message
+        return "no error"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    started_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, None),
+    ]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result1 = executor.execute(TEST_INSTANCE_ID, [], started_events)
+    actions = result1.actions
+    assert len(actions) == 1
+    assert actions[0].sendEntityMessage.HasField("entityOperationCalled")
+    request_id = actions[0].sendEntityMessage.entityOperationCalled.requestId
+
+    # The Durable WebJobs extension translates a failed entity operation into a
+    # legacy-protocol ResponseMessage carrying a serialized FailureDetails.
+    response_message = {
+        "result": None,
+        "failureDetails": {
+            "ErrorType": "ValueError",
+            "ErrorMessage": "Something went wrong!",
+            "StackTrace": None,
+            "InnerFailure": None,
+            "IsNonRetriable": False,
+        },
+    }
+    new_events = [
+        helpers.new_event_sent_event(1, str(test_entity_id), json.dumps({"id": request_id})),
+        helpers.new_event_raised_event(request_id, json.dumps(response_message)),
+    ]
+    result2 = executor.execute(TEST_INSTANCE_ID, started_events, new_events)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result2.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    output = json.loads(complete_action.result.value)
+    assert output == (
+        "Operation 'set' on entity '@counter@myCounter' failed with error: Something went wrong!"
+    )
+
+
+def test_entity_call_failure_propagated_over_old_protocol_exception_type():
+    """A failed entity operation whose legacy ResponseMessage only carries the
+    ``exceptionType`` (error message) field must still surface as a TaskFailedError."""
+    test_entity_id = entities.EntityInstanceId("Counter", "myCounter")
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        try:
+            yield ctx.call_entity(test_entity_id, "set", 1)
+        except task.TaskFailedError as e:
+            return e.details.message
+        return "no error"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    started_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, None),
+    ]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result1 = executor.execute(TEST_INSTANCE_ID, [], started_events)
+    actions = result1.actions
+    assert len(actions) == 1
+    request_id = actions[0].sendEntityMessage.entityOperationCalled.requestId
+
+    response_message = {"result": None, "exceptionType": "Something went wrong!"}
+    new_events = [
+        helpers.new_event_sent_event(1, str(test_entity_id), json.dumps({"id": request_id})),
+        helpers.new_event_raised_event(request_id, json.dumps(response_message)),
+    ]
+    result2 = executor.execute(TEST_INSTANCE_ID, started_events, new_events)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result2.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    output = json.loads(complete_action.result.value)
+    assert output == (
+        "Operation 'set' on entity '@counter@myCounter' failed with error: Something went wrong!"
+    )
+
+
+def test_entity_call_success_over_old_protocol():
+    """A successful entity operation delivered via the legacy protocol must
+    complete the call_entity task with the unwrapped result."""
+    test_entity_id = entities.EntityInstanceId("Counter", "myCounter")
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        return (yield ctx.call_entity(test_entity_id, "get", return_type=int))
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    started_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, None),
+    ]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result1 = executor.execute(TEST_INSTANCE_ID, [], started_events)
+    actions = result1.actions
+    assert len(actions) == 1
+    request_id = actions[0].sendEntityMessage.entityOperationCalled.requestId
+
+    response_message = {"result": json.dumps(42)}
+    new_events = [
+        helpers.new_event_sent_event(1, str(test_entity_id), json.dumps({"id": request_id})),
+        helpers.new_event_raised_event(request_id, json.dumps(response_message)),
+    ]
+    result2 = executor.execute(TEST_INSTANCE_ID, started_events, new_events)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result2.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert json.loads(complete_action.result.value) == 42
+
+
 def get_and_validate_complete_orchestration_action_list(expected_action_count: int, actions: list[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
     assert len(actions) == expected_action_count
     assert type(actions[-1]) is pb.OrchestratorAction

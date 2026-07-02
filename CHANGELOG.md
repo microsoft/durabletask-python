@@ -11,6 +11,10 @@ CHANGED
 
 - Changed the default large-payload externalization threshold (`LargePayloadStorageOptions.threshold_bytes`) from 900,000 bytes to 262,144 bytes (256 KiB), matching the .NET SDK default. Behavioral change (not source/binary breaking): payloads larger than 256 KiB are now externalized by default.
 
+FIXED
+
+- Fixed `OrchestrationContext.call_entity` not propagating entity operation failures when running under the legacy entity protocol (used by the Azure Functions Durable extension). A failed entity operation now raises `TaskFailedError` in the calling orchestration instead of silently completing, matching the behavior of the current entity protocol and the .NET SDK.
+
 ## v1.7.0
 
 ADDED
