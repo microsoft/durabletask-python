@@ -2573,10 +2573,10 @@ class _OrchestrationExecutor:
                     raise TypeError("Unexpected sub-orchestration task type")
             elif event.HasField("eventRaised"):
                 if event.eventRaised.name in ctx._entity_task_id_map:  # pyright: ignore[reportPrivateUsage]
-                    entity_id, operation, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None, None))  # pyright: ignore[reportPrivateUsage]
+                    entity_id, operation, task_id = ctx._entity_task_id_map.pop(event.eventRaised.name, (None, None, None))  # pyright: ignore[reportPrivateUsage]
                     self._handle_entity_event_raised(ctx, event, entity_id, task_id, False, operation)
                 elif event.eventRaised.name in ctx._entity_lock_task_id_map:  # pyright: ignore[reportPrivateUsage]
-                    entity_id, task_id = ctx._entity_lock_task_id_map.get(event.eventRaised.name, (None, None))  # pyright: ignore[reportPrivateUsage]
+                    entity_id, task_id = ctx._entity_lock_task_id_map.pop(event.eventRaised.name, (None, None))  # pyright: ignore[reportPrivateUsage]
                     self._handle_entity_event_raised(ctx, event, entity_id, task_id, True)
                 else:
                     # event names are case-insensitive
