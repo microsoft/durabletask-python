@@ -2220,6 +2220,42 @@ def test_entity_call_success_over_old_protocol():
     assert json.loads(complete_action.result.value) == 42
 
 
+@pytest.mark.parametrize("entity_result", ["done", 42, 3.5, True, {"a": 1}, [1, 2, 3]])
+def test_entity_call_success_over_old_protocol_round_trips_result(entity_result):
+    """The legacy-protocol ``result`` field holds a *serialized* JSON string, so
+    the caller must receive the fully deserialized value regardless of type and
+    without needing an explicit ``return_type`` (i.e. no double-encoding)."""
+    test_entity_id = entities.EntityInstanceId("Counter", "myCounter")
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        return (yield ctx.call_entity(test_entity_id, "get"))
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    started_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, None),
+    ]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result1 = executor.execute(TEST_INSTANCE_ID, [], started_events)
+    actions = result1.actions
+    assert len(actions) == 1
+    request_id = actions[0].sendEntityMessage.entityOperationCalled.requestId
+
+    # The entity worker places the *serialized* return value into the "result" field.
+    response_message = {"result": json.dumps(entity_result)}
+    new_events = [
+        helpers.new_event_sent_event(1, str(test_entity_id), json.dumps({"id": request_id})),
+        helpers.new_event_raised_event(request_id, json.dumps(response_message)),
+    ]
+    result2 = executor.execute(TEST_INSTANCE_ID, started_events, new_events)
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result2.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert json.loads(complete_action.result.value) == entity_result
+
+
 def get_and_validate_complete_orchestration_action_list(expected_action_count: int, actions: list[pb.OrchestratorAction]) -> pb.CompleteOrchestrationAction:
     assert len(actions) == expected_action_count
     assert type(actions[-1]) is pb.OrchestratorAction

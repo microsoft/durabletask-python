@@ -2814,7 +2814,7 @@ class _OrchestrationExecutor:
         entity_task = ctx._pending_tasks.pop(task_id, None)  # pyright: ignore[reportPrivateUsage]
         if not entity_task:
             raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
-        response: Any | None = None
+        response: dict[str, Any] | None = None
         if not ph.is_empty(event.eventRaised.input):
             response = self._data_converter.deserialize(event.eventRaised.input.value)
 
@@ -2823,7 +2823,7 @@ class _OrchestrationExecutor:
         # "failureDetails" field. Propagate that as a task failure so an awaiting call_entity raises,
         # matching the new entity protocol and the .NET SDK.
         if not is_lock_event and isinstance(response, dict):
-            failure_details = ph.entity_response_failure_details(cast(dict[str, Any], response))
+            failure_details = ph.entity_response_failure_details(response)
             if failure_details is not None:
                 failure = EntityOperationFailedException(entity_id, operation or "", failure_details)
                 ctx._entity_context.recover_lock_after_call(entity_id)  # pyright: ignore[reportPrivateUsage]
@@ -2833,14 +2833,13 @@ class _OrchestrationExecutor:
 
         result = None
         if response is not None:
-            # TODO: Investigate why the event result is wrapped in a dict with "result" key
-            # The expected type applies to the unwrapped result value, not the
-            # transport wrapper. Unwrap first, then coerce the already-parsed
-            # inner value to the expected type via the converter (no redundant
-            # re-serialization round-trip).
-            unwrapped: Any = cast(Any, response)["result"]
-            result = self._data_converter.coerce(
-                unwrapped,
+            # The legacy protocol wraps the result as {"result": <serialized>},
+            # where the value is a serialized JSON string (like the new protocol's
+            # entityOperationCompleted.output). Deserialize it -- not coerce -- so
+            # the value is fully parsed and the expected type applied; coercing
+            # would skip JSON parsing and leave it double-encoded (e.g. '"done"').
+            result = self._data_converter.deserialize(
+                response["result"],
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
             )
         if is_lock_event:
