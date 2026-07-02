@@ -7,17 +7,17 @@ from datetime import timedelta
 import azure.functions as func
 from urllib.parse import urlparse, quote
 
-from durabletask.client import TaskHubGrpcClient
-from .internal.azurefunctions_grpc_interceptor import AzureFunctionsDefaultClientInterceptorImpl
+from durabletask.client import AsyncTaskHubGrpcClient
+from .internal.azurefunctions_grpc_interceptor import AzureFunctionsAsyncDefaultClientInterceptorImpl
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http import HttpManagementPayload
 
 
 # Client class used for Durable Functions
-class DurableFunctionsClient(TaskHubGrpcClient):
+class DurableFunctionsClient(AsyncTaskHubGrpcClient):
     """A gRPC client passed to Durable Functions durable client bindings.
 
-    Connects to the Durable Functions runtime using gRPC and provides methods
+    Connects to the Durable Functions runtime using async gRPC and provides methods
     for creating and managing Durable orchestrations, interacting with Durable entities,
     and creating HTTP management payloads and check status responses for use with Durable Functions invocations.
     """
@@ -45,7 +45,7 @@ class DurableFunctionsClient(TaskHubGrpcClient):
         """
         self._parse_client_configuration(client_as_string)
 
-        interceptors = [AzureFunctionsDefaultClientInterceptorImpl(self.taskHubName, self.requiredQueryStringParameters)]
+        interceptors = [AzureFunctionsAsyncDefaultClientInterceptorImpl(self.taskHubName, self.requiredQueryStringParameters)]
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
