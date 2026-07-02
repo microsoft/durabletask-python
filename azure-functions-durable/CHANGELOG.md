@@ -23,6 +23,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`output`, `input`, `customStatus`) as their raw JSON representation instead
   of reconstructed Python objects, so the result is always JSON-serializable
   even when payloads are custom types.
+- Restored v1 members that were missing on the compatibility types, avoiding
+  `AttributeError`/`TypeError` for existing code that used them:
+  - `create_http_management_payload(...)` now returns a `dict`-based
+    `HttpManagementPayload`, so `json.dumps(payload)` works directly again.
+  - `RetryOptions.to_json()` returns the v1
+    `firstRetryIntervalInMilliseconds`/`maxNumberOfAttempts` dictionary, and the
+    `first_retry_interval_in_milliseconds` / `max_number_of_attempts` getters
+    remain available.
+  - `DurableOrchestrationStatus.from_json(...)` reconstructs a status from its
+    `to_json()` representation (or the equivalent v1 JSON schema).
+  - `PurgeHistoryResult.from_json(...)` reconstructs a result from its v1 JSON
+    representation.
+  - `DurableOrchestrationContext.version` returns the orchestration instance
+    version (or `None`).
 
 ### Added
 
@@ -103,10 +117,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `create_http_management_payload` now accepts either the durabletask
   `(request, instance_id)` signature or the v1 `(instance_id)` signature for
   backwards compatibility.
-- `HttpManagementPayload` now supports mapping-style access
+- `HttpManagementPayload` now subclasses `dict`, so it is directly
+  JSON-serializable via `json.dumps(payload)` and supports mapping-style access
   (`payload["statusQueryGetUri"]`, iteration, `in`, `keys()`/`items()`/`values()`)
   so v1 code that treated the payload as a `dict` keeps working.
-
 
 ## v0.1.0
 

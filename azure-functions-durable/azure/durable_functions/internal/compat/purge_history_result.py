@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from typing import Any
+
 from durabletask.client import PurgeInstancesResult
 
 
@@ -20,6 +22,11 @@ class PurgeHistoryResult:
     def from_purge_result(cls, result: PurgeInstancesResult) -> "PurgeHistoryResult":
         """Wrap a durabletask ``PurgeInstancesResult``."""
         return cls(result.deleted_instance_count)
+
+    @classmethod
+    def from_json(cls, json_obj: "dict[str, Any]") -> "PurgeHistoryResult":
+        """Reconstruct a result from its v1 JSON representation."""
+        return cls(instances_deleted=json_obj["instancesDeleted"])
 
     @property
     def instances_deleted(self) -> int:

@@ -44,3 +44,10 @@ class RetryOptions(RetryPolicy):
     def first_retry_interval_in_milliseconds(self) -> int:
         """Get the first retry interval, in milliseconds."""
         return int(self.first_retry_interval / timedelta(milliseconds=1))
+
+    def to_json(self) -> dict[str, int]:
+        """Return the v1 JSON representation of these retry options."""
+        return {
+            "firstRetryIntervalInMilliseconds": self.first_retry_interval_in_milliseconds,
+            "maxNumberOfAttempts": self.max_number_of_attempts,
+        }

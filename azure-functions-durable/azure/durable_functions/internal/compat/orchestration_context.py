@@ -82,6 +82,11 @@ class DurableOrchestrationContext:
         return self._will_continue_as_new
 
     @property
+    def version(self) -> Optional[str]:
+        """Get the version assigned to the orchestration instance (or ``None``)."""
+        return self._ctx.version
+
+    @property
     def parent_instance_id(self) -> str:
         """Get the ID of the parent orchestration.
 

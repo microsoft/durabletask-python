@@ -3,13 +3,14 @@
 
 import json
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
-from durabletask.client import OrchestrationState
+from durabletask.client import OrchestrationState, OrchestrationStatus
 
 from .orchestration_runtime_status import (
     OrchestrationRuntimeStatus,
     from_durabletask_status,
+    to_durabletask_status,
 )
 
 
@@ -33,6 +34,43 @@ class DurableOrchestrationStatus:
     def from_orchestration_state(
             cls, state: Optional[OrchestrationState]) -> "DurableOrchestrationStatus":
         """Wrap a durabletask ``OrchestrationState`` (or ``None``)."""
+        return cls(state)
+
+    @classmethod
+    def from_json(cls, json_obj: Any) -> "DurableOrchestrationStatus":
+        """Reconstruct a status from its v1 JSON representation.
+
+        Accepts the dictionary produced by :meth:`to_json` (or the equivalent v1
+        schema); a JSON string is parsed first. The wrapped
+        ``OrchestrationState`` is rebuilt so the resulting object exposes the
+        same attribute surface as one returned by the client.
+        """
+        if isinstance(json_obj, str):
+            json_obj = json.loads(json_obj)
+        data = dict(json_obj)
+
+        runtime_status = data.get("runtimeStatus")
+        dt_status = (
+            to_durabletask_status(OrchestrationRuntimeStatus(runtime_status))
+            if runtime_status is not None else None)
+
+        def _parse_datetime(value: Any) -> Any:
+            return datetime.fromisoformat(value) if isinstance(value, str) else value
+
+        def _reserialize(value: Any) -> Optional[str]:
+            return None if value is None else json.dumps(value)
+
+        state = OrchestrationState(
+            instance_id=cast(str, data.get("instanceId")),
+            name=cast(str, data.get("name")),
+            runtime_status=cast(OrchestrationStatus, dt_status),
+            created_at=cast(datetime, _parse_datetime(data.get("createdTime"))),
+            last_updated_at=cast(datetime, _parse_datetime(data.get("lastUpdatedTime"))),
+            serialized_input=_reserialize(data.get("input")),
+            serialized_output=_reserialize(data.get("output")),
+            serialized_custom_status=_reserialize(data.get("customStatus")),
+            failure_details=None,
+        )
         return cls(state)
 
     def __bool__(self) -> bool:
