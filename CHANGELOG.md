@@ -15,6 +15,7 @@ FIXED
 
 - Fixed `OrchestrationContext.call_entity` not propagating entity operation failures when running under the legacy entity protocol (used by the Azure Functions Durable extension). A failed entity operation now raises `TaskFailedError` in the calling orchestration instead of silently completing, matching the behavior of the current entity protocol and the .NET SDK.
 - Fixed `OrchestrationContext.call_entity` returning a double-encoded result under the legacy entity protocol. The entity's return value was left as a raw serialized JSON string (for example, a returned string arrived with extra quotes and dicts/lists arrived as strings); it is now fully deserialized and coerced to the requested `return_type`, matching the current entity protocol.
+- Fixed unbounded growth of the internal entity request/lock tracking maps when using entities over the legacy entity protocol. Entries are now released as each response is handled, reducing memory use in long-running orchestrations that call or lock entities.
 
 ## v1.7.0
 
