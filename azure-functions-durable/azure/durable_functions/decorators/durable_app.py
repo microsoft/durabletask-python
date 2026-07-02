@@ -12,6 +12,7 @@ from durabletask import task
 
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
+from ..client import DurableFunctionsClient
 from ..worker import DurableFunctionsWorker
 from ..orchestrator import Orchestrator
 
@@ -47,7 +48,8 @@ class Blueprint(TriggerApi, BindingApi):
 
     def _configure_orchestrator_callable(
             self,
-            wrap: Callable[[Callable[..., Any]], FunctionBuilder]
+            wrap: Callable[[Callable[..., Any]], FunctionBuilder],
+            input_type: Optional[type] = None
     ) -> Callable[[task.Orchestrator[Any, Any]], FunctionBuilder]:
         """Obtain decorator to construct an Orchestrator class from a user-defined Function.
 
@@ -55,6 +57,10 @@ class Blueprint(TriggerApi, BindingApi):
         ----------
         wrap: Callable
             The next decorator to be applied.
+        input_type: Optional[type]
+            The expected type for orchestration input, forwarded from the
+            ``orchestration_trigger`` decorator so a v1-style
+            ``context.get_input()`` can decode the input to that type.
 
         Returns
         -------
@@ -64,6 +70,11 @@ class Blueprint(TriggerApi, BindingApi):
         """
         def decorator(orchestrator_func: task.Orchestrator[Any, Any]) -> FunctionBuilder:
             # Construct an orchestrator based on the end-user code
+
+            if input_type is not None:
+                # Stash the decorator-declared input type so the runtime can
+                # feed it to a v1-style ``context.get_input()``.
+                orchestrator_func._df_input_type = input_type  # type: ignore[attr-defined]  # noqa: E501
 
             handle = Orchestrator.create(orchestrator_func)
 
@@ -167,7 +178,8 @@ class Blueprint(TriggerApi, BindingApi):
         return decorator
 
     def orchestration_trigger(self, context_name: str,
-                              orchestration: Optional[str] = None
+                              orchestration: Optional[str] = None,
+                              input_type: Optional[type] = None
                               ) -> Callable[[task.Orchestrator[Any, Any]], FunctionBuilder]:
         """Register an Orchestrator Function.
 
@@ -178,8 +190,12 @@ class Blueprint(TriggerApi, BindingApi):
         orchestration: Optional[str]
             Name of Orchestrator Function.
             The value is None by default, in which case the name of the method is used.
+        input_type: Optional[type]
+            The expected type for the orchestration input. When set, a v1-style
+            ``context.get_input()`` decodes the input payload to this type. A
+            call-site ``expected_type`` argument on ``get_input`` takes
+            precedence over this value.
         """
-        @self._configure_orchestrator_callable
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
 
@@ -191,7 +207,7 @@ class Blueprint(TriggerApi, BindingApi):
 
             return decorator()
 
-        return wrap
+        return self._configure_orchestrator_callable(wrap, input_type=input_type)
 
     def activity_trigger(self, input_name: str,
                          activity: Optional[str] = None
@@ -271,6 +287,7 @@ class Blueprint(TriggerApi, BindingApi):
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
             def decorator() -> FunctionBuilder:
+                self._add_rich_client(fb, client_name, DurableFunctionsClient)
                 fb.add_binding(
                     binding=DurableClient(name=client_name,
                                           task_hub=task_hub,

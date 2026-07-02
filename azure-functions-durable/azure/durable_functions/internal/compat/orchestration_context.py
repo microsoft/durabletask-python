@@ -10,6 +10,7 @@ from durabletask import task
 from durabletask.entities import EntityInstanceId
 from durabletask.task import OrchestrationContext, RetryPolicy, Task
 
+from ..serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .token_source import TokenSource
 
 
@@ -24,16 +25,28 @@ class DurableOrchestrationContext:
     context directly instead.
     """
 
-    def __init__(self, ctx: OrchestrationContext, orchestration_input: Any = None):
+    def __init__(self,
+                 ctx: OrchestrationContext,
+                 orchestration_input: Any = None,
+                 input_type: Optional[type] = None):
         self._ctx = ctx
         self._input = orchestration_input
+        self._input_type = input_type
         self._custom_status: Any = None
         self._will_continue_as_new = False
 
     # -- input ---------------------------------------------------------------
-    def get_input(self) -> Any:
-        """Get the orchestration input."""
-        return self._input
+    def get_input(self, expected_type: Optional[type] = None) -> Any:
+        """Get the orchestration input.
+
+        When an ``expected_type`` (or the ``input_type`` declared on the
+        ``orchestration_trigger`` decorator) is available, the already-decoded
+        input is coerced to that type; otherwise the raw value is returned.
+        """
+        resolved_type = expected_type or self._input_type
+        if resolved_type is None:
+            return self._input
+        return DEFAULT_FUNCTIONS_DATA_CONVERTER.coerce(self._input, resolved_type)
 
     # -- properties ----------------------------------------------------------
     @property
@@ -227,11 +240,12 @@ def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
     if accepts_two_positional_args(fn):
         return fn
 
+    input_type = getattr(fn, "_df_input_type", None)
     name = getattr(fn, "__name__", "orchestrator")
 
     if inspect.isgeneratorfunction(fn):
         def _generator_wrapper(context: OrchestrationContext, _input: Any = None) -> Any:
-            adapter = DurableOrchestrationContext(context, _input)
+            adapter = DurableOrchestrationContext(context, _input, input_type)
             generator = cast("Generator[Any, Any, Any]", fn(adapter))
             result: Any = yield from generator
             return result
@@ -239,7 +253,7 @@ def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
         return _generator_wrapper
 
     def _wrapper(context: OrchestrationContext, _input: Any = None) -> Any:
-        adapter = DurableOrchestrationContext(context, _input)
+        adapter = DurableOrchestrationContext(context, _input, input_type)
         return fn(adapter)
     _wrapper.__name__ = name
     return _wrapper
