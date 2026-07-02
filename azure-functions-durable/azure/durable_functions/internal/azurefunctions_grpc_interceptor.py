@@ -13,7 +13,7 @@ def _build_metadata(taskhub_name: str) -> list[tuple[str, str]]:
     """Build the gRPC metadata headers sent on every Durable Functions call."""
     try:
         # Get the version of the azurefunctions package
-        sdk_version = version('durabletask-azurefunctions')
+        sdk_version = version('azure-functions-durable')
     except Exception:
         # Fallback if version cannot be determined
         sdk_version = "unknown"
