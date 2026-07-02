@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import json
+from collections.abc import Iterator
 
 
 class HttpManagementPayload:
@@ -9,6 +10,10 @@ class HttpManagementPayload:
 
     Contains URLs for managing the instance, such as querying status,
     sending events, terminating, restarting, etc.
+
+    Supports mapping-style access (``payload["statusQueryGetUri"]``, iteration,
+    ``in``, ``.keys()``/``.items()``/``.values()``) for backwards compatibility
+    with the v1 API, which returned a plain ``dict``.
     """
 
     def __init__(self, instance_id: str, instance_status_url: str, required_query_string_parameters: str):
@@ -32,3 +37,27 @@ class HttpManagementPayload:
 
     def __str__(self):
         return json.dumps(self.urls)
+
+    def __getitem__(self, key: str) -> str:
+        return self.urls[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.urls)
+
+    def __len__(self) -> int:
+        return len(self.urls)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self.urls
+
+    def keys(self):
+        """Return the management URL keys."""
+        return self.urls.keys()
+
+    def items(self):
+        """Return the management URL (key, value) pairs."""
+        return self.urls.items()
+
+    def values(self):
+        """Return the management URL values."""
+        return self.urls.values()

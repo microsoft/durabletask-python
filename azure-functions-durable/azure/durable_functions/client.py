@@ -3,14 +3,25 @@
 
 import json
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any, Optional, Union
+from typing_extensions import deprecated
 import azure.functions as func
 from urllib.parse import urlparse, quote
 
-from durabletask.client import AsyncTaskHubGrpcClient
+from durabletask.client import (
+    AsyncTaskHubGrpcClient,
+    OrchestrationQuery,
+    OrchestrationStatus,
+)
+from durabletask.entities import EntityInstanceId
 from .internal.azurefunctions_grpc_interceptor import AzureFunctionsAsyncDefaultClientInterceptorImpl
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http import HttpManagementPayload
+from .durable_orchestration_status import DurableOrchestrationStatus
+from .entity_state_response import EntityStateResponse
+from .orchestration_runtime_status import OrchestrationRuntimeStatus, to_durabletask_statuses
+from .purge_history_result import PurgeHistoryResult
 
 
 # Client class used for Durable Functions
@@ -96,22 +107,299 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             },
         )
 
-    def create_http_management_payload(self, request: func.HttpRequest, instance_id: str) -> HttpManagementPayload:
+    def create_http_management_payload(
+            self,
+            request: func.HttpRequest | str | None = None,
+            instance_id: str | None = None) -> HttpManagementPayload:
         """Creates an HTTP management payload for a Durable Function instance.
 
-        Args:
-            instance_id (str): The ID of the Durable Function instance.
-        """
-        return self._get_client_response_links(request, instance_id)
+        Two call styles are supported:
 
-    def _get_client_response_links(self, request: func.HttpRequest, instance_id: str) -> HttpManagementPayload:
+        - ``create_http_management_payload(request, instance_id)`` (recommended):
+          builds the payload URLs relative to the incoming request's origin.
+        - ``create_http_management_payload(instance_id)`` (deprecated V1 style):
+          builds the payload URLs from the client binding's base URL when no
+          request is available.
+
+        Args:
+            request (func.HttpRequest | str | None): The incoming HTTP request, or,
+                for backwards compatibility, the instance ID when called with a
+                single positional argument.
+            instance_id (str | None): The ID of the Durable Function instance.
+        """
+        # Backwards-compatibility: v1 accepted a single positional ``instance_id``.
+        if instance_id is None and isinstance(request, str):
+            instance_id = request
+            request = None
+        if instance_id is None:
+            raise TypeError("instance_id is required")
+        resolved_request = request if isinstance(request, func.HttpRequest) else None
+        return self._get_client_response_links(resolved_request, instance_id)
+
+    def _get_client_response_links(self, request: func.HttpRequest | None, instance_id: str) -> HttpManagementPayload:
         instance_status_url = self._get_instance_status_url(request, instance_id)
         return HttpManagementPayload(instance_id, instance_status_url, self.requiredQueryStringParameters)
 
-    @staticmethod
-    def _get_instance_status_url(request: func.HttpRequest, instance_id: str) -> str:
-        request_url = urlparse(request.url)
-        location_url = f"{request_url.scheme}://{request_url.netloc}"
+    def _get_instance_status_url(self, request: func.HttpRequest | None, instance_id: str) -> str:
         encoded_instance_id = quote(instance_id)
-        location_url = location_url + "/runtime/webhooks/durabletask/instances/" + encoded_instance_id
+        if request is not None:
+            request_url = urlparse(request.url)
+            location_url = f"{request_url.scheme}://{request_url.netloc}"
+            location_url = location_url + "/runtime/webhooks/durabletask/instances/" + encoded_instance_id
+        else:
+            # No request available (v1-style call): fall back to the base URL
+            # supplied in the client binding configuration.
+            base_url = self.baseUrl.rstrip("/") if self.baseUrl else ""
+            location_url = base_url + "/instances/" + encoded_instance_id
         return location_url
+
+    # ------------------------------------------------------------------
+    # Backwards-compatibility shims for the v1 azure-functions-durable
+    # DurableOrchestrationClient API. These delegate to the durabletask
+    # AsyncTaskHubGrpcClient methods and are deprecated: new code should use
+    # the durabletask method names directly.
+    # ------------------------------------------------------------------
+
+    @deprecated("start_new is deprecated; use schedule_new_orchestration instead.")
+    async def start_new(self,
+                        orchestration_function_name: str,
+                        instance_id: Optional[str] = None,
+                        client_input: Optional[Any] = None,
+                        version: Optional[str] = None) -> str:
+        """Deprecated alias for :meth:`schedule_new_orchestration`."""
+        return await self.schedule_new_orchestration(
+            orchestration_function_name,
+            input=client_input,
+            instance_id=instance_id,
+            version=version)
+
+    @deprecated("get_status is deprecated; use get_orchestration_state instead.")
+    async def get_status(
+            self,
+            instance_id: str,
+            show_history: bool = False,
+            show_history_output: bool = False,
+            show_input: bool = False) -> DurableOrchestrationStatus:
+        """Deprecated alias for :meth:`get_orchestration_state`.
+
+        Returns a :class:`DurableOrchestrationStatus` wrapping the durabletask
+        ``OrchestrationState`` for v1 back-compat. When the instance does not
+        exist, a falsy status is returned rather than ``None``.
+
+        The ``show_history`` and ``show_history_output`` flags have no
+        equivalent in durabletask and are ignored; ``show_input`` maps to
+        ``fetch_payloads``.
+        """
+        state = await self.get_orchestration_state(instance_id, fetch_payloads=show_input)
+        return DurableOrchestrationStatus.from_orchestration_state(state)
+
+    @deprecated("get_status_all is deprecated; use get_all_orchestration_states instead.")
+    async def get_status_all(self) -> list[DurableOrchestrationStatus]:
+        """Deprecated alias for :meth:`get_all_orchestration_states`."""
+        states = await self.get_all_orchestration_states()
+        return [DurableOrchestrationStatus.from_orchestration_state(state) for state in states]
+
+    @deprecated("raise_event is deprecated; use raise_orchestration_event instead.")
+    async def raise_event(
+            self,
+            instance_id: str,
+            event_name: str,
+            event_data: Any = None,
+            task_hub_name: Optional[str] = None,
+            connection_name: Optional[str] = None) -> None:
+        """Deprecated alias for :meth:`raise_orchestration_event`.
+
+        The ``task_hub_name`` and ``connection_name`` arguments have no
+        equivalent in durabletask and are ignored.
+        """
+        await self.raise_orchestration_event(instance_id, event_name, data=event_data)
+
+    @deprecated("terminate is deprecated; use terminate_orchestration instead.")
+    async def terminate(self, instance_id: str, reason: Optional[Any] = None) -> None:
+        """Deprecated alias for :meth:`terminate_orchestration`.
+
+        The v1 ``reason`` maps to the durabletask ``output`` argument.
+        """
+        await self.terminate_orchestration(instance_id, output=reason)
+
+    @deprecated("purge_instance_history is deprecated; use purge_orchestration instead.")
+    async def purge_instance_history(self, instance_id: str) -> PurgeHistoryResult:
+        """Deprecated alias for :meth:`purge_orchestration`.
+
+        Returns a :class:`PurgeHistoryResult` wrapping the durabletask
+        ``PurgeInstancesResult`` for v1 back-compat.
+        """
+        result = await self.purge_orchestration(instance_id)
+        return PurgeHistoryResult.from_purge_result(result)
+
+    @deprecated("suspend is deprecated; use suspend_orchestration instead.")
+    async def suspend(self, instance_id: str, reason: Optional[str] = None) -> None:
+        """Deprecated alias for :meth:`suspend_orchestration`.
+
+        The v1 ``reason`` argument has no equivalent in durabletask and is
+        ignored.
+        """
+        await self.suspend_orchestration(instance_id)
+
+    @deprecated("resume is deprecated; use resume_orchestration instead.")
+    async def resume(self, instance_id: str, reason: Optional[str] = None) -> None:
+        """Deprecated alias for :meth:`resume_orchestration`.
+
+        The v1 ``reason`` argument has no equivalent in durabletask and is
+        ignored.
+        """
+        await self.resume_orchestration(instance_id)
+
+    @deprecated("restart is deprecated; use restart_orchestration instead.")
+    async def restart(
+            self,
+            instance_id: str,
+            restart_with_new_instance_id: bool = True) -> str:
+        """Deprecated alias for :meth:`restart_orchestration`."""
+        return await self.restart_orchestration(
+            instance_id, restart_with_new_instance_id=restart_with_new_instance_id)
+
+    @deprecated("read_entity_state is deprecated; use get_entity instead.")
+    async def read_entity_state(
+            self,
+            entity_instance_id: EntityInstanceId,
+            task_hub_name: Optional[str] = None,
+            connection_name: Optional[str] = None) -> EntityStateResponse:
+        """Deprecated alias for :meth:`get_entity`.
+
+        Returns an :class:`EntityStateResponse` wrapping the durabletask
+        ``EntityMetadata`` for v1 back-compat.
+
+        The ``task_hub_name`` and ``connection_name`` arguments have no
+        equivalent in durabletask and are ignored.
+        """
+        metadata = await self.get_entity(entity_instance_id)
+        return EntityStateResponse.from_entity_metadata(metadata)
+
+    @deprecated("get_status_by is deprecated; use get_all_orchestration_states instead.")
+    async def get_status_by(
+            self,
+            created_time_from: Optional[datetime] = None,
+            created_time_to: Optional[datetime] = None,
+            runtime_status: Optional[list[OrchestrationRuntimeStatus]] = None) -> list[DurableOrchestrationStatus]:
+        """Deprecated alias for :meth:`get_all_orchestration_states`.
+
+        The v1 ``OrchestrationRuntimeStatus`` values are mapped onto the
+        durabletask ``OrchestrationStatus`` enum, and results are wrapped in
+        :class:`DurableOrchestrationStatus` for v1 back-compat.
+        """
+        query = OrchestrationQuery(
+            created_time_from=created_time_from,
+            created_time_to=created_time_to,
+            runtime_status=to_durabletask_statuses(runtime_status))
+        states = await self.get_all_orchestration_states(query)
+        return [DurableOrchestrationStatus.from_orchestration_state(state) for state in states]
+
+    @deprecated("purge_instance_history_by is deprecated; use purge_orchestrations_by instead.")
+    async def purge_instance_history_by(
+            self,
+            created_time_from: Optional[datetime] = None,
+            created_time_to: Optional[datetime] = None,
+            runtime_status: Optional[list[OrchestrationRuntimeStatus]] = None) -> PurgeHistoryResult:
+        """Deprecated alias for :meth:`purge_orchestrations_by`.
+
+        The v1 ``OrchestrationRuntimeStatus`` values are mapped onto the
+        durabletask ``OrchestrationStatus`` enum, and the result is wrapped in
+        :class:`PurgeHistoryResult` for v1 back-compat.
+        """
+        result = await self.purge_orchestrations_by(
+            created_time_from=created_time_from,
+            created_time_to=created_time_to,
+            runtime_status=to_durabletask_statuses(runtime_status))
+        return PurgeHistoryResult.from_purge_result(result)
+
+    async def signal_entity(
+            self,
+            entity_instance_id: EntityInstanceId,
+            operation_name: str,
+            input: Any = None,
+            signal_time: Optional[datetime] = None,
+            *,
+            operation_input: Any = None,
+            task_hub_name: Optional[str] = None,
+            connection_name: Optional[str] = None) -> None:
+        """Signal an entity to perform an operation.
+
+        Accepts the durabletask ``input`` argument as well as the v1
+        ``operation_input`` alias. The ``task_hub_name`` and ``connection_name``
+        arguments have no equivalent in durabletask and are ignored.
+        """
+        resolved_input = operation_input if operation_input is not None else input
+        await super().signal_entity(
+            entity_instance_id, operation_name, input=resolved_input, signal_time=signal_time)
+
+    @deprecated(
+        "get_client_response_links is deprecated; use create_http_management_payload instead.")
+    def get_client_response_links(
+            self,
+            request: Optional[func.HttpRequest],
+            instance_id: str) -> HttpManagementPayload:
+        """Deprecated alias for :meth:`create_http_management_payload`."""
+        return self._get_client_response_links(request, instance_id)
+
+    @deprecated(
+        "wait_for_completion_or_create_check_status_response is deprecated; use "
+        "wait_for_orchestration_completion together with create_check_status_response instead.")
+    async def wait_for_completion_or_create_check_status_response(
+            self,
+            request: func.HttpRequest,
+            instance_id: str,
+            timeout_in_milliseconds: int = 10000,
+            retry_interval_in_milliseconds: int = 1000) -> func.HttpResponse:
+        """Wait for an orchestration to complete, or return a check-status response.
+
+        If the orchestration completes within the timeout, an HTTP response
+        containing its output (or failure) is returned; otherwise a
+        check-status response is returned.
+
+        The ``retry_interval_in_milliseconds`` argument has no durabletask
+        equivalent (durabletask waits server-side) and is ignored.
+        """
+        if retry_interval_in_milliseconds > timeout_in_milliseconds:
+            raise Exception(
+                f'Total timeout {timeout_in_milliseconds} (ms) should be bigger than '
+                f'retry timeout {retry_interval_in_milliseconds} (ms)')
+
+        try:
+            state = await self.wait_for_orchestration_completion(
+                instance_id, timeout=timeout_in_milliseconds / 1000)
+        except TimeoutError:
+            return self.create_check_status_response(request, instance_id)
+
+        if state is None:
+            return self.create_check_status_response(request, instance_id)
+
+        if state.runtime_status == OrchestrationStatus.COMPLETED:
+            return self._create_http_response(200, state.serialized_output)
+        if state.runtime_status == OrchestrationStatus.TERMINATED:
+            return self._create_http_response(200, state.serialized_output)
+        if state.runtime_status == OrchestrationStatus.FAILED:
+            return self._create_http_response(500, state.serialized_output)
+        return self.create_check_status_response(request, instance_id)
+
+    @deprecated(
+        "rewind is not yet supported in durabletask; this shim raises "
+        "NotImplementedError.")
+    async def rewind(
+            self,
+            instance_id: str,
+            reason: str,
+            task_hub_name: Optional[str] = None,
+            connection_name: Optional[str] = None) -> None:
+        """Not implemented: durabletask has no rewind equivalent yet."""
+        raise NotImplementedError(
+            "rewind is not yet supported by durabletask.")
+
+    @staticmethod
+    def _create_http_response(status_code: int, body: Union[str, Any]) -> func.HttpResponse:
+        body_as_json = body if isinstance(body, str) else json.dumps(body)
+        return func.HttpResponse(
+            status_code=status_code,
+            body=body_as_json,
+            mimetype="application/json",
+            headers={"Content-Type": "application/json"})

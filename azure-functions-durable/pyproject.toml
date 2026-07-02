@@ -29,7 +29,8 @@ readme = "README.md"
 dependencies = [
     "durabletask>=1.2.0dev0",
     "azure-identity>=1.19.0",
-    "azure-functions>=2.2.0b6"
+    "azure-functions>=2.2.0b6",
+    "typing-extensions>=4.9.0"
 ]
 
 [project.urls]
