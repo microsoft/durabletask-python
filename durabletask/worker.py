@@ -1483,6 +1483,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._registry = registry
         self._entity_context = OrchestrationEntityContext(instance_id)
         self._version: str | None = None
+        self._parent_instance_id: str | None = None
         self._completion_status: pb.OrchestrationStatus | None = None
         self._received_events: dict[str, list[str | None]] = {}
         self._pending_events: dict[str, list[task.CancellableTask[Any]]] = {}
@@ -1637,6 +1638,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     @property
     def version(self) -> str | None:
         return self._version
+
+    @property
+    def parent_instance_id(self) -> str | None:
+        return self._parent_instance_id
 
     @property
     def current_utc_datetime(self) -> datetime:
@@ -2221,6 +2226,13 @@ class _OrchestrationExecutor:
 
                 if event.executionStarted.version:
                     ctx._version = event.executionStarted.version.value  # pyright: ignore[reportPrivateUsage]
+
+                # Store the parent orchestration instance ID (set for
+                # sub-orchestrations; absent for top-level orchestrations)
+                if event.executionStarted.HasField("parentInstance") and \
+                        event.executionStarted.parentInstance.HasField("orchestrationInstance"):
+                    ctx._parent_instance_id = (  # pyright: ignore[reportPrivateUsage]
+                        event.executionStarted.parentInstance.orchestrationInstance.instanceId)
 
                 # Store the parent trace context for propagation to child tasks
                 if event.executionStarted.HasField("parentTraceContext"):
