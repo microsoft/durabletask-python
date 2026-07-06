@@ -11,6 +11,10 @@ CHANGED
 
 - Changed the default large-payload externalization threshold (`LargePayloadStorageOptions.threshold_bytes`) from 900,000 bytes to 262,144 bytes (256 KiB), matching the .NET SDK default. Behavioral change (not source/binary breaking): payloads larger than 256 KiB are now externalized by default.
 
+FIXED
+
+- Fixed schedules created with `durabletask.scheduled` not appearing in the Durable Task Scheduler dashboard. The schedule entity state is now persisted in a format compatible with the .NET SDK (the `status` is serialized as its numeric enum value and the `interval` as a .NET `TimeSpan` string, using .NET property names), so the dashboard can read it without a JSON deserialization error.
+
 ## v1.7.0
 
 ADDED

@@ -25,7 +25,12 @@ def _to_iso(value: datetime | None) -> str | None:
 
 
 def _from_iso(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+    if not value:
+        return None
+    # .NET serializes ``DateTimeOffset`` with a numeric offset, but tolerate a
+    # trailing ``Z`` so states written by other producers still parse on the
+    # Python versions that predate ``fromisoformat`` accepting ``Z``.
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _interval_to_seconds(value: timedelta | None) -> float | None:
@@ -34,6 +39,95 @@ def _interval_to_seconds(value: timedelta | None) -> float | None:
 
 def _interval_from_seconds(value: float | None) -> timedelta | None:
     return timedelta(seconds=value) if value is not None else None
+
+
+# Number of 100-nanosecond ticks per second, matching the .NET ``TimeSpan``
+# resolution used when formatting the fractional component.
+_TICKS_PER_SECOND = 10_000_000
+
+
+def _interval_to_timespan(value: timedelta | None) -> str | None:
+    """Format a ``timedelta`` as a .NET ``TimeSpan`` (``[-][d.]hh:mm:ss[.fffffff]``).
+
+    The Durable Task Scheduler dashboard deserializes the schedule interval into
+    a .NET ``TimeSpan``, whose JSON converter only accepts this constant format.
+    """
+    if value is None:
+        return None
+    negative = value < timedelta(0)
+    value = abs(value)
+    days = value.days
+    hours, remainder = divmod(value.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if days:
+        formatted = f"{days}.{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        formatted = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    if value.microseconds:
+        ticks = value.microseconds * 10  # microseconds -> 100-ns ticks
+        formatted += f".{ticks:07d}"
+    return f"-{formatted}" if negative else formatted
+
+
+def _interval_from_timespan(value: str) -> timedelta:
+    """Parse a .NET ``TimeSpan`` string (``[-][d.]hh:mm:ss[.fffffff]``)."""
+    text = value.strip()
+    negative = text.startswith("-")
+    if negative:
+        text = text[1:]
+
+    fraction = 0.0
+    if "." in text:
+        head, _, tail = text.rpartition(".")
+        # A dot before the first ``:`` is the day separator, not a fraction.
+        if ":" in tail:
+            # e.g. ``1.02:03:04`` -- the ``.`` separates days from the clock.
+            days_part, _, clock = text.partition(".")
+            days = int(days_part)
+            hours, minutes, seconds = (int(p) for p in clock.split(":"))
+        else:
+            # ``head`` holds ``[d.]hh:mm:ss`` and ``tail`` the ticks fraction.
+            fraction = int(tail.ljust(7, "0")[:7]) / _TICKS_PER_SECOND
+            days, hours, minutes, seconds = _split_clock(head)
+    else:
+        days, hours, minutes, seconds = _split_clock(text)
+
+    result = timedelta(days=days, hours=hours, minutes=minutes,
+                       seconds=seconds) + timedelta(seconds=fraction)
+    return -result if negative else result
+
+
+def _split_clock(text: str) -> tuple[int, int, int, int]:
+    """Split ``[d.]hh:mm:ss`` into ``(days, hours, minutes, seconds)``."""
+    days = 0
+    if "." in text:
+        days_part, _, text = text.partition(".")
+        days = int(days_part)
+    hours, minutes, seconds = (int(part) for part in text.split(":"))
+    return days, hours, minutes, seconds
+
+
+def _get(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    """Return the first present key from ``data``.
+
+    Reads tolerate both the .NET-compatible PascalCase keys and the legacy
+    snake_case keys written by earlier Python workers.
+    """
+    for key in keys:
+        if key in data:
+            return data[key]
+    return default
+
+
+def _parse_interval(data: dict[str, Any]) -> timedelta:
+    """Read the interval from either the .NET ``Interval`` or legacy field."""
+    timespan = _get(data, "Interval", "interval")
+    if isinstance(timespan, str):
+        return _interval_from_timespan(timespan)
+    seconds = _get(data, "interval_seconds")
+    if seconds is not None:
+        return timedelta(seconds=seconds)
+    raise KeyError("interval")
 
 
 @dataclass
@@ -230,29 +324,34 @@ class ScheduleConfiguration:
             raise ValueError("start_at cannot be later than end_at.")
 
     def to_json(self) -> dict[str, Any]:
+        # Serialized with .NET-compatible property names and value shapes so the
+        # Durable Task Scheduler dashboard can deserialize the raw entity state:
+        # PascalCase keys and the interval as a .NET ``TimeSpan`` string.
         return {
-            "schedule_id": self.schedule_id,
-            "orchestration_name": self.orchestration_name,
-            "interval_seconds": self.interval.total_seconds(),
-            "orchestration_input": self.orchestration_input,
-            "orchestration_instance_id": self.orchestration_instance_id,
-            "start_at": _to_iso(self.start_at),
-            "end_at": _to_iso(self.end_at),
-            "start_immediately_if_late": self.start_immediately_if_late,
+            "ScheduleId": self.schedule_id,
+            "OrchestrationName": self.orchestration_name,
+            "Interval": _interval_to_timespan(self.interval),
+            "OrchestrationInput": self.orchestration_input,
+            "OrchestrationInstanceId": self.orchestration_instance_id,
+            "StartAt": _to_iso(self.start_at),
+            "EndAt": _to_iso(self.end_at),
+            "StartImmediatelyIfLate": self.start_immediately_if_late,
         }
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "ScheduleConfiguration":
         config = cls(
-            data["schedule_id"],
-            data["orchestration_name"],
-            timedelta(seconds=data["interval_seconds"]),
+            _get(data, "ScheduleId", "schedule_id"),
+            _get(data, "OrchestrationName", "orchestration_name"),
+            _parse_interval(data),
         )
-        config.orchestration_input = data.get("orchestration_input")
-        config.orchestration_instance_id = data.get("orchestration_instance_id")
-        config.start_at = _from_iso(data.get("start_at"))
-        config.end_at = _from_iso(data.get("end_at"))
-        config.start_immediately_if_late = bool(data.get("start_immediately_if_late", False))
+        config.orchestration_input = _get(data, "OrchestrationInput", "orchestration_input")
+        config.orchestration_instance_id = _get(
+            data, "OrchestrationInstanceId", "orchestration_instance_id")
+        config.start_at = _from_iso(_get(data, "StartAt", "start_at"))
+        config.end_at = _from_iso(_get(data, "EndAt", "end_at"))
+        config.start_immediately_if_late = bool(
+            _get(data, "StartImmediatelyIfLate", "start_immediately_if_late", default=False))
         return config
 
 
@@ -273,16 +372,18 @@ class ScheduleState:
 
     def to_json(self) -> dict[str, Any]:
         # ``schedule_configuration`` is returned as the object itself; the
-        # serializer recurses into it and fires its own ``to_json`` hook. Only
-        # this type's non-JSON-native leaves (datetimes) are converted here.
+        # serializer recurses into it and fires its own ``to_json`` hook. Keys
+        # and value shapes mirror the .NET ``ScheduleState`` so the Durable Task
+        # Scheduler dashboard can deserialize the raw entity state: PascalCase
+        # names, the status as its numeric ordinal, and datetimes as ISO strings.
         return {
-            "status": self.status.value,
-            "execution_token": self.execution_token,
-            "last_run_at": _to_iso(self.last_run_at),
-            "next_run_at": _to_iso(self.next_run_at),
-            "schedule_created_at": _to_iso(self.schedule_created_at),
-            "schedule_last_modified_at": _to_iso(self.schedule_last_modified_at),
-            "schedule_configuration": self.schedule_configuration,
+            "Status": self.status.to_dotnet_ordinal(),
+            "ExecutionToken": self.execution_token,
+            "LastRunAt": _to_iso(self.last_run_at),
+            "NextRunAt": _to_iso(self.next_run_at),
+            "ScheduleCreatedAt": _to_iso(self.schedule_created_at),
+            "ScheduleLastModifiedAt": _to_iso(self.schedule_last_modified_at),
+            "ScheduleConfiguration": self.schedule_configuration,
         }
 
     @classmethod
@@ -291,15 +392,17 @@ class ScheduleState:
         # ``from_json`` hook directly. ``ScheduleConfiguration`` is an internal
         # type, so there is no need to route it through a (possibly custom)
         # converter -- keeping this hook converter-free means it round-trips
-        # under any code path, not only the worker's threaded converter.
+        # under any code path, not only the worker's threaded converter. Reads
+        # accept both the .NET-compatible and legacy snake_case shapes.
         state = cls()
-        state.status = ScheduleStatus(data["status"])
-        state.execution_token = data["execution_token"]
-        state.last_run_at = _from_iso(data.get("last_run_at"))
-        state.next_run_at = _from_iso(data.get("next_run_at"))
-        state.schedule_created_at = _from_iso(data.get("schedule_created_at"))
-        state.schedule_last_modified_at = _from_iso(data.get("schedule_last_modified_at"))
-        config_data = data.get("schedule_configuration")
+        state.status = ScheduleStatus.from_dotnet(_get(data, "Status", "status"))
+        state.execution_token = _get(data, "ExecutionToken", "execution_token")
+        state.last_run_at = _from_iso(_get(data, "LastRunAt", "last_run_at"))
+        state.next_run_at = _from_iso(_get(data, "NextRunAt", "next_run_at"))
+        state.schedule_created_at = _from_iso(_get(data, "ScheduleCreatedAt", "schedule_created_at"))
+        state.schedule_last_modified_at = _from_iso(
+            _get(data, "ScheduleLastModifiedAt", "schedule_last_modified_at"))
+        config_data = _get(data, "ScheduleConfiguration", "schedule_configuration")
         state.schedule_configuration = (
             ScheduleConfiguration.from_json(config_data) if config_data is not None else None)
         return state
