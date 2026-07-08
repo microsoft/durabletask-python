@@ -217,7 +217,7 @@ with DurableTaskSchedulerWorker(
     state = c.wait_for_orchestration_completion(instance_id, timeout=60)
 ```
 
-In this example, any payload exceeding the threshold (default 900 KB) is compressed and uploaded to
+In this example, any payload exceeding the threshold (default 256 KiB) is compressed and uploaded to
 the configured Azure Blob container. When the worker or client reads the message, it downloads and
 decompresses the payload automatically.
 

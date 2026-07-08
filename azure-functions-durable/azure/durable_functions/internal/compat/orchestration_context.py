@@ -87,14 +87,13 @@ class DurableOrchestrationContext:
         return self._ctx.version
 
     @property
-    def parent_instance_id(self) -> str:
+    def parent_instance_id(self) -> Optional[str]:
         """Get the ID of the parent orchestration.
 
-        Not available: durabletask does not currently surface the parent
-        instance ID on the orchestration context.
+        Returns ``None`` for a top-level orchestration (i.e. one that was not
+        started as a sub-orchestration).
         """
-        raise NotImplementedError(
-            "parent_instance_id is not currently exposed by durabletask.")
+        return self._ctx.parent_instance_id
 
     @property
     def function_context(self) -> Any:

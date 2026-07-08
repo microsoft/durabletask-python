@@ -40,6 +40,22 @@ class OrchestrationContext(ABC):
 
     @property
     @abstractmethod
+    def parent_instance_id(self) -> str | None:
+        """Get the ID of the parent orchestration instance.
+
+        For a sub-orchestration, this is the instance ID of the orchestration
+        that scheduled it. For a top-level orchestration, this is ``None``.
+
+        Returns
+        -------
+        str | None
+            The parent orchestration instance ID, or ``None`` if this
+            orchestration was not scheduled by a parent orchestration.
+        """
+        pass
+
+    @property
+    @abstractmethod
     def version(self) -> str | None:
         """Get the version of the orchestration instance.
 

@@ -421,7 +421,7 @@ class TestBlobPayloadStoreDefaults:
             connection_string="UseDevelopmentStorage=true",
         ))
         opts = store.options
-        assert opts.threshold_bytes == 900_000
+        assert opts.threshold_bytes == 262_144
         assert opts.max_stored_payload_bytes == 10 * 1024 * 1024
         assert opts.enable_compression is True
         assert opts.container_name == "durabletask-payloads"

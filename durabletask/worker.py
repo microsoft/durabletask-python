@@ -1482,6 +1482,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._registry = registry
         self._entity_context = OrchestrationEntityContext(instance_id)
         self._version: str | None = None
+        self._parent_instance_id: str | None = None
         self._completion_status: pb.OrchestrationStatus | None = None
         self._received_events: dict[str, list[str | None]] = {}
         self._pending_events: dict[str, list[task.CancellableTask[Any]]] = {}
@@ -1636,6 +1637,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     @property
     def version(self) -> str | None:
         return self._version
+
+    @property
+    def parent_instance_id(self) -> str | None:
+        return self._parent_instance_id
 
     @property
     def current_utc_datetime(self) -> datetime:
@@ -2226,6 +2231,16 @@ class _OrchestrationExecutor:
                 if event.executionStarted.version:
                     ctx._version = event.executionStarted.version.value  # pyright: ignore[reportPrivateUsage]
 
+                # Store the parent orchestration instance ID (set for
+                # sub-orchestrations; absent for top-level orchestrations)
+                if (
+                        event.executionStarted.HasField("parentInstance")
+                        and event.executionStarted.parentInstance.HasField("orchestrationInstance")
+                ):
+                    ctx._parent_instance_id = (  # pyright: ignore[reportPrivateUsage]
+                        event.executionStarted.parentInstance.orchestrationInstance.instanceId
+                    )
+
                 # Store the parent trace context for propagation to child tasks
                 if event.executionStarted.HasField("parentTraceContext"):
                     ctx._parent_trace_context = event.executionStarted.parentTraceContext  # pyright: ignore[reportPrivateUsage]
@@ -2577,10 +2592,10 @@ class _OrchestrationExecutor:
                     raise TypeError("Unexpected sub-orchestration task type")
             elif event.HasField("eventRaised"):
                 if event.eventRaised.name in ctx._entity_task_id_map:  # pyright: ignore[reportPrivateUsage]
-                    entity_id, operation, task_id = ctx._entity_task_id_map.get(event.eventRaised.name, (None, None, None))  # pyright: ignore[reportPrivateUsage]
-                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, False)
+                    entity_id, operation, task_id = ctx._entity_task_id_map.pop(event.eventRaised.name, (None, None, None))  # pyright: ignore[reportPrivateUsage]
+                    self._handle_entity_event_raised(ctx, event, entity_id, task_id, False, operation)
                 elif event.eventRaised.name in ctx._entity_lock_task_id_map:  # pyright: ignore[reportPrivateUsage]
-                    entity_id, task_id = ctx._entity_lock_task_id_map.get(event.eventRaised.name, (None, None))  # pyright: ignore[reportPrivateUsage]
+                    entity_id, task_id = ctx._entity_lock_task_id_map.pop(event.eventRaised.name, (None, None))  # pyright: ignore[reportPrivateUsage]
                     self._handle_entity_event_raised(ctx, event, entity_id, task_id, True)
                 else:
                     # event names are case-insensitive
@@ -2807,7 +2822,8 @@ class _OrchestrationExecutor:
                                     event: pb.HistoryEvent,
                                     entity_id: EntityInstanceId | None,
                                     task_id: int | None,
-                                    is_lock_event: bool):
+                                    is_lock_event: bool,
+                                    operation: str | None = None):
         # This eventRaised represents the result of an entity operation after being translated to the old
         # entity protocol by the Durable WebJobs extension
         if entity_id is None:
@@ -2817,26 +2833,38 @@ class _OrchestrationExecutor:
         entity_task = ctx._pending_tasks.pop(task_id, None)  # pyright: ignore[reportPrivateUsage]
         if not entity_task:
             raise RuntimeError(f"Could not retrieve entity task for entity-related eventRaised with ID '{event.eventId}'")
-        result = None
+        response: dict[str, Any] | None = None
         if not ph.is_empty(event.eventRaised.input):
-            # TODO: Investigate why the event result is wrapped in a dict with "result" key
-            # The expected type applies to the unwrapped result value, not the
-            # transport wrapper. Unwrap first, then coerce the already-parsed
-            # inner value to the expected type via the converter (no redundant
-            # re-serialization round-trip).
-            unwrapped = self._data_converter.deserialize(event.eventRaised.input.value)["result"]
-            # The result here is double-encoded somewhere, so we need to decode it again. This does not happen
-            # with entityOperationCompleted, so it's either part of the event entity messaging protocol in Core,
-            # or something done by the WebJobs extension.
-            if unwrapped and isinstance(unwrapped, str):
-                try:
-                    unwrapped = self._data_converter.deserialize(unwrapped)
-                except Exception as ex:
-                    self._logger.warning(f"{ctx.instance_id}: Could not deserialize entity operation result to object "
-                                         f"for entity '{entity_id}', defaulting to encoded string."
-                                         f"Decode error: {ex}")
-            result = self._data_converter.coerce(
-                unwrapped,
+            response = self._data_converter.deserialize(event.eventRaised.input.value)
+
+        # For entity operation calls (lock acquisitions never fail this way), the legacy WebJobs
+        # "old protocol" ResponseMessage signals a failed operation via the presence of an
+        # "exceptionType" marker (or a structured "failureDetails" object). The human-readable
+        # message lives in the *serialized* "result" field -- "exceptionType" is only the exception
+        # type name, not the message -- so deserialize "result" to recover it, matching
+        # azure-functions-durable-python / -js. Propagate as a task failure so an awaiting
+        # call_entity raises, like the current entity protocol and the .NET SDK.
+        if not is_lock_event and isinstance(response, dict) and ph.is_entity_error_response(response):
+            raw_result = response.get("result")
+            error_content = (
+                self._data_converter.deserialize(raw_result) if isinstance(raw_result, str) else raw_result
+            )
+            failure_details = ph.entity_response_failure_details(response, error_content)
+            failure = EntityOperationFailedException(entity_id, operation or "", failure_details)
+            ctx._entity_context.recover_lock_after_call(entity_id)  # pyright: ignore[reportPrivateUsage]
+            entity_task.fail(str(failure), failure)
+            ctx.resume()
+            return
+
+        result = None
+        if response is not None:
+            # The legacy protocol wraps the result as {"result": <serialized>},
+            # where the value is a serialized JSON string (like the new protocol's
+            # entityOperationCompleted.output). Deserialize it -- not coerce -- so
+            # the value is fully parsed and the expected type applied; coercing
+            # would skip JSON parsing and leave it double-encoded (e.g. '"done"').
+            result = self._data_converter.deserialize(
+                response["result"],
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
             )
         if is_lock_event:

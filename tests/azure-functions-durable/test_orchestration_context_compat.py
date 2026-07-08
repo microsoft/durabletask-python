@@ -136,10 +136,10 @@ def test_will_continue_as_new_tracks_continue_as_new():
     fake.continue_as_new.assert_called_once_with({"next": 1})
 
 
-def test_parent_instance_id_raises_not_implemented():
-    adapter, _ = _adapter()
-    with pytest.raises(NotImplementedError):
-        _ = adapter.parent_instance_id
+def test_parent_instance_id_delegates():
+    adapter, fake = _adapter()
+    fake.parent_instance_id = "parent-123"
+    assert adapter.parent_instance_id == "parent-123"
 
 
 def test_function_context_raises_not_implemented():

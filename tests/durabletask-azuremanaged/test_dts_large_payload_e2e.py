@@ -45,7 +45,7 @@ AZURITE_CONN_STR = "UseDevelopmentStorage=true"
 TEST_CONTAINER = f"dts-payloads-{uuid.uuid4().hex[:8]}"
 
 # A low threshold so we can trigger externalization without massive strings.
-# In production the default is 900 KB; here we use 1 KB for fast tests.
+# In production the default is 256 KiB; here we use 1 KB for fast tests.
 THRESHOLD_BYTES = 1_024
 
 # Pin API version to one that Azurite supports.

@@ -21,15 +21,15 @@ class LargePayloadStorageOptions:
 
     Attributes:
         threshold_bytes: Payloads larger than this value (in bytes) will
-            be externalized to the payload store.  Defaults to 900,000
-            (900 KB), matching the .NET SDK default.
+            be externalized to the payload store.  Defaults to 262,144
+            (256 KiB), matching the .NET SDK default.
         max_stored_payload_bytes: Maximum payload size (in bytes) that
             can be stored externally.  Payloads exceeding this limit
             will cause an error.  Defaults to 10,485,760 (10 MB).
         enable_compression: When ``True`` (the default), payloads are
             GZip-compressed before uploading.
     """
-    threshold_bytes: int = 900_000
+    threshold_bytes: int = 262_144
     max_stored_payload_bytes: int = 10 * 1024 * 1024  # 10 MB
     enable_compression: bool = True
 

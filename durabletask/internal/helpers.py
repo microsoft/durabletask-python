@@ -3,6 +3,7 @@
 
 import traceback
 from datetime import datetime, timezone
+from typing import Any, cast
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -134,6 +135,59 @@ def new_failure_details(ex: Exception, _visited: set[int] | None = None) -> pb.T
         stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__))),
         innerFailure=new_failure_details(inner, _visited) if inner else None
     )
+
+
+def _failure_details_from_core_dict(fd: dict[str, Any]) -> pb.TaskFailureDetails:
+    """Convert a serialized DurableTask.Core ``FailureDetails`` dict to protobuf."""
+    inner = fd.get("InnerFailure")
+    stack_trace = fd.get("StackTrace")
+    return pb.TaskFailureDetails(
+        errorType=str(fd.get("ErrorType") or ""),
+        errorMessage=str(fd.get("ErrorMessage") or ""),
+        stackTrace=get_string_value(str(stack_trace) if stack_trace is not None else None),
+        innerFailure=_failure_details_from_core_dict(cast(dict[str, Any], inner)) if isinstance(inner, dict) else None,
+        isNonRetriable=bool(fd.get("IsNonRetriable", False)),
+    )
+
+
+def entity_response_failure_details(
+        response: dict[str, Any],
+        error_content: Any = None) -> pb.TaskFailureDetails:
+    """Build failure details from a failed legacy-protocol entity ``ResponseMessage``.
+
+    Call this only for responses that :func:`is_entity_error_response` reports as
+    failures. In the WebJobs "old protocol" ``ResponseMessage`` (see
+    ``EntityScheduler/ResponseMessage.cs``), a failed operation serializes the
+    human-readable content into ``result`` while ``exceptionType`` carries only
+    the exception's type name (a presence marker) -- it is *not* the message.
+    This mirrors ``azure-functions-durable-python`` / ``-js``, which read the
+    message from ``result`` and ignore ``exceptionType``'s value.
+
+    Parameters
+    ----------
+    response:
+        The deserialized ``ResponseMessage`` dict.
+    error_content:
+        The already-deserialized ``result`` payload, used as the failure
+        message. A structured ``failureDetails`` object, if present, takes
+        precedence (current-protocol shape).
+    """
+    failure_details = response.get("failureDetails")
+    if isinstance(failure_details, dict):
+        return _failure_details_from_core_dict(cast(dict[str, Any], failure_details))
+    error_type = str(response.get("exceptionType") or "")
+    error_message = "" if error_content is None else str(error_content)
+    return pb.TaskFailureDetails(errorType=error_type, errorMessage=error_message)
+
+
+def is_entity_error_response(response: dict[str, Any]) -> bool:
+    """Return ``True`` if a legacy-protocol entity ``ResponseMessage`` is a failure.
+
+    In the WebJobs "old protocol" a failed operation is marked by the presence of
+    an ``exceptionType`` field (successful responses omit it). Current-protocol
+    payloads may instead carry a structured ``failureDetails`` object.
+    """
+    return "exceptionType" in response or isinstance(response.get("failureDetails"), dict)
 
 
 def new_event_sent_event(event_id: int, instance_id: str, input: str):
