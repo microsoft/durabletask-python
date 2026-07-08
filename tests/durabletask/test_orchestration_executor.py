@@ -49,6 +49,50 @@ def test_orchestrator_inputs():
     assert complete_action.result.value == json.dumps(expected_output)
 
 
+def test_orchestrator_parent_instance_id():
+    """A sub-orchestration exposes its parent's instance ID on the context."""
+
+    parent_id = "parent-instance-42"
+    observed: dict[str, str | None] = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        observed["parent"] = ctx.parent_instance_id
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    started = helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)
+    started.executionStarted.parentInstance.CopyFrom(
+        pb.ParentInstanceInfo(
+            taskScheduledId=1,
+            orchestrationInstance=pb.OrchestrationInstance(instanceId=parent_id)))
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    executor.execute(TEST_INSTANCE_ID, [], [started])
+
+    assert observed["parent"] == parent_id
+
+
+def test_orchestrator_parent_instance_id_none_for_top_level():
+    """A top-level orchestration has no parent instance ID."""
+
+    observed: dict[str, str | None] = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        observed["parent"] = ctx.parent_instance_id
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    new_events = [helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    executor.execute(TEST_INSTANCE_ID, [], new_events)
+
+    assert observed["parent"] is None
+
+
 def test_complete_orchestration_actions():
     """Tests the actions output for a completed orchestration"""
 
