@@ -13,7 +13,7 @@ CHANGED
 
 FIXED
 
-- Fixed schedules created with `durabletask.scheduled` not appearing in the Durable Task Scheduler dashboard. The schedule entity state is now persisted in a format compatible with the .NET SDK (the `status` is serialized as its numeric enum value and the `interval` as a .NET `TimeSpan` string, using .NET property names), so the dashboard can read it without a JSON deserialization error.
+- Fixed schedules created with `durabletask.scheduled` not appearing in the Durable Task Scheduler dashboard. The schedule entity state is now persisted in a format compatible with the .NET SDK: the `status` is serialized as its numeric enum value, the `interval` as a .NET `TimeSpan` string, and the `orchestration_input` as a JSON-encoded string, all using .NET property names, so the dashboard can read it without a JSON deserialization error.
 
 ## v1.7.0
 

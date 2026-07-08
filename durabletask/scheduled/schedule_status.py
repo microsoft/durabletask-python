@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 from enum import Enum
-from typing import Union
 
 
 class ScheduleStatus(str, Enum):
@@ -29,7 +28,7 @@ class ScheduleStatus(str, Enum):
         return _STATUS_TO_ORDINAL[self]
 
     @classmethod
-    def from_dotnet(cls, value: Union[int, str, None]) -> "ScheduleStatus":
+    def from_dotnet(cls, value: "int | str | None") -> "ScheduleStatus":
         """Reconstruct a status from a persisted value.
 
         Accepts the numeric ordinal written by the .NET-compatible serializer
