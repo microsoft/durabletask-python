@@ -2096,8 +2096,9 @@ def test_entity_lock_created_as_event():
 
 
 def test_entity_call_failure_propagated_over_old_protocol():
-    """A failed entity operation delivered via the legacy protocol (an eventRaised
-    ResponseMessage with failureDetails) must surface as a TaskFailedError to the caller."""
+    """A failed entity response carrying a structured ``failureDetails`` object
+    (defensively supported, current-protocol shape) must surface as a
+    TaskFailedError with the structured message."""
     test_entity_id = entities.EntityInstanceId("Counter", "myCounter")
 
     def orchestrator(ctx: task.OrchestrationContext, _):
@@ -2122,8 +2123,8 @@ def test_entity_call_failure_propagated_over_old_protocol():
     assert actions[0].sendEntityMessage.HasField("entityOperationCalled")
     request_id = actions[0].sendEntityMessage.entityOperationCalled.requestId
 
-    # The Durable WebJobs extension translates a failed entity operation into a
-    # legacy-protocol ResponseMessage carrying a serialized FailureDetails.
+    # A structured FailureDetails object, when present, takes precedence over the
+    # WebJobs result/exceptionType fields.
     response_message = {
         "result": None,
         "failureDetails": {
@@ -2148,8 +2149,9 @@ def test_entity_call_failure_propagated_over_old_protocol():
 
 
 def test_entity_call_failure_propagated_over_old_protocol_exception_type():
-    """A failed entity operation whose legacy ResponseMessage only carries the
-    ``exceptionType`` (error message) field must still surface as a TaskFailedError."""
+    """A WebJobs "old protocol" failure carries the message in the serialized
+    ``result`` field, while ``exceptionType`` is only the exception type name.
+    The surfaced message must come from ``result``, not ``exceptionType``."""
     test_entity_id = entities.EntityInstanceId("Counter", "myCounter")
 
     def orchestrator(ctx: task.OrchestrationContext, _):
@@ -2173,7 +2175,12 @@ def test_entity_call_failure_propagated_over_old_protocol_exception_type():
     assert len(actions) == 1
     request_id = actions[0].sendEntityMessage.entityOperationCalled.requestId
 
-    response_message = {"result": None, "exceptionType": "Something went wrong!"}
+    # Real WebJobs shape: message serialized into "result"; "exceptionType" is the
+    # (assembly-qualified) exception type name and must NOT be used as the message.
+    response_message = {
+        "result": json.dumps("Something went wrong!"),
+        "exceptionType": "System.InvalidOperationException, mscorlib",
+    }
     new_events = [
         helpers.new_event_sent_event(1, str(test_entity_id), json.dumps({"id": request_id})),
         helpers.new_event_raised_event(request_id, json.dumps(response_message)),
@@ -2185,6 +2192,8 @@ def test_entity_call_failure_propagated_over_old_protocol_exception_type():
     assert output == (
         "Operation 'set' on entity '@counter@myCounter' failed with error: Something went wrong!"
     )
+    # Guard against the regression of surfacing the type name instead of the message.
+    assert "InvalidOperationException" not in output
 
 
 def test_entity_call_success_over_old_protocol():

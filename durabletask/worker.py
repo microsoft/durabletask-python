@@ -2818,18 +2818,24 @@ class _OrchestrationExecutor:
         if not ph.is_empty(event.eventRaised.input):
             response = self._data_converter.deserialize(event.eventRaised.input.value)
 
-        # For entity operation calls (lock acquisitions never fail this way), the legacy-protocol
-        # ResponseMessage signals a failed operation via its "exceptionType" (error message) or
-        # "failureDetails" field. Propagate that as a task failure so an awaiting call_entity raises,
-        # matching the new entity protocol and the .NET SDK.
-        if not is_lock_event and isinstance(response, dict):
-            failure_details = ph.entity_response_failure_details(response)
-            if failure_details is not None:
-                failure = EntityOperationFailedException(entity_id, operation or "", failure_details)
-                ctx._entity_context.recover_lock_after_call(entity_id)  # pyright: ignore[reportPrivateUsage]
-                entity_task.fail(str(failure), failure)
-                ctx.resume()
-                return
+        # For entity operation calls (lock acquisitions never fail this way), the legacy WebJobs
+        # "old protocol" ResponseMessage signals a failed operation via the presence of an
+        # "exceptionType" marker (or a structured "failureDetails" object). The human-readable
+        # message lives in the *serialized* "result" field -- "exceptionType" is only the exception
+        # type name, not the message -- so deserialize "result" to recover it, matching
+        # azure-functions-durable-python / -js. Propagate as a task failure so an awaiting
+        # call_entity raises, like the current entity protocol and the .NET SDK.
+        if not is_lock_event and isinstance(response, dict) and ph.is_entity_error_response(response):
+            raw_result = response.get("result")
+            error_content = (
+                self._data_converter.deserialize(raw_result) if isinstance(raw_result, str) else raw_result
+            )
+            failure_details = ph.entity_response_failure_details(response, error_content)
+            failure = EntityOperationFailedException(entity_id, operation or "", failure_details)
+            ctx._entity_context.recover_lock_after_call(entity_id)  # pyright: ignore[reportPrivateUsage]
+            entity_task.fail(str(failure), failure)
+            ctx.resume()
+            return
 
         result = None
         if response is not None:

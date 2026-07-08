@@ -150,22 +150,44 @@ def _failure_details_from_core_dict(fd: dict[str, Any]) -> pb.TaskFailureDetails
     )
 
 
-def entity_response_failure_details(response: dict[str, Any]) -> pb.TaskFailureDetails | None:
-    """Extract failure details from a legacy-protocol entity ``ResponseMessage``.
+def entity_response_failure_details(
+        response: dict[str, Any],
+        error_content: Any = None) -> pb.TaskFailureDetails:
+    """Build failure details from a failed legacy-protocol entity ``ResponseMessage``.
 
-    The legacy entity protocol (used when the Durable WebJobs extension
-    translates entity operations) delivers operation results as a
-    ``ResponseMessage`` whose ``exceptionType`` (error message) or
-    ``failureDetails`` field is populated when the operation failed. Returns
-    ``None`` when the response represents a successful operation.
+    Call this only for responses that :func:`is_entity_error_response` reports as
+    failures. In the WebJobs "old protocol" ``ResponseMessage`` (see
+    ``EntityScheduler/ResponseMessage.cs``), a failed operation serializes the
+    human-readable content into ``result`` while ``exceptionType`` carries only
+    the exception's type name (a presence marker) -- it is *not* the message.
+    This mirrors ``azure-functions-durable-python`` / ``-js``, which read the
+    message from ``result`` and ignore ``exceptionType``'s value.
+
+    Parameters
+    ----------
+    response:
+        The deserialized ``ResponseMessage`` dict.
+    error_content:
+        The already-deserialized ``result`` payload, used as the failure
+        message. A structured ``failureDetails`` object, if present, takes
+        precedence (current-protocol shape).
     """
     failure_details = response.get("failureDetails")
     if isinstance(failure_details, dict):
         return _failure_details_from_core_dict(cast(dict[str, Any], failure_details))
-    error_message = response.get("exceptionType")
-    if error_message is not None:
-        return pb.TaskFailureDetails(errorType="", errorMessage=str(error_message))
-    return None
+    error_type = str(response.get("exceptionType") or "")
+    error_message = "" if error_content is None else str(error_content)
+    return pb.TaskFailureDetails(errorType=error_type, errorMessage=error_message)
+
+
+def is_entity_error_response(response: dict[str, Any]) -> bool:
+    """Return ``True`` if a legacy-protocol entity ``ResponseMessage`` is a failure.
+
+    In the WebJobs "old protocol" a failed operation is marked by the presence of
+    an ``exceptionType`` field (successful responses omit it). Current-protocol
+    payloads may instead carry a structured ``failureDetails`` object.
+    """
+    return "exceptionType" in response or isinstance(response.get("failureDetails"), dict)
 
 
 def new_event_sent_event(event_id: int, instance_id: str, input: str):
