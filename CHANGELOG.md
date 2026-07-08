@@ -19,6 +19,9 @@ CHANGED
 
 FIXED
 
+- Fixed `OrchestrationContext.call_entity` not propagating entity operation failures when running under the legacy entity protocol (used by the Azure Functions Durable extension). A failed entity operation now raises `TaskFailedError` in the calling orchestration instead of silently completing, matching the behavior of the current entity protocol and the .NET SDK.
+- Fixed `OrchestrationContext.call_entity` returning a double-encoded result under the legacy entity protocol. The entity's return value was left as a raw serialized JSON string (for example, a returned string arrived with extra quotes and dicts/lists arrived as strings); it is now fully deserialized and coerced to the requested `return_type`, matching the current entity protocol.
+- Fixed unbounded growth of the internal entity request/lock tracking maps when using entities over the legacy entity protocol. Entries are now released as each response is handled, reducing memory use in long-running orchestrations that call or lock entities.
 - Fixed schedules created with `durabletask.scheduled` not appearing in the Durable Task Scheduler dashboard. The schedule entity state is now persisted in a format compatible with the .NET SDK: the `status` is serialized as its numeric enum value, the `interval` as a .NET `TimeSpan` string, and the `orchestration_input` as a JSON-encoded string, all using .NET property names, so the dashboard can read it without a JSON deserialization error.
 
 ## v1.7.0
