@@ -11,9 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
-- Added `OrchestrationContext.parent_instance_id`, which returns the instance
-  ID of the parent orchestration for a sub-orchestration, or `None` for a
-  top-level orchestration.
+- Added `OrchestrationContext.parent_instance_id`, which returns the instance ID of the parent orchestration for a sub-orchestration, or `None` for a top-level orchestration.
 
 CHANGED
 
