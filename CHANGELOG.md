@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.7.1
+
 ADDED
 
 - Added `OrchestrationContext.parent_instance_id`, which returns the instance
