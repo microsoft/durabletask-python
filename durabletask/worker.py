@@ -2142,8 +2142,8 @@ class _OrchestrationExecutor:
 
         # Check for rewind BEFORE replay.  A rewind is indicated by an
         # executionRewound event in new_events.  We look for an
-        # executionCompleted event anywhere in the history (old or new
-        # events) to decide whether to rewind or replay:
+        # executionCompleted event in the committed history (old_events)
+        # to decide whether to rewind or replay:
         # 1. executionCompleted IS present → the orchestration reached a
         #    terminal state (e.g. failed).  This is a *new* rewind that
         #    the worker must short-circuit by building clean history.
@@ -2252,6 +2252,14 @@ class _OrchestrationExecutor:
         event is kept so the backend can identify which sub-orchestration
         instances to recursively rewind.
 
+        Known limitation (shared with the Core/.NET rewind): timer events
+        (``timerCreated`` / ``timerFired``) emitted between retry attempts
+        of an activity scheduled with a ``RetryPolicy`` are not removed.
+        On the next replay the regenerated ``scheduleTask`` action may not
+        line up with those retained timer events, which can surface as a
+        non-determinism mismatch. Rewinding an activity that used a retry
+        policy is therefore not currently supported.
+
         WARNING!!!:
         If any changes are made to how this method modifies the orchestration's history, then corresponding changes *must*
         be made in the backend implementations that rely on this method for executing a rewind.
@@ -2272,14 +2280,12 @@ class _OrchestrationExecutor:
         new_execution_id = uuid.uuid4().hex
 
         # First pass: collect the task-scheduled IDs that correspond to
-        # failed activities / sub-orchestrations so we can remove the
-        # matching taskScheduled events in the second pass.
+        # failed activities so we can remove the matching taskScheduled
+        # events in the second pass.
         failed_task_ids: set[int] = set()
         for event in all_events:
             if event.HasField("taskFailed"):
                 failed_task_ids.add(event.taskFailed.taskScheduledId)
-            elif event.HasField("subOrchestrationInstanceFailed"):
-                failed_task_ids.add(event.subOrchestrationInstanceFailed.taskScheduledId)
 
         # Second pass: build the clean history.
         clean_history: list[pb.HistoryEvent] = []
@@ -2301,10 +2307,15 @@ class _OrchestrationExecutor:
                 event_copy.CopyFrom(event)
                 event_copy.executionStarted.orchestrationInstance.executionId.CopyFrom(
                     ph.get_string_value_or_empty(new_execution_id))
-                if rewind_event.HasField("parentExecutionId"):
-                    if rewind_event.parentExecutionId.value:
-                        event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
-                            rewind_event.parentExecutionId)
+                # Only update the parent's execution ID when this is
+                # actually a sub-orchestration (its executionStarted has a
+                # parentInstance). Writing through parentInstance for a
+                # top-level orchestration would materialize an empty one.
+                if (rewind_event.HasField("parentExecutionId")
+                        and rewind_event.parentExecutionId.value
+                        and event_copy.executionStarted.HasField("parentInstance")):
+                    event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
+                        rewind_event.parentExecutionId)
                 clean_history.append(event_copy)
                 continue
 

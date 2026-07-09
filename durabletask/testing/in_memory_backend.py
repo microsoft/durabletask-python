@@ -613,8 +613,12 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         instance.pending_events.clear()
 
                         # Add OrchestratorStarted for re-dispatches so that
-                        # ctx.current_utc_datetime advances correctly
-                        if instance.history:
+                        # ctx.current_utc_datetime advances correctly, unless
+                        # the pending batch already begins with one (e.g. a
+                        # post-rewind replay supplies its own).
+                        if instance.history and not (
+                                instance.dispatched_events
+                                and instance.dispatched_events[0].HasField("orchestratorStarted")):
                             now = datetime.now(timezone.utc)
                             orch_started = helpers.new_orchestrator_started_event(now)
                             instance.dispatched_events.insert(0, orch_started)
@@ -1901,10 +1905,15 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         # Clear any stale dispatched events.
         instance.dispatched_events.clear()
 
-        # Add the ExecutionRewound event as a new pending event.
+        # Add the ExecutionRewound event as a new pending event. Stamp it
+        # with the current time (rather than the default epoch) so the
+        # audit event carries a meaningful timestamp, consistent with
+        # other backend-generated events.
+        rewind_timestamp = timestamp_pb2.Timestamp()
+        rewind_timestamp.FromDatetime(datetime.now(timezone.utc))
         rewind_event = pb.HistoryEvent(
             eventId=-1,
-            timestamp=timestamp_pb2.Timestamp(),
+            timestamp=rewind_timestamp,
             executionRewound=pb.ExecutionRewoundEvent(
                 reason=wrappers_pb2.StringValue(value=reason) if reason else None,
             ),
@@ -1977,22 +1986,18 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     instance.instance_id, sub_instance_id, task_id)
 
         # Re-enqueue so the orchestration replays with the clean history.
-        # The executionRewound event is added to pending_events so the
-        # worker can see it in new_events; the worker uses the presence
-        # of executionRewound in old_events (history) to distinguish
-        # this normal post-rewind replay from the initial rewind
-        # short-circuit.  Note: we do NOT add orchestratorStarted here
-        # because the work-item dispatch loop already inserts one when
-        # the instance has non-empty history.
-        rewind_event = None
-        for event in new_history:
-            if event.HasField("executionRewound"):
-                rewind_event = event
-                break
+        # The executionRewound event is already present in the clean
+        # history (it was kept by the SDK's rewind rewrite), so it must
+        # NOT be re-sent as a pending event — doing so would duplicate it
+        # in the instance history once the dispatched events are
+        # committed. A lone orchestratorStarted is enough to make the
+        # instance dispatchable for the post-rewind replay; the worker
+        # replays normally because executionCompleted is no longer in the
+        # history.
         instance.pending_events.clear()
         instance.dispatched_events.clear()
-        if rewind_event is not None:
-            instance.pending_events.append(rewind_event)
+        instance.pending_events.append(
+            helpers.new_orchestrator_started_event(datetime.now(timezone.utc)))
         instance.completion_token = self._next_completion_token
         self._next_completion_token += 1
         self._orchestration_in_flight.discard(instance.instance_id)

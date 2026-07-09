@@ -13,8 +13,9 @@ expected semantics:
   ``executionStarted`` copy is updated accordingly.
 * ``taskFailed`` events and their corresponding ``taskScheduled``
   events are removed.
-* ``subOrchestrationInstanceFailed`` events and their corresponding
-  ``taskScheduled`` events are removed.
+* ``subOrchestrationInstanceFailed`` events are removed. Sub-orchestrations
+  are represented by ``subOrchestrationInstanceCreated`` (not
+  ``taskScheduled``), so no ``taskScheduled`` event is dropped for them.
 * ``subOrchestrationInstanceCreated`` events for failed sub-orchestrations
   are kept so the backend can recursively rewind them.
 * ``executionCompleted`` events are removed.
@@ -344,8 +345,8 @@ def test_rewind_preserves_successful_activity():
 
 
 def test_rewind_removes_failed_sub_orch_events():
-    """subOrchestrationInstanceFailed and its corresponding taskScheduled
-    should be removed, but subOrchestrationInstanceCreated is kept."""
+    """subOrchestrationInstanceFailed should be removed, but
+    subOrchestrationInstanceCreated is kept."""
     executor = _make_executor()
 
     old_events = [
@@ -373,14 +374,10 @@ def test_rewind_removes_failed_sub_orch_events():
     assert not any(
         e.HasField("subOrchestrationInstanceFailed") for e in clean
     )
-    # The corresponding taskScheduled (eventId == 1) used by
-    # subOrchestrationInstanceFailed should also be removed, since
-    # _build_rewind_result collects the taskScheduledId from
-    # subOrchestrationInstanceFailed too.
-    # Note: subOrchestrationInstanceCreated uses a separate event with
-    # its own eventId and is NOT removed.
+    # Sub-orchestrations are represented by subOrchestrationInstanceCreated,
+    # not taskScheduled, so there is no taskScheduled event to remove here.
     assert not any(
-        e.HasField("taskScheduled") and e.eventId == 1 for e in clean
+        e.HasField("taskScheduled") for e in clean
     )
     # The subOrchestrationInstanceCreated event should be preserved
     # so the backend can identify which sub-orchestration to rewind.

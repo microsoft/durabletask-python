@@ -14,7 +14,6 @@ from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 #       docker run -i -p 8080:8080 -p 8082:8082 -d mcr.microsoft.com/dts/dts-emulator:latest
 pytestmark = [
     pytest.mark.dts,
-    pytest.mark.skip(reason="Rewind support is not yet available in the public DTS emulator"),
 ]
 
 # Read the environment variables
