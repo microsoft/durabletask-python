@@ -1,0 +1,5 @@
+durabletask
+durabletask-azuremanaged
+azure-identity
+pydantic>=2
+pytest

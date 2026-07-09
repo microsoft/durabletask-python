@@ -50,20 +50,29 @@ class OrchestrationInstance(_message.Message):
     def __init__(self, instanceId: _Optional[str] = ..., executionId: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ...) -> None: ...
 
 class ActivityRequest(_message.Message):
-    __slots__ = ("name", "version", "input", "orchestrationInstance", "taskId", "parentTraceContext")
+    __slots__ = ("name", "version", "input", "orchestrationInstance", "taskId", "parentTraceContext", "tags")
+    class TagsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     NAME_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
     INPUT_FIELD_NUMBER: _ClassVar[int]
     ORCHESTRATIONINSTANCE_FIELD_NUMBER: _ClassVar[int]
     TASKID_FIELD_NUMBER: _ClassVar[int]
     PARENTTRACECONTEXT_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
     name: str
     version: _wrappers_pb2.StringValue
     input: _wrappers_pb2.StringValue
     orchestrationInstance: OrchestrationInstance
     taskId: int
     parentTraceContext: TraceContext
-    def __init__(self, name: _Optional[str] = ..., version: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., input: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., orchestrationInstance: _Optional[_Union[OrchestrationInstance, _Mapping]] = ..., taskId: _Optional[int] = ..., parentTraceContext: _Optional[_Union[TraceContext, _Mapping]] = ...) -> None: ...
+    tags: _containers.ScalarMap[str, str]
+    def __init__(self, name: _Optional[str] = ..., version: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., input: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., orchestrationInstance: _Optional[_Union[OrchestrationInstance, _Mapping]] = ..., taskId: _Optional[int] = ..., parentTraceContext: _Optional[_Union[TraceContext, _Mapping]] = ..., tags: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class ActivityResponse(_message.Message):
     __slots__ = ("instanceId", "taskId", "result", "failureDetails", "completionToken")
@@ -913,14 +922,16 @@ class PurgeInstancesRequest(_message.Message):
     def __init__(self, instanceId: _Optional[str] = ..., purgeInstanceFilter: _Optional[_Union[PurgeInstanceFilter, _Mapping]] = ..., instanceBatch: _Optional[_Union[InstanceBatch, _Mapping]] = ..., recursive: bool = ..., isOrchestration: bool = ...) -> None: ...
 
 class PurgeInstanceFilter(_message.Message):
-    __slots__ = ("createdTimeFrom", "createdTimeTo", "runtimeStatus")
+    __slots__ = ("createdTimeFrom", "createdTimeTo", "runtimeStatus", "timeout")
     CREATEDTIMEFROM_FIELD_NUMBER: _ClassVar[int]
     CREATEDTIMETO_FIELD_NUMBER: _ClassVar[int]
     RUNTIMESTATUS_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_FIELD_NUMBER: _ClassVar[int]
     createdTimeFrom: _timestamp_pb2.Timestamp
     createdTimeTo: _timestamp_pb2.Timestamp
     runtimeStatus: _containers.RepeatedScalarFieldContainer[OrchestrationStatus]
-    def __init__(self, createdTimeFrom: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., createdTimeTo: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., runtimeStatus: _Optional[_Iterable[_Union[OrchestrationStatus, str]]] = ...) -> None: ...
+    timeout: _duration_pb2.Duration
+    def __init__(self, createdTimeFrom: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., createdTimeTo: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., runtimeStatus: _Optional[_Iterable[_Union[OrchestrationStatus, str]]] = ..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]] = ...) -> None: ...
 
 class PurgeInstancesResponse(_message.Message):
     __slots__ = ("deletedInstanceCount", "isComplete")
@@ -1258,18 +1269,20 @@ class SkipGracefulOrchestrationTerminationsResponse(_message.Message):
     def __init__(self, unterminatedInstanceIds: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class GetWorkItemsRequest(_message.Message):
-    __slots__ = ("maxConcurrentOrchestrationWorkItems", "maxConcurrentActivityWorkItems", "maxConcurrentEntityWorkItems", "capabilities", "workItemFilters")
+    __slots__ = ("maxConcurrentOrchestrationWorkItems", "maxConcurrentActivityWorkItems", "maxConcurrentEntityWorkItems", "capabilities", "workItemFilters", "worker_instance_id")
     MAXCONCURRENTORCHESTRATIONWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     MAXCONCURRENTACTIVITYWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     MAXCONCURRENTENTITYWORKITEMS_FIELD_NUMBER: _ClassVar[int]
     CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
     WORKITEMFILTERS_FIELD_NUMBER: _ClassVar[int]
+    WORKER_INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     maxConcurrentOrchestrationWorkItems: int
     maxConcurrentActivityWorkItems: int
     maxConcurrentEntityWorkItems: int
     capabilities: _containers.RepeatedScalarFieldContainer[WorkerCapability]
     workItemFilters: WorkItemFilters
-    def __init__(self, maxConcurrentOrchestrationWorkItems: _Optional[int] = ..., maxConcurrentActivityWorkItems: _Optional[int] = ..., maxConcurrentEntityWorkItems: _Optional[int] = ..., capabilities: _Optional[_Iterable[_Union[WorkerCapability, str]]] = ..., workItemFilters: _Optional[_Union[WorkItemFilters, _Mapping]] = ...) -> None: ...
+    worker_instance_id: str
+    def __init__(self, maxConcurrentOrchestrationWorkItems: _Optional[int] = ..., maxConcurrentActivityWorkItems: _Optional[int] = ..., maxConcurrentEntityWorkItems: _Optional[int] = ..., capabilities: _Optional[_Iterable[_Union[WorkerCapability, str]]] = ..., workItemFilters: _Optional[_Union[WorkItemFilters, _Mapping]] = ..., worker_instance_id: _Optional[str] = ...) -> None: ...
 
 class WorkItemFilters(_message.Message):
     __slots__ = ("orchestrations", "activities", "entities")

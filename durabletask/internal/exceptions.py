@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import durabletask.internal.orchestrator_service_pb2 as pb
 
 

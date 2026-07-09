@@ -8,6 +8,27 @@ building durable orchestrations. The repo contains two packages:
 - `durabletask` — core SDK (in `durabletask/`)
 - `durabletask.azuremanaged` — Azure Durable Task Scheduler provider (in `durabletask-azuremanaged/`)
 
+## Changelog Requirements
+
+- ALWAYS document user-facing changes in the appropriate changelog under
+  `## Unreleased`.
+- Update `CHANGELOG.md` for core SDK changes and
+  `durabletask-azuremanaged/CHANGELOG.md` for provider changes.
+- If a change affects both packages, update both changelogs.
+- Include changelog entries for externally observable outcomes only, such as
+  new public APIs, behavior changes, bug fixes users can notice, breaking
+  changes, and new configuration capabilities.
+- Do NOT document internal-only changes in changelogs, including CI/workflow
+  updates, test-only changes, refactors with no user-visible behavior change,
+  and implementation details that do not affect public behavior or API.
+- When in doubt, write the changelog entry in terms of user impact (what users
+  can now do or what behavior changed), not implementation mechanism (how it
+  was implemented internally).
+
+Examples:
+- Include: "Added `get_orchestration_history()` to retrieve orchestration history from the client."
+- Exclude: "Added internal helper functions to aggregate streamed history chunks."
+
 ## Language and Style
 
 - Python 3.10+ is required.
@@ -15,13 +36,35 @@ building durable orchestrations. The repo contains two packages:
 - Follow PEP 8 conventions.
 - Use `autopep8` for Python formatting.
 
+## Copyright Headers
+
+Every new Python (`.py`) source file MUST begin with the following copyright
+header as the first two lines, followed by a blank line before any code,
+docstring, or imports:
+
+```python
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+```
+
+This applies to all hand-written Python files, including `__init__.py` files,
+tests, and examples. The only exceptions are auto-generated protobuf files
+(`*_pb2.py` and `*_pb2_grpc.py`), which carry their own generated header.
+
+## Python Type Checking
+
+Before linting, check for and fix any Pylance errors in the files you
+changed. Use the editor's diagnostics (or the `get_errors` tool) to
+identify type errors and resolve them first — type safety takes
+priority over style.
+
 ## Python Linting
 
 This repository uses [flake8](https://flake8.pycqa.org/) for Python
 linting. Run it after making changes to verify there are no issues:
 
 ```bash
-flake8 path/to/changed/file.py
+python -m flake8 path/to/changed/file.py
 ```
 
 ## Markdown Style
@@ -57,19 +100,19 @@ repository root.
 To lint a single file:
 
 ```bash
-pymarkdown -c .pymarkdown.json scan path/to/file.md
+python -m pymarkdown -c .pymarkdown.json scan path/to/file.md
 ```
 
 To lint all Markdown files in the repository:
 
 ```bash
-pymarkdown -c .pymarkdown.json scan **/*.md
+python -m pymarkdown -c .pymarkdown.json scan **/*.md
 ```
 
 Install the linter via the dev dependencies:
 
 ```bash
-pip install -r dev-requirements.txt
+python -m pip install -r dev-requirements.txt
 ```
 
 ## Building and Testing
@@ -77,19 +120,41 @@ pip install -r dev-requirements.txt
 Install the packages locally in editable mode:
 
 ```bash
-pip install -e . -e ./durabletask-azuremanaged
+python -m pip install -e . -e ./durabletask-azuremanaged
 ```
 
 Run tests with pytest:
 
 ```bash
-pytest
+python -m pytest
 ```
 
 ## Project Structure
 
 - `durabletask/` — core SDK source
+  - `payload/` — public payload externalization API (`PayloadStore` ABC,
+    `LargePayloadStorageOptions`, helper functions)
+  - `extensions/azure_blob_payloads/` — Azure Blob Storage payload store
+    (installed via `pip install durabletask[azure-blob-payloads]`)
+  - `entities/` — durable entity support
+  - `testing/` — in-memory backend for testing without a sidecar
+  - `internal/` — protobuf definitions, gRPC helpers, tracing (not public API)
 - `durabletask-azuremanaged/` — Azure managed provider source
 - `examples/` — example orchestrations (see `examples/README.md`)
 - `tests/` — test suite
 - `dev-requirements.txt` — development dependencies
+
+## Cross-Package Compatibility
+
+The `durabletask-azuremanaged` package extends the core `durabletask`
+package (e.g. `DurableTaskSchedulerWorker` subclasses
+`TaskHubGrpcWorker`). When adding or changing features in
+`durabletask/`, always verify that `durabletask-azuremanaged` still
+works correctly:
+
+- Check whether the azuremanaged worker, client, or tests override or
+  depend on the code you changed.
+- Run the azuremanaged unit tests if they exist for the affected area.
+- If a new public API is added to the core SDK (e.g. a method on
+  `OrchestrationContext`), confirm it is accessible through the
+  azuremanaged package and add a test or example if appropriate.

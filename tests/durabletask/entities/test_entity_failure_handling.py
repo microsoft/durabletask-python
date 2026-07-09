@@ -12,13 +12,16 @@ import pytest
 from durabletask import client, entities, task, worker
 from durabletask.testing import create_test_backend
 
-HOST = "localhost:50057"
+from tests.durabletask._port_utils import find_free_port
+
+PORT = find_free_port()
+HOST = f"localhost:{PORT}"
 
 
 @pytest.fixture(autouse=True)
 def backend():
     """Create an in-memory backend for entity testing."""
-    b = create_test_backend(port=50057)
+    b = create_test_backend(port=PORT)
     yield b
     b.stop()
     b.reset()
@@ -39,9 +42,9 @@ def test_class_entity_unhandled_failure_fails():
         w.add_entity(FailingEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -66,9 +69,9 @@ def test_function_entity_unhandled_failure_fails():
         w.add_entity(failing_entity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -97,9 +100,9 @@ def test_class_entity_handled_failure_succeeds():
         w.add_entity(FailingEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -129,9 +132,9 @@ def test_function_entity_handled_failure_succeeds():
         w.add_entity(failing_entity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)
@@ -168,9 +171,9 @@ def test_entity_failure_unlocks_entity():
         w.add_entity(failing_entity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(test_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert state is not None
     assert state.name == task.get_name(test_orchestrator)

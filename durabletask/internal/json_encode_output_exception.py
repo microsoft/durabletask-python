@@ -1,10 +1,13 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from typing import Any
 
 
 class JsonEncodeOutputException(Exception):
     """Custom exception type used to indicate that an orchestration result could not be JSON-encoded."""
 
-    def __init__(self, problem_object: Any):
+    def __init__(self, problem_object: Any) -> None:
         super().__init__()
         self.problem_object = problem_object
 

@@ -1,20 +1,29 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
-from typing import Any, Optional, Type, TypeVar, Union, overload
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 import uuid
+from google.protobuf import timestamp_pb2
 from durabletask.entities.entity_instance_id import EntityInstanceId
-from durabletask.internal import helpers, shared
+from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
 import durabletask.internal.orchestrator_service_pb2 as pb
+
+if TYPE_CHECKING:
+    from durabletask.serialization import DataConverter
 
 TState = TypeVar("TState")
 
 
 class EntityContext:
-    def __init__(self, orchestration_id: str, operation: str, state: StateShim, entity_id: EntityInstanceId):
+    def __init__(self, orchestration_id: str, operation: str, state: StateShim,
+                 entity_id: EntityInstanceId, data_converter: "DataConverter"):
         self._orchestration_id = orchestration_id
         self._operation = operation
         self._state = state
         self._entity_id = entity_id
+        self._data_converter = data_converter
 
     @property
     def orchestration_id(self) -> str:
@@ -43,23 +52,23 @@ class EntityContext:
         return self._operation
 
     @overload
-    def get_state(self, intended_type: Type[TState], default: TState) -> TState:
+    def get_state(self, intended_type: type[TState], default: TState) -> TState:
         ...
 
     @overload
-    def get_state(self, intended_type: Type[TState]) -> Optional[TState]:
+    def get_state(self, intended_type: type[TState]) -> TState | None:
         ...
 
     @overload
     def get_state(self, intended_type: None = None, default: Any = None) -> Any:
         ...
 
-    def get_state(self, intended_type: Optional[Type[TState]] = None, default: Optional[TState] = None) -> Union[None, TState, Any]:
+    def get_state(self, intended_type: type[TState] | None = None, default: TState | None = None) -> TState | Any | None:
         """Get the current state of the entity, optionally converting it to a specified type.
 
         Parameters
         ----------
-        intended_type : Type[TState] | None, optional
+        intended_type : type[TState] | None, optional
             The type to which the state should be converted. If None, the state is returned as-is.
         default : TState, optional
             The default value to return if the state is not found or cannot be converted.
@@ -71,7 +80,7 @@ class EntityContext:
         """
         return self._state.get_state(intended_type, default)
 
-    def set_state(self, new_state: Any):
+    def set_state(self, new_state: Any) -> None:
         """Set the state of the entity to a new value.
 
         Parameters
@@ -81,7 +90,9 @@ class EntityContext:
         """
         self._state.set_state(new_state)
 
-    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str, input: Optional[Any] = None) -> None:
+    def signal_entity(self, entity_instance_id: EntityInstanceId, operation: str,
+                      input: Any | None = None,
+                      signal_time: datetime | None = None) -> None:
         """Signal another entity to perform an operation.
 
         Parameters
@@ -92,22 +103,30 @@ class EntityContext:
             The operation to perform on the entity.
         input : Any, optional
             The input to provide to the entity for the operation.
+        signal_time : datetime, optional
+            The time at which the signal should be delivered. If None, the signal is
+            delivered as soon as possible. Use this to schedule a future operation,
+            for example to have an entity wake itself up at a later time.
         """
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = self._data_converter.serialize(input)
+        scheduled_time: timestamp_pb2.Timestamp | None = None
+        if signal_time is not None:
+            scheduled_time = timestamp_pb2.Timestamp()
+            scheduled_time.FromDatetime(signal_time)
         self._state.add_operation_action(
             pb.OperationAction(
                 sendSignal=pb.SendSignalAction(
                     instanceId=str(entity_instance_id),
                     name=operation,
                     input=helpers.get_string_value(encoded_input),
-                    scheduledTime=None,
+                    scheduledTime=scheduled_time,
                     requestTime=None,
                     parentTraceContext=None,
                 )
             )
         )
 
-    def schedule_new_orchestration(self, orchestration_name: str, input: Optional[Any] = None, instance_id: Optional[str] = None) -> str:
+    def schedule_new_orchestration(self, orchestration_name: str, input: Any | None = None, instance_id: str | None = None) -> str:
         """Schedule a new orchestration instance.
 
         Parameters
@@ -124,7 +143,7 @@ class EntityContext:
         str
             The instance ID of the scheduled orchestration.
         """
-        encoded_input = shared.to_json(input) if input is not None else None
+        encoded_input: str | None = self._data_converter.serialize(input)
         if not instance_id:
             instance_id = uuid.uuid4().hex
         self._state.add_operation_action(

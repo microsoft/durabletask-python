@@ -2,9 +2,10 @@
 # Licensed under the MIT License.
 
 import logging
+from collections.abc import Sequence
 
-from typing import Optional
-
+import grpc
+import grpc.aio
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
@@ -13,6 +14,13 @@ from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSDefaultClientInterceptorImpl,
 )
 from durabletask.client import AsyncTaskHubGrpcClient, TaskHubGrpcClient
+from durabletask.grpc_options import (
+    GrpcChannelOptions,
+    GrpcClientResiliencyOptions,
+)
+import durabletask.internal.shared as shared
+from durabletask.payload.store import PayloadStore
+from durabletask.serialization import DataConverter
 
 
 # Client class used for Durable Task Scheduler (DTS)
@@ -20,27 +28,41 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
-                 token_credential: Optional[TokenCredential],
+                 token_credential: TokenCredential | None,
+                 channel: grpc.Channel | None = None,
                  secure_channel: bool = True,
-                 default_version: Optional[str] = None,
-                 log_handler: Optional[logging.Handler] = None,
-                 log_formatter: Optional[logging.Formatter] = None):
+                 interceptors: Sequence[shared.ClientInterceptor] | None = None,
+                 channel_options: GrpcChannelOptions | None = None,
+                 resiliency_options: GrpcClientResiliencyOptions | None = None,
+                 default_version: str | None = None,
+                 payload_store: PayloadStore | None = None,
+                 data_converter: DataConverter | None = None,
+                 log_handler: logging.Handler | None = None,
+                 log_formatter: logging.Formatter | None = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
 
-        interceptors = [DTSDefaultClientInterceptorImpl(token_credential, taskhub)]
+        resolved_interceptors: list[shared.ClientInterceptor] = (
+            list(interceptors) if interceptors is not None else []
+        )
+        resolved_interceptors.append(DTSDefaultClientInterceptorImpl(token_credential, taskhub))
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
             host_address=host_address,
+            channel=channel,
             secure_channel=secure_channel,
             metadata=None,
             log_handler=log_handler,
             log_formatter=log_formatter,
-            interceptors=interceptors,
-            default_version=default_version)
+            interceptors=resolved_interceptors,
+            channel_options=channel_options,
+            resiliency_options=resiliency_options,
+            default_version=default_version,
+            payload_store=payload_store,
+            data_converter=data_converter)
 
 
 # Async client class used for Durable Task Scheduler (DTS)
@@ -55,13 +77,17 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
     Args:
         host_address (str): The gRPC endpoint address of the DTS service.
         taskhub (str): The name of the task hub. Cannot be empty.
-        token_credential (Optional[TokenCredential]): Azure credential for authentication.
+        token_credential (TokenCredential | None): Azure credential for authentication.
             If None, anonymous authentication will be used.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to True.
-        default_version (Optional[str], optional): Default version string for orchestrations.
-        log_handler (Optional[logging.Handler], optional): Custom logging handler for client logs.
-        log_formatter (Optional[logging.Formatter], optional): Custom log formatter for client logs.
+        resiliency_options (GrpcClientResiliencyOptions | None, optional): Client-side
+            gRPC resiliency settings forwarded to the base async client.
+        default_version (str | None, optional): Default version string for orchestrations.
+        payload_store (PayloadStore | None, optional): A payload store for
+            externalizing large payloads. If None, payloads are sent inline.
+        log_handler (logging.Handler | None, optional): Custom logging handler for client logs.
+        log_formatter (logging.Formatter | None, optional): Custom log formatter for client logs.
 
     Raises:
         ValueError: If taskhub is empty or None.
@@ -82,24 +108,38 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
     def __init__(self, *,
                  host_address: str,
                  taskhub: str,
-                 token_credential: Optional[AsyncTokenCredential],
+                 token_credential: AsyncTokenCredential | None,
+                 channel: grpc.aio.Channel | None = None,
                  secure_channel: bool = True,
-                 default_version: Optional[str] = None,
-                 log_handler: Optional[logging.Handler] = None,
-                 log_formatter: Optional[logging.Formatter] = None):
+                 interceptors: Sequence[shared.AsyncClientInterceptor] | None = None,
+                 channel_options: GrpcChannelOptions | None = None,
+                 resiliency_options: GrpcClientResiliencyOptions | None = None,
+                 default_version: str | None = None,
+                 payload_store: PayloadStore | None = None,
+                 data_converter: DataConverter | None = None,
+                 log_handler: logging.Handler | None = None,
+                 log_formatter: logging.Formatter | None = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
 
-        interceptors = [DTSAsyncDefaultClientInterceptorImpl(token_credential, taskhub)]
+        resolved_interceptors: list[shared.AsyncClientInterceptor] = (
+            list(interceptors) if interceptors is not None else []
+        )
+        resolved_interceptors.append(DTSAsyncDefaultClientInterceptorImpl(token_credential, taskhub))
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
             host_address=host_address,
+            channel=channel,
             secure_channel=secure_channel,
             metadata=None,
             log_handler=log_handler,
             log_formatter=log_formatter,
-            interceptors=interceptors,
-            default_version=default_version)
+            interceptors=resolved_interceptors,
+            channel_options=channel_options,
+            resiliency_options=resiliency_options,
+            default_version=default_version,
+            payload_store=payload_store,
+            data_converter=data_converter)

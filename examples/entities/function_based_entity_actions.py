@@ -1,7 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """End-to-end sample that demonstrates how to configure an orchestrator
 that calls an activity function in a sequence and prints the outputs."""
 import os
-from typing import Optional
+from collections.abc import Generator
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -10,7 +14,7 @@ from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
 
-def counter(ctx: entities.EntityContext, input: int) -> Optional[int]:
+def counter(ctx: entities.EntityContext, input: int | None = None) -> int | None:
     if ctx.operation == "set":
         ctx.set_state(input)
     elif ctx.operation == "add":
@@ -31,7 +35,7 @@ def counter(ctx: entities.EntityContext, input: int) -> Optional[int]:
         raise ValueError(f"Unknown operation '{ctx.operation}'")
 
 
-def counter_orchestrator(ctx: task.OrchestrationContext, _):
+def counter_orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, Any]:
     """Orchestrator function that demonstrates the behavior of the counter entity"""
 
     entity_id = task.EntityInstanceId("counter", "myCounter")
@@ -50,7 +54,7 @@ def counter_orchestrator(ctx: task.OrchestrationContext, _):
     return (yield ctx.call_entity(parent_entity_id, "get"))
 
 
-def hello_orchestrator(ctx: task.OrchestrationContext, _):
+def hello_orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
     return "Hello world!"
 
 

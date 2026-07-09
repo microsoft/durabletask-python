@@ -2,8 +2,8 @@
 # Licensed under the MIT License.
 
 import traceback
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, cast
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -13,7 +13,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 # TODO: The new_xxx_event methods are only used by test code and should be moved elsewhere
 
 
-def new_orchestrator_started_event(timestamp: Optional[datetime] = None) -> pb.HistoryEvent:
+def new_orchestrator_started_event(timestamp: datetime | None = None) -> pb.HistoryEvent:
     ts = timestamp_pb2.Timestamp()
     if timestamp is not None:
         ts.FromDatetime(timestamp)
@@ -25,10 +25,10 @@ def new_orchestrator_completed_event() -> pb.HistoryEvent:
                            orchestratorCompleted=pb.OrchestratorCompletedEvent())
 
 
-def new_execution_started_event(name: str, instance_id: str, encoded_input: Optional[str] = None,
-                                tags: Optional[dict[str, str]] = None,
-                                version: Optional[str] = None,
-                                parent_trace_context: Optional[pb.TraceContext] = None) -> pb.HistoryEvent:
+def new_execution_started_event(name: str, instance_id: str, encoded_input: str | None = None,
+                                tags: dict[str, str] | None = None,
+                                version: str | None = None,
+                                parent_trace_context: pb.TraceContext | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -61,7 +61,7 @@ def new_timer_fired_event(timer_id: int, fire_at: datetime) -> pb.HistoryEvent:
     )
 
 
-def new_task_scheduled_event(event_id: int, name: str, encoded_input: Optional[str] = None) -> pb.HistoryEvent:
+def new_task_scheduled_event(event_id: int, name: str, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
@@ -69,7 +69,7 @@ def new_task_scheduled_event(event_id: int, name: str, encoded_input: Optional[s
     )
 
 
-def new_task_completed_event(event_id: int, encoded_output: Optional[str] = None) -> pb.HistoryEvent:
+def new_task_completed_event(event_id: int, encoded_output: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -89,8 +89,8 @@ def new_sub_orchestration_created_event(
         event_id: int,
         name: str,
         instance_id: str,
-        encoded_input: Optional[str] = None,
-        version: Optional[str] = None) -> pb.HistoryEvent:
+        encoded_input: str | None = None,
+        version: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
@@ -102,7 +102,7 @@ def new_sub_orchestration_created_event(
     )
 
 
-def new_sub_orchestration_completed_event(event_id: int, encoded_output: Optional[str] = None) -> pb.HistoryEvent:
+def new_sub_orchestration_completed_event(event_id: int, encoded_output: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -122,11 +122,11 @@ def new_sub_orchestration_failed_event(event_id: int, ex: Exception) -> pb.Histo
     )
 
 
-def new_failure_details(ex: Exception, _visited: Optional[set[int]] = None) -> pb.TaskFailureDetails:
+def new_failure_details(ex: Exception, _visited: set[int] | None = None) -> pb.TaskFailureDetails:
     if _visited is None:
         _visited = set()
     _visited.add(id(ex))
-    inner: Optional[BaseException] = ex.__cause__ or ex.__context__
+    inner: BaseException | None = ex.__cause__ or ex.__context__
     if len(_visited) > 10 or (inner and id(inner) in _visited) or not isinstance(inner, Exception):
         inner = None
     return pb.TaskFailureDetails(
@@ -135,6 +135,59 @@ def new_failure_details(ex: Exception, _visited: Optional[set[int]] = None) -> p
         stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__))),
         innerFailure=new_failure_details(inner, _visited) if inner else None
     )
+
+
+def _failure_details_from_core_dict(fd: dict[str, Any]) -> pb.TaskFailureDetails:
+    """Convert a serialized DurableTask.Core ``FailureDetails`` dict to protobuf."""
+    inner = fd.get("InnerFailure")
+    stack_trace = fd.get("StackTrace")
+    return pb.TaskFailureDetails(
+        errorType=str(fd.get("ErrorType") or ""),
+        errorMessage=str(fd.get("ErrorMessage") or ""),
+        stackTrace=get_string_value(str(stack_trace) if stack_trace is not None else None),
+        innerFailure=_failure_details_from_core_dict(cast(dict[str, Any], inner)) if isinstance(inner, dict) else None,
+        isNonRetriable=bool(fd.get("IsNonRetriable", False)),
+    )
+
+
+def entity_response_failure_details(
+        response: dict[str, Any],
+        error_content: Any = None) -> pb.TaskFailureDetails:
+    """Build failure details from a failed legacy-protocol entity ``ResponseMessage``.
+
+    Call this only for responses that :func:`is_entity_error_response` reports as
+    failures. In the WebJobs "old protocol" ``ResponseMessage`` (see
+    ``EntityScheduler/ResponseMessage.cs``), a failed operation serializes the
+    human-readable content into ``result`` while ``exceptionType`` carries only
+    the exception's type name (a presence marker) -- it is *not* the message.
+    This mirrors ``azure-functions-durable-python`` / ``-js``, which read the
+    message from ``result`` and ignore ``exceptionType``'s value.
+
+    Parameters
+    ----------
+    response:
+        The deserialized ``ResponseMessage`` dict.
+    error_content:
+        The already-deserialized ``result`` payload, used as the failure
+        message. A structured ``failureDetails`` object, if present, takes
+        precedence (current-protocol shape).
+    """
+    failure_details = response.get("failureDetails")
+    if isinstance(failure_details, dict):
+        return _failure_details_from_core_dict(cast(dict[str, Any], failure_details))
+    error_type = str(response.get("exceptionType") or "")
+    error_message = "" if error_content is None else str(error_content)
+    return pb.TaskFailureDetails(errorType=error_type, errorMessage=error_message)
+
+
+def is_entity_error_response(response: dict[str, Any]) -> bool:
+    """Return ``True`` if a legacy-protocol entity ``ResponseMessage`` is a failure.
+
+    In the WebJobs "old protocol" a failed operation is marked by the presence of
+    an ``exceptionType`` field (successful responses omit it). Current-protocol
+    payloads may instead carry a structured ``failureDetails`` object.
+    """
+    return "exceptionType" in response or isinstance(response.get("failureDetails"), dict)
 
 
 def new_event_sent_event(event_id: int, instance_id: str, input: str):
@@ -149,7 +202,7 @@ def new_event_sent_event(event_id: int, instance_id: str, input: str):
     )
 
 
-def new_event_raised_event(name: str, encoded_input: Optional[str] = None) -> pb.HistoryEvent:
+def new_event_raised_event(name: str, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -173,7 +226,7 @@ def new_resume_event() -> pb.HistoryEvent:
     )
 
 
-def new_terminated_event(*, encoded_output: Optional[str] = None) -> pb.HistoryEvent:
+def new_terminated_event(*, encoded_output: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -184,9 +237,9 @@ def new_terminated_event(*, encoded_output: Optional[str] = None) -> pb.HistoryE
 
 
 def new_execution_completed_event(
-        status: 'pb.OrchestrationStatus',
-        encoded_result: Optional[str] = None,
-        failure_details: Optional['pb.TaskFailureDetails'] = None) -> pb.HistoryEvent:
+        status: pb.OrchestrationStatus,
+        encoded_result: str | None = None,
+        failure_details: pb.TaskFailureDetails | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
@@ -198,21 +251,21 @@ def new_execution_completed_event(
     )
 
 
-def get_string_value(val: Optional[str]) -> Optional[wrappers_pb2.StringValue]:
+def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
     if val is None:
         return None
     else:
         return wrappers_pb2.StringValue(value=val)
 
 
-def get_int_value(val: Optional[int]) -> Optional[wrappers_pb2.Int32Value]:
+def get_int_value(val: int | None) -> wrappers_pb2.Int32Value | None:
     if val is None:
         return None
     else:
         return wrappers_pb2.Int32Value(value=val)
 
 
-def get_string_value_or_empty(val: Optional[str]) -> wrappers_pb2.StringValue:
+def get_string_value_or_empty(val: str | None) -> wrappers_pb2.StringValue:
     if val is None:
         return wrappers_pb2.StringValue(value="")
     return wrappers_pb2.StringValue(value=val)
@@ -221,9 +274,9 @@ def get_string_value_or_empty(val: Optional[str]) -> wrappers_pb2.StringValue:
 def new_complete_orchestration_action(
         id: int,
         status: pb.OrchestrationStatus,
-        result: Optional[str] = None,
-        failure_details: Optional[pb.TaskFailureDetails] = None,
-        carryover_events: Optional[list[pb.HistoryEvent]] = None) -> pb.OrchestratorAction:
+        result: str | None = None,
+        failure_details: pb.TaskFailureDetails | None = None,
+        carryover_events: list[pb.HistoryEvent] | None = None) -> pb.OrchestratorAction:
     completeOrchestrationAction = pb.CompleteOrchestrationAction(
         orchestrationStatus=status,
         result=get_string_value(result),
@@ -239,9 +292,9 @@ def new_create_timer_action(id: int, fire_at: datetime) -> pb.OrchestratorAction
     return pb.OrchestratorAction(id=id, createTimer=pb.CreateTimerAction(fireAt=timestamp))
 
 
-def new_schedule_task_action(id: int, name: str, encoded_input: Optional[str],
-                             tags: Optional[dict[str, str]],
-                             parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
+def new_schedule_task_action(id: int, name: str, encoded_input: str | None,
+                             tags: dict[str, str] | None,
+                             parent_trace_context: pb.TraceContext | None = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, scheduleTask=pb.ScheduleTaskAction(
         name=name,
         input=get_string_value(encoded_input),
@@ -254,7 +307,7 @@ def new_call_entity_action(id: int,
                            parent_instance_id: str,
                            entity_id: EntityInstanceId,
                            operation: str,
-                           encoded_input: Optional[str],
+                           encoded_input: str | None,
                            request_id: str) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationCalled=pb.EntityOperationCalledEvent(
         requestId=request_id,
@@ -270,12 +323,14 @@ def new_call_entity_action(id: int,
 def new_signal_entity_action(id: int,
                              entity_id: EntityInstanceId,
                              operation: str,
-                             encoded_input: Optional[str],
-                             request_id: str) -> pb.OrchestratorAction:
+                             encoded_input: str | None,
+                             request_id: str,
+                             signal_time: datetime | None = None) -> pb.OrchestratorAction:
+    scheduled_time = new_timestamp(signal_time) if signal_time is not None else None
     return pb.OrchestratorAction(id=id, sendEntityMessage=pb.SendEntityMessageAction(entityOperationSignaled=pb.EntityOperationSignaledEvent(
         requestId=request_id,
         operation=operation,
-        scheduledTime=None,
+        scheduledTime=scheduled_time,
         input=get_string_value(encoded_input),
         targetInstanceId=get_string_value(str(entity_id)),
     )))
@@ -316,13 +371,28 @@ def new_timestamp(dt: datetime) -> timestamp_pb2.Timestamp:
     return ts
 
 
+def ensure_aware(value: datetime | None) -> datetime | None:
+    """Return ``value`` as a timezone-aware datetime, assuming UTC when naive.
+
+    A naive datetime is tagged as UTC; an already-aware datetime is returned
+    unchanged. Useful before comparing user-supplied datetimes against the
+    SDK's always-aware-UTC timestamps to avoid "can't compare offset-naive and
+    offset-aware datetimes".
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 def new_create_sub_orchestration_action(
         id: int,
         name: str,
-        instance_id: Optional[str],
-        encoded_input: Optional[str],
-        version: Optional[str],
-        parent_trace_context: Optional[pb.TraceContext] = None) -> pb.OrchestratorAction:
+        instance_id: str | None,
+        encoded_input: str | None,
+        version: str | None,
+        parent_trace_context: pb.TraceContext | None = None) -> pb.OrchestratorAction:
     return pb.OrchestratorAction(id=id, createSubOrchestration=pb.CreateSubOrchestrationAction(
         name=name,
         instanceId=instance_id,
@@ -332,7 +402,7 @@ def new_create_sub_orchestration_action(
     ))
 
 
-def is_empty(v: wrappers_pb2.StringValue):
+def is_empty(v: wrappers_pb2.StringValue | None) -> bool:
     return v is None or v.value == ''
 
 

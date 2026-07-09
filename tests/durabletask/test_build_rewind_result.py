@@ -27,6 +27,7 @@ import logging
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask import task, worker
+from durabletask.serialization import DEFAULT_DATA_CONVERTER
 from google.protobuf import wrappers_pb2
 
 logging.basicConfig(
@@ -90,7 +91,7 @@ def _make_executor() -> worker._OrchestrationExecutor:
     """Create a minimal _OrchestrationExecutor (no registered functions needed)."""
     registry = worker._Registry()
     registry.add_orchestrator(_dummy_orchestrator)
-    return worker._OrchestrationExecutor(registry, TEST_LOGGER)
+    return worker._OrchestrationExecutor(registry, TEST_LOGGER, DEFAULT_DATA_CONVERTER)
 
 
 def _get_clean_history(result: worker.ExecutionResults) -> list[pb.HistoryEvent]:

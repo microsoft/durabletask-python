@@ -15,7 +15,9 @@ from durabletask.client import TaskHubGrpcClient
 from durabletask.testing import create_test_backend
 from durabletask.worker import TaskHubGrpcWorker
 
-BATCH_TEST_PORT = 50058
+from tests.durabletask._port_utils import find_free_port
+
+BATCH_TEST_PORT = find_free_port()
 HOST = f"localhost:{BATCH_TEST_PORT}"
 
 
@@ -38,20 +40,20 @@ def failing_orchestrator(ctx: task.OrchestrationContext, _):
 
 def test_get_all_orchestration_states(backend):
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_orchestrator(empty_orchestrator)
     worker.start()
 
     try:
-        id = c.schedule_new_orchestration(empty_orchestrator, input="Hello")
-        c.wait_for_orchestration_completion(id, timeout=30)
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(empty_orchestrator, input="Hello")
+            c.wait_for_orchestration_completion(id, timeout=30)
 
-        all_orchestrations = c.get_all_orchestration_states()
-        query = client.OrchestrationQuery()
-        query.fetch_inputs_and_outputs = True
-        all_orchestrations_with_state = c.get_all_orchestration_states(query)
-        this_orch = c.get_orchestration_state(id)
+            all_orchestrations = c.get_all_orchestration_states()
+            query = client.OrchestrationQuery()
+            query.fetch_inputs_and_outputs = True
+            all_orchestrations_with_state = c.get_all_orchestration_states(query)
+            this_orch = c.get_orchestration_state(id)
     finally:
         worker.stop()
 
@@ -79,35 +81,35 @@ def test_get_all_orchestration_states(backend):
 
 def test_get_orchestration_state_by_status(backend):
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_orchestrator(empty_orchestrator)
     worker.add_orchestrator(failing_orchestrator)
     worker.start()
 
     try:
-        # Schedule completed orchestration
-        completed_id = c.schedule_new_orchestration(empty_orchestrator, input="Hello")
-        c.wait_for_orchestration_completion(completed_id, timeout=30)
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Schedule completed orchestration
+            completed_id = c.schedule_new_orchestration(empty_orchestrator, input="Hello")
+            c.wait_for_orchestration_completion(completed_id, timeout=30)
 
-        # Schedule failed orchestration
-        failed_id = c.schedule_new_orchestration(failing_orchestrator)
-        try:
-            c.wait_for_orchestration_completion(failed_id, timeout=30)
-        except client.OrchestrationFailedError:
-            pass  # Expected failure
+            # Schedule failed orchestration
+            failed_id = c.schedule_new_orchestration(failing_orchestrator)
+            try:
+                c.wait_for_orchestration_completion(failed_id, timeout=30)
+            except client.OrchestrationFailedError:
+                pass  # Expected failure
 
-        # Query by completed status
-        query = client.OrchestrationQuery()
-        query.runtime_status = [client.OrchestrationStatus.COMPLETED]
-        query.fetch_inputs_and_outputs = True
-        completed_orchestrations = c.get_all_orchestration_states(query)
+            # Query by completed status
+            query = client.OrchestrationQuery()
+            query.runtime_status = [client.OrchestrationStatus.COMPLETED]
+            query.fetch_inputs_and_outputs = True
+            completed_orchestrations = c.get_all_orchestration_states(query)
 
-        # Query by failed status
-        query = client.OrchestrationQuery()
-        query.runtime_status = [client.OrchestrationStatus.FAILED]
-        query.fetch_inputs_and_outputs = True
-        failed_orchestrations = c.get_all_orchestration_states(query)
+            # Query by failed status
+            query = client.OrchestrationQuery()
+            query.runtime_status = [client.OrchestrationStatus.FAILED]
+            query.fetch_inputs_and_outputs = True
+            failed_orchestrations = c.get_all_orchestration_states(query)
     finally:
         worker.stop()
 
@@ -124,36 +126,36 @@ def test_get_orchestration_state_by_status(backend):
 
 def test_get_orchestration_state_by_time_range(backend):
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_orchestrator(empty_orchestrator)
     worker.start()
 
     try:
-        # Get current time
-        before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Get current time
+            before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
 
-        # Schedule orchestration
-        id = c.schedule_new_orchestration(empty_orchestrator, input="TimeTest")
-        c.wait_for_orchestration_completion(id, timeout=30)
+            # Schedule orchestration
+            id = c.schedule_new_orchestration(empty_orchestrator, input="TimeTest")
+            c.wait_for_orchestration_completion(id, timeout=30)
 
-        after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
+            after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
 
-        # Query by time range
-        query = client.OrchestrationQuery(
-            created_time_from=before_creation,
-            created_time_to=after_creation,
-            fetch_inputs_and_outputs=True
-        )
-        orchestrations_in_range = c.get_all_orchestration_states(query)
+            # Query by time range
+            query = client.OrchestrationQuery(
+                created_time_from=before_creation,
+                created_time_to=after_creation,
+                fetch_inputs_and_outputs=True
+            )
+            orchestrations_in_range = c.get_all_orchestration_states(query)
 
-        # Query outside time range
-        query = client.OrchestrationQuery(
-            created_time_from=after_creation,
-            created_time_to=after_creation + timedelta(hours=1),
-            fetch_inputs_and_outputs=True
-        )
-        orchestrations_outside_range = c.get_all_orchestration_states(query)
+            # Query outside time range
+            query = client.OrchestrationQuery(
+                created_time_from=after_creation,
+                created_time_to=after_creation + timedelta(hours=1),
+                fetch_inputs_and_outputs=True
+            )
+            orchestrations_outside_range = c.get_all_orchestration_states(query)
     finally:
         worker.stop()
 
@@ -172,25 +174,25 @@ def test_get_orchestration_state_pagination_succeeds(backend):
     handler = ListHandler()
 
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST, log_handler=handler)
 
     worker.add_orchestrator(empty_orchestrator)
     worker.start()
 
     try:
-        # Create at least 3 orchestrations to test the limit
-        ids = []
-        for i in range(3):
-            id = c.schedule_new_orchestration(empty_orchestrator, input=f"Test{i}")
-            ids.append(id)
+        with TaskHubGrpcClient(host_address=HOST, log_handler=handler) as c:
+            # Create at least 3 orchestrations to test the limit
+            ids = []
+            for i in range(3):
+                id = c.schedule_new_orchestration(empty_orchestrator, input=f"Test{i}")
+                ids.append(id)
 
-        # Wait for all to complete
-        for id in ids:
-            c.wait_for_orchestration_completion(id, timeout=30)
+            # Wait for all to complete
+            for id in ids:
+                c.wait_for_orchestration_completion(id, timeout=30)
 
-        # Query with max_instance_count=2
-        query = client.OrchestrationQuery(max_instance_count=2)
-        orchestrations = c.get_all_orchestration_states(query)
+            # Query with max_instance_count=2
+            query = client.OrchestrationQuery(max_instance_count=2)
+            orchestrations = c.get_all_orchestration_states(query)
     finally:
         worker.stop()
 
@@ -203,106 +205,146 @@ def test_get_orchestration_state_pagination_succeeds(backend):
 
 def test_purge_orchestration(backend):
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_orchestrator(empty_orchestrator)
     worker.start()
 
     try:
-        # Schedule and complete orchestration
-        id = c.schedule_new_orchestration(empty_orchestrator, input="ToPurge")
-        c.wait_for_orchestration_completion(id, timeout=30)
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Schedule and complete orchestration
+            id = c.schedule_new_orchestration(empty_orchestrator, input="ToPurge")
+            c.wait_for_orchestration_completion(id, timeout=30)
 
-        # Verify it exists
-        state_before = c.get_orchestration_state(id)
-        assert state_before is not None
+            # Verify it exists
+            state_before = c.get_orchestration_state(id)
+            assert state_before is not None
 
-        # Purge the orchestration
-        result = c.purge_orchestration(id, recursive=True)
+            # Purge the orchestration
+            result = c.purge_orchestration(id, recursive=True)
 
-        # Verify purge result
-        assert result.deleted_instance_count >= 1
+            # Verify purge result
+            assert result.deleted_instance_count >= 1
 
-        # Verify it no longer exists
-        state_after = c.get_orchestration_state(id)
-        assert state_after is None
+            # Verify it no longer exists
+            state_after = c.get_orchestration_state(id)
+            assert state_after is None
     finally:
         worker.stop()
 
 
 def test_purge_orchestrations_by_status(backend):
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_orchestrator(failing_orchestrator)
     worker.start()
 
     try:
-        # Schedule and let it fail
-        failed_id = c.schedule_new_orchestration(failing_orchestrator)
-        try:
-            c.wait_for_orchestration_completion(failed_id, timeout=30)
-        except client.OrchestrationFailedError:
-            pass  # Expected failure
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Schedule and let it fail
+            failed_id = c.schedule_new_orchestration(failing_orchestrator)
+            try:
+                c.wait_for_orchestration_completion(failed_id, timeout=30)
+            except client.OrchestrationFailedError:
+                pass  # Expected failure
 
-        # Verify it exists and is failed
-        state_before = c.get_orchestration_state(failed_id)
-        assert state_before is not None
-        assert state_before.runtime_status == client.OrchestrationStatus.FAILED
+            # Verify it exists and is failed
+            state_before = c.get_orchestration_state(failed_id)
+            assert state_before is not None
+            assert state_before.runtime_status == client.OrchestrationStatus.FAILED
 
-        # Purge failed orchestrations
-        result = c.purge_orchestrations_by(
-            runtime_status=[client.OrchestrationStatus.FAILED],
-            recursive=True
-        )
+            # Purge failed orchestrations
+            result = c.purge_orchestrations_by(
+                runtime_status=[client.OrchestrationStatus.FAILED],
+                recursive=True
+            )
 
-        # Verify purge result
-        assert result.deleted_instance_count >= 1
+            # Verify purge result
+            assert result.deleted_instance_count >= 1
 
-        # Verify the failed orchestration no longer exists
-        state_after = c.get_orchestration_state(failed_id)
-        assert state_after is None
+            # Verify the failed orchestration no longer exists
+            state_after = c.get_orchestration_state(failed_id)
+            assert state_after is None
     finally:
         worker.stop()
 
 
 def test_purge_orchestrations_by_time_range(backend):
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_orchestrator(empty_orchestrator)
     worker.start()
 
     try:
-        # Get current time
-        before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Get current time
+            before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
 
-        # Schedule orchestration
-        id = c.schedule_new_orchestration(empty_orchestrator, input="ToPurgeByTime")
-        c.wait_for_orchestration_completion(id, timeout=30)
+            # Schedule orchestration
+            id = c.schedule_new_orchestration(empty_orchestrator, input="ToPurgeByTime")
+            c.wait_for_orchestration_completion(id, timeout=30)
 
-        after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
+            after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
 
-        # Verify it exists
-        state_before = c.get_orchestration_state(id)
-        assert state_before is not None
+            # Verify it exists
+            state_before = c.get_orchestration_state(id)
+            assert state_before is not None
 
-        # Purge by time range
-        result = c.purge_orchestrations_by(
-            created_time_from=before_creation,
-            created_time_to=after_creation,
-            runtime_status=[client.OrchestrationStatus.COMPLETED],
-            recursive=True
-        )
+            # Purge by time range
+            result = c.purge_orchestrations_by(
+                created_time_from=before_creation,
+                created_time_to=after_creation,
+                runtime_status=[client.OrchestrationStatus.COMPLETED],
+                recursive=True
+            )
 
-        # Verify purge result
-        assert result.deleted_instance_count >= 1
+            # Verify purge result
+            assert result.deleted_instance_count >= 1
 
-        # Verify it no longer exists
-        state_after = c.get_orchestration_state(id)
-        assert state_after is None
+            # Verify it no longer exists
+            state_after = c.get_orchestration_state(id)
+            assert state_after is None
     finally:
         worker.stop()
+
+
+def test_list_instance_ids_paginates_terminal_instances(backend):
+    worker = TaskHubGrpcWorker(host_address=HOST)
+
+    worker.add_orchestrator(empty_orchestrator)
+    worker.add_orchestrator(failing_orchestrator)
+    worker.start()
+
+    try:
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            completed_id = c.schedule_new_orchestration(empty_orchestrator, input='done')
+            c.wait_for_orchestration_completion(completed_id, timeout=30)
+
+            failed_id = c.schedule_new_orchestration(failing_orchestrator)
+            failed_state = c.wait_for_orchestration_completion(failed_id, timeout=30)
+
+            window_start = datetime.now(timezone.utc) - timedelta(minutes=1)
+            first_page = c.list_instance_ids(
+                runtime_status=[client.OrchestrationStatus.COMPLETED, client.OrchestrationStatus.FAILED],
+                completed_time_from=window_start,
+                page_size=1,
+            )
+            second_page = c.list_instance_ids(
+                runtime_status=[client.OrchestrationStatus.COMPLETED, client.OrchestrationStatus.FAILED],
+                completed_time_from=window_start,
+                page_size=1,
+                continuation_token=first_page.continuation_token,
+            )
+    finally:
+        worker.stop()
+
+    assert len(first_page.items) == 1
+    assert len(second_page.items) == 1
+    assert set(first_page.items + second_page.items) == {completed_id, failed_id}
+    assert failed_state is not None
+    assert failed_state.runtime_status == client.OrchestrationStatus.FAILED
+    assert first_page.continuation_token is not None
+    assert any(instance_id in first_page.continuation_token for instance_id in {completed_id, failed_id})
+    assert second_page.continuation_token is None
 
 
 def test_get_all_entities(backend):
@@ -317,30 +359,65 @@ def test_get_all_entities(backend):
             return ctx.get_state(int, 0)
 
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_entity(counter_entity)
     worker.start()
 
     try:
-        # Create entity
-        entity_id = entities.EntityInstanceId("counter_entity", "testCounter1")
-        c.signal_entity(entity_id, "add", input=5)
-        time.sleep(3)  # Wait for signal to be processed
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Create entity
+            entity_id = entities.EntityInstanceId("counter_entity", "testCounter1")
+            c.signal_entity(entity_id, "add", input=5)
+            time.sleep(3)  # Wait for signal to be processed
 
-        # Get all entities without state
-        query = client.EntityQuery(include_state=False)
-        all_entities = c.get_all_entities(query)
-        assert len([e for e in all_entities if e.id == entity_id]) == 1
-        entity_without_state = [e for e in all_entities if e.id == entity_id][0]
-        assert entity_without_state.get_state(int) is None
+            # Get all entities without state
+            query = client.EntityQuery(include_state=False)
+            all_entities = c.get_all_entities(query)
+            assert len([e for e in all_entities if e.id == entity_id]) == 1
+            entity_without_state = [e for e in all_entities if e.id == entity_id][0]
+            assert entity_without_state.get_state(int) is None
 
-        # Get all entities with state
-        query = client.EntityQuery(include_state=True)
-        all_entities_with_state = c.get_all_entities(query)
-        assert len([e for e in all_entities_with_state if e.id == entity_id]) == 1
-        entity_with_state = [e for e in all_entities_with_state if e.id == entity_id][0]
-        assert entity_with_state.get_state(int) == 5
+            # Get all entities with state
+            query = client.EntityQuery(include_state=True)
+            all_entities_with_state = c.get_all_entities(query)
+            assert len([e for e in all_entities_with_state if e.id == entity_id]) == 1
+            entity_with_state = [e for e in all_entities_with_state if e.id == entity_id][0]
+            assert entity_with_state.get_state(int) == 5
+    finally:
+        worker.stop()
+
+
+def test_entity_falsy_state_is_persisted(backend):
+    """A falsy entity state (e.g. 0) must be persisted, not dropped as None.
+
+    Regression test: the batch result previously persisted state only when it
+    was truthy, so a valid falsy state such as ``0`` was written as ``None`` and
+    effectively deleted. Only an actual ``None`` should clear the state.
+    """
+    def counter_entity(ctx: entities.EntityContext, input):
+        if ctx.operation == "set":
+            ctx.set_state(input)
+        elif ctx.operation == "get":
+            return ctx.get_state(int)
+
+    worker = TaskHubGrpcWorker(host_address=HOST)
+
+    worker.add_entity(counter_entity)
+    worker.start()
+
+    try:
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            entity_id = entities.EntityInstanceId("counter_entity", "falsyCounter")
+            # Set the state to a falsy-but-valid value.
+            c.signal_entity(entity_id, "set", input=0)
+            time.sleep(3)  # Wait for the signal to be processed
+
+            query = client.EntityQuery(include_state=True)
+            all_entities = c.get_all_entities(query)
+            matches = [e for e in all_entities if e.id == entity_id]
+            # The entity must still exist with its falsy state intact.
+            assert len(matches) == 1
+            assert matches[0].get_state(int) == 0
     finally:
         worker.stop()
 
@@ -351,32 +428,32 @@ def test_get_entities_by_instance_id_prefix(backend):
             ctx.set_state(input)
 
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_entity(counter_entity)
     worker.start()
 
     try:
-        # Create entities with different prefixes
-        entity_id_1 = entities.EntityInstanceId("counter_entity", "prefix1_counter")
-        entity_id_2 = entities.EntityInstanceId("counter_entity", "prefix2_counter")
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Create entities with different prefixes
+            entity_id_1 = entities.EntityInstanceId("counter_entity", "prefix1_counter")
+            entity_id_2 = entities.EntityInstanceId("counter_entity", "prefix2_counter")
 
-        c.signal_entity(entity_id_1, "set", input=10)
-        c.signal_entity(entity_id_2, "set", input=20)
-        time.sleep(3)  # Wait for signals to be processed
+            c.signal_entity(entity_id_1, "set", input=10)
+            c.signal_entity(entity_id_2, "set", input=20)
+            time.sleep(3)  # Wait for signals to be processed
 
-        # Query by prefix
-        query = client.EntityQuery(
-            instance_id_starts_with="@counter_entity@prefix1",
-            include_state=True
-        )
-        entities_prefix1 = c.get_all_entities(query)
+            # Query by prefix
+            query = client.EntityQuery(
+                instance_id_starts_with="@counter_entity@prefix1",
+                include_state=True
+            )
+            entities_prefix1 = c.get_all_entities(query)
 
-        query = client.EntityQuery(
-            instance_id_starts_with="@counter_entity@prefix2",
-            include_state=True
-        )
-        entities_prefix2 = c.get_all_entities(query)
+            query = client.EntityQuery(
+                instance_id_starts_with="@counter_entity@prefix2",
+                include_state=True
+            )
+            entities_prefix2 = c.get_all_entities(query)
     finally:
         worker.stop()
 
@@ -393,36 +470,36 @@ def test_get_entities_by_time_range(backend):
             ctx.set_state(input)
 
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_entity(simple_entity)
     worker.start()
 
     try:
-        # Get current time
-        before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Get current time
+            before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
 
-        # Create entity
-        entity_id = entities.EntityInstanceId("simple_entity", "timeTestEntity")
-        c.signal_entity(entity_id, "set", input="test_value")
-        time.sleep(3)  # Wait for signal to be processed
+            # Create entity
+            entity_id = entities.EntityInstanceId("simple_entity", "timeTestEntity")
+            c.signal_entity(entity_id, "set", input="test_value")
+            time.sleep(3)  # Wait for signal to be processed
 
-        after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
+            after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
 
-        # Query by time range
-        query = client.EntityQuery(
-            last_modified_from=before_creation,
-            last_modified_to=after_creation,
-            include_state=True
-        )
-        entities_in_range = c.get_all_entities(query)
+            # Query by time range
+            query = client.EntityQuery(
+                last_modified_from=before_creation,
+                last_modified_to=after_creation,
+                include_state=True
+            )
+            entities_in_range = c.get_all_entities(query)
 
-        # Query outside time range
-        query = client.EntityQuery(
-            last_modified_from=after_creation,
-            last_modified_to=after_creation + timedelta(hours=1)
-        )
-        entities_outside_range = c.get_all_entities(query)
+            # Query outside time range
+            query = client.EntityQuery(
+                last_modified_from=after_creation,
+                last_modified_to=after_creation + timedelta(hours=1)
+            )
+            entities_outside_range = c.get_all_entities(query)
     finally:
         worker.stop()
 
@@ -435,22 +512,22 @@ def test_clean_entity_storage(backend):
         pass
 
     worker = TaskHubGrpcWorker(host_address=HOST)
-    c = TaskHubGrpcClient(host_address=HOST)
 
     worker.add_entity(EmptyEntity)
     worker.start()
 
     try:
-        # Create an entity and then delete its state to make it empty
-        entity_id = entities.EntityInstanceId("EmptyEntity", "toClean")
-        c.signal_entity(entity_id, "delete")
-        time.sleep(3)  # Wait for signal to be processed
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            # Create an entity and then delete its state to make it empty
+            entity_id = entities.EntityInstanceId("EmptyEntity", "toClean")
+            c.signal_entity(entity_id, "delete")
+            time.sleep(3)  # Wait for signal to be processed
 
-        # Clean entity storage
-        result = c.clean_entity_storage(
-            remove_empty_entities=True,
-            release_orphaned_locks=True
-        )
+            # Clean entity storage
+            result = c.clean_entity_storage(
+                remove_empty_entities=True,
+                release_orphaned_locks=True
+            )
     finally:
         worker.stop()
 

@@ -19,7 +19,7 @@ import random
 import time
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
@@ -30,34 +30,55 @@ logger = logging.getLogger("durabletask-tracing")
 # ---------------------------------------------------------------------------
 # Lazy / optional OpenTelemetry imports
 # ---------------------------------------------------------------------------
-try:
+# Declare the optional symbols for the type checker so the rest of the
+# module can be statically type-checked even when opentelemetry is absent.
+# At runtime, ``_OTEL_AVAILABLE`` gates every real use.
+if TYPE_CHECKING:
     from opentelemetry import context as otel_context
     from opentelemetry import trace
-    from opentelemetry.trace import (
-        SpanKind,  # type: ignore[no-redef]
-        StatusCode,  # type: ignore[no-redef]
-    )
+    from opentelemetry.trace import SpanKind, StatusCode
     from opentelemetry.trace.propagation.tracecontext import (
         TraceContextTextMapPropagator,
     )
 
-    _OTEL_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _OTEL_AVAILABLE = False
-    # Provide stub for SpanKind so callers can reference tracing.SpanKind
-    # without guarding every reference with OTEL_AVAILABLE checks.
+try:
+    from opentelemetry import context as _otel_context  # noqa: F401
+    from opentelemetry import trace as _trace  # noqa: F401
+    from opentelemetry.trace import SpanKind as _SpanKind  # noqa: F401
+    from opentelemetry.trace import StatusCode as _StatusCode  # noqa: F401
+    from opentelemetry.trace.propagation.tracecontext import (  # noqa: F401
+        TraceContextTextMapPropagator as _TraceContextTextMapPropagator,
+    )
 
-    class SpanKind:  # type: ignore[no-redef]
+    _OTEL_AVAILABLE: bool = True
+    # Re-bind for runtime usage so the module exposes the real classes.
+    otel_context = _otel_context  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    trace = _trace  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    SpanKind = _SpanKind  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    StatusCode = _StatusCode  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+    TraceContextTextMapPropagator = _TraceContextTextMapPropagator  # noqa: F811  # type: ignore[assignment]  # pyright: ignore[reportConstantRedefinition]
+except ImportError:  # pragma: no cover
+    _OTEL_AVAILABLE = False  # pyright: ignore[reportConstantRedefinition]
+
+    # Inject runtime stubs via globals so pyright (which only sees the
+    # TYPE_CHECKING block) doesn't flag these as incompatible reassignments.
+    class _SpanKindStub:
         INTERNAL: Any = None
         CLIENT: Any = None
         SERVER: Any = None
         PRODUCER: Any = None
         CONSUMER: Any = None
 
-    class StatusCode:  # type: ignore[no-redef]
+    class _StatusCodeStub:
         OK: Any = None
         ERROR: Any = None
         UNSET: Any = None
+
+    globals()["SpanKind"] = _SpanKindStub
+    globals()["StatusCode"] = _StatusCodeStub
+    globals()["otel_context"] = None
+    globals()["trace"] = None
+    globals()["TraceContextTextMapPropagator"] = None
 
 # Re-export so callers can check without importing opentelemetry themselves.
 OTEL_AVAILABLE = _OTEL_AVAILABLE
@@ -102,7 +123,7 @@ CARRIER_KEY_TRACESTATE = "tracestate"
 # ---------------------------------------------------------------------------
 
 def create_span_name(
-    span_type: str, task_name: str, version: Optional[str] = None,
+    span_type: str, task_name: str, version: str | None = None,
 ) -> str:
     """Build a span name with optional version suffix.
 
@@ -126,7 +147,7 @@ def create_timer_span_name(orchestration_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _trace_context_from_carrier(carrier: dict[str, str]) -> Optional[pb.TraceContext]:
+def _trace_context_from_carrier(carrier: dict[str, str]) -> pb.TraceContext | None:
     """Build a ``TraceContext`` protobuf from a W3C propagation carrier.
 
     Returns ``None`` when the carrier does not contain a valid
@@ -149,7 +170,7 @@ def _trace_context_from_carrier(carrier: dict[str, str]) -> Optional[pb.TraceCon
     )
 
 
-def _parse_traceparent(traceparent: str) -> Optional[tuple[int, int, int]]:
+def _parse_traceparent(traceparent: str) -> tuple[int, int, int] | None:
     """Parse a W3C traceparent string into ``(trace_id, span_id, trace_flags)``.
 
     Returns ``None`` when the string is not a valid traceparent.
@@ -168,7 +189,7 @@ def _parse_traceparent(traceparent: str) -> Optional[tuple[int, int, int]]:
         return None
 
 
-def get_current_trace_context() -> Optional[pb.TraceContext]:
+def get_current_trace_context() -> pb.TraceContext | None:
     """Capture the current OpenTelemetry span context as a protobuf ``TraceContext``.
 
     Returns ``None`` when OpenTelemetry is not installed or there is no
@@ -183,7 +204,7 @@ def get_current_trace_context() -> Optional[pb.TraceContext]:
     return _trace_context_from_carrier(carrier)
 
 
-def extract_trace_context(proto_ctx: Optional[pb.TraceContext]) -> Optional[Any]:
+def extract_trace_context(proto_ctx: pb.TraceContext | None) -> Any | None:
     """Convert a protobuf ``TraceContext`` into an OpenTelemetry ``Context``.
 
     Returns ``None`` when OpenTelemetry is not installed or the supplied
@@ -208,9 +229,9 @@ def extract_trace_context(proto_ctx: Optional[pb.TraceContext]) -> Optional[Any]
 @contextmanager
 def start_span(
     name: str,
-    trace_context: Optional[pb.TraceContext] = None,
+    trace_context: pb.TraceContext | None = None,
     kind: Any = None,
-    attributes: Optional[dict[str, str]] = None,
+    attributes: dict[str, str] | None = None,
 ):
     """Context manager that starts an OpenTelemetry span linked to a parent trace context.
 
@@ -271,12 +292,12 @@ def set_span_error(span: Any, ex: Exception) -> None:
 def emit_orchestration_span(
     name: str,
     instance_id: str,
-    start_time_ns: Optional[int],
+    start_time_ns: int | None,
     is_failed: bool,
     failure_details: Any = None,
-    parent_trace_context: Optional[pb.TraceContext] = None,
-    orchestration_trace_context: Optional[pb.TraceContext] = None,
-    version: Optional[str] = None,
+    parent_trace_context: pb.TraceContext | None = None,
+    orchestration_trace_context: pb.TraceContext | None = None,
+    version: str | None = None,
 ) -> None:
     """Emit a SERVER span for a completed orchestration (create-and-end).
 
@@ -353,10 +374,10 @@ def emit_orchestration_span(
 def _emit_orchestration_span_deferred(
     span_name: str,
     attrs: dict[str, str],
-    start_time_ns: Optional[int],
+    start_time_ns: int | None,
     is_failed: bool,
     failure_details: Any,
-    parent_trace_context: Optional[pb.TraceContext],
+    parent_trace_context: pb.TraceContext | None,
     orchestration_trace_context: pb.TraceContext,
 ) -> bool:
     """Emit an orchestration SERVER span with a pre-determined span ID.
@@ -479,7 +500,7 @@ def _is_deferred_span_capable() -> bool:
     for downstream SERVER spans instead.
     """
     try:
-        from opentelemetry.sdk.trace import ReadableSpan  # noqa: F401
+        from opentelemetry.sdk.trace import ReadableSpan  # noqa: F401  # pyright: ignore[reportUnusedImport]
         from opentelemetry.sdk.trace import TracerProvider as SdkTracerProvider
     except (ImportError, AttributeError):
         return False
@@ -494,8 +515,8 @@ def _is_deferred_span_capable() -> bool:
 
 
 def generate_client_trace_context(
-    parent_trace_context: Optional[pb.TraceContext] = None,
-) -> Optional[pb.TraceContext]:
+    parent_trace_context: pb.TraceContext | None = None,
+) -> pb.TraceContext | None:
     """Generate a trace context for a deferred CLIENT span.
 
     Creates a new span ID and builds a W3C traceparent string **without**
@@ -544,12 +565,12 @@ def emit_client_span(
     instance_id: str,
     task_id: int,
     client_trace_context: pb.TraceContext,
-    parent_trace_context: Optional[pb.TraceContext] = None,
-    start_time_ns: Optional[int] = None,
-    end_time_ns: Optional[int] = None,
+    parent_trace_context: pb.TraceContext | None = None,
+    start_time_ns: int | None = None,
+    end_time_ns: int | None = None,
     is_error: bool = False,
-    error_message: Optional[str] = None,
-    version: Optional[str] = None,
+    error_message: str | None = None,
+    version: str | None = None,
 ) -> None:
     """Emit a CLIENT span with a specific span ID reconstructed from history.
 
@@ -665,8 +686,8 @@ def emit_timer_span(
     instance_id: str,
     timer_id: int,
     fire_at: datetime,
-    scheduled_time_ns: Optional[int] = None,
-    parent_trace_context: Optional[pb.TraceContext] = None,
+    scheduled_time_ns: int | None = None,
+    parent_trace_context: pb.TraceContext | None = None,
 ) -> None:
     """Emit an Internal span for a timer (emit-and-close pattern).
 
@@ -712,8 +733,8 @@ def emit_timer_span(
 def emit_event_raised_span(
     event_name: str,
     instance_id: str,
-    target_instance_id: Optional[str] = None,
-    parent_trace_context: Optional[pb.TraceContext] = None,
+    target_instance_id: str | None = None,
+    parent_trace_context: pb.TraceContext | None = None,
 ) -> None:
     """Emit a Producer span for an event raised from the orchestration.
 
@@ -759,7 +780,7 @@ def emit_event_raised_span(
 def start_create_orchestration_span(
     name: str,
     instance_id: str,
-    version: Optional[str] = None,
+    version: str | None = None,
 ):
     """Context manager for a Producer span when scheduling a new orchestration.
 
@@ -817,7 +838,7 @@ def start_raise_event_span(
 def reconstruct_trace_context(
     parent_trace_context: pb.TraceContext,
     span_id: str,
-) -> Optional[pb.TraceContext]:
+) -> pb.TraceContext | None:
     """Reconstruct a ``TraceContext`` with a specific span ID.
 
     Uses the trace ID and flags from *parent_trace_context* but replaces
@@ -839,9 +860,9 @@ def reconstruct_trace_context(
 
 
 def build_orchestration_trace_context(
-    start_time_ns: Optional[int],
-    span_id: Optional[str] = None,
-) -> Optional[pb.OrchestrationTraceContext]:
+    start_time_ns: int | None,
+    span_id: str | None = None,
+) -> pb.OrchestrationTraceContext | None:
     """Build an ``OrchestrationTraceContext`` protobuf to return to the sidecar.
 
     This preserves both the orchestration start time and span ID across

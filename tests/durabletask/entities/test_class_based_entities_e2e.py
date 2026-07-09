@@ -12,13 +12,16 @@ import pytest
 from durabletask import client, entities, task, worker
 from durabletask.testing import create_test_backend
 
-HOST = "localhost:50059"
+from tests.durabletask._port_utils import find_free_port
+
+PORT = find_free_port()
+HOST = f"localhost:{PORT}"
 
 
 @pytest.fixture(autouse=True)
 def backend():
     """Create an in-memory backend for entity testing."""
-    b = create_test_backend(port=50059)
+    b = create_test_backend(port=PORT)
     yield b
     b.stop()
     b.reset()
@@ -37,10 +40,10 @@ def test_client_signal_class_entity_and_custom_name():
         w.add_entity(EmptyEntity, name="EntityNameCustom")
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        entity_id = entities.EntityInstanceId("EntityNameCustom", "testEntity")
-        c.signal_entity(entity_id, "do_nothing")
-        time.sleep(2)  # wait for the signal to be processed
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            entity_id = entities.EntityInstanceId("EntityNameCustom", "testEntity")
+            c.signal_entity(entity_id, "do_nothing")
+            time.sleep(2)  # wait for the signal to be processed
 
     assert invoked
 
@@ -59,14 +62,14 @@ def test_client_get_class_entity():
         w.add_entity(EmptyEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        entity_id = entities.EntityInstanceId("EmptyEntity", "testEntity")
-        c.signal_entity(entity_id, "do_nothing")
-        time.sleep(2)  # wait for the signal to be processed
-        state = c.get_entity(entity_id, include_state=True)
-        assert state is not None
-        assert state.id == entity_id
-        assert state.get_state(int) == 1
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            entity_id = entities.EntityInstanceId("EmptyEntity", "testEntity")
+            c.signal_entity(entity_id, "do_nothing")
+            time.sleep(2)  # wait for the signal to be processed
+            state = c.get_entity(entity_id, include_state=True)
+            assert state is not None
+            assert state.id == entity_id
+            assert state.get_state(int) == 1
 
     assert invoked
 
@@ -89,10 +92,10 @@ def test_orchestration_signal_class_entity_and_custom_name():
         w.add_entity(EmptyEntity, name="EntityNameCustom")
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(empty_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
-        time.sleep(2)  # wait for the signal to be processed
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(empty_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
+            time.sleep(2)  # wait for the signal to be processed
 
     assert invoked
     assert state is not None
@@ -123,9 +126,9 @@ def test_orchestration_call_class_entity():
         w.add_entity(EmptyEntity)
         w.start()
 
-        c = client.TaskHubGrpcClient(host_address=HOST)
-        id = c.schedule_new_orchestration(empty_orchestrator)
-        state = c.wait_for_orchestration_completion(id, timeout=30)
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(empty_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
 
     assert invoked
     assert state is not None

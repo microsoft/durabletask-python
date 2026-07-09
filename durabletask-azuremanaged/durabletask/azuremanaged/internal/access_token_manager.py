@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from threading import Lock
 
 from azure.core.credentials import AccessToken, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -12,14 +12,15 @@ import durabletask.internal.shared as shared
 # By default, when there's 10minutes left before the token expires, refresh the token
 class AccessTokenManager:
 
-    _token: Optional[AccessToken]
+    _token: AccessToken | None
 
-    def __init__(self, token_credential: Optional[TokenCredential], refresh_interval_seconds: int = 600):
+    def __init__(self, token_credential: TokenCredential | None, refresh_interval_seconds: int = 600):
         self._scope = "https://durabletask.io/.default"
         self._refresh_interval_seconds = refresh_interval_seconds
         self._logger = shared.get_logger("token_manager")
 
         self._credential = token_credential
+        self._refresh_lock = Lock()
 
         if self._credential is not None:
             self._token = self._credential.get_token(self._scope)
@@ -28,9 +29,11 @@ class AccessTokenManager:
             self._token = None
             self.expiry_time = None
 
-    def get_access_token(self) -> Optional[AccessToken]:
+    def get_access_token(self) -> AccessToken | None:
         if self._token is None or self.is_token_expired():
-            self.refresh_token()
+            with self._refresh_lock:
+                if self._token is None or self.is_token_expired():
+                    self.refresh_token()
         return self._token
 
     # Checks if the token is expired, or if it will expire in the next "refresh_interval_seconds" seconds.
@@ -55,9 +58,9 @@ class AsyncAccessTokenManager:
 
     This avoids blocking the event loop when acquiring or refreshing tokens."""
 
-    _token: Optional[AccessToken]
+    _token: AccessToken | None
 
-    def __init__(self, token_credential: Optional[AsyncTokenCredential],
+    def __init__(self, token_credential: AsyncTokenCredential | None,
                  refresh_interval_seconds: int = 600):
         self._scope = "https://durabletask.io/.default"
         self._refresh_interval_seconds = refresh_interval_seconds
@@ -67,7 +70,7 @@ class AsyncAccessTokenManager:
         self._token = None
         self.expiry_time = None
 
-    async def get_access_token(self) -> Optional[AccessToken]:
+    async def get_access_token(self) -> AccessToken | None:
         if self._token is None or self.is_token_expired():
             await self.refresh_token()
         return self._token

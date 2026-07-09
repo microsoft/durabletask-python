@@ -9,15 +9,18 @@ making it easy to test with the in-memory backend.
 
 Note on serialization
 ---------------------
-The Durable Task SDK serializes dataclass and namedtuple inputs to JSON.
-When deserialized on the receiving side, top-level objects become
-``SimpleNamespace`` instances while nested objects become plain ``dict``s.
-Activities that receive complex inputs should therefore use dict-style
-access (``item["quantity"]``) for nested data.
+The Durable Task SDK serializes dataclass inputs to JSON. Annotating an
+orchestrator's or activity's input parameter with its dataclass type lets the
+SDK reconstruct that type on the receiving side (including nested dataclass
+fields), so the functions below use attribute access (``order.items``,
+``item.quantity``). Without a type annotation, payloads arrive as plain
+``dict`` / ``list`` values and would need dict-style access instead.
 """
 
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from durabletask import task
 
@@ -25,14 +28,14 @@ from durabletask import task
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
-# These dataclasses document the expected shape of the data. At runtime,
-# they are serialized to JSON and arrive in activities as SimpleNamespace
-# (top-level) or dict (nested) objects.
+# These dataclasses describe the shape of the data. Because the orchestrators
+# and activities annotate their inputs with these types, the SDK reconstructs
+# them (including the nested ``OrderItem`` list) on the receiving side.
 
 
 @dataclass
 class OrderItem:
-    """A single item in an order (arrives as a ``dict`` inside activities)."""
+    """A single item in an order."""
     name: str
     quantity: int
     unit_price: float
@@ -40,7 +43,7 @@ class OrderItem:
 
 @dataclass
 class Order:
-    """An order containing one or more items (arrives as ``SimpleNamespace``)."""
+    """An order containing one or more items."""
     customer: str
     items: list[OrderItem]
 
@@ -50,7 +53,7 @@ class Order:
 # ---------------------------------------------------------------------------
 
 
-def validate_order(ctx: task.ActivityContext, order) -> None:
+def validate_order(ctx: task.ActivityContext, order: Order) -> None:
     """Validate that the order has items and all quantities/prices are valid.
 
     Raises ``ValueError`` on invalid input.
@@ -58,17 +61,17 @@ def validate_order(ctx: task.ActivityContext, order) -> None:
     if not order.items:
         raise ValueError("Order must contain at least one item")
     for item in order.items:
-        if item["quantity"] <= 0:
+        if item.quantity <= 0:
             raise ValueError(
-                f"Invalid quantity for '{item['name']}': {item['quantity']}")
-        if item["unit_price"] < 0:
+                f"Invalid quantity for '{item.name}': {item.quantity}")
+        if item.unit_price < 0:
             raise ValueError(
-                f"Invalid price for '{item['name']}': {item['unit_price']}")
+                f"Invalid price for '{item.name}': {item.unit_price}")
 
 
-def calculate_total(ctx: task.ActivityContext, items: list) -> float:
-    """Return the total cost for a list of item dicts."""
-    return sum(item["quantity"] * item["unit_price"] for item in items)
+def calculate_total(ctx: task.ActivityContext, items: list[OrderItem]) -> float:
+    """Return the total cost for a list of order items."""
+    return sum(item.quantity * item.unit_price for item in items)
 
 
 def process_payment(ctx: task.ActivityContext, amount: float) -> str:
@@ -95,7 +98,7 @@ def ship_item(ctx: task.ActivityContext, item_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def process_order(ctx: task.OrchestrationContext, order):
+def process_order(ctx: task.OrchestrationContext, order: Order) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Process a complete order: validate, pay, ship items in parallel, confirm.
 
     Demonstrates:
@@ -115,7 +118,7 @@ def process_order(ctx: task.OrchestrationContext, order):
 
     # 4. Ship all items in parallel (fan-out / fan-in)
     ship_tasks: list[task.Task[str]] = [
-        ctx.call_activity(ship_item, input=item["name"])
+        ctx.call_activity(ship_item, input=item.name)
         for item in order.items
     ]
     tracking_ids: list[str] = yield task.when_all(ship_tasks)
@@ -135,7 +138,7 @@ def process_order(ctx: task.OrchestrationContext, order):
     }
 
 
-def order_with_approval(ctx: task.OrchestrationContext, order):
+def order_with_approval(ctx: task.OrchestrationContext, order: Order) -> Generator[task.Task[Any], Any, dict[str, Any]]:
     """Order workflow that requires manager approval for high-value orders.
 
     Demonstrates:

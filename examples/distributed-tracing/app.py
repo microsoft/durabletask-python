@@ -16,7 +16,9 @@ Prerequisites:
 
 import os
 import time
+from collections.abc import Generator
 from datetime import timedelta
+from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -64,7 +66,7 @@ def get_weather(ctx: task.ActivityContext, city: str) -> str:
     return result
 
 
-def summarize(ctx: task.ActivityContext, reports: list) -> str:
+def summarize(ctx: task.ActivityContext, reports: list[str]) -> str:
     """Combine individual weather reports into a summary string."""
     summary = " | ".join(reports)
     print(f"  [Activity] summarize -> {summary}")
@@ -75,9 +77,9 @@ def summarize(ctx: task.ActivityContext, reports: list) -> str:
 # Sub-orchestration
 # ---------------------------------------------------------------------------
 
-def collect_weather(ctx: task.OrchestrationContext, cities: list):
+def collect_weather(ctx: task.OrchestrationContext, cities: list[str]) -> Generator[task.Task[Any], Any, list[str]]:
     """Sub-orchestration that collects weather for a list of cities."""
-    results = []
+    results: list[str] = []
     for city in cities:
         weather = yield ctx.call_activity(get_weather, input=city)
         results.append(f"{city}: {weather}")
@@ -88,7 +90,7 @@ def collect_weather(ctx: task.OrchestrationContext, cities: list):
 # Main orchestration
 # ---------------------------------------------------------------------------
 
-def weather_report_orchestrator(ctx: task.OrchestrationContext, cities: list):
+def weather_report_orchestrator(ctx: task.OrchestrationContext, cities: list[str]) -> Generator[task.Task[Any], Any, str]:
     """Top-level orchestration demonstrating timers, activities, and sub-orchestrations.
 
     Flow:

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """End-to-end sample that demonstrates how to configure an orchestrator
 that waits for an "approval" event before proceding to the next step. If
 the approval isn't received within a specified timeout, the order that is
@@ -6,9 +9,10 @@ represented by the orchestration is automatically cancelled."""
 import os
 import threading
 import time
-from collections import namedtuple
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from azure.identity import DefaultAzureCredential
 
@@ -28,6 +32,12 @@ class Order:
         return f'{self.Product} ({self.Quantity})'
 
 
+@dataclass
+class Approval:
+    """Represents an approval decision raised as an external event."""
+    approver: str
+
+
 def send_approval_request(_: task.ActivityContext, order: Order) -> None:
     """Activity function that sends an approval request to the manager"""
     time.sleep(5)
@@ -39,7 +49,7 @@ def place_order(_: task.ActivityContext, order: Order) -> None:
     print(f'*** Placing order: {order}')
 
 
-def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
+def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order) -> Generator[task.Task[Any], Any, str]:
     """Orchestrator function that represents a purchase order workflow"""
     # Orders under $1000 are auto-approved
     if order.Cost < 1000:
@@ -48,10 +58,12 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     # Orders of $1000 or more require manager approval
     yield ctx.call_activity(send_approval_request, input=order)
 
-    # Approvals must be received within 24 hours or they will be canceled.
-    approval_event = ctx.wait_for_external_event("approval_received")
+    # Approvals must be received within 24 hours or they will be cancelled.
+    # Passing ``data_type`` reconstructs the event payload as an ``Approval``.
+    approval_event = ctx.wait_for_external_event("approval_received", data_type=Approval)
     timeout_event = ctx.create_timer(timedelta(hours=24))
-    winner = yield task.when_any([approval_event, timeout_event])
+    pending: list[task.Task[Any]] = [approval_event, timeout_event]
+    winner = yield task.when_any(pending)
     if winner == timeout_event:
         return "Cancelled"
 
@@ -79,31 +91,31 @@ if __name__ == "__main__":
             w.add_activity(place_order)
             w.start()
 
-            c = client.TaskHubGrpcClient()
+            with client.TaskHubGrpcClient() as c:
 
-            # Start a purchase order workflow using the user input
-            order = Order(args.cost, "MyProduct", 1)
-            instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
+                # Start a purchase order workflow using the user input
+                order = Order(args.cost, "MyProduct", 1)
+                instance_id = c.schedule_new_orchestration(purchase_order_workflow, input=order)
 
-            def prompt_for_approval():
-                input("Press [ENTER] to approve the order...\n")
-                approval_event = namedtuple("Approval", ["approver"])(args.approver)
-                c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
+                def prompt_for_approval():
+                    input("Press [ENTER] to approve the order...\n")
+                    approval_event = Approval(approver=args.approver)
+                    c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
-            # Prompt the user for approval on a background thread
-            threading.Thread(target=prompt_for_approval, daemon=True).start()
+                # Prompt the user for approval on a background thread
+                threading.Thread(target=prompt_for_approval, daemon=True).start()
 
-            # Wait for the orchestration to complete
-            try:
-                state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
-                if not state:
-                    print("Workflow not found!")  # not expected
-                elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
-                    print(f'Orchestration completed! Result: {state.serialized_output}')
-                else:
-                    state.raise_if_failed()  # raises an exception
-            except TimeoutError:
-                print("*** Orchestration timed out!")
+                # Wait for the orchestration to complete
+                try:
+                    state = c.wait_for_orchestration_completion(instance_id, timeout=args.timeout + 2)
+                    if not state:
+                        print("Workflow not found!")  # not expected
+                    elif state.runtime_status == client.OrchestrationStatus.COMPLETED:
+                        print(f'Orchestration completed! Result: {state.serialized_output}')
+                    else:
+                        state.raise_if_failed()  # raises an exception
+                except TimeoutError:
+                    print("*** Orchestration timed out!")
     else:
         # Use DurableTaskScheduler
         # Use environment variables if provided, otherwise use default emulator values
@@ -133,7 +145,7 @@ if __name__ == "__main__":
 
             def prompt_for_approval():
                 input("Press [ENTER] to approve the order...\n")
-                approval_event = namedtuple("Approval", ["approver"])(args.approver)
+                approval_event = Approval(approver=args.approver)
                 c.raise_orchestration_event(instance_id, "approval_received", data=approval_event)
 
             # Prompt the user for approval on a background thread
