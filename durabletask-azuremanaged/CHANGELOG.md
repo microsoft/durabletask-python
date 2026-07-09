@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.7.2
+
+- Updates base dependency to durabletask v1.7.2.
+
 ## v1.7.1
 
 - Updates base dependency to durabletask v1.7.1
