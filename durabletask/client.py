@@ -320,6 +320,9 @@ class _SyncTaskHubSidecarServiceStub(Protocol):
     def ResumeInstance(self, request: pb.ResumeRequest) -> pb.ResumeResponse:
         ...
 
+    def RewindInstance(self, request: pb.RewindInstanceRequest) -> pb.RewindInstanceResponse:
+        ...
+
     def RestartInstance(self, request: pb.RestartInstanceRequest) -> pb.RestartInstanceResponse:
         ...
 
