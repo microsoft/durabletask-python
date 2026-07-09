@@ -11,6 +11,12 @@ ADDED
 
 - Added `TaskHubGrpcClient.rewind_orchestration()` to rewind a failed orchestration instance to its last known good state. Failed activity and sub-orchestration results are removed from the history and the orchestration replays from the last successful checkpoint, retrying only the failed work. The in-memory testing backend supports rewind as well.
 
+## v1.7.2
+
+FIXED
+
+- Fixed history export failing for orchestrations that completed with an error. Events carrying failure information (orchestration completion, activity failure, sub-orchestration failure, and entity operation failure) were not JSON-serializable, causing the `durabletask.extensions.history_export` module to raise `TypeError: Object of type FailureDetails is not JSON serializable`. `FailureDetails` now serializes to a JSON object with `message`, `error_type`, and `stack_trace` fields.
+
 ## v1.7.1
 
 ADDED
