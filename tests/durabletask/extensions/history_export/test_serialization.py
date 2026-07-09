@@ -66,6 +66,30 @@ class TestEventToDict:
         assert d["event_id"] == 0
         assert d["timestamp"].startswith("2025-01-01")
 
+    def test_failure_details_is_json_safe(self) -> None:
+        # Regression: FailureDetails-bearing events must serialize to a
+        # JSON-safe dict rather than a raw FailureDetails object.
+        e = history.ExecutionCompletedEvent(
+            event_id=-1,
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            orchestration_status=3,
+            result=None,
+            failure_details=task.FailureDetails(
+                message="boom", error_type="RuntimeError", stack_trace="trace",
+            ),
+        )
+        d = event_to_dict(e)
+        assert d["failure_details"] == {
+            "message": "boom",
+            "error_type": "RuntimeError",
+            "stack_trace": "trace",
+        }
+        # The full document must be JSON-serializable.
+        fmt = ExportFormat(kind=ExportFormatKind.JSON)
+        out = serialize_history([e], instance_id="fail-1", fmt=fmt)
+        doc = json.loads(out)
+        assert doc["events"][0]["failure_details"]["error_type"] == "RuntimeError"
+
 
 class TestSerializeJson:
     def test_envelope_fields(self) -> None:

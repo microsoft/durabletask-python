@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.7.2
+
+FIXED
+
+- Fixed history export failing for orchestrations that completed with an error. Events carrying failure information (orchestration completion, activity failure, sub-orchestration failure, and entity operation failure) were not JSON-serializable, causing the `durabletask.extensions.history_export` module to raise `TypeError: Object of type FailureDetails is not JSON serializable`. `FailureDetails` now serializes to a JSON object with `message`, `error_type`, and `stack_trace` fields.
+
 ## v1.7.1
 
 ADDED
