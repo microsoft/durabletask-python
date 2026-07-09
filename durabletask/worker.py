@@ -2148,9 +2148,13 @@ class _OrchestrationExecutor:
         #    terminal state (e.g. failed).  This is a *new* rewind that
         #    the worker must short-circuit by building clean history.
         # 2. executionCompleted is NOT present → the backend already
-        #    processed the RewindOrchestrationAction which removed
-        #    executionCompleted from history.  This is a normal
-        #    post-rewind replay.
+        #    processed the RewindOrchestrationAction and removed
+        #    executionCompleted from the committed history. Here the
+        #    executionRewound event in new_events acts as a "jump-start":
+        #    it wakes the orchestration so that normal replay re-emits
+        #    scheduleTask actions for the removed activities, causing the
+        #    previously-failed work to rerun. No further rewrite is needed,
+        #    so we fall through to the normal replay path below.
         has_rewind_in_new = any(
             e.HasField("executionRewound") for e in new_events
         )
