@@ -99,6 +99,14 @@ extends:
                   mainpublisher: "durabletask-java"
                   domaintenantid: "33e01921-4d64-4f8c-a055-5bdaffd5e33d"
 
+      - stage: release_azure_functions_durable
+        displayName: "Release azure-functions-durable"
+        # Depends on the core durabletask stage (azure-functions-durable
+        # requires durabletask), not on the azuremanaged stage. If the
+        # durabletask stage is de-selected at queue time, ADO skips it and
+        # this stage runs on its own.
+        dependsOn: release_durabletask
+        jobs:
           - job: azure_functions_durable
             displayName: "Release azure-functions-durable"
             templateContext:

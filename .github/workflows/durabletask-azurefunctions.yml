@@ -51,15 +51,20 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install durabletask locally
+      - name: Install durabletask dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio
-          pip install . --force-reinstall
+          pip install flake8 pytest
+          pip install -r requirements.txt
+
+      - name: Install durabletask locally
+        run: |
+          pip install . --no-deps --force-reinstall
 
       - name: Install azure-functions-durable locally
+        working-directory: azure-functions-durable
         run: |
-          pip install ./azure-functions-durable --force-reinstall
+          pip install . --no-deps --force-reinstall
 
       - name: Run unit tests
         working-directory: tests/azure-functions-durable
