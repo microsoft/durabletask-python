@@ -142,10 +142,13 @@ def test_parent_instance_id_delegates():
     assert adapter.parent_instance_id == "parent-123"
 
 
-def test_function_context_raises_not_implemented():
+def test_function_context_returns_empty_bag():
+    from azure.durable_functions.internal.compat.function_context import FunctionContext
     adapter, _ = _adapter()
-    with pytest.raises(NotImplementedError):
-        _ = adapter.function_context
+    fc = adapter.function_context
+    assert isinstance(fc, FunctionContext)
+    # Empty by default: no extra attributes, matching the common v1 case.
+    assert [a for a in vars(fc)] == []
 
 
 def test_histories_raises_not_implemented():

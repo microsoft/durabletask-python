@@ -11,6 +11,7 @@ from durabletask.entities import EntityInstanceId
 from durabletask.task import OrchestrationContext, RetryPolicy, Task
 
 from ..serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
+from .function_context import FunctionContext
 from .token_source import TokenSource
 
 
@@ -34,6 +35,10 @@ class DurableOrchestrationContext:
         self._input_type = input_type
         self._custom_status: Any = None
         self._will_continue_as_new = False
+        # v1 exposed a FunctionContext bag of any extra trigger-payload fields.
+        # The durabletask protobuf request carries no such extras, so this is
+        # an empty bag -- matching the common v1 runtime case.
+        self._function_context = FunctionContext()
 
     # -- input ---------------------------------------------------------------
     def get_input(self, expected_type: Optional[type] = None) -> Any:
@@ -96,14 +101,16 @@ class DurableOrchestrationContext:
         return self._ctx.parent_instance_id
 
     @property
-    def function_context(self) -> Any:
-        """Get the Azure Functions-level context.
+    def function_context(self) -> FunctionContext:
+        """Get the Azure Functions-level context (extra trigger-payload fields).
 
-        Not available: durabletask does not provide the v1 ``FunctionContext``
-        binding metadata.
+        Returned as an (empty) :class:`FunctionContext` for v1 drop-in
+        compatibility. The durabletask orchestration request does not carry the
+        arbitrary extra fields the v1 JSON trigger payload could, so there is
+        nothing to populate -- which matches the common v1 case where the base
+        payload is fully consumed and the bag is empty.
         """
-        raise NotImplementedError(
-            "function_context is not available in this SDK.")
+        return self._function_context
 
     @property
     def histories(self) -> Any:
