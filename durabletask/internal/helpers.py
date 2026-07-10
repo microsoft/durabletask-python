@@ -236,6 +236,21 @@ def new_terminated_event(*, encoded_output: str | None = None) -> pb.HistoryEven
     )
 
 
+def new_execution_completed_event(
+        status: pb.OrchestrationStatus,
+        encoded_result: str | None = None,
+        failure_details: pb.TaskFailureDetails | None = None) -> pb.HistoryEvent:
+    return pb.HistoryEvent(
+        eventId=-1,
+        timestamp=timestamp_pb2.Timestamp(),
+        executionCompleted=pb.ExecutionCompletedEvent(
+            orchestrationStatus=status,
+            result=get_string_value(encoded_result),
+            failureDetails=failure_details,
+        )
+    )
+
+
 def get_string_value(val: str | None) -> wrappers_pb2.StringValue | None:
     if val is None:
         return None

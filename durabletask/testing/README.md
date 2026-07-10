@@ -255,8 +255,7 @@ The in-memory backend is designed for testing and has some limitations compared 
 1. **No persistence**: All state is lost when the backend is stopped
 2. **No distributed execution**: Runs in a single process
 3. **No history streaming**: StreamInstanceHistory is not implemented
-4. **No rewind**: RewindInstance is not implemented
-5. **No recursive termination**: Recursive termination is not supported
+4. **No recursive termination**: Recursive termination is not supported
 
 ### Best Practices
 

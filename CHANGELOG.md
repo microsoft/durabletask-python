@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `TaskHubGrpcClient.rewind_orchestration()` to rewind a failed orchestration instance to its last known good state. Failed activity and sub-orchestration results are removed from the history and the orchestration replays from the last successful checkpoint, retrying only the failed work. The in-memory testing backend supports rewind as well.
+
 ## v1.7.2
 
 FIXED
