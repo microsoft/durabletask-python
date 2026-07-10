@@ -114,7 +114,7 @@ class DurableOrchestrationStatus:
     @property
     def runtime_status(self) -> Optional[OrchestrationRuntimeStatus]:
         """Get the runtime status as a v1 ``OrchestrationRuntimeStatus``."""
-        if self._state is None:
+        if self._state is None or self._state.runtime_status is None:
             return None
         return from_durabletask_status(self._state.runtime_status)
 

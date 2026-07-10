@@ -26,6 +26,25 @@ from azure.durable_functions.internal.compat.token_source import (
 # Models
 # ---------------------------------------------------------------------------
 
+def test_request_property_getters():
+    token = ManagedIdentityTokenSource("https://management.core.windows.net/")
+    req = DurableHttpRequest(
+        "POST", "http://example.com", content="body",
+        headers={"h": "v"}, token_source=token)
+    assert req.method == "POST"
+    assert req.uri == "http://example.com"
+    assert req.content == "body"
+    assert req.headers == {"h": "v"}
+    assert req.token_source is token
+
+
+def test_request_optional_getters_default_to_none():
+    req = DurableHttpRequest("GET", "http://example.com")
+    assert req.content is None
+    assert req.headers is None
+    assert req.token_source is None
+
+
 def test_request_to_json_minimal():
     req = DurableHttpRequest("GET", "http://example.com")
     assert req.to_json() == {"method": "GET", "uri": "http://example.com"}
