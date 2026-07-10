@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import inspect
+import json
 from datetime import datetime, timezone
 from typing import Any, Callable, Generator, Optional, cast
 from uuid import UUID
@@ -207,22 +208,63 @@ class DurableOrchestrationContext:
         """Signal an entity operation (fire and forget)."""
         self._ctx.signal_entity(entityId, operationName, input=operationInput)
 
-    # -- durable HTTP (not yet supported) ------------------------------------
+    # -- durable HTTP --------------------------------------------------------
     def call_http(self,
                   method: str,
                   uri: str,
-                  content: Optional[str] = None,
+                  content: Any = None,
                   headers: Optional[dict[str, str]] = None,
                   token_source: Optional[TokenSource] = None,
-                  is_raw_str: bool = False) -> Any:
-        """Schedule a durable HTTP call (v1 API).
+                  is_raw_str: bool = False) -> Task[Any]:
+        """Schedule a durable HTTP call to the specified endpoint.
 
-        Not yet supported: durabletask has no durable-HTTP (``call_http``)
-        equivalent, so this raises ``NotImplementedError``.
+        The request is executed by a built-in activity and, if the endpoint
+        responds with ``202 Accepted`` and a ``Location`` header, is polled to
+        completion via a built-in sub-orchestration (honoring ``Retry-After``).
+        The task's result is a
+        :class:`~azure.durable_functions.http.models.DurableHttpResponse`.
+
+        Parameters
+        ----------
+        method: str
+            The HTTP request method.
+        uri: str
+            The HTTP request uri.
+        content: Any
+            The HTTP request content. A ``str`` is sent as JSON unless
+            ``is_raw_str`` is set; other values are serialized to JSON.
+        headers: Optional[dict[str, str]]
+            The HTTP request headers.
+        token_source: Optional[TokenSource]
+            The source of the OAuth token to add to the request.
+        is_raw_str: bool
+            When ``True``, send ``str`` content as-is instead of JSON-encoding
+            it. Requires ``content`` to be a ``str``.
         """
-        raise NotImplementedError(
-            "call_http is not yet supported by durabletask. The durable-HTTP "
-            "API (and its TokenSource auth) has no durabletask equivalent yet.")
+        # Imported lazily to avoid a module import cycle
+        # (http.models -> compat.token_source).
+        from ...http.builtin import BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
+        from ...http.models import DurableHttpRequest, DurableHttpResponse
+
+        if (not isinstance(content, str)) and is_raw_str:
+            raise TypeError(
+                "Invalid use of 'is_raw_str' parameter: 'is_raw_str' is set to "
+                "'True' but 'content' is not an instance of type 'str'. Either "
+                "set 'is_raw_str' to 'False', or ensure your 'content' is of "
+                "type 'str'.")
+
+        json_content: Optional[str] = None
+        if content is not None:
+            if isinstance(content, str) and is_raw_str:
+                json_content = content
+            else:
+                json_content = json.dumps(content)
+
+        request = DurableHttpRequest(method, uri, json_content, headers, token_source)
+        return self._ctx.call_sub_orchestrator(
+            BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
+            input=request.to_json(),
+            return_type=DurableHttpResponse)
 
 
 def accepts_two_positional_args(fn: Callable[..., Any]) -> bool:

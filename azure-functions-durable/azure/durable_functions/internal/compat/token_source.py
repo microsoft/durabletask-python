@@ -3,31 +3,24 @@
 
 from abc import ABC
 
-from typing_extensions import deprecated
-
 
 class TokenSource(ABC):
     """Token source abstract base class.
 
-    Backwards-compatible shim for the v1 ``TokenSource``. Token sources are
-    consumed only by the orchestrator ``call_http`` API, which has no
-    durabletask equivalent yet — see
-    :meth:`DurableOrchestrationContext.call_http`. Constructing a token source
-    is harmless, but it cannot be used until ``call_http`` is supported.
+    A token source supplies an OAuth token that is attached to the request made
+    by the orchestrator ``call_http`` API. See
+    :meth:`DurableOrchestrationContext.call_http`.
     """
 
     def __init__(self):
         super().__init__()
 
 
-@deprecated(
-    "ManagedIdentityTokenSource is deprecated; it is only usable with the "
-    "orchestrator call_http API, which is not yet available in durabletask.")
 class ManagedIdentityTokenSource(TokenSource):
     """Returns a ``ManagedIdentityTokenSource`` object.
 
-    Only meaningful when passed to ``call_http`` (not yet supported in
-    durabletask). Constructing one is allowed for import/config compatibility.
+    Pass an instance to ``call_http`` to have a Managed Identity bearer token
+    for the given ``resource`` attached to the outbound request.
     """
 
     def __init__(self, resource: str):

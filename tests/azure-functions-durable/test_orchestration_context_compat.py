@@ -110,10 +110,51 @@ def test_task_all_and_task_any_use_when_helpers():
     when_any.assert_called_once_with(["t1", "t2"])
 
 
-def test_call_http_raises_not_implemented():
+def test_call_http_schedules_poll_sub_orchestrator():
+    from azure.durable_functions.http.builtin import (
+        BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
+    )
+    from azure.durable_functions.http.models import DurableHttpResponse
+
+    adapter, fake = _adapter()
+    adapter.call_http("GET", "http://example.com")
+
+    fake.call_sub_orchestrator.assert_called_once()
+    args, kwargs = fake.call_sub_orchestrator.call_args
+    assert args[0] == BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
+    assert kwargs["input"] == {"method": "GET", "uri": "http://example.com"}
+    assert kwargs["return_type"] is DurableHttpResponse
+
+
+def test_call_http_serializes_content_and_token_source():
+    from azure.durable_functions.internal.compat.token_source import (
+        ManagedIdentityTokenSource,
+    )
+
+    adapter, fake = _adapter()
+    token = ManagedIdentityTokenSource("https://management.core.windows.net/")
+    adapter.call_http(
+        "POST", "http://example.com",
+        content={"a": 1}, headers={"h": "v"}, token_source=token)
+
+    payload = fake.call_sub_orchestrator.call_args.kwargs["input"]
+    assert payload["method"] == "POST"
+    assert payload["content"] == '{"a": 1}'
+    assert payload["headers"] == {"h": "v"}
+    assert payload["tokenSource"]["resource"] == "https://management.core.windows.net/"
+
+
+def test_call_http_raw_str_content_is_not_json_encoded():
+    adapter, fake = _adapter()
+    adapter.call_http("POST", "http://example.com", content="raw", is_raw_str=True)
+    payload = fake.call_sub_orchestrator.call_args.kwargs["input"]
+    assert payload["content"] == "raw"
+
+
+def test_call_http_is_raw_str_requires_str_content():
     adapter, _ = _adapter()
-    with pytest.raises(NotImplementedError):
-        adapter.call_http("GET", "http://example.com")
+    with pytest.raises(TypeError):
+        adapter.call_http("POST", "http://example.com", content={"a": 1}, is_raw_str=True)
 
 
 # ---------------------------------------------------------------------------

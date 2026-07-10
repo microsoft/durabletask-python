@@ -31,5 +31,6 @@
         "coverage.cobertura.xml"
     ],
     "makefile.configureOnOpen": false,
-    "debugpy.debugJustMyCode": false
+    "debugpy.debugJustMyCode": false,
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

@@ -140,9 +140,10 @@ async def test_durable_client_input_injects_rich_client():
 
 def test_decorators_register_function_builders():
     app = df.DFApp()
+    baseline = len(app._function_builders)
 
     def orch(context):
         return 1
 
     app.orchestration_trigger(context_name="context")(orch)
-    assert len(app._function_builders) == 1
+    assert len(app._function_builders) == baseline + 1

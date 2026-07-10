@@ -8,6 +8,7 @@ from durabletask.task import RetryPolicy
 
 from .decorators.durable_app import Blueprint, DFApp
 from .client import DurableFunctionsClient
+from .http.models import DurableHttpRequest, DurableHttpResponse
 from .orchestrator import Orchestrator
 from .internal.compat.retry_options import RetryOptions
 from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus
@@ -32,6 +33,8 @@ __all__ = [
     "DFApp",
     "DurableEntityContext",
     "DurableFunctionsClient",
+    "DurableHttpRequest",
+    "DurableHttpResponse",
     "DurableOrchestrationClient",
     "DurableOrchestrationContext",
     "DurableOrchestrationStatus",

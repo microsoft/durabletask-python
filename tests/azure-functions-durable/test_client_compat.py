@@ -376,8 +376,7 @@ def test_entity_id_maps_to_entity_instance_id():
 
 
 def test_managed_identity_token_source_shim():
-    with pytest.warns(DeprecationWarning):
-        source = df.ManagedIdentityTokenSource("https://management.core.windows.net")
+    source = df.ManagedIdentityTokenSource("https://management.core.windows.net")
     assert source.resource == "https://management.core.windows.net"
     assert source.to_json()["kind"] == "AzureManagedIdentity"
 
@@ -553,17 +552,26 @@ async def test_http_management_payload_is_mapping_like():
 
 
 # ---------------------------------------------------------------------------
-# call_http not implemented
+# call_http
 # ---------------------------------------------------------------------------
 
-def test_call_http_raises_not_implemented():
-    # call_http ignores self, so invoke via the class to avoid instantiating
-    # the abstract context.
-    with pytest.raises(NotImplementedError):
-        df.DurableOrchestrationContext.call_http(None, "GET", "http://example.com")
+def test_call_http_schedules_sub_orchestrator():
+    from unittest.mock import MagicMock
+
+    from azure.durable_functions.http.builtin import (
+        BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
+    )
+    from azure.durable_functions.internal.compat.orchestration_context import (
+        DurableOrchestrationContext,
+    )
+
+    fake_ctx = MagicMock()
+    adapter = DurableOrchestrationContext(fake_ctx)
+    adapter.call_http("GET", "http://example.com")
+    assert (fake_ctx.call_sub_orchestrator.call_args.args[0]
+            == BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME)
 
 
 def test_token_source_is_still_constructible():
-    with pytest.warns(DeprecationWarning):
-        source = df.ManagedIdentityTokenSource("https://graph.microsoft.com")
+    source = df.ManagedIdentityTokenSource("https://graph.microsoft.com")
     assert source.resource == "https://graph.microsoft.com"

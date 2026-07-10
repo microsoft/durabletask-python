@@ -13,6 +13,12 @@ from durabletask import task
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
 from ..client import DurableFunctionsClient
+from ..http.builtin import (
+    BUILTIN_HTTP_ACTIVITY_NAME,
+    BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
+    builtin_http_activity,
+    builtin_http_poll_orchestrator,
+)
 from ..worker import DurableFunctionsWorker
 from ..orchestrator import Orchestrator
 
@@ -45,6 +51,21 @@ class Blueprint(TriggerApi, BindingApi):
         # The next-in-MRO base (``DecoratorApi.__init__``) is declared with
         # untyped ``*args``/``**kwargs``, so pyright cannot see this call's type.
         super().__init__(auth_level=http_auth_level)  # pyright: ignore[reportUnknownMemberType]
+        self._register_builtin_http_functions()
+
+    def _register_builtin_http_functions(self) -> None:
+        """Register the built-in durable HTTP activity and poll orchestrator.
+
+        These back ``DurableOrchestrationContext.call_http``. They are
+        registered under reserved names on every app so existing code that
+        calls ``call_http`` works without any additional setup.
+        """
+        self.activity_trigger(
+            input_name="input",
+            activity=BUILTIN_HTTP_ACTIVITY_NAME)(builtin_http_activity)
+        self.orchestration_trigger(
+            context_name="context",
+            orchestration=BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME)(builtin_http_poll_orchestrator)
 
     def _configure_orchestrator_callable(
             self,
