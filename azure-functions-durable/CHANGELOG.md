@@ -7,38 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Fixed
-
-- `durable_client_input` now injects a rich `DurableFunctionsClient` into the
-  decorated function's client parameter (the binding's JSON string is converted
-  to a client object). Previously the client parameter received the raw string.
-- `DurableFunctionsClient` now applies the host-provided
-  `maxGrpcMessageSizeInBytes` to the gRPC channel's send/receive message limits
-  (when provided), allowing large orchestration payloads to be retrieved. When
-  the host does not supply a value, the gRPC library defaults are left in place.
-- `DurableOrchestrationContext.current_utc_datetime` is now timezone-aware
-  (UTC), matching v1, so comparisons against timezone-aware datetimes (e.g. a
-  parsed scheduled-start time) no longer raise.
-- `DurableOrchestrationStatus.to_json()` now emits orchestration payloads
-  (`output`, `input`, `customStatus`) as their raw JSON representation instead
-  of reconstructed Python objects, so the result is always JSON-serializable
-  even when payloads are custom types.
-- Restored v1 members that were missing on the compatibility types, avoiding
-  `AttributeError`/`TypeError` for existing code that used them:
-  - `create_http_management_payload(...)` now returns a `dict`-based
-    `HttpManagementPayload`, so `json.dumps(payload)` works directly again.
-  - `RetryOptions.to_json()` returns the v1
-    `firstRetryIntervalInMilliseconds`/`maxNumberOfAttempts` dictionary, and the
-    `first_retry_interval_in_milliseconds` / `max_number_of_attempts` getters
-    remain available.
-  - `DurableOrchestrationStatus.from_json(...)` reconstructs a status from its
-    `to_json()` representation (or the equivalent v1 JSON schema).
-  - `PurgeHistoryResult.from_json(...)` reconstructs a result from its v1 JSON
-    representation.
-  - `DurableOrchestrationContext.version` returns the orchestration instance
-    version (or `None`).
-
 ### Added
+
+- `DurableOrchestrationContext.call_http(...)` for making durable HTTP calls
+  from orchestrators, restoring the v1 API. The request is executed by a
+  built-in activity and, when the endpoint responds with `202 Accepted` and a
+  `Location` header, is automatically polled to completion (honoring
+  `Retry-After`). `ManagedIdentityTokenSource` can be supplied to attach a
+  Managed Identity bearer token to the request. `DurableHttpRequest` and
+  `DurableHttpResponse` are exported from `azure.durable_functions`.
 
 - The `orchestration_trigger` decorator now accepts an `input_type` argument
   (v1 parity). When set, a v1-style `context.get_input()` decodes the input to
@@ -121,6 +98,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON-serializable via `json.dumps(payload)` and supports mapping-style access
   (`payload["statusQueryGetUri"]`, iteration, `in`, `keys()`/`items()`/`values()`)
   so v1 code that treated the payload as a `dict` keeps working.
+
+### Fixed
+
+- `durable_client_input` now injects a rich `DurableFunctionsClient` into the
+  decorated function's client parameter (the binding's JSON string is converted
+  to a client object). Previously the client parameter received the raw string.
+- `DurableFunctionsClient` now applies the host-provided
+  `maxGrpcMessageSizeInBytes` to the gRPC channel's send/receive message limits
+  (when provided), allowing large orchestration payloads to be retrieved. When
+  the host does not supply a value, the gRPC library defaults are left in place.
+- `DurableOrchestrationContext.current_utc_datetime` is now timezone-aware
+  (UTC), matching v1, so comparisons against timezone-aware datetimes (e.g. a
+  parsed scheduled-start time) no longer raise.
+- `DurableOrchestrationStatus.to_json()` now emits orchestration payloads
+  (`output`, `input`, `customStatus`) as their raw JSON representation instead
+  of reconstructed Python objects, so the result is always JSON-serializable
+  even when payloads are custom types.
+- Restored v1 members that were missing on the compatibility types, avoiding
+  `AttributeError`/`TypeError` for existing code that used them:
+  - `create_http_management_payload(...)` now returns a `dict`-based
+    `HttpManagementPayload`, so `json.dumps(payload)` works directly again.
+  - `RetryOptions.to_json()` returns the v1
+    `firstRetryIntervalInMilliseconds`/`maxNumberOfAttempts` dictionary, and the
+    `first_retry_interval_in_milliseconds` / `max_number_of_attempts` getters
+    remain available.
+  - `DurableOrchestrationStatus.from_json(...)` reconstructs a status from its
+    `to_json()` representation (or the equivalent v1 JSON schema).
+  - `PurgeHistoryResult.from_json(...)` reconstructs a result from its v1 JSON
+    representation.
+  - `DurableOrchestrationContext.version` returns the orchestration instance
+    version (or `None`).
 
 ## v0.1.0
 
