@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional, Union
 
 import azure.functions as func
 from azure.functions import FunctionRegister, TriggerApi, BindingApi, AuthLevel
-from azure.functions.decorators.function_app import FunctionBuilder
+from azure.functions.decorators.function_app import DecoratorApi, FunctionBuilder
 
 from durabletask import task
 
@@ -326,4 +326,39 @@ class DFApp(Blueprint, FunctionRegister):
     Exports the decorators required to declare and index DF Function-types.
     """
 
-    pass
+    def register_functions(self, function_container: DecoratorApi) -> None:
+        """Register the functions of a blueprint into this app.
+
+        Every :class:`Blueprint` (and the :class:`DFApp` itself) auto-registers
+        the reserved built-in durable-HTTP functions so ``call_http`` works out
+        of the box. Merging a blueprint that carries its own copies would
+        otherwise raise a duplicate-function-name error, breaking the standard
+        Functions blueprint pattern. This app already provides the built-ins, so
+        the blueprint's copies are dropped during registration. The incoming
+        container is left unmodified, so the same blueprint can be registered
+        into multiple apps.
+        """
+        reserved = {BUILTIN_HTTP_ACTIVITY_NAME, BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME}
+        original = function_container._function_builders
+        filtered = [fb for fb in original if _builder_function_name(fb) not in reserved]
+        if len(filtered) == len(original):
+            super().register_functions(function_container)
+            return
+        function_container._function_builders = filtered
+        try:
+            super().register_functions(function_container)
+        finally:
+            function_container._function_builders = original
+
+    # ``register_blueprint`` is an alias of ``register_functions`` in the base
+    # ``FunctionRegister`` (the same function object), so it must be re-aliased
+    # here for blueprint registration to get the same built-in de-duplication.
+    register_blueprint = register_functions
+
+
+def _builder_function_name(function_builder: FunctionBuilder) -> Optional[str]:
+    """Return a function builder's registered name, or ``None`` if unavailable."""
+    try:
+        return function_builder._function.get_function_name()  # pyright: ignore[reportPrivateUsage]
+    except Exception:  # pragma: no cover - defensive; name is always present in practice
+        return None

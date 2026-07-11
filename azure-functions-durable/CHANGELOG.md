@@ -101,6 +101,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Registering a `Blueprint` into a `DFApp` (via `register_functions` /
+  `register_blueprint`) no longer raises a duplicate-function-name error for the
+  reserved built-in durable-HTTP functions. Both the app and every blueprint
+  auto-register those built-ins, so the app now de-duplicates them during
+  registration (leaving the blueprint itself unmodified). This restores the
+  standard Azure Functions blueprint authoring pattern.
 - `durable_client_input` now injects a rich `DurableFunctionsClient` into the
   decorated function's client parameter (the binding's JSON string is converted
   to a client object). Previously the client parameter received the raw string.

@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 APPS_DIR = Path(__file__).parent / "apps"
 
@@ -95,6 +95,14 @@ def http_request(
         return HttpResult(e.code, e.read().decode("utf-8"))
 
 
+class _FatalStartupError(RuntimeError):
+    """Raised when the host aborts startup for a non-transient reason.
+
+    Signals that the app itself failed to load (e.g. an import error), so
+    retrying on a different port would be pointless.
+    """
+
+
 class FunctionApp:
     """Manages the lifecycle of a ``func start`` host for a sample app.
 
@@ -102,6 +110,12 @@ class FunctionApp:
     app's ``/api/ping`` route responds; on exit it terminates the whole process
     group and surfaces the captured host log if startup failed.
     """
+
+    # ``func start`` binds the HTTP port itself, some time after we pick a free
+    # one. Another process (e.g. the sibling app's host, started moments
+    # earlier) can claim that port in the interim, so a transient startup
+    # failure is retried on a freshly chosen free port a few times.
+    _STARTUP_MAX_ATTEMPTS = 3
 
     def __init__(self, app_name: str, port: Optional[int] = None):
         self.app_dir = APPS_DIR / app_name
@@ -141,6 +155,30 @@ class FunctionApp:
                 "Provision it first (run the suite via 'nox -s functions_e2e', "
                 "which creates a .venv inside each sample app).")
 
+        env = self._build_env()
+
+        last_exc: Optional[BaseException] = None
+        for attempt in range(1, self._STARTUP_MAX_ATTEMPTS + 1):
+            self._launch(func, env)
+            try:
+                self._wait_until_ready()
+                return
+            except _FatalStartupError:
+                # The app itself failed to load; a different port won't help.
+                self.stop()
+                raise
+            except (RuntimeError, TimeoutError) as exc:
+                # Likely a port claimed between our selection and func's bind
+                # (or a slow cold start). Tear down and retry on a fresh port.
+                last_exc = exc
+                self.stop()
+                if attempt < self._STARTUP_MAX_ATTEMPTS:
+                    self.port = find_free_port()
+                    self.base_url = f"http://127.0.0.1:{self.port}"
+        assert last_exc is not None
+        raise last_exc
+
+    def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
         # Start the host exactly as a developer would after activating the
         # app's OWN virtual environment (``<app>/.venv``). The environment MUST
@@ -156,7 +194,9 @@ class FunctionApp:
         env["PATH"] = str(interpreter_dir) + os.pathsep + env.get("PATH", "")
         # A stray PYTHONHOME would override the venv; activation clears it.
         env.pop("PYTHONHOME", None)
+        return env
 
+    def _launch(self, func: str, env: dict[str, str]) -> None:
         self._log = open(self._log_path, "w", encoding="utf-8")
         # start_new_session/CREATE_NEW_PROCESS_GROUP lets us reliably terminate
         # the host *and* its child worker processes as a group on teardown.
@@ -177,12 +217,6 @@ class FunctionApp:
             creationflags=creationflags,
             start_new_session=start_new_session,
         )
-
-        try:
-            self._wait_until_ready()
-        except Exception:
-            self.stop()
-            raise
 
     def _wait_until_ready(self) -> None:
         deadline = time.time() + HOST_STARTUP_TIMEOUT_S
@@ -217,7 +251,7 @@ class FunctionApp:
         log = self._read_log()
         for marker in self._FATAL_LOG_MARKERS:
             if marker in log:
-                raise RuntimeError(
+                raise _FatalStartupError(
                     f"Functions host failed to start (matched '{marker}').\n{log}")
 
     def _read_log(self) -> str:
@@ -312,3 +346,57 @@ class FunctionApp:
         raise TimeoutError(
             f"Orchestration {instance_id} did not complete within {timeout}s; "
             f"last status: {status}")
+
+    def wait_for_status(
+            self,
+            instance_id: str,
+            expected: str,
+            timeout: float = ORCHESTRATION_TIMEOUT_S) -> dict[str, Any]:
+        """Poll status until ``runtimeStatus`` equals ``expected`` (case-insensitive)."""
+        target = expected.lower()
+        deadline = time.time() + timeout
+        status: dict[str, Any] = {}
+        while time.time() < deadline:
+            status = self.get_status(instance_id)
+            if (status.get("runtimeStatus") or "").lower() == target:
+                return status
+            time.sleep(0.5)
+        raise TimeoutError(
+            f"Orchestration {instance_id} did not reach '{expected}' within "
+            f"{timeout}s; last status: {status}")
+
+    # -- event / entity helpers --------------------------------------------
+
+    def raise_event(self, instance_id: str, event: str, data: Any = None) -> None:
+        """Raise an external event via the app's ``/api/raise/{id}/{event}`` route."""
+        result = http_request(
+            "POST", f"{self.base_url}/api/raise/{instance_id}/{event}", data={"data": data})
+        assert result.status == 202, f"raise failed: {result.status} {result.body}"
+
+    def read_entity(self, name: str, key: str) -> dict[str, Any]:
+        """Read entity state via the app's ``/api/entity/{name}/{key}`` route."""
+        result = http_request("GET", f"{self.base_url}/api/entity/{name}/{key}")
+        assert result.status == 200, f"entity read failed: {result.status} {result.body}"
+        return result.json()
+
+    def signal_entity(self, name: str, key: str, op: str, input: Any = None) -> None:
+        """Signal an entity via the app's ``/api/signal/{name}/{key}/{op}`` route."""
+        result = http_request(
+            "POST", f"{self.base_url}/api/signal/{name}/{key}/{op}", data={"input": input})
+        assert result.status == 202, f"signal failed: {result.status} {result.body}"
+
+    def wait_for_entity(
+            self,
+            name: str,
+            key: str,
+            predicate: Callable[[dict[str, Any]], bool],
+            timeout: float = 30) -> dict[str, Any]:
+        """Poll the entity read route until ``predicate(payload)`` is true."""
+        deadline = time.time() + timeout
+        payload: dict[str, Any] = {}
+        while time.time() < deadline:
+            payload = self.read_entity(name, key)
+            if predicate(payload):
+                return payload
+            time.sleep(0.5)
+        raise TimeoutError(f"entity {name}/{key} predicate not met; last: {payload}")

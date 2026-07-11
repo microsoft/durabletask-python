@@ -12,8 +12,9 @@ When either prerequisite is missing the whole module is skipped, so the suite
 is a no-op for contributors who have not set up the local toolchain. In CI both
 are provisioned before the suite runs.
 
-Each sample app gets its own module-scoped Functions host so the two apps are
-fully isolated and their hosts start/stop once per test module.
+Each sample app gets its own session-scoped Functions host so the two apps are
+fully isolated and their hosts start/stop once per test session (shared across
+all test modules that use the same app).
 """
 
 import pytest
@@ -33,14 +34,14 @@ def _require_prerequisites(app_name: str) -> None:
             "inside each sample app.")
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def v1_app():
     _require_prerequisites("v1_style")
     with FunctionApp("v1_style") as app:
         yield app
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def dtask_app():
     _require_prerequisites("dtask_style")
     with FunctionApp("dtask_style") as app:

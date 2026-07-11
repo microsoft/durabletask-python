@@ -2228,7 +2228,7 @@ class _OrchestrationExecutor:
                         f"A '{event.executionStarted.name}' orchestrator was not registered."
                     )
 
-                if event.executionStarted.version:
+                if event.executionStarted.HasField("version"):
                     ctx._version = event.executionStarted.version.value  # pyright: ignore[reportPrivateUsage]
 
                 # Store the parent orchestration instance ID (set for

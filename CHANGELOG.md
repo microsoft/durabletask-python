@@ -20,6 +20,10 @@ CHANGED
 
 FIXED
 
+- Fixed `OrchestrationContext.version` returning an empty string (`''`) instead
+  of `None` for orchestrations started without an explicit version. The version
+  field is a protobuf wrapper (a singular message that is always truthy), so it
+  is now checked for presence with `HasField` before being read.
 - `OrchestrationContext.create_timer` now accepts timezone-aware `datetime`
   values, normalizing them to UTC instead of raising when compared against the
   orchestration's internal clock.
