@@ -332,15 +332,17 @@ async def test_wait_for_completion_returns_check_status_on_timeout():
 
 
 # ---------------------------------------------------------------------------
-# rewind (not implemented)
+# rewind
 # ---------------------------------------------------------------------------
 
-async def test_rewind_raises_not_implemented():
+async def test_rewind_delegates_to_rewind_orchestration():
     client = _make_client()
     try:
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(NotImplementedError):
+        with patch.object(client, "rewind_orchestration",
+                          new=AsyncMock()) as mock:
+            with pytest.warns(DeprecationWarning):
                 await client.rewind("abc", "reason")
+        mock.assert_awaited_once_with("abc", reason="reason")
     finally:
         await client.close()
 

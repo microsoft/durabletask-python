@@ -207,6 +207,14 @@ def sub_orch_fails(context: df.DurableOrchestrationContext):
 
 
 @bp.orchestration_trigger(context_name="context")
+def rewind_target(context: df.DurableOrchestrationContext):
+    # Calls an activity that fails on its first attempt. The orchestration
+    # fails; a client rewind replays the failed activity, which then succeeds.
+    result = yield context.call_activity("fail_once", context.instance_id)
+    return result
+
+
+@bp.orchestration_trigger(context_name="context")
 def access_histories(context: df.DurableOrchestrationContext):
     # histories is intentionally unsupported and raises NotImplementedError,
     # which surfaces as a failed orchestration.

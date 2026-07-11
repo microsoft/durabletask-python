@@ -2917,6 +2917,12 @@ class _OrchestrationExecutor:
             elif event.HasField("executionRewound"):
                 # Informational event added when an orchestration is rewound. No action needed.
                 pass
+            elif event.HasField("genericEvent"):
+                # Informational history event with no execution semantics (for
+                # example, the marker the Durable Functions extension appends
+                # when rewinding an orchestration). Ignored during replay,
+                # matching the .NET worker.
+                pass
             elif event.HasField("eventSent"):
                 # Check if this eventSent corresponds to an entity operation call after being translated to the old
                 # entity protocol by the Durable WebJobs extension. If so, treat this message similarly to

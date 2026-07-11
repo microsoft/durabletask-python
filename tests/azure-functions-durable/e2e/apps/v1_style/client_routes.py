@@ -183,10 +183,7 @@ async def wait_or_check(
 @bp.durable_client_input(client_name="client")
 async def rewind_orchestration(
         req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
-    try:
-        await client.rewind(req.route_params["id"], reason="e2e-rewind")
-    except NotImplementedError as exc:
-        return func.HttpResponse(str(exc), status_code=501)
+    await client.rewind(req.route_params["id"], reason="e2e-rewind")
     return func.HttpResponse(status_code=202)
 
 

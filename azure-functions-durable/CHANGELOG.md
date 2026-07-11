@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `DurableFunctionsClient.rewind_orchestration(...)` (inherited from durabletask)
+  rewinds a failed orchestration to its last known good state. The deprecated v1
+  `rewind(...)` method now delegates to it instead of raising
+  `NotImplementedError`.
+
 - `DFApp.configure_scheduled_tasks()` opts an app in to durabletask scheduled
   tasks by registering the schedule entity and operation orchestrator. Once
   enabled, schedules are managed from a client via

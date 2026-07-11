@@ -104,10 +104,16 @@ def test_wait_for_completion_or_check_status(v1_app):
     assert result.json() == ["Hello Tokyo!", "Hello Seattle!", "Hello London!"]
 
 
-def test_rewind_not_implemented(v1_app):
-    instance_id = v1_app.start_orchestration("activity_chain")
-    v1_app.wait_for_completion(instance_id)
+def test_rewind(v1_app):
+    # The orchestration's activity fails on its first attempt, so it lands in a
+    # Failed state; rewinding replays the failed activity, which now succeeds.
+    instance_id = v1_app.start_orchestration("rewind_target")
+    failed = v1_app.wait_for_completion(instance_id)
+    assert failed["runtimeStatus"] == "Failed"
 
     result = http_request("POST", f"{v1_app.base_url}/api/rewind/{instance_id}")
-    # rewind is a deprecated stub that raises NotImplementedError.
-    assert result.status == 501
+    assert result.status == 202
+
+    status = v1_app.wait_for_status(instance_id, "Completed")
+    assert status["runtimeStatus"] == "Completed"
+    assert status["output"] == "succeeded on attempt 2"

@@ -48,3 +48,18 @@ def flaky(payload: dict) -> dict:
     if attempts < threshold:
         raise ValueError(f"flaky failure {attempts}/{threshold}")
     return {"attempts": attempts}
+
+
+@bp.activity_trigger(input_name="token")
+def fail_once(token: str) -> str:
+    """Fail on the first invocation for ``token``, then succeed.
+
+    Used to exercise rewind: the first attempt fails the orchestration, and a
+    rewind replays the failed activity -- which now succeeds because the
+    in-process attempt counter has advanced.
+    """
+    _ATTEMPTS[token] = _ATTEMPTS.get(token, 0) + 1
+    attempts = _ATTEMPTS[token]
+    if attempts == 1:
+        raise ValueError("failing on first attempt (rewind to retry)")
+    return f"succeeded on attempt {attempts}"

@@ -393,18 +393,23 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             return self._create_http_response(500, state.serialized_output)
         return self.create_check_status_response(request, instance_id)
 
-    @deprecated(
-        "rewind is not yet supported in durabletask; this shim raises "
-        "NotImplementedError.")
+    @deprecated("rewind is deprecated; use rewind_orchestration instead.")
     async def rewind(
             self,
             instance_id: str,
             reason: str,
             task_hub_name: Optional[str] = None,
             connection_name: Optional[str] = None) -> None:
-        """Not implemented: durabletask has no rewind equivalent yet."""
-        raise NotImplementedError(
-            "rewind is not yet supported by durabletask.")
+        """Deprecated alias for :meth:`rewind_orchestration`.
+
+        Rewinds a failed orchestration instance to its last known good state,
+        removing failed task and sub-orchestration results from the history and
+        replaying from the last successful checkpoint.
+
+        The ``task_hub_name`` and ``connection_name`` arguments have no
+        equivalent in durabletask and are ignored.
+        """
+        await self.rewind_orchestration(instance_id, reason=reason)
 
     @staticmethod
     def _create_http_response(status_code: int, body: Union[str, Any]) -> func.HttpResponse:

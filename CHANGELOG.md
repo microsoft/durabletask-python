@@ -18,6 +18,12 @@ ADDED
 
 FIXED
 
+- Fixed orchestrations failing with `OrchestrationStateError: Don't know how to
+  handle event of type 'genericEvent'` after being rewound over the Azure
+  Functions Durable extension. The `genericEvent` history event (an
+  informational marker with no execution semantics) is now ignored during
+  replay, matching the .NET worker, so `rewind_orchestration` completes the
+  replay instead of re-failing.
 - Fixed durabletask scheduled tasks (`durabletask.scheduled`) failing under
   data converters that reconstruct nested custom-object envelopes bottom-up
   (such as the Azure Functions Durable `df` codec). `ScheduleState.from_json`
