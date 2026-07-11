@@ -59,7 +59,7 @@ def _acquire_bearer_token(resource: str) -> str:
     return credential.get_token(scope).token
 
 
-def builtin_http_activity(input: Optional[dict[str, Any]]) -> dict[str, Any]:
+def builtin_http_activity(input: dict) -> dict:
     """Execute a single HTTP request and return the response payload.
 
     ``input`` is the JSON form of a
@@ -67,6 +67,15 @@ def builtin_http_activity(input: Optional[dict[str, Any]]) -> dict[str, Any]:
     (``method``, ``uri``, ``content``, ``headers``, ``tokenSource``). The
     return value is the JSON form of a
     :class:`~azure.durable_functions.http.models.DurableHttpResponse`.
+
+    The parameter and return are annotated with the plain ``dict`` type on
+    purpose. The Azure Functions Python worker inspects trigger annotations
+    during indexing and requires them to be a real ``type`` (it rejects
+    parameterized generics such as ``dict[str, Any]`` with
+    ``FunctionLoadError: ... invalid non-type annotation`` and, for a
+    ``typing.Union`` origin like ``Optional[...]``, raises
+    ``TypeError: issubclass() arg 1 must be a class``). A bare ``dict`` keeps
+    worker indexing happy while the body still defends against ``None`` below.
     """
     request = input or {}
     method = str(request.get("method", "GET")).upper()

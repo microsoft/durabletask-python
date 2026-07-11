@@ -110,7 +110,17 @@ class FunctionsDataConverter(JsonDataConverter):
     def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
         if data is None or data == "":
             return None
-        return df_loads(data, target_type)
+        value = df_loads(data, target_type)
+        # ``df_loads`` reconstructs the custom-object envelope
+        # (``{"__class__", "__module__", "__data__"}``), but a payload that was
+        # serialized as a plain JSON structure -- e.g. a ``dict`` produced by a
+        # built-in activity/orchestrator such as ``DurableHttpResponse.to_json()``
+        # -- is returned as that plain value. Apply the inherited value-level
+        # coercion so ``from_json``-capable target types (like
+        # ``DurableHttpResponse``) are still reconstructed. ``coerce`` is a
+        # no-op when the value already matches ``target_type`` or when no type
+        # was requested.
+        return self.coerce(value, target_type)
 
 
 # Shared instance: the converter is stateless, so a single instance is reused

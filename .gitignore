@@ -111,6 +111,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Azure Functions E2E test host logs (written by the test harness)
+_func_host.log
+
 # Spyder project settings
 .spyderproject
 .spyproject
