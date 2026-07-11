@@ -90,6 +90,69 @@ class Blueprint(TriggerApi, BindingApi):
         self.orchestration_trigger(
             context_name="context")(execute_schedule_operation_orchestrator)
 
+    def configure_history_export(self) -> None:
+        """Opt in to durabletask history export by registering its built-ins.
+
+        Like scheduled tasks, history export is opt-in: its export-job entity,
+        driving orchestrator, and two activities are only registered when this
+        method is called. After calling it, drive export jobs from the client
+        with :class:`durabletask.extensions.history_export.ExportHistoryClient`.
+
+        The runtime dependencies the activities need (a durabletask client and a
+        :class:`~durabletask.extensions.history_export.writer.HistoryWriter`) are
+        supplied separately via
+        :func:`durabletask.extensions.history_export.bind_context`, since the
+        client is only available at request time in the host-driven Functions
+        model.
+
+        The durabletask export activities take a ``(context, input)`` signature;
+        they ignore the context, so they are wrapped as single-input Functions
+        activities to match the host's activity calling convention.
+
+        The enumeration activity uses a Functions-specific implementation
+        (:mod:`azure.durable_functions.internal.history_export_compat`) that
+        queries terminal instances via ``QueryInstances`` instead of the core
+        ``ListInstanceIds`` call, which the Durable Functions host extension
+        does not implement.
+
+        NOTE: We need to consider whether this will perform well on Azure 
+        Functions' distributed architecture - later.
+        """
+        from durabletask.extensions.history_export._constants import (
+            ENTITY_NAME as EXPORT_ENTITY_NAME,
+        )
+        from durabletask.extensions.history_export.activities import (
+            EXPORT_INSTANCE_HISTORY_ACTIVITY,
+            LIST_TERMINAL_INSTANCES_ACTIVITY,
+            export_instance_history,
+        )
+        from durabletask.extensions.history_export.entity import ExportJobEntity
+        from durabletask.extensions.history_export.orchestrator import (
+            export_job_orchestrator,
+        )
+        from ..internal.history_export_compat import (
+            list_terminal_instances,
+        )
+
+        self.entity_trigger(
+            context_name="context", entity_name=EXPORT_ENTITY_NAME)(ExportJobEntity)
+        self.orchestration_trigger(context_name="context")(export_job_orchestrator)
+
+        def _list_terminal_instances(input: dict) -> dict:
+            return list_terminal_instances(None, input)  # type: ignore[arg-type]
+
+        def _export_instance_history(input: dict) -> dict:
+            return export_instance_history(None, input)  # type: ignore[arg-type]
+
+        _list_terminal_instances.__name__ = LIST_TERMINAL_INSTANCES_ACTIVITY
+        _export_instance_history.__name__ = EXPORT_INSTANCE_HISTORY_ACTIVITY
+        self.activity_trigger(
+            input_name="input",
+            activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(_list_terminal_instances)
+        self.activity_trigger(
+            input_name="input",
+            activity=EXPORT_INSTANCE_HISTORY_ACTIVITY)(_export_instance_history)
+
     def _configure_orchestrator_callable(
             self,
             wrap: Callable[[Callable[..., Any]], FunctionBuilder],

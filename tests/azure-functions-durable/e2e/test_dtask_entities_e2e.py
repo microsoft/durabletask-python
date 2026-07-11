@@ -69,4 +69,3 @@ def test_entity_operation_returning_none(dtask_app):
     assert output["reset_result"] is None
     assert output["reset_result_is_none"] is True
     assert output["total"] == 0
-

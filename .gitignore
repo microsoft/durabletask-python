@@ -114,6 +114,9 @@ venv.bak/
 # Azure Functions E2E test host logs (written by the test harness)
 _func_host.log
 
+# Azure Functions E2E history-export output (written by the sample app writer)
+_export_output/
+
 # Spyder project settings
 .spyderproject
 .spyproject

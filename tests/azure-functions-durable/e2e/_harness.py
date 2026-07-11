@@ -419,6 +419,36 @@ class FunctionApp:
             "POST", f"{self.base_url}/api/schedule/{schedule_id}/delete", timeout=90)
         assert result.status == 202, f"delete schedule failed: {result.status} {result.body}"
 
+    def start_export(self, container: str = "exports",
+                     job_id: Optional[str] = None,
+                     completed_from: Optional[str] = None) -> dict[str, Any]:
+        """Start a history-export job via the app's ``/api/export/start`` route.
+
+        ``completed_from`` (an ISO-8601 timestamp) narrows the export window so
+        it only covers instances completed at/after that time.
+        """
+        data: dict[str, Any] = {"container": container}
+        if job_id is not None:
+            data["job_id"] = job_id
+        if completed_from is not None:
+            data["completed_from"] = completed_from
+        result = http_request("POST", f"{self.base_url}/api/export/start", data=data, timeout=90)
+        assert result.status == 200, f"start export failed: {result.status} {result.body}"
+        return result.json()
+
+    def wait_for_export(self, job_id: str, timeout: float = 90) -> dict[str, Any]:
+        """Poll ``/api/export/status/{id}`` until the export job is terminal."""
+        deadline = time.time() + timeout
+        payload: dict[str, Any] = {}
+        while time.time() < deadline:
+            result = http_request("GET", f"{self.base_url}/api/export/status/{job_id}")
+            assert result.status == 200, f"export status failed: {result.status} {result.body}"
+            payload = result.json()
+            if (payload.get("status") or "") in ("Completed", "Failed"):
+                return payload
+            time.sleep(0.5)
+        raise TimeoutError(f"export job {job_id} did not finish within {timeout}s; last: {payload}")
+
     def signal_entity(self, name: str, key: str, op: str, input: Any = None,
                       delay_seconds: Optional[float] = None) -> None:
         """Signal an entity via the app's ``/api/signal/{name}/{key}/{op}`` route.

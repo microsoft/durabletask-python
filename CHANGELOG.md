@@ -13,6 +13,10 @@ ADDED
 - Added `OrchestrationContext.parent_instance_id`, which returns the instance
   ID of the parent orchestration for a sub-orchestration, or `None` for a
   top-level orchestration.
+- Exported `bind_context` and `clear_context` from
+  `durabletask.extensions.history_export` so hosts that register the export
+  functions themselves (rather than via `ExportHistoryClient.register_worker`)
+  can supply the activities' runtime dependencies.
 
 CHANGED
 
@@ -20,6 +24,14 @@ CHANGED
 
 FIXED
 
+- Fixed durabletask scheduled tasks (`durabletask.scheduled`) failing under
+  data converters that reconstruct nested custom-object envelopes bottom-up
+  (such as the Azure Functions Durable `df` codec). `ScheduleState.from_json`
+  now tolerates an already-reconstructed nested `ScheduleConfiguration` (and
+  accepts the active `DataConverter` for nested reconstruction), and
+  `ScheduleOperationRequest` gained `to_json`/`from_json` hooks so it can be
+  serialized by converters that require them. The default JSON converter's
+  behavior is unchanged.
 - Fixed `OrchestrationContext.lock_entities` failing when used over the legacy
   entity protocol (used by the Azure Functions Durable extension). Acquiring an
   entity lock raised a `JSONDecodeError` because the worker tried to deserialize

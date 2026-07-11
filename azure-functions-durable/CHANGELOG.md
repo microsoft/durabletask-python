@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `DFApp.configure_scheduled_tasks()` opts an app in to durabletask scheduled
+  tasks by registering the schedule entity and operation orchestrator. Once
+  enabled, schedules are managed from a client via
+  `durabletask.scheduled.ScheduledTaskClient`. Scheduled tasks are not
+  registered unless this method is called.
+- `DFApp.configure_history_export()` opts an app in to durabletask history
+  export by registering the export-job entity, driving orchestrator, and
+  activities. Once enabled, export jobs are driven from a client via
+  `durabletask.extensions.history_export.ExportHistoryClient`; supply the
+  activities' runtime dependencies with `history_export.bind_context(...)`.
+  The instance-enumeration activity uses a Functions-specific implementation
+  based on `QueryInstances` because the Durable Functions host extension does
+  not implement the `ListInstanceIds` gRPC call the core activity relies on.
 - `DurableOrchestrationContext.call_http(...)` for making durable HTTP calls
   from orchestrators, restoring the v1 API. The request is executed by a
   built-in activity and, when the endpoint responds with `202 Accepted` and a

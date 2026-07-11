@@ -21,6 +21,7 @@ import azure.durable_functions as df
 import activities
 import client_routes
 import entities
+import history_export_routes
 import orchestrators
 
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
@@ -29,7 +30,12 @@ app.register_functions(activities.bp)
 app.register_functions(entities.bp)
 app.register_functions(orchestrators.bp)
 app.register_functions(client_routes.bp)
+app.register_functions(history_export_routes.bp)
 
 # Opt in to durabletask scheduled tasks: registers the schedule entity and
 # operation orchestrator so schedules can be managed via ScheduledTaskClient.
 app.configure_scheduled_tasks()
+
+# Opt in to durabletask history export: registers the export-job entity, driving
+# orchestrator, and activities so export jobs can be driven via ExportHistoryClient.
+app.configure_history_export()

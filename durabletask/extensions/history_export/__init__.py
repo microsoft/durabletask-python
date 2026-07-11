@@ -22,6 +22,8 @@ from durabletask.extensions.history_export._constants import (
 )
 from durabletask.extensions.history_export.activities import (
     HistoryExportContext,
+    bind_context,
+    clear_context,
 )
 from durabletask.extensions.history_export.client import (
     ExportHistoryClient,
@@ -76,5 +78,7 @@ __all__ = [
     "ExportMode",
     "HistoryExportContext",
     "HistoryWriter",
+    "bind_context",
+    "clear_context",
     "orchestrator_instance_id_for",
 ]
