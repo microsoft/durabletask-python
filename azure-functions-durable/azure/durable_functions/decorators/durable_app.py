@@ -115,7 +115,7 @@ class Blueprint(TriggerApi, BindingApi):
         ``ListInstanceIds`` call, which the Durable Functions host extension
         does not implement.
 
-        NOTE: We need to consider whether this will perform well on Azure 
+        NOTE: We need to consider whether this will perform well on Azure
         Functions' distributed architecture - later.
         """
         from durabletask.extensions.history_export._constants import (
