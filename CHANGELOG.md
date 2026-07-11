@@ -20,6 +20,11 @@ CHANGED
 
 FIXED
 
+- Fixed `OrchestrationContext.lock_entities` failing when used over the legacy
+  entity protocol (used by the Azure Functions Durable extension). Acquiring an
+  entity lock raised a `JSONDecodeError` because the worker tried to deserialize
+  an operation result from the lock-granted event, which carries none; the
+  result is now only read for entity operation calls, not lock acquisitions.
 - Fixed `OrchestrationContext.version` returning an empty string (`''`) instead
   of `None` for orchestrations started without an explicit version. The version
   field is a protobuf wrapper (a singular message that is always truthy), so it

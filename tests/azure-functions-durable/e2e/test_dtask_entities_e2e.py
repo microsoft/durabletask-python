@@ -57,3 +57,16 @@ def test_signal_entity_from_orchestrator(dtask_app):
     payload = dtask_app.wait_for_entity(
         "counter", key, lambda p: p["exists"] and p["state"] == 10)
     assert payload["state"] == 10
+
+
+def test_entity_operation_returning_none(dtask_app):
+    # The class-based Counter's ``reset`` returns None; verify that result
+    # round-trips through ``call_entity`` as None (and the state is reset).
+    instance_id = dtask_app.start_orchestration("reset_counter")
+    status = dtask_app.wait_for_completion(instance_id)
+    assert status["runtimeStatus"] == "COMPLETED"
+    output = status["output"]
+    assert output["reset_result"] is None
+    assert output["reset_result_is_none"] is True
+    assert output["total"] == 0
+

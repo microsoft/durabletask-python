@@ -67,6 +67,29 @@ class Blueprint(TriggerApi, BindingApi):
             context_name="context",
             orchestration=BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME)(builtin_http_poll_orchestrator)
 
+    def configure_scheduled_tasks(self) -> None:
+        """Opt in to durabletask scheduled tasks by registering their built-ins.
+
+        Unlike durable HTTP (which is always available), scheduled tasks are
+        opt-in: most apps don't use them, so their schedule entity and
+        operation orchestrator are only registered when this method is called.
+        After calling it, manage schedules from the client with
+        :class:`durabletask.scheduled.ScheduledTaskClient`.
+
+        The schedule entity is self-driving (it re-arms itself with delayed
+        self-signals), so no additional worker configuration is required in the
+        host-driven Functions model.
+        """
+        from durabletask.scheduled.orchestrator import (
+            execute_schedule_operation_orchestrator,
+        )
+        from durabletask.scheduled.schedule_entity import ENTITY_NAME, Schedule
+
+        self.entity_trigger(
+            context_name="context", entity_name=ENTITY_NAME)(Schedule)
+        self.orchestration_trigger(
+            context_name="context")(execute_schedule_operation_orchestrator)
+
     def _configure_orchestrator_callable(
             self,
             wrap: Callable[[Callable[..., Any]], FunctionBuilder],

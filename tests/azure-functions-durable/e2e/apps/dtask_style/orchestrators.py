@@ -65,6 +65,17 @@ def counter_orchestration(ctx: task.OrchestrationContext, _: Any):
 
 
 @bp.orchestration_trigger(context_name="context")
+def reset_counter(ctx: task.OrchestrationContext, _: Any):
+    # Exercises an entity operation that returns None (``reset``): the None
+    # result must round-trip through ``call_entity`` as None.
+    entity_id = entities.EntityInstanceId("counter", ctx.instance_id)
+    yield ctx.call_entity(entity_id, "add", 5)
+    reset_result = yield ctx.call_entity(entity_id, "reset")
+    total = yield ctx.call_entity(entity_id, "get")
+    return {"reset_result": reset_result, "reset_result_is_none": reset_result is None, "total": total}
+
+
+@bp.orchestration_trigger(context_name="context")
 def continue_as_new_counter(ctx: task.OrchestrationContext, value: Any):
     value = (value or 0) + 1
     if value < 5:
@@ -141,6 +152,88 @@ def describe_entity(ctx: task.OrchestrationContext, key: Any):
     entity_id = entities.EntityInstanceId("probe", key)
     description = yield ctx.call_entity(entity_id, "describe")
     return description
+
+
+# ---------------------------------------------------------------------------
+# Advanced entity patterns: locks, entity-to-entity signal, entity-starts-
+# orchestration, and entity-operation failure propagation
+# ---------------------------------------------------------------------------
+
+@bp.orchestration_trigger(context_name="context")
+def lock_and_increment(ctx: task.OrchestrationContext, key: Any):
+    # Critical section around an entity via ctx.lock_entities.
+    entity_id = entities.EntityInstanceId("counter", key)
+    with (yield ctx.lock_entities([entity_id])):
+        yield ctx.call_entity(entity_id, "add", 5)
+        total = yield ctx.call_entity(entity_id, "get")
+    return total
+
+
+@bp.orchestration_trigger(context_name="context")
+def lock_then_throw(ctx: task.OrchestrationContext, key: Any):
+    # Acquire a lock, mutate the entity, then raise: the lock must be released
+    # so a later orchestration can lock the same entity again.
+    entity_id = entities.EntityInstanceId("counter", key)
+    with (yield ctx.lock_entities([entity_id])):
+        yield ctx.call_entity(entity_id, "add", 1)
+        raise RuntimeError("boom after locking")
+
+
+@bp.orchestration_trigger(context_name="context")
+def relay_signal(ctx: task.OrchestrationContext, key: Any):
+    # Orchestrator calls a Relay entity operation that in turn signals the
+    # counter entity (entity-to-entity signalling).
+    relay_id = entities.EntityInstanceId("relay", key)
+    yield ctx.call_entity(relay_id, "signal_counter", {"key": key, "amount": 7})
+    return key
+
+
+@bp.orchestration_trigger(context_name="context")
+def signal_counter_delayed(ctx: task.OrchestrationContext, key: Any):
+    # Schedules a delayed (future) signal to the counter entity, then completes
+    # immediately. The signal should only be delivered after the delay elapses.
+    entity_id = entities.EntityInstanceId("counter", key)
+    signal_at = ctx.current_utc_datetime + timedelta(seconds=3)
+    ctx.signal_entity(entity_id, "add", 4, signal_time=signal_at)
+    return key
+
+
+@bp.orchestration_trigger(context_name="context")
+def scheduled_tick(ctx: task.OrchestrationContext, key: Any):
+    # Target orchestration for a scheduled task: each run signals the counter
+    # entity so tests can observe that the schedule fired repeatedly.
+    entity_id = entities.EntityInstanceId("counter", key)
+    ctx.signal_entity(entity_id, "add", 1)
+    return key
+
+
+@bp.orchestration_trigger(context_name="context")
+def relay_start_orch(ctx: task.OrchestrationContext, key: Any):
+    # Orchestrator calls a Relay entity operation that schedules a new
+    # orchestration (signal_counter), which then signals the counter entity.
+    relay_id = entities.EntityInstanceId("relay", key)
+    yield ctx.call_entity(
+        relay_id, "start_orchestration", {"name": "signal_counter", "input": key})
+    return key
+
+
+@bp.orchestration_trigger(context_name="context")
+def call_failing_entity(ctx: task.OrchestrationContext, key: Any):
+    # Unhandled entity-operation failure must fail the orchestration.
+    relay_id = entities.EntityInstanceId("relay", key)
+    result = yield ctx.call_entity(relay_id, "boom")
+    return result
+
+
+@bp.orchestration_trigger(context_name="context")
+def call_failing_entity_handled(ctx: task.OrchestrationContext, key: Any):
+    # A caught entity-operation failure lets the orchestration complete.
+    relay_id = entities.EntityInstanceId("relay", key)
+    try:
+        yield ctx.call_entity(relay_id, "boom")
+        return {"caught": False}
+    except Exception as exc:  # noqa: BLE001 - test intentionally catches broadly
+        return {"caught": True, "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------

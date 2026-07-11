@@ -29,3 +29,7 @@ app.register_functions(activities.bp)
 app.register_functions(entities.bp)
 app.register_functions(orchestrators.bp)
 app.register_functions(client_routes.bp)
+
+# Opt in to durabletask scheduled tasks: registers the schedule entity and
+# operation orchestrator so schedules can be managed via ScheduledTaskClient.
+app.configure_scheduled_tasks()

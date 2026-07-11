@@ -13,15 +13,42 @@ native method names: ``schedule_new_orchestration``,
 ``get_entity``, and ``signal_entity``.
 """
 
+import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import azure.functions as func
 
 import azure.durable_functions as df
 from durabletask import entities
+from durabletask.client import EntityQuery, TaskHubGrpcClient
+from durabletask.scheduled import ScheduledTaskClient, ScheduleCreationOptions
+from azure.durable_functions.internal.azurefunctions_grpc_interceptor import (
+    AzureFunctionsDefaultClientInterceptorImpl,
+)
+from azure.durable_functions.internal.serialization import (
+    DEFAULT_FUNCTIONS_DATA_CONVERTER,
+)
 
 bp = df.Blueprint()
+
+
+def _sync_client(client: df.DurableFunctionsClient) -> TaskHubGrpcClient:
+    """Build a synchronous durabletask client aimed at the same sidecar.
+
+    The scheduled-tasks client (``ScheduledTaskClient``) is built on the
+    synchronous ``TaskHubGrpcClient``, whereas ``DurableFunctionsClient`` is
+    async; this bridges to a sync client using the same task hub, endpoint, and
+    data converter as the durable-client binding.
+    """
+    interceptors = [AzureFunctionsDefaultClientInterceptorImpl(
+        client.taskHubName, client.requiredQueryStringParameters)]
+    return TaskHubGrpcClient(
+        host_address=client.rpcBaseUrl,
+        secure_channel=False,
+        interceptors=interceptors,
+        data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
 
 
 def _state_to_json(state: Any) -> dict[str, Any]:
@@ -179,5 +206,119 @@ async def signal_entity(
         req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
     body = req.get_json()
     entity_id = entities.EntityInstanceId(req.route_params["name"], req.route_params["key"])
-    await client.signal_entity(entity_id, req.route_params["op"], input=body.get("input"))
+    # An optional ``delay_seconds`` schedules the signal for future delivery
+    # (client-side delayed/scheduled signal).
+    signal_time = None
+    delay_seconds = body.get("delay_seconds")
+    if delay_seconds:
+        signal_time = datetime.now(timezone.utc) + timedelta(seconds=float(delay_seconds))
+    await client.signal_entity(
+        entity_id, req.route_params["op"], input=body.get("input"), signal_time=signal_time)
+    return func.HttpResponse(status_code=202)
+
+
+@bp.route(route="entities", methods=["GET"])
+@bp.durable_client_input(client_name="client")
+async def list_entities(
+        req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
+    # List All Entities: client.get_all_entities with an optional
+    # instance-id-prefix filter (entity IDs are formatted "@name@key").
+    starts_with = req.params.get("starts_with")
+    query = EntityQuery(instance_id_starts_with=starts_with, include_state=True)
+    metadatas = await client.get_all_entities(query)
+    items = [
+        {
+            "entity": md.id.entity,
+            "key": md.id.key,
+            "state": md.get_typed_state() if md.includes_state else None,
+        }
+        for md in metadatas
+    ]
+    return func.HttpResponse(
+        json.dumps({"count": len(items), "entities": items}),
+        mimetype="application/json")
+
+
+@bp.route(route="clean-entities", methods=["POST"])
+@bp.durable_client_input(client_name="client")
+async def clean_entities(
+        req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
+    # Entity storage cleanup: remove empty entities and release orphaned locks.
+    result = await client.clean_entity_storage(
+        remove_empty_entities=True, release_orphaned_locks=True)
+    return func.HttpResponse(
+        json.dumps({
+            "emptyEntitiesRemoved": result.empty_entities_removed,
+            "orphanedLocksReleased": result.orphaned_locks_released,
+        }),
+        mimetype="application/json")
+
+
+@bp.route(route="schedule/{id}", methods=["POST"])
+@bp.durable_client_input(client_name="client")
+async def create_schedule(
+        req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
+    # Scheduled orchestrations: create a schedule that runs "scheduled_tick"
+    # on an interval. Uses the sync ScheduledTaskClient bridged to the sidecar.
+    body = req.get_json()
+    schedule_id = req.route_params["id"]
+    interval_seconds = float(body.get("interval_seconds", 2))
+    tick_key = body.get("input")
+
+    def _create() -> dict[str, Any]:
+        sync = _sync_client(client)
+        try:
+            scheduled = ScheduledTaskClient(sync)
+            options = ScheduleCreationOptions(
+                schedule_id=schedule_id,
+                orchestration_name="scheduled_tick",
+                interval=timedelta(seconds=interval_seconds),
+                orchestration_input=tick_key,
+                start_immediately_if_late=True,
+            )
+            scheduled.create_schedule(options)
+            desc = scheduled.get_schedule(schedule_id)
+            return {"scheduleId": desc.schedule_id, "status": str(desc.status)}
+        finally:
+            sync.close()
+
+    payload = await asyncio.to_thread(_create)
+    return func.HttpResponse(json.dumps(payload), mimetype="application/json")
+
+
+@bp.route(route="schedule/{id}", methods=["GET"])
+@bp.durable_client_input(client_name="client")
+async def describe_schedule(
+        req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
+    schedule_id = req.route_params["id"]
+
+    def _describe() -> dict[str, Any]:
+        sync = _sync_client(client)
+        try:
+            scheduled = ScheduledTaskClient(sync)
+            desc = scheduled.get_schedule(schedule_id)
+            if desc is None:
+                return {"exists": False}
+            return {"exists": True, "scheduleId": desc.schedule_id, "status": str(desc.status)}
+        finally:
+            sync.close()
+
+    payload = await asyncio.to_thread(_describe)
+    return func.HttpResponse(json.dumps(payload), mimetype="application/json")
+
+
+@bp.route(route="schedule/{id}/delete", methods=["POST"])
+@bp.durable_client_input(client_name="client")
+async def delete_schedule(
+        req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
+    schedule_id = req.route_params["id"]
+
+    def _delete() -> None:
+        sync = _sync_client(client)
+        try:
+            ScheduledTaskClient(sync).get_schedule_client(schedule_id).delete()
+        finally:
+            sync.close()
+
+    await asyncio.to_thread(_delete)
     return func.HttpResponse(status_code=202)

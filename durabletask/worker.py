@@ -2857,12 +2857,15 @@ class _OrchestrationExecutor:
             return
 
         result = None
-        if response is not None:
+        if response is not None and not is_lock_event:
             # The legacy protocol wraps the result as {"result": <serialized>},
             # where the value is a serialized JSON string (like the new protocol's
             # entityOperationCompleted.output). Deserialize it -- not coerce -- so
             # the value is fully parsed and the expected type applied; coercing
             # would skip JSON parsing and leave it double-encoded (e.g. '"done"').
+            # Skipped for lock-granted events: those carry no operation result
+            # (the payload's "result" is empty), and the lock branch below
+            # ignores ``result`` entirely, so deserializing it would only raise.
             result = self._data_converter.deserialize(
                 response["result"],
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]

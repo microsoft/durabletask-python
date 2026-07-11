@@ -379,10 +379,58 @@ class FunctionApp:
         assert result.status == 200, f"entity read failed: {result.status} {result.body}"
         return result.json()
 
-    def signal_entity(self, name: str, key: str, op: str, input: Any = None) -> None:
-        """Signal an entity via the app's ``/api/signal/{name}/{key}/{op}`` route."""
+    def list_entities(self, starts_with: Optional[str] = None) -> dict[str, Any]:
+        """List entities via the app's ``/api/entities`` route.
+
+        An optional ``starts_with`` filters by the entity instance-id prefix
+        (entity IDs are formatted ``@name@key``).
+        """
+        url = f"{self.base_url}/api/entities"
+        if starts_with is not None:
+            url += f"?starts_with={urllib.parse.quote(starts_with)}"
+        result = http_request("GET", url)
+        assert result.status == 200, f"list entities failed: {result.status} {result.body}"
+        return result.json()
+
+    def clean_entity_storage(self) -> dict[str, Any]:
+        """Trigger entity storage cleanup via the app's ``/api/clean-entities`` route."""
+        result = http_request("POST", f"{self.base_url}/api/clean-entities")
+        assert result.status == 200, f"clean entities failed: {result.status} {result.body}"
+        return result.json()
+
+    def create_schedule(self, schedule_id: str, interval_seconds: float = 2,
+                        input: Any = None) -> dict[str, Any]:
+        """Create a scheduled task via the app's ``/api/schedule/{id}`` route."""
         result = http_request(
-            "POST", f"{self.base_url}/api/signal/{name}/{key}/{op}", data={"input": input})
+            "POST", f"{self.base_url}/api/schedule/{schedule_id}",
+            data={"interval_seconds": interval_seconds, "input": input}, timeout=90)
+        assert result.status == 200, f"create schedule failed: {result.status} {result.body}"
+        return result.json()
+
+    def describe_schedule(self, schedule_id: str) -> dict[str, Any]:
+        """Describe a scheduled task via the app's ``/api/schedule/{id}`` route."""
+        result = http_request("GET", f"{self.base_url}/api/schedule/{schedule_id}", timeout=90)
+        assert result.status == 200, f"describe schedule failed: {result.status} {result.body}"
+        return result.json()
+
+    def delete_schedule(self, schedule_id: str) -> None:
+        """Delete a scheduled task via the app's ``/api/schedule/{id}/delete`` route."""
+        result = http_request(
+            "POST", f"{self.base_url}/api/schedule/{schedule_id}/delete", timeout=90)
+        assert result.status == 202, f"delete schedule failed: {result.status} {result.body}"
+
+    def signal_entity(self, name: str, key: str, op: str, input: Any = None,
+                      delay_seconds: Optional[float] = None) -> None:
+        """Signal an entity via the app's ``/api/signal/{name}/{key}/{op}`` route.
+
+        When ``delay_seconds`` is provided, the app schedules the signal for
+        future delivery (a delayed/scheduled entity signal).
+        """
+        data: dict[str, Any] = {"input": input}
+        if delay_seconds is not None:
+            data["delay_seconds"] = delay_seconds
+        result = http_request(
+            "POST", f"{self.base_url}/api/signal/{name}/{key}/{op}", data=data)
         assert result.status == 202, f"signal failed: {result.status} {result.body}"
 
     def wait_for_entity(
