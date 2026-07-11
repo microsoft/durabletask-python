@@ -320,6 +320,9 @@ class _SyncTaskHubSidecarServiceStub(Protocol):
     def ResumeInstance(self, request: pb.ResumeRequest) -> pb.ResumeResponse:
         ...
 
+    def RewindInstance(self, request: pb.RewindInstanceRequest) -> pb.RewindInstanceResponse:
+        ...
+
     def RestartInstance(self, request: pb.RestartInstanceRequest) -> pb.RestartInstanceResponse:
         ...
 
@@ -379,6 +382,9 @@ class _AsyncTaskHubSidecarServiceStub(Protocol):
         ...
 
     async def ResumeInstance(self, request: pb.ResumeRequest) -> pb.ResumeResponse:
+        ...
+
+    async def RewindInstance(self, request: pb.RewindInstanceRequest) -> pb.RewindInstanceResponse:
         ...
 
     async def RestartInstance(self, request: pb.RestartInstanceRequest) -> pb.RestartInstanceResponse:
@@ -781,6 +787,26 @@ class TaskHubGrpcClient:
         req = pb.ResumeRequest(instanceId=instance_id)
         self._logger.info(f"Resuming instance '{instance_id}'.")
         self._stub.ResumeInstance(req)
+
+    def rewind_orchestration(self, instance_id: str, *,
+                             reason: str | None = None) -> None:
+        """Rewinds a failed orchestration instance to its last known good state.
+
+        Rewind removes failed task and sub-orchestration results from the
+        orchestration history and replays the orchestration from the last
+        successful checkpoint.  Activities that previously succeeded are
+        not re-executed; only failed work is retried.
+
+        Args:
+            instance_id: The ID of the orchestration instance to rewind.
+            reason: An optional reason string describing why the orchestration is being rewound.
+        """
+        req = pb.RewindInstanceRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason))
+
+        self._logger.info(f"Rewinding instance '{instance_id}'.")
+        self._stub.RewindInstance(req)
 
     def restart_orchestration(self, instance_id: str, *,
                               restart_with_new_instance_id: bool = False) -> str:
@@ -1266,6 +1292,26 @@ class AsyncTaskHubGrpcClient:
         req = pb.ResumeRequest(instanceId=instance_id)
         self._logger.info(f"Resuming instance '{instance_id}'.")
         await self._stub.ResumeInstance(req)
+
+    async def rewind_orchestration(self, instance_id: str, *,
+                                   reason: str | None = None) -> None:
+        """Rewinds a failed orchestration instance to its last known good state.
+
+        Rewind removes failed task and sub-orchestration results from the
+        orchestration history and replays the orchestration from the last
+        successful checkpoint.  Activities that previously succeeded are
+        not re-executed; only failed work is retried.
+
+        Args:
+            instance_id: The ID of the orchestration instance to rewind.
+            reason: An optional reason string describing why the orchestration is being rewound.
+        """
+        req = pb.RewindInstanceRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason))
+
+        self._logger.info(f"Rewinding instance '{instance_id}'.")
+        await self._stub.RewindInstance(req)
 
     async def restart_orchestration(self, instance_id: str, *,
                                     restart_with_new_instance_id: bool = False) -> str:

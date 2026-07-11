@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- Added `rewind_orchestration()` to `DurableTaskSchedulerClient` and `AsyncDurableTaskSchedulerClient` (inherited from the base clients) to rewind a failed orchestration instance to its last known good state.
+
+## v1.7.2
+
+- Updates base dependency to durabletask v1.7.2.
+
+## v1.7.1
+
+- Updates base dependency to durabletask v1.7.1
+
 ## v1.7.0
 
 - Updates base dependency to durabletask v1.7.0.

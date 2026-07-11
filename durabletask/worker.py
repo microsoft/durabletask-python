@@ -2144,6 +2144,30 @@ class _OrchestrationExecutor:
                 "The new history event list must have at least one event in it."
             )
 
+        # Check for rewind BEFORE replay.  A rewind is indicated by an
+        # executionRewound event in new_events.  We look for an
+        # executionCompleted event in the committed history (old_events)
+        # to decide whether to rewind or replay:
+        # 1. executionCompleted IS present → the orchestration reached a
+        #    terminal state (e.g. failed).  This is a *new* rewind that
+        #    the worker must short-circuit by building clean history.
+        # 2. executionCompleted is NOT present → the backend already
+        #    processed the RewindOrchestrationAction and removed
+        #    executionCompleted from the committed history. Here the
+        #    executionRewound event in new_events acts as a "jump-start":
+        #    it wakes the orchestration so that normal replay re-emits
+        #    scheduleTask actions for the removed activities, causing the
+        #    previously-failed work to rerun. No further rewrite is needed,
+        #    so we fall through to the normal replay path below.
+        has_rewind_in_new = any(
+            e.HasField("executionRewound") for e in new_events
+        )
+        if has_rewind_in_new and any(e.HasField("executionCompleted") for e in old_events):
+            # The orchestration completed (with failure) and needs
+            # rewinding — short-circuit to build clean history.
+            return self._build_rewind_result(
+                instance_id, orchestration_name, old_events, new_events)
+
         ctx = _RuntimeOrchestrationContext(
             instance_id,
             self._registry,
@@ -2209,6 +2233,108 @@ class _OrchestrationExecutor:
             actions=actions, encoded_custom_status=ctx._encoded_custom_status,  # pyright: ignore[reportPrivateUsage]
             orchestration_trace_context=ctx._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
         )
+
+    def _build_rewind_result(
+            self,
+            instance_id: str,
+            orchestration_name: str,
+            old_events: Sequence[pb.HistoryEvent],
+            new_events: Sequence[pb.HistoryEvent],
+    ) -> ExecutionResults:
+        """Build an ``ExecutionResults`` containing a ``RewindOrchestrationAction``.
+
+        When the worker detects an ``executionRewound`` event in the new
+        events (that does not yet appear in the committed history) it
+        rewrites the history by removing failed task results
+        (``taskFailed``) and failed sub-orchestration results
+        (``subOrchestrationInstanceFailed``).  The ``executionRewound``
+        event is kept so the backend knows why the rewind happened and
+        so it remains in the history for audit purposes.
+
+        For failed activities, the corresponding ``taskScheduled`` event
+        is also removed so that the SDK will re-generate a
+        ``scheduleTask`` action during the next replay, causing the
+        backend to re-dispatch the activity.
+
+        For failed sub-orchestrations, the ``subOrchestrationInstanceCreated``
+        event is kept so the backend can identify which sub-orchestration
+        instances to recursively rewind.
+
+        Known limitation (shared with the Core/.NET rewind): timer events
+        (``timerCreated`` / ``timerFired``) emitted between retry attempts
+        of an activity scheduled with a ``RetryPolicy`` are not removed.
+        On the next replay the regenerated ``scheduleTask`` action may not
+        line up with those retained timer events, which can surface as a
+        non-determinism mismatch. Rewinding an activity that used a retry
+        policy is therefore not currently supported.
+
+        WARNING!!!:
+        If any changes are made to how this method modifies the orchestration's history, then corresponding changes *must*
+        be made in the backend implementations that rely on this method for executing a rewind.
+        """
+        self._logger.info(
+            f"{instance_id}: Orchestration {orchestration_name} is being rewound"
+        )
+
+        if len(new_events) != 2 or not new_events[1].HasField("executionRewound"):
+            raise ValueError(
+                "When rewinding an orchestration, the new events list must contain exactly two events: orchestratorStarted and the executionRewound event."
+            )
+
+        rewind_event: pb.ExecutionRewoundEvent = new_events[1].executionRewound
+
+        all_events = list(old_events) + list(new_events)
+        # Generate a new execution ID for the rewound execution.
+        new_execution_id = uuid.uuid4().hex
+
+        # First pass: collect the task-scheduled IDs that correspond to
+        # failed activities so we can remove the matching taskScheduled
+        # events in the second pass.
+        failed_task_ids: set[int] = set()
+        for event in all_events:
+            if event.HasField("taskFailed"):
+                failed_task_ids.add(event.taskFailed.taskScheduledId)
+
+        # Second pass: build the clean history.
+        clean_history: list[pb.HistoryEvent] = []
+        for event in all_events:
+            if event.HasField("taskFailed"):
+                continue
+            if event.HasField("taskScheduled") and event.eventId in failed_task_ids:
+                continue
+            if event.HasField("subOrchestrationInstanceFailed"):
+                continue
+            if event.HasField("executionCompleted"):
+                continue
+
+            # Modify the executionStarted event: assign a fresh
+            # execution ID and, for sub-orchestrations, update the
+            # parent's execution ID so it matches the parent's new run.
+            if event.HasField("executionStarted"):
+                event_copy = pb.HistoryEvent()
+                event_copy.CopyFrom(event)
+                event_copy.executionStarted.orchestrationInstance.executionId.CopyFrom(
+                    ph.get_string_value_or_empty(new_execution_id))
+                # Only update the parent's execution ID when this is
+                # actually a sub-orchestration (its executionStarted has a
+                # parentInstance). Writing through parentInstance for a
+                # top-level orchestration would materialize an empty one.
+                if (rewind_event.HasField("parentExecutionId")
+                        and rewind_event.parentExecutionId.value
+                        and event_copy.executionStarted.HasField("parentInstance")):
+                    event_copy.executionStarted.parentInstance.orchestrationInstance.executionId.CopyFrom(
+                        rewind_event.parentExecutionId)
+                clean_history.append(event_copy)
+                continue
+
+            clean_history.append(event)
+
+        rewind_action = pb.RewindOrchestrationAction(newHistory=clean_history)
+        action = pb.OrchestratorAction(
+            id=-1,
+            rewindOrchestration=rewind_action,
+        )
+        return ExecutionResults(actions=[action], encoded_custom_status=None)
 
     def process_event(
             self, ctx: _RuntimeOrchestrationContext, event: pb.HistoryEvent
@@ -2783,7 +2909,13 @@ class _OrchestrationExecutor:
                 entity_task.fail(str(failure), failure)
                 ctx.resume()
             elif event.HasField("orchestratorCompleted"):
-                # Added in Functions only (for some reason) and does not affect orchestrator flow
+                # Bookend event for each replay batch — no action needed.
+                pass
+            elif event.HasField("executionCompleted"):
+                # Terminal marker event — in practice, this never appears during replay.
+                pass
+            elif event.HasField("executionRewound"):
+                # Informational event added when an orchestration is rewound. No action needed.
                 pass
             elif event.HasField("eventSent"):
                 # Check if this eventSent corresponds to an entity operation call after being translated to the old

@@ -8,6 +8,7 @@ import logging
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 
@@ -449,23 +450,11 @@ class ReplaySafeLogger(_LoggerAdapterBase):
         return self.logger.isEnabledFor(level)
 
 
+@dataclass(frozen=True)
 class FailureDetails:
-    def __init__(self, message: str, error_type: str, stack_trace: str | None):
-        self._message = message
-        self._error_type = error_type
-        self._stack_trace = stack_trace
-
-    @property
-    def message(self) -> str:
-        return self._message
-
-    @property
-    def error_type(self) -> str:
-        return self._error_type
-
-    @property
-    def stack_trace(self) -> str | None:
-        return self._stack_trace
+    message: str
+    error_type: str
+    stack_trace: str | None
 
 
 class TaskFailedError(Exception):

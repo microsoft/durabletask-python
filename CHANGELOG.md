@@ -10,17 +10,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ADDED
 
 - Added a `result` property to `Task` as a convenience alias for `get_result()`.
-- Added `OrchestrationContext.parent_instance_id`, which returns the instance
-  ID of the parent orchestration for a sub-orchestration, or `None` for a
-  top-level orchestration.
+- Added `TaskHubGrpcClient.rewind_orchestration()` to rewind a failed orchestration instance to its last known good state. Failed activity and sub-orchestration results are removed from the history and the orchestration replays from the last successful checkpoint, retrying only the failed work. The in-memory testing backend supports rewind as well.
 - Exported `bind_context` and `clear_context` from
   `durabletask.extensions.history_export` so hosts that register the export
   functions themselves (rather than via `ExportHistoryClient.register_worker`)
   can supply the activities' runtime dependencies.
-
-CHANGED
-
-- Changed the default large-payload externalization threshold (`LargePayloadStorageOptions.threshold_bytes`) from 900,000 bytes to 262,144 bytes (256 KiB), matching the .NET SDK default. Behavioral change (not source/binary breaking): payloads larger than 256 KiB are now externalized by default.
 
 FIXED
 
@@ -44,6 +38,25 @@ FIXED
 - `OrchestrationContext.create_timer` now accepts timezone-aware `datetime`
   values, normalizing them to UTC instead of raising when compared against the
   orchestration's internal clock.
+
+## v1.7.2
+
+FIXED
+
+- Fixed history export failing for orchestrations that completed with an error. Events carrying failure information (orchestration completion, activity failure, sub-orchestration failure, and entity operation failure) were not JSON-serializable, causing the `durabletask.extensions.history_export` module to raise `TypeError: Object of type FailureDetails is not JSON serializable`. `FailureDetails` now serializes to a JSON object with `message`, `error_type`, and `stack_trace` fields.
+
+## v1.7.1
+
+ADDED
+
+- Added `OrchestrationContext.parent_instance_id`, which returns the instance ID of the parent orchestration for a sub-orchestration, or `None` for a top-level orchestration.
+
+CHANGED
+
+- Changed the default large-payload externalization threshold (`LargePayloadStorageOptions.threshold_bytes`) from 900,000 bytes to 262,144 bytes (256 KiB), matching the .NET SDK default. Behavioral change (not source/binary breaking): payloads larger than 256 KiB are now externalized by default.
+
+FIXED
+
 - Fixed `OrchestrationContext.call_entity` not propagating entity operation failures when running under the legacy entity protocol (used by the Azure Functions Durable extension). A failed entity operation now raises `TaskFailedError` in the calling orchestration instead of silently completing, matching the behavior of the current entity protocol and the .NET SDK.
 - Fixed `OrchestrationContext.call_entity` returning a double-encoded result under the legacy entity protocol. The entity's return value was left as a raw serialized JSON string (for example, a returned string arrived with extra quotes and dicts/lists arrived as strings); it is now fully deserialized and coerced to the requested `return_type`, matching the current entity protocol.
 - Fixed unbounded growth of the internal entity request/lock tracking maps when using entities over the legacy entity protocol. Entries are now released as each response is handled, reducing memory use in long-running orchestrations that call or lock entities.
