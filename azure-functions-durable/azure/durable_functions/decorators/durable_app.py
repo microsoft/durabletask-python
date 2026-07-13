@@ -65,7 +65,8 @@ class Blueprint(TriggerApi, BindingApi):
             activity=BUILTIN_HTTP_ACTIVITY_NAME)(builtin_http_activity)
         self.orchestration_trigger(
             context_name="context",
-            orchestration=BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME)(builtin_http_poll_orchestrator)
+            orchestration=BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME)(
+                builtin_http_poll_orchestrator)  # pyright: ignore[reportArgumentType]
 
     def configure_scheduled_tasks(self) -> None:
         """Opt in to durabletask scheduled tasks by registering their built-ins.
@@ -138,14 +139,19 @@ class Blueprint(TriggerApi, BindingApi):
             context_name="context", entity_name=EXPORT_ENTITY_NAME)(ExportJobEntity)
         self.orchestration_trigger(context_name="context")(export_job_orchestrator)
 
-        def _list_terminal_instances(input: dict) -> dict:
+        def _list_terminal_instances(input: dict[str, Any]) -> dict[str, Any]:
             return list_terminal_instances(None, input)  # type: ignore[arg-type]
 
-        def _export_instance_history(input: dict) -> dict:
+        def _export_instance_history(input: dict[str, Any]) -> dict[str, Any]:
             return export_instance_history(None, input)  # type: ignore[arg-type]
 
         _list_terminal_instances.__name__ = LIST_TERMINAL_INSTANCES_ACTIVITY
         _export_instance_history.__name__ = EXPORT_INSTANCE_HISTORY_ACTIVITY
+        # The worker reads the runtime ``__annotations__`` during indexing and
+        # rejects parameterized generics, so reset them to the bare ``dict`` it
+        # accepts (the signatures above stay typed for static analysis).
+        _list_terminal_instances.__annotations__ = {"input": dict, "return": dict}
+        _export_instance_history.__annotations__ = {"input": dict, "return": dict}
         self.activity_trigger(
             input_name="input",
             activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(_list_terminal_instances)

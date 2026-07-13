@@ -28,7 +28,7 @@ from durabletask.client import OrchestrationQuery, OrchestrationStatus
 from durabletask.internal.helpers import ensure_aware
 
 from durabletask.extensions.history_export._internal import dt_from_iso
-from durabletask.extensions.history_export.activities import _require_context
+from durabletask.extensions.history_export.activities import _require_context  # pyright: ignore[reportPrivateUsage]
 
 # The activity registers under the same name the export orchestrator calls, so
 # it transparently replaces the core activity.

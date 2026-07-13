@@ -59,7 +59,7 @@ def _acquire_bearer_token(resource: str) -> str:
     return credential.get_token(scope).token
 
 
-def builtin_http_activity(input: dict) -> dict:
+def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:
     """Execute a single HTTP request and return the response payload.
 
     ``input`` is the JSON form of a
@@ -68,14 +68,14 @@ def builtin_http_activity(input: dict) -> dict:
     return value is the JSON form of a
     :class:`~azure.durable_functions.http.models.DurableHttpResponse`.
 
-    The parameter and return are annotated with the plain ``dict`` type on
-    purpose. The Azure Functions Python worker inspects trigger annotations
-    during indexing and requires them to be a real ``type`` (it rejects
+    The parameter and return are declared as ``dict[str, Any]`` for static type
+    checking, but the *runtime* annotations are reset to the bare ``dict`` type
+    just below the function. The Azure Functions Python worker inspects trigger
+    annotations during indexing and requires a real ``type`` -- it rejects
     parameterized generics such as ``dict[str, Any]`` with
     ``FunctionLoadError: ... invalid non-type annotation`` and, for a
     ``typing.Union`` origin like ``Optional[...]``, raises
-    ``TypeError: issubclass() arg 1 must be a class``). A bare ``dict`` keeps
-    worker indexing happy while the body still defends against ``None`` below.
+    ``TypeError: issubclass() arg 1 must be a class``.
     """
     request = input or {}
     method = str(request.get("method", "GET")).upper()
@@ -113,6 +113,13 @@ def builtin_http_activity(input: dict) -> dict:
         status_code=status, headers=resp_headers, content=body).to_json()
 
 
+# The Azure Functions worker reads a trigger function's runtime ``__annotations__``
+# during indexing and rejects parameterized generics (it requires a bare
+# ``dict``). The signature above is typed ``dict[str, Any]`` for static analysis;
+# reset the runtime annotations to the bare ``dict`` the worker accepts.
+builtin_http_activity.__annotations__ = {"input": dict, "return": dict}
+
+
 def _get_header(headers: dict[str, str], name: str) -> Optional[str]:
     """Case-insensitively look up ``name`` in ``headers``."""
     lowered = name.lower()
@@ -135,10 +142,8 @@ def _retry_after_seconds(headers: dict[str, str]) -> int:
     if raw.isdigit():
         return max(int(raw), 0)
     try:
-        retry_at = parsedate_to_datetime(raw)
+        parsedate_to_datetime(raw)
     except (TypeError, ValueError):
-        return _DEFAULT_POLL_INTERVAL_SECONDS
-    if retry_at is None:
         return _DEFAULT_POLL_INTERVAL_SECONDS
     return _DEFAULT_POLL_INTERVAL_SECONDS
 
@@ -156,7 +161,7 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, dict[str
         BUILTIN_HTTP_ACTIVITY_NAME, request)
 
     while response.get("status_code") == 202:
-        headers = response.get("headers") or {}
+        headers: dict[str, str] = response.get("headers") or {}
         location = _get_header(headers, "Location")
         if not location:
             # Cannot poll without a Location; return the 202 as-is.
