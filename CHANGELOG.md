@@ -10,6 +10,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ADDED
 
 - Added `TaskHubGrpcClient.rewind_orchestration()` to rewind a failed orchestration instance to its last known good state. Failed activity and sub-orchestration results are removed from the history and the orchestration replays from the last successful checkpoint, retrying only the failed work. The in-memory testing backend supports rewind as well.
+- Added a `Task.result` property as a read-only alias for `Task.get_result()`.
+- Exported `bind_context` and `clear_context` from `durabletask.extensions.history_export` for managing the ambient history-export context.
+
+FIXED
+
+- Fixed timers created with a timezone-aware `fire_at` datetime being compared against the orchestration's naive UTC clock, which could cause timers to fire at the wrong time. Timezone-aware fire times are now normalized to naive UTC before scheduling.
+- Fixed the orchestration version being set from an unset `executionStarted.version` field. Presence is now checked with `HasField`, so `OrchestrationContext` no longer reports a version when none was provided.
+- Fixed orchestrations failing with `OrchestrationStateError` when a `genericEvent` history event was replayed (for example, the marker the Durable Functions extension appends when rewinding an orchestration). Such informational events are now ignored during replay, matching the .NET worker.
+- Fixed a lock-granted entity response over the legacy entity protocol raising while trying to deserialize an empty operation result. Lock-granted events no longer attempt result deserialization.
 
 ## v1.7.2
 
