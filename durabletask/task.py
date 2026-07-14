@@ -562,13 +562,20 @@ class WhenAllTask(CompositeTask[list[T]]):
         if self.is_complete:
             raise ValueError('The task has already completed.')
         self._completed_tasks += 1
-        if task.is_failed and self._exception is None:
-            self._exception = task.get_exception()
-            self._is_complete = True
+        if task.is_failed:
+            self._failed_tasks += 1
+            if self._exception is None:
+                self._exception = task.get_exception()
         if self._completed_tasks == len(self._tasks):
-            # The order of the result MUST match the order of the tasks provided to the constructor.
-            self._result = [child.get_result() for child in self._tasks]
+            # Only complete once every child task has completed. This matches the
+            # semantics of .NET's Task.WhenAll: the composite task waits for all
+            # children to finish and, if any failed, surfaces the first failure
+            # rather than failing fast on the first error.
             self._is_complete = True
+            if self._exception is None:
+                # The order of the result MUST match the order of the tasks
+                # provided to the constructor.
+                self._result = [child.get_result() for child in self._tasks]
 
     def get_completed_tasks(self) -> int:
         return self._completed_tasks

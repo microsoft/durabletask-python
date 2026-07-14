@@ -1615,15 +1615,27 @@ def test_fan_in_with_single_failure():
             i + 1, activity_name, encoded_input=str(i)))
 
     # 5 of the tasks complete successfully, 1 fails, and 4 are still running.
-    # The expectation is that the orchestration will fail immediately.
-    new_events = []
+    # when_all must NOT fail fast: it waits for every child task to complete
+    # before surfacing a failure (matching .NET's Task.WhenAll semantics), so
+    # the orchestration is expected to still be running with zero new actions.
+    ex = Exception("Kah-BOOOOM!!!")
+    partial_events = []
     for i in range(5):
+        partial_events.append(helpers.new_task_completed_event(
+            i + 1, encoded_output=print_int(None, i)))
+    partial_events.append(helpers.new_task_failed_event(6, ex))
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, partial_events)
+    assert len(result.actions) == 0
+
+    # Once the remaining 4 tasks also complete, the orchestration fails and
+    # surfaces the first task failure.
+    new_events = list(partial_events)
+    for i in range(6, 10):
         new_events.append(helpers.new_task_completed_event(
             i + 1, encoded_output=print_int(None, i)))
-    ex = Exception("Kah-BOOOOM!!!")
-    new_events.append(helpers.new_task_failed_event(6, ex))
 
-    # Now test with the full set of new events. We expect the orchestration to complete.
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions

@@ -11,6 +11,10 @@ ADDED
 
 - Added `TaskHubGrpcClient.rewind_orchestration()` to rewind a failed orchestration instance to its last known good state. Failed activity and sub-orchestration results are removed from the history and the orchestration replays from the last successful checkpoint, retrying only the failed work. The in-memory testing backend supports rewind as well.
 
+FIXED
+
+- Fixed `task.when_all()` failing fast when one of its child tasks failed. It now waits for every child task to complete before surfacing the first failure, matching the semantics of .NET's `Task.WhenAll`.
+
 ## v1.7.2
 
 FIXED
