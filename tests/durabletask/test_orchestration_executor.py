@@ -1646,6 +1646,40 @@ def test_fan_in_with_single_failure():
     assert str(ex) in complete_action.failureDetails.errorMessage
 
 
+def test_when_all_defers_failure_until_all_children_complete():
+    """when_all must not report is_failed until every child task completes.
+
+    This mirrors .NET's Task.WhenAll, where the returned task does not fault
+    (failed => complete) until all children have finished. A composite that
+    exposed is_failed while still incomplete would surprise consumers that
+    assume failed implies complete.
+    """
+    t1 = task.CompletableTask()
+    t2 = task.CompletableTask()
+    t3 = task.CompletableTask()
+    when_all = task.when_all([t1, t2, t3])
+
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # First child fails: the composite must stay pending and must NOT report
+    # failure yet.
+    t1.fail("boom", Exception("boom"))
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # A later child completes successfully: still pending, still not failed.
+    t2.complete("ok")
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # Once the final child completes, the composite completes and only then
+    # surfaces the first failure.
+    t3.complete("ok")
+    assert when_all.is_complete
+    assert when_all.is_failed
+
+
 def test_when_any():
     """Tests that a when_any pattern works correctly"""
     def hello(_, name: str):

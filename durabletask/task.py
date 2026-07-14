@@ -552,6 +552,7 @@ class WhenAllTask(CompositeTask[list[T]]):
         super().__init__(cast(list[Task[Any]], tasks))
         self._completed_tasks = 0
         self._failed_tasks = 0
+        self._pending_exception: TaskFailedError | None = None
 
     @property
     def pending_tasks(self) -> int:
@@ -564,15 +565,21 @@ class WhenAllTask(CompositeTask[list[T]]):
         self._completed_tasks += 1
         if task.is_failed:
             self._failed_tasks += 1
-            if self._exception is None:
-                self._exception = task.get_exception()
+            if self._pending_exception is None:
+                # Stage the first failure but do NOT expose it via `_exception`
+                # yet. Exposing it now would make `is_failed` return True while
+                # `is_complete` is still False, diverging from .NET's
+                # Task.WhenAll (which does not fault until all children finish).
+                self._pending_exception = task.get_exception()
         if self._completed_tasks == len(self._tasks):
             # Only complete once every child task has completed. This matches the
             # semantics of .NET's Task.WhenAll: the composite task waits for all
             # children to finish and, if any failed, surfaces the first failure
             # rather than failing fast on the first error.
             self._is_complete = True
-            if self._exception is None:
+            if self._pending_exception is not None:
+                self._exception = self._pending_exception
+            else:
                 # The order of the result MUST match the order of the tasks
                 # provided to the constructor.
                 self._result = [child.get_result() for child in self._tasks]
