@@ -1434,8 +1434,7 @@ class TaskHubGrpcWorker:
             stub.CompleteEntityTask(batch_result)
         except Exception as ex:
             self._logger.exception(
-                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}"
-            )
+                f"Failed to deliver entity response for '{entity_instance_id}' of orchestration ID '{instance_id}' to sidecar: {ex}")
 
         # TODO: Reset context
 
@@ -1673,6 +1672,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             final_fire_at = self.current_utc_datetime + fire_at
         else:
             final_fire_at = fire_at
+
+        # Normalize timezone-aware datetimes to naive UTC so they can be safely
+        # compared against and combined with the orchestration's naive UTC clock.
+        # A datetime is only truly aware when utcoffset() returns a value; a
+        # tzinfo whose utcoffset() is None is still naive and must be left as-is
+        # (calling astimezone() on it would raise ValueError).
+        if final_fire_at.utcoffset() is not None:
+            final_fire_at = final_fire_at.astimezone(timezone.utc).replace(tzinfo=None)
 
         next_fire_at: datetime = final_fire_at
 
@@ -2350,7 +2357,7 @@ class _OrchestrationExecutor:
                         f"A '{event.executionStarted.name}' orchestrator was not registered."
                     )
 
-                if event.executionStarted.version:
+                if event.executionStarted.HasField("version"):
                     ctx._version = event.executionStarted.version.value  # pyright: ignore[reportPrivateUsage]
 
                 # Store the parent orchestration instance ID (set for
@@ -2913,6 +2920,12 @@ class _OrchestrationExecutor:
             elif event.HasField("executionRewound"):
                 # Informational event added when an orchestration is rewound. No action needed.
                 pass
+            elif event.HasField("genericEvent"):
+                # Informational history event with no execution semantics (for
+                # example, the marker the Durable Functions extension appends
+                # when rewinding an orchestration). Ignored during replay,
+                # matching the .NET worker.
+                pass
             elif event.HasField("eventSent"):
                 # Check if this eventSent corresponds to an entity operation call after being translated to the old
                 # entity protocol by the Durable WebJobs extension. If so, treat this message similarly to
@@ -2985,12 +2998,15 @@ class _OrchestrationExecutor:
             return
 
         result = None
-        if response is not None:
+        if response is not None and not is_lock_event:
             # The legacy protocol wraps the result as {"result": <serialized>},
             # where the value is a serialized JSON string (like the new protocol's
             # entityOperationCompleted.output). Deserialize it -- not coerce -- so
             # the value is fully parsed and the expected type applied; coercing
             # would skip JSON parsing and leave it double-encoded (e.g. '"done"').
+            # Skipped for lock-granted events: those carry no operation result
+            # (the payload's "result" is empty), and the lock branch below
+            # ignores ``result`` entirely, so deserializing it would only raise.
             result = self._data_converter.deserialize(
                 response["result"],
                 entity_task._expected_type,  # pyright: ignore[reportPrivateUsage]
