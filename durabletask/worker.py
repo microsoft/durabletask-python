@@ -1675,7 +1675,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
         # Normalize timezone-aware datetimes to naive UTC so they can be safely
         # compared against and combined with the orchestration's naive UTC clock.
-        if final_fire_at.tzinfo is not None:
+        # A datetime is only truly aware when utcoffset() returns a value; a
+        # tzinfo whose utcoffset() is None is still naive and must be left as-is
+        # (calling astimezone() on it would raise ValueError).
+        if final_fire_at.utcoffset() is not None:
             final_fire_at = final_fire_at.astimezone(timezone.utc).replace(tzinfo=None)
 
         next_fire_at: datetime = final_fire_at
