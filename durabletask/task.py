@@ -526,6 +526,8 @@ class Task(ABC, Generic[T]):
 class CompositeTask(Task[T]):
     """A task that is composed of other tasks."""
     _tasks: list[Task[Any]]
+    _completed_tasks: int
+    _failed_tasks: int
 
     def __init__(self, tasks: list[Task[Any]]):
         super().__init__()
@@ -549,10 +551,14 @@ class WhenAllTask(CompositeTask[list[T]]):
     """A task that completes when all of its child tasks complete."""
 
     def __init__(self, tasks: list[Task[T]]):
-        super().__init__(cast(list[Task[Any]], tasks))
-        self._completed_tasks = 0
-        self._failed_tasks = 0
+        # Initialize state that on_child_completed() reads BEFORE invoking the
+        # base constructor: CompositeTask.__init__ calls on_child_completed()
+        # for any children that are already complete, so `_pending_exception`
+        # must exist first. The base constructor also initializes
+        # `_completed_tasks`/`_failed_tasks` to 0 and then accounts for
+        # pre-completed children, so they must not be reset afterwards.
         self._pending_exception: TaskFailedError | None = None
+        super().__init__(cast(list[Task[Any]], tasks))
 
     @property
     def pending_tasks(self) -> int:

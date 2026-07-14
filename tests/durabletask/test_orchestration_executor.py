@@ -1680,6 +1680,33 @@ def test_when_all_defers_failure_until_all_children_complete():
     assert when_all.is_failed
 
 
+def test_when_all_handles_pre_completed_children():
+    """when_all must account for children that are already complete/failed.
+
+    CompositeTask.__init__ invokes on_child_completed() for children that are
+    already complete, so when_all must be constructible from an already-failed
+    child without raising (regression test for AttributeError on
+    `_pending_exception`).
+    """
+    # An already-failed child plus a still-pending child.
+    failed = task.CompletableTask()
+    failed.fail("boom", Exception("boom"))
+    pending = task.CompletableTask()
+
+    when_all = task.when_all([failed, pending])
+
+    # The pre-completed failure is accounted for but not yet surfaced.
+    assert when_all.get_completed_tasks() == 1
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # Completing the remaining child finishes the composite and surfaces the
+    # first failure.
+    pending.complete("ok")
+    assert when_all.is_complete
+    assert when_all.is_failed
+
+
 def test_when_any():
     """Tests that a when_any pattern works correctly"""
     def hello(_, name: str):
