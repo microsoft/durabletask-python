@@ -531,6 +531,8 @@ class Task(ABC, Generic[T]):
 class CompositeTask(Task[T]):
     """A task that is composed of other tasks."""
     _tasks: list[Task[Any]]
+    _completed_tasks: int
+    _failed_tasks: int
 
     def __init__(self, tasks: list[Task[Any]]):
         super().__init__()
@@ -554,9 +556,14 @@ class WhenAllTask(CompositeTask[list[T]]):
     """A task that completes when all of its child tasks complete."""
 
     def __init__(self, tasks: list[Task[T]]):
+        # Initialize state that on_child_completed() reads BEFORE invoking the
+        # base constructor: CompositeTask.__init__ calls on_child_completed()
+        # for any children that are already complete, so `_pending_exception`
+        # must exist first. The base constructor also initializes
+        # `_completed_tasks`/`_failed_tasks` to 0 and then accounts for
+        # pre-completed children, so they must not be reset afterwards.
+        self._pending_exception: TaskFailedError | None = None
         super().__init__(cast(list[Task[Any]], tasks))
-        self._completed_tasks = 0
-        self._failed_tasks = 0
 
     @property
     def pending_tasks(self) -> int:
@@ -567,13 +574,26 @@ class WhenAllTask(CompositeTask[list[T]]):
         if self.is_complete:
             raise ValueError('The task has already completed.')
         self._completed_tasks += 1
-        if task.is_failed and self._exception is None:
-            self._exception = task.get_exception()
-            self._is_complete = True
+        if task.is_failed:
+            self._failed_tasks += 1
+            if self._pending_exception is None:
+                # Stage the first failure but do NOT expose it via `_exception`
+                # yet. Exposing it now would make `is_failed` return True while
+                # `is_complete` is still False, diverging from .NET's
+                # Task.WhenAll (which does not fault until all children finish).
+                self._pending_exception = task.get_exception()
         if self._completed_tasks == len(self._tasks):
-            # The order of the result MUST match the order of the tasks provided to the constructor.
-            self._result = [child.get_result() for child in self._tasks]
+            # Only complete once every child task has completed. This matches the
+            # semantics of .NET's Task.WhenAll: the composite task waits for all
+            # children to finish and, if any failed, surfaces the first failure
+            # rather than failing fast on the first error.
             self._is_complete = True
+            if self._pending_exception is not None:
+                self._exception = self._pending_exception
+            else:
+                # The order of the result MUST match the order of the tasks
+                # provided to the constructor.
+                self._result = [child.get_result() for child in self._tasks]
 
     def get_completed_tasks(self) -> int:
         return self._completed_tasks
