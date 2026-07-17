@@ -1063,7 +1063,7 @@ class TaskHubGrpcWorker:
                     invalidate_connection(recreate_channel=recreate_channel)
                 error_details = str(rpc_error)
 
-                if error_code == grpc.StatusCode.CANCELLED:
+                if error_code == grpc.StatusCode.CANCELLED and self._shutdown.is_set():
                     self._logger.info(f"Disconnected from {self._host_address}")
                     break
                 elif error_code == grpc.StatusCode.UNAVAILABLE:

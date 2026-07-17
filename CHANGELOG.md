@@ -20,6 +20,9 @@ FIXED
 - Fixed orchestrations failing with `OrchestrationStateError` when a `genericEvent` history event was replayed (for example, the marker the Durable Functions extension appends when rewinding an orchestration). Such informational events are now ignored during replay, matching the .NET worker.
 - Fixed a lock-granted entity response over the legacy entity protocol raising while trying to deserialize an empty operation result. Lock-granted events no longer attempt result deserialization.
 - Fixed `task.when_all()` failing fast when one of its child tasks failed. It now waits for every child task to complete before surfacing the first failure, matching the semantics of .NET's `Task.WhenAll`.
+- Fixed workers stopping permanently when the server reset the `GetWorkItems`
+  stream. Workers now reconnect after a peer cancellation and still exit normally
+  when stopped.
 
 ## v1.7.2
 
