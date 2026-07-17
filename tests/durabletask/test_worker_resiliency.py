@@ -34,6 +34,14 @@ class FakeRpcError(grpc.RpcError):
         return self._details
 
 
+def _cancel_after_shutdown(worker):
+    def cancel(*_args, **_kwargs):
+        worker._shutdown.set()
+        raise FakeRpcError(grpc.StatusCode.CANCELLED, "stop")
+
+    return cancel
+
+
 class FakeResponseStream:
     def __init__(self, items=(), error: grpc.RpcError | None = None):
         self._items = list(items)
@@ -225,7 +233,7 @@ async def test_worker_applies_configured_hello_timeout(monkeypatch):
     monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
 
     stub = MagicMock()
-    stub.GetWorkItems.side_effect = FakeRpcError(grpc.StatusCode.CANCELLED, "stop")
+    stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
 
     monkeypatch.setattr("durabletask.worker.shared.get_grpc_channel", lambda *args, **kwargs: MagicMock())
     monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", lambda channel: stub)
@@ -233,6 +241,32 @@ async def test_worker_applies_configured_hello_timeout(monkeypatch):
     await worker._async_run_loop()
 
     assert stub.Hello.call_args.kwargs["timeout"] == 12.5
+
+
+@pytest.mark.asyncio
+async def test_worker_reconnects_after_peer_cancelled_stream(monkeypatch):
+    worker = TaskHubGrpcWorker(channel=MagicMock())
+    worker._async_worker_manager = DummyWorkerManager()
+    monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
+
+    first_stub = MagicMock()
+    first_stub.GetWorkItems.side_effect = FakeRpcError(
+        grpc.StatusCode.CANCELLED,
+        "peer reset",
+    )
+    second_stub = MagicMock()
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
+    stub_factory = MagicMock(side_effect=[first_stub, second_stub])
+
+    monkeypatch.setattr(
+        "durabletask.worker.stubs.TaskHubSidecarServiceStub",
+        stub_factory,
+    )
+
+    await worker._async_run_loop()
+
+    first_stub.GetWorkItems.assert_called_once()
+    second_stub.GetWorkItems.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -254,7 +288,7 @@ async def test_worker_does_not_recreate_sdk_owned_channel_for_non_transport_setu
     first_stub.Hello.side_effect = RuntimeError("boom")
 
     second_stub = MagicMock()
-    second_stub.GetWorkItems.side_effect = FakeRpcError(grpc.StatusCode.CANCELLED, "stop")
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
 
     stubs = [first_stub, second_stub]
 
@@ -293,10 +327,7 @@ async def test_worker_recreates_sdk_owned_channel_after_transport_failure_thresh
             grpc.StatusCode.UNAVAILABLE,
             "second transport failure",
         )))),
-        MagicMock(GetWorkItems=MagicMock(side_effect=FakeRpcError(
-            grpc.StatusCode.CANCELLED,
-            "stop",
-        ))),
+        MagicMock(GetWorkItems=MagicMock(side_effect=_cancel_after_shutdown(worker))),
     ]
     stub_channels = []
 
@@ -352,10 +383,7 @@ async def test_worker_recreates_sdk_owned_channel_after_silent_disconnect(monkey
     stub_channels = []
     stubs = [
         MagicMock(GetWorkItems=MagicMock(return_value=blocking_stream)),
-        MagicMock(GetWorkItems=MagicMock(side_effect=FakeRpcError(
-            grpc.StatusCode.CANCELLED,
-            "stop",
-        ))),
+        MagicMock(GetWorkItems=MagicMock(side_effect=_cancel_after_shutdown(worker))),
     ]
 
     def create_stub(channel):
@@ -393,10 +421,7 @@ async def test_worker_closes_sdk_owned_channel_on_graceful_stream_reset(monkeypa
     stub_channels = []
     stubs = [
         MagicMock(GetWorkItems=MagicMock(return_value=FakeResponseStream())),
-        MagicMock(GetWorkItems=MagicMock(side_effect=FakeRpcError(
-            grpc.StatusCode.CANCELLED,
-            "stop",
-        ))),
+        MagicMock(GetWorkItems=MagicMock(side_effect=_cancel_after_shutdown(worker))),
     ]
 
     def create_stub(channel):
@@ -440,10 +465,7 @@ async def test_worker_defers_sdk_owned_channel_close_until_inflight_completion_f
     first_stub.CompleteActivityTask.side_effect = complete_activity
 
     second_stub = MagicMock()
-    second_stub.GetWorkItems.side_effect = FakeRpcError(
-        grpc.StatusCode.CANCELLED,
-        "stop",
-    )
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
 
     stubs = [first_stub, second_stub]
     stub_channels = []
@@ -495,10 +517,7 @@ async def test_worker_releases_inflight_channel_when_activity_handler_raises(mon
     first_stub.GetWorkItems.return_value = FakeResponseStream(items=[_make_activity_work_item()])
 
     second_stub = MagicMock()
-    second_stub.GetWorkItems.side_effect = FakeRpcError(
-        grpc.StatusCode.CANCELLED,
-        "stop",
-    )
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
 
     stubs = [first_stub, second_stub]
 
@@ -561,10 +580,7 @@ async def test_worker_shutdown_drains_real_manager_work_before_closing_retired_s
     first_stub.CompleteActivityTask.side_effect = complete_activity
 
     second_stub = MagicMock()
-    second_stub.GetWorkItems.side_effect = FakeRpcError(
-        grpc.StatusCode.CANCELLED,
-        "stop",
-    )
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
 
     stubs = [first_stub, second_stub]
     stub_channels = []
@@ -637,10 +653,7 @@ async def test_worker_shutdown_runs_real_manager_cancellation_wrapper_before_clo
     first_stub.CompleteActivityTask.side_effect = complete_activity
 
     second_stub = MagicMock()
-    second_stub.GetWorkItems.side_effect = FakeRpcError(
-        grpc.StatusCode.CANCELLED,
-        "stop",
-    )
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
 
     stubs = [first_stub, second_stub]
     stub_channels = []
@@ -684,10 +697,7 @@ async def test_worker_never_closes_caller_owned_channel_after_graceful_reset(mon
     first_stub.CompleteActivityTask.side_effect = complete_activity
 
     second_stub = MagicMock()
-    second_stub.GetWorkItems.side_effect = FakeRpcError(
-        grpc.StatusCode.CANCELLED,
-        "stop",
-    )
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
 
     stubs = [first_stub, second_stub]
     stub_channels = []
@@ -751,10 +761,7 @@ async def test_worker_uses_reconnect_backoff_helper_after_connection_failure(mon
         "connect failed",
     )
     second_stub = MagicMock()
-    second_stub.GetWorkItems.side_effect = FakeRpcError(
-        grpc.StatusCode.CANCELLED,
-        "stop",
-    )
+    second_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
     stubs = [first_stub, second_stub]
 
     def create_stub(current_channel):
@@ -789,10 +796,7 @@ async def test_worker_never_replaces_caller_owned_channel_during_transport_failu
             grpc.StatusCode.UNAVAILABLE,
             "transport failure",
         )))),
-        MagicMock(GetWorkItems=MagicMock(side_effect=FakeRpcError(
-            grpc.StatusCode.CANCELLED,
-            "stop",
-        ))),
+        MagicMock(GetWorkItems=MagicMock(side_effect=_cancel_after_shutdown(worker))),
     ]
 
     def create_stub(channel):
@@ -846,10 +850,7 @@ async def test_worker_received_messages_reset_failure_tracker(monkeypatch, work_
             items=[work_item],
             error=FakeRpcError(grpc.StatusCode.UNAVAILABLE, "second transport failure"),
         ))),
-        MagicMock(GetWorkItems=MagicMock(side_effect=FakeRpcError(
-            grpc.StatusCode.CANCELLED,
-            "stop",
-        ))),
+        MagicMock(GetWorkItems=MagicMock(side_effect=_cancel_after_shutdown(worker))),
     ]
 
     monkeypatch.setattr("durabletask.worker.shared.get_grpc_channel", get_grpc_channel)
