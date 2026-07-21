@@ -115,7 +115,7 @@ def test_execute_orchestration_request_raises_without_execution_started():
     request.newEvents.append(helpers.new_orchestrator_started_event())
     encoded = base64.b64encode(request.SerializeToString()).decode("utf-8")
 
-    with pytest.raises(Exception, match="No ExecutionStarted event"):
+    with pytest.raises(ValueError, match="No ExecutionStarted event"):
         DurableFunctionsWorker().execute_orchestration_request(orchestrator, encoded)
 
 

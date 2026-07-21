@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from abc import ABC
+from abc import ABC, abstractmethod
 
 
 class TokenSource(ABC):
@@ -14,6 +14,11 @@ class TokenSource(ABC):
 
     def __init__(self):
         super().__init__()
+
+    @abstractmethod
+    def to_json(self) -> dict[str, str]:
+        """Convert this token source into a JSON-serializable dictionary."""
+        ...
 
 
 class ManagedIdentityTokenSource(TokenSource):

@@ -65,8 +65,7 @@ class DurableHttpRequest:
         if self._headers is not None:
             json_dict["headers"] = dict(self._headers)
         if self._token_source is not None:
-            # TokenSource exposes ``to_json`` (e.g. ManagedIdentityTokenSource).
-            json_dict["tokenSource"] = self._token_source.to_json()  # type: ignore[attr-defined]  # noqa: E501
+            json_dict["tokenSource"] = self._token_source.to_json()
         return json_dict
 
 
