@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import urllib.error
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Generator, Optional
 
@@ -129,11 +129,14 @@ def _get_header(headers: dict[str, str], name: str) -> Optional[str]:
     return None
 
 
-def _retry_after_seconds(headers: dict[str, str]) -> int:
+def _retry_after_seconds(headers: dict[str, str], now: datetime) -> int:
     """Parse the ``Retry-After`` header into a delay in seconds.
 
     Supports both the delta-seconds and HTTP-date forms; falls back to
-    :data:`_DEFAULT_POLL_INTERVAL_SECONDS` when absent or unparseable.
+    :data:`_DEFAULT_POLL_INTERVAL_SECONDS` when absent or unparseable. For the
+    HTTP-date form the delay is computed against ``now`` -- which the caller
+    supplies as the orchestration's replay-safe ``current_utc_datetime`` -- so
+    the resulting timer fire time is deterministic across replays.
     """
     raw = _get_header(headers, "Retry-After")
     if raw is None:
@@ -142,10 +145,19 @@ def _retry_after_seconds(headers: dict[str, str]) -> int:
     if raw.isdigit():
         return max(int(raw), 0)
     try:
-        parsedate_to_datetime(raw)
+        retry_at = parsedate_to_datetime(raw)
     except (TypeError, ValueError):
         return _DEFAULT_POLL_INTERVAL_SECONDS
-    return _DEFAULT_POLL_INTERVAL_SECONDS
+    if retry_at is None:
+        return _DEFAULT_POLL_INTERVAL_SECONDS
+    # ``parsedate_to_datetime`` may return a naive datetime (no zone in the
+    # header); treat it as UTC. Normalize ``now`` the same way so the
+    # subtraction is well-defined regardless of the caller's tz-awareness.
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return max(int((retry_at - now).total_seconds()), 0)
 
 
 def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, dict[str, Any]]:
@@ -167,8 +179,9 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, dict[str
             # Cannot poll without a Location; return the 202 as-is.
             break
 
-        delay = _retry_after_seconds(headers)
-        fire_at = context.current_utc_datetime + timedelta(seconds=delay)
+        now = context.current_utc_datetime
+        delay = _retry_after_seconds(headers, now)
+        fire_at = now + timedelta(seconds=delay)
         yield context.create_timer(fire_at)
 
         poll_request: dict[str, Any] = {"method": "GET", "uri": location}

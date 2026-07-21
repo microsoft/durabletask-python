@@ -10,6 +10,7 @@ import pytest
 from azure.durable_functions.http.builtin import (
     BUILTIN_HTTP_ACTIVITY_NAME,
     BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
+    _retry_after_seconds,
     builtin_http_activity,
     builtin_http_poll_orchestrator,
 )
@@ -212,6 +213,46 @@ def test_poll_orchestrator_stops_when_202_has_no_location():
         gen.send({"status_code": 202, "headers": {}, "content": None})
     assert stop.value.value["status_code"] == 202
     assert len(ctx._activity_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Retry-After parsing
+# ---------------------------------------------------------------------------
+
+_NOW = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def test_retry_after_delta_seconds():
+    assert _retry_after_seconds({"Retry-After": "7"}, _NOW) == 7
+
+
+def test_retry_after_missing_uses_default():
+    assert _retry_after_seconds({}, _NOW) == 1
+
+
+def test_retry_after_unparseable_uses_default():
+    assert _retry_after_seconds({"Retry-After": "not-a-date"}, _NOW) == 1
+
+
+def test_retry_after_http_date_computed_against_now():
+    # An HTTP-date 30s in the future yields a 30s delay relative to `now`.
+    headers = {"Retry-After": "Wed, 01 Jan 2020 00:00:30 GMT"}
+    assert _retry_after_seconds(headers, _NOW) == 30
+
+
+def test_retry_after_http_date_in_past_clamped_to_zero():
+    headers = {"Retry-After": "Wed, 01 Jan 2020 00:00:00 GMT"}
+    past = _NOW + timedelta(seconds=60)
+    assert _retry_after_seconds(headers, past) == 0
+
+
+def test_retry_after_http_date_is_replay_deterministic():
+    # Same `now` (the replay-safe clock) always yields the same delay,
+    # regardless of wall-clock time.
+    headers = {"Retry-After": "Wed, 01 Jan 2020 00:01:00 GMT"}
+    first = _retry_after_seconds(headers, _NOW)
+    second = _retry_after_seconds(headers, _NOW)
+    assert first == second == 60
 
 
 # ---------------------------------------------------------------------------

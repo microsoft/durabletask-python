@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Durable Orchestrator.
 
 Responsible for orchestrating the execution of the user defined generator

@@ -58,13 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wait_for_external_event`, `continue_as_new`, `set_custom_status`,
   `task_all`/`task_any`, `call_entity`/`signal_entity`, and `new_uuid`/`new_guid`.
   Two-argument (durabletask-native) orchestrators continue to work unchanged.
-  `DurableOrchestrationContext.call_http` raises `NotImplementedError` pending a
-  durabletask durable-HTTP implementation.
+  `DurableOrchestrationContext.call_http` schedules a durable HTTP call (see the
+  durable-HTTP entry above).
 - `DurableOrchestrationContext` also exposes `custom_status` (reflecting the
-  value set via `set_custom_status`) and `will_continue_as_new` (True once
-  `continue_as_new` has been called). `parent_instance_id`, `function_context`,
-  and `histories` raise `NotImplementedError` because durabletask does not
-  surface that information on the orchestration context.
+  value set via `set_custom_status`), `will_continue_as_new` (True once
+  `continue_as_new` has been called), `parent_instance_id`, and
+  `function_context`. Only `histories` raises `NotImplementedError`, because
+  durabletask does not surface that information on the orchestration context.
 
 - Backwards-compatible, deprecated aliases on `DurableFunctionsClient` for the
   v1 `DurableOrchestrationClient` method names: `start_new`, `get_status`,
@@ -78,8 +78,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DurableFunctionsClient.signal_entity` now also accepts the v1
   `operation_input` keyword (alias for `input`); `task_hub_name` and
   `connection_name` are accepted for compatibility and ignored.
-- `DurableFunctionsClient.rewind` is present as a deprecated stub that raises
-  `NotImplementedError`, pending a durabletask rewind implementation.
 - Deprecated v1 compatibility aliases are now exported from
   `azure.durable_functions`: `DurableOrchestrationClient` (alias for
   `DurableFunctionsClient`), `DurableOrchestrationContext`, `DurableEntityContext`,
@@ -94,10 +92,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a falsy value for missing instances); `purge_instance_history`/`_by` return
   `PurgeHistoryResult` (with `instances_deleted`); and `read_entity_state`
   returns `EntityStateResponse` (with `entity_exists`/`entity_state`).
-- `DurableOrchestrationContext.call_http` is present as a stub that raises
-  `NotImplementedError`, documenting the durable-HTTP gap. `TokenSource` /
-  `ManagedIdentityTokenSource` remain constructible but only apply to
-  `call_http`, which is not yet supported.
 - `RetryOptions`, a deprecated shim that maps the v1 millisecond-based
   constructor onto durabletask `RetryPolicy` (which uses `timedelta`).
   `RetryPolicy` is now also exported from `azure.durable_functions`.
