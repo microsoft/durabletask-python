@@ -9,41 +9,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
-- Added a `result` property to `Task` as a convenience alias for `get_result()`.
 - Added `TaskHubGrpcClient.rewind_orchestration()` to rewind a failed orchestration instance to its last known good state. Failed activity and sub-orchestration results are removed from the history and the orchestration replays from the last successful checkpoint, retrying only the failed work. The in-memory testing backend supports rewind as well.
-- Exported `bind_context` and `clear_context` from
-  `durabletask.extensions.history_export` so hosts that register the export
-  functions themselves (rather than via `ExportHistoryClient.register_worker`)
-  can supply the activities' runtime dependencies.
+- Added a `Task.result` property as a read-only alias for `Task.get_result()`.
+- Exported `bind_context` and `clear_context` from `durabletask.extensions.history_export` for managing the ambient history-export context.
 
 FIXED
 
-- Fixed orchestrations failing with `OrchestrationStateError: Don't know how to
-  handle event of type 'genericEvent'` after being rewound over the Azure
-  Functions Durable extension. The `genericEvent` history event (an
-  informational marker with no execution semantics) is now ignored during
-  replay, matching the .NET worker, so `rewind_orchestration` completes the
-  replay instead of re-failing.
-- Fixed durabletask scheduled tasks (`durabletask.scheduled`) failing under
-  data converters that reconstruct nested custom-object envelopes bottom-up
-  (such as the Azure Functions Durable `df` codec). `ScheduleState.from_json`
-  now tolerates an already-reconstructed nested `ScheduleConfiguration` (and
-  accepts the active `DataConverter` for nested reconstruction), and
-  `ScheduleOperationRequest` gained `to_json`/`from_json` hooks so it can be
-  serialized by converters that require them. The default JSON converter's
-  behavior is unchanged.
-- Fixed `OrchestrationContext.lock_entities` failing when used over the legacy
-  entity protocol (used by the Azure Functions Durable extension). Acquiring an
-  entity lock raised a `JSONDecodeError` because the worker tried to deserialize
-  an operation result from the lock-granted event, which carries none; the
-  result is now only read for entity operation calls, not lock acquisitions.
-- Fixed `OrchestrationContext.version` returning an empty string (`''`) instead
-  of `None` for orchestrations started without an explicit version. The version
-  field is a protobuf wrapper (a singular message that is always truthy), so it
-  is now checked for presence with `HasField` before being read.
-- `OrchestrationContext.create_timer` now accepts timezone-aware `datetime`
-  values, normalizing them to UTC instead of raising when compared against the
-  orchestration's internal clock.
+- Fixed timers created with a timezone-aware `fire_at` datetime being compared against the orchestration's naive UTC clock, which could cause timers to fire at the wrong time. Timezone-aware fire times are now normalized to naive UTC before scheduling.
+- Fixed the orchestration version being set from an unset `executionStarted.version` field. Presence is now checked with `HasField`, so `OrchestrationContext` no longer reports a version when none was provided.
+- Fixed orchestrations failing with `OrchestrationStateError` when a `genericEvent` history event was replayed (for example, the marker the Durable Functions extension appends when rewinding an orchestration). Such informational events are now ignored during replay, matching the .NET worker.
+- Fixed a lock-granted entity response over the legacy entity protocol raising while trying to deserialize an empty operation result. Lock-granted events no longer attempt result deserialization.
+- Fixed `task.when_all()` failing fast when one of its child tasks failed. It now waits for every child task to complete before surfacing the first failure, matching the semantics of .NET's `Task.WhenAll`.
+- Fixed workers stopping permanently when the server reset the `GetWorkItems`
+  stream. Workers now reconnect after a peer cancellation and still exit normally
+  when stopped.
 
 ## v1.7.2
 

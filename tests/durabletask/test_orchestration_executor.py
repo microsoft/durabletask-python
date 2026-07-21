@@ -1615,15 +1615,27 @@ def test_fan_in_with_single_failure():
             i + 1, activity_name, encoded_input=str(i)))
 
     # 5 of the tasks complete successfully, 1 fails, and 4 are still running.
-    # The expectation is that the orchestration will fail immediately.
-    new_events = []
+    # when_all must NOT fail fast: it waits for every child task to complete
+    # before surfacing a failure (matching .NET's Task.WhenAll semantics), so
+    # the orchestration is expected to still be running with zero new actions.
+    ex = Exception("Kah-BOOOOM!!!")
+    partial_events = []
     for i in range(5):
+        partial_events.append(helpers.new_task_completed_event(
+            i + 1, encoded_output=print_int(None, i)))
+    partial_events.append(helpers.new_task_failed_event(6, ex))
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, partial_events)
+    assert len(result.actions) == 0
+
+    # Once the remaining 4 tasks also complete, the orchestration fails and
+    # surfaces the first task failure.
+    new_events = list(partial_events)
+    for i in range(6, 10):
         new_events.append(helpers.new_task_completed_event(
             i + 1, encoded_output=print_int(None, i)))
-    ex = Exception("Kah-BOOOOM!!!")
-    new_events.append(helpers.new_task_failed_event(6, ex))
 
-    # Now test with the full set of new events. We expect the orchestration to complete.
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
@@ -1632,6 +1644,67 @@ def test_fan_in_with_single_failure():
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Is this the right error type?
     assert str(ex) in complete_action.failureDetails.errorMessage
+
+
+def test_when_all_defers_failure_until_all_children_complete():
+    """when_all must not report is_failed until every child task completes.
+
+    This mirrors .NET's Task.WhenAll, where the returned task does not fault
+    (failed => complete) until all children have finished. A composite that
+    exposed is_failed while still incomplete would surprise consumers that
+    assume failed implies complete.
+    """
+    t1 = task.CompletableTask()
+    t2 = task.CompletableTask()
+    t3 = task.CompletableTask()
+    when_all = task.when_all([t1, t2, t3])
+
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # First child fails: the composite must stay pending and must NOT report
+    # failure yet.
+    t1.fail("boom", Exception("boom"))
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # A later child completes successfully: still pending, still not failed.
+    t2.complete("ok")
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # Once the final child completes, the composite completes and only then
+    # surfaces the first failure.
+    t3.complete("ok")
+    assert when_all.is_complete
+    assert when_all.is_failed
+
+
+def test_when_all_handles_pre_completed_children():
+    """when_all must account for children that are already complete/failed.
+
+    CompositeTask.__init__ invokes on_child_completed() for children that are
+    already complete, so when_all must be constructible from an already-failed
+    child without raising (regression test for AttributeError on
+    `_pending_exception`).
+    """
+    # An already-failed child plus a still-pending child.
+    failed = task.CompletableTask()
+    failed.fail("boom", Exception("boom"))
+    pending = task.CompletableTask()
+
+    when_all = task.when_all([failed, pending])
+
+    # The pre-completed failure is accounted for but not yet surfaced.
+    assert when_all.get_completed_tasks() == 1
+    assert not when_all.is_complete
+    assert not when_all.is_failed
+
+    # Completing the remaining child finishes the composite and surfaces the
+    # first failure.
+    pending.complete("ok")
+    assert when_all.is_complete
+    assert when_all.is_failed
 
 
 def test_when_any():
