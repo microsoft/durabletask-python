@@ -39,7 +39,11 @@ durabletask means:
 
 ### Breaking changes (from `azure-functions-durable` 1.x)
 
-- **Python 3.13+ is now required.** 1.x supported Python 3.10+.
+- **Python 3.13+ is now required** (1.x supported 3.10+). On Functions Python
+  workers older than 3.13, worker dependencies are not isolated from your app's
+  dependencies, which causes a `grpc` version conflict with the durable runtime
+  at load time. Python 3.13 enables worker dependency isolation, avoiding the
+  collision.
 - **The classic (v1) programming model has been dropped.** Only the
   decorator-based application model (`DFApp` / `Blueprint`, the Python v2
   programming model) is supported; the `function.json`-based model is not.
@@ -145,3 +149,7 @@ code:
 - Orchestration history is not exposed on the context;
   `DurableOrchestrationContext.histories` raises `NotImplementedError`. Use the
   client's `get_orchestration_history(...)` instead.
+- The client status methods accept the v1 `show_history` /
+  `show_history_output` flags for signature compatibility but ignore them, so
+  the returned status has no `historyEvents`. Use
+  `get_orchestration_history(...)` to retrieve history.

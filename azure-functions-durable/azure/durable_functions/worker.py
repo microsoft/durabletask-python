@@ -64,16 +64,16 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             if e.HasField("executionStarted"):
                 execution_started_events.append(e)
         if len(execution_started_events) == 0:
-            raise Exception("No ExecutionStarted event found in orchestration request.")
+            raise ValueError("No ExecutionStarted event found in orchestration request.")
 
         function_name = execution_started_events[-1].executionStarted.name
         self.add_named_orchestrator(function_name, wrap_orchestrator(func))
         super()._execute_orchestrator(request, stub, None)
 
         if response is None:
-            raise Exception("Orchestrator execution did not produce a response.")
+            raise RuntimeError("Orchestrator execution did not produce a response.")
         # The Python worker returns the input as type "json", so double-encoding is necessary
-        return base64.b64encode(response.SerializeToString()).decode('utf-8')
+        return base64.b64encode(response.SerializeToString()).decode("utf-8")
 
     def execute_entity_batch_request(self, func: task.Entity[Any, Any], context: Any) -> str:
         context_body = getattr(context, "body", None)
@@ -94,6 +94,6 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         super()._execute_entity_batch(request, stub, None)
 
         if response is None:
-            raise Exception("Entity execution did not produce a response.")
+            raise RuntimeError("Entity execution did not produce a response.")
         # The Python worker returns the input as type "json", so double-encoding is necessary
-        return base64.b64encode(response.SerializeToString()).decode('utf-8')
+        return base64.b64encode(response.SerializeToString()).decode("utf-8")

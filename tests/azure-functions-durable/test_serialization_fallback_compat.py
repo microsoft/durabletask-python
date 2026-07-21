@@ -10,6 +10,8 @@ exercise the fallback callables directly (they are otherwise only selected at
 import time based on the installed SDK version).
 """
 
+import pytest
+
 import azure.durable_functions.internal.serialization as serialization
 
 
@@ -58,3 +60,15 @@ def test_warn_fallback_is_emitted_only_once(caplog):
         assert len(fallback_records) == 1
     finally:
         serialization._warned = True
+
+
+def test_fallback_raises_clearly_when_legacy_hooks_unavailable(monkeypatch):
+    # If the private azure-functions custom-object hooks are missing (renamed or
+    # removed upstream), the fallback path raises a clear RuntimeError rather
+    # than a cryptic failure.
+    monkeypatch.setattr(serialization, "_serialize_custom_object", None)
+    monkeypatch.setattr(serialization, "_deserialize_custom_object", None)
+    with pytest.raises(RuntimeError, match="Durable serialization API"):
+        serialization._fallback_df_dumps({"a": 1})
+    with pytest.raises(RuntimeError, match="Durable serialization API"):
+        serialization._fallback_df_loads("{}")

@@ -3,14 +3,12 @@
 
 """Durable Orchestrator.
 
-Responsible for orchestrating the execution of the user defined generator
+Responsible for orchestrating the execution of a user-defined orchestrator
 function.
 """
-from typing import Any, Callable, Generator
+from typing import Any, Callable
 
 import azure.functions as func
-
-from durabletask.task import OrchestrationContext
 
 from .worker import DurableFunctionsWorker
 
@@ -22,15 +20,16 @@ class Orchestrator:
     function.
     """
 
-    def __init__(self,
-                 activity_func: Callable[[OrchestrationContext, Any], Generator[Any, Any, Any]]):
-        """Create a new orchestrator for the user defined generator.
+    def __init__(self, orchestrator_func: Callable[..., Any]):
+        """Create a new orchestrator wrapper for a user orchestrator function.
 
-        Responsible for orchestrating the execution of the user defined
-        generator function.
-        :param activity_func: Generator function to orchestrate.
+        The wrapped function may be a durabletask-native two-argument
+        orchestrator or a v1-style single-argument orchestrator, and may or may
+        not be a generator; ``DurableFunctionsWorker`` adapts it as needed.
+
+        :param orchestrator_func: The user's orchestrator function to run.
         """
-        self.fn: Callable[[OrchestrationContext, Any], Generator[Any, Any, Any]] = activity_func
+        self.fn: Callable[..., Any] = orchestrator_func
 
     def handle(self, context: func.OrchestrationContext) -> str:
         """Handle the orchestration of the user defined generator function.
@@ -53,14 +52,14 @@ class Orchestrator:
         return DurableFunctionsWorker().execute_orchestration_request(self.fn, context)
 
     @classmethod
-    def create(cls, fn: Callable[[OrchestrationContext, Any], Generator[Any, Any, Any]]) \
-            -> Callable[[Any], str]:
-        """Create an instance of the orchestration class.
+    def create(cls, fn: Callable[..., Any]) -> Callable[[Any], str]:
+        """Create the Functions host handle for a user orchestrator function.
 
         Parameters
         ----------
-        fn: Callable[[DurableOrchestrationContext], Iterator[Any]]
-            Generator function that needs orchestration
+        fn: Callable[..., Any]
+            The user's orchestrator function (durabletask-native two-argument
+            or v1-style single-argument; generator or not).
 
         Returns
         -------

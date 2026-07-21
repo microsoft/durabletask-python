@@ -377,6 +377,12 @@ def test_entity_id_maps_to_entity_instance_id():
     assert str(entity_id) == "@counter@one"
 
 
+def test_entity_id_url_path():
+    with pytest.warns(DeprecationWarning):
+        entity_id = df.EntityId("Counter", "one")
+    assert df.EntityId.get_entity_id_url_path(entity_id) == "entities/counter/one"
+
+
 def test_managed_identity_token_source_shim():
     source = df.ManagedIdentityTokenSource("https://management.core.windows.net")
     assert source.resource == "https://management.core.windows.net"

@@ -42,7 +42,10 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
     rpcBaseUrl: str
     httpBaseUrl: str
     maxGrpcMessageSizeInBytes: int
-    grpcHttpClientTimeout: timedelta
+    # The host sends this as a .NET TimeSpan string; it is currently stored
+    # as-received (see _parse_client_configuration) and is unused, so the raw
+    # string form is permitted alongside the timedelta default.
+    grpcHttpClientTimeout: timedelta | str
 
     def __init__(self, client_as_string: str):
         """Initializes a DurableFunctionsClient instance from a JSON string.

@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
 from durabletask.client import OrchestrationState, OrchestrationStatus
@@ -154,9 +154,9 @@ class DurableOrchestrationStatus:
         if self.instance_id is not None:
             result["instanceId"] = self.instance_id
         if self.created_time is not None:
-            result["createdTime"] = self.created_time.isoformat()
+            result["createdTime"] = self._format_datetime(self.created_time)
         if self.last_updated_time is not None:
-            result["lastUpdatedTime"] = self.last_updated_time.isoformat()
+            result["lastUpdatedTime"] = self._format_datetime(self.last_updated_time)
         output = self._raw_payload(
             self._state.serialized_output if self._state is not None else None)
         if output is not None:
@@ -186,3 +186,14 @@ class DurableOrchestrationStatus:
             return json.loads(serialized)
         except (TypeError, ValueError):
             return serialized
+
+    @staticmethod
+    def _format_datetime(value: datetime) -> str:
+        """Format a datetime the way v1 did: UTC, microseconds, trailing ``Z``.
+
+        v1 emitted ``%Y-%m-%dT%H:%M:%S.%fZ``; matching it keeps strict v1
+        consumers that parse with that exact format working.
+        """
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"

@@ -21,8 +21,8 @@ def _sample_json():
     return {
         "name": "orch",
         "instanceId": "abc",
-        "createdTime": "2026-01-01T00:00:00+00:00",
-        "lastUpdatedTime": "2026-01-02T00:00:00+00:00",
+        "createdTime": "2026-01-01T00:00:00.000000Z",
+        "lastUpdatedTime": "2026-01-02T00:00:00.000000Z",
         "input": {"in": 1},
         "output": {"out": 2},
         "customStatus": "cs",

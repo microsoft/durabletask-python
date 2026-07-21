@@ -33,11 +33,32 @@ logger = logging.getLogger("azure.functions.DurableFunctions")
 # ``azure.functions`` only exposes its Durable serialization helpers from a
 # private, untyped module. Resolve it dynamically and bind the symbols we need
 # to locally-typed callables so the rest of the module stays type-checked.
-_df_internal = importlib.import_module("azure.functions._durable_functions")
-_serialize_custom_object: Callable[[Any], Any] = getattr(
-    _df_internal, "_serialize_custom_object")
-_deserialize_custom_object: Callable[[dict[str, Any]], Any] = getattr(
-    _df_internal, "_deserialize_custom_object")
+try:
+    _df_internal = importlib.import_module("azure.functions._durable_functions")
+except ImportError as exc:  # pragma: no cover - defensive import guard
+    raise RuntimeError(
+        "Durable Functions serialization requires the "
+        "'azure.functions._durable_functions' module, which is not available in "
+        "the installed 'azure-functions' package. Install a compatible "
+        "'azure-functions' release."
+    ) from exc
+
+# The legacy custom-object hooks are only needed on the fallback path (when the
+# SDK's ``df_dumps`` / ``df_loads`` are unavailable). Bind them with a ``None``
+# default so a rename/removal upstream does not break ``import
+# azure.durable_functions``; the fallback functions raise a clear error if they
+# are actually required but missing.
+_serialize_custom_object: Optional[Callable[[Any], Any]] = getattr(
+    _df_internal, "_serialize_custom_object", None)
+_deserialize_custom_object: Optional[Callable[[dict[str, Any]], Any]] = getattr(
+    _df_internal, "_deserialize_custom_object", None)
+
+_LEGACY_HOOKS_UNAVAILABLE = (
+    "The installed 'azure-functions' package provides neither the centralized "
+    "'df_dumps' / 'df_loads' serializers nor the legacy custom-object hooks "
+    "('_serialize_custom_object' / '_deserialize_custom_object'). Upgrade "
+    "'azure-functions' to a version that provides the Durable serialization API."
+)
 
 _FALLBACK_MESSAGE = (
     "The installed 'azure-functions' package does not provide the centralized "
@@ -62,6 +83,8 @@ def _warn_fallback_once() -> None:
 
 def _fallback_df_dumps(value: Any) -> str:
     """Serialize ``value`` via the legacy custom-object hook."""
+    if _serialize_custom_object is None:
+        raise RuntimeError(_LEGACY_HOOKS_UNAVAILABLE)
     _warn_fallback_once()
     return json.dumps(value, default=_serialize_custom_object)
 
@@ -73,6 +96,8 @@ def _fallback_df_loads(s: str, expected_type: Optional[type] = None) -> Any:
     this fallback path; type validation is only performed by the SDK's
     ``df_loads`` when it is available.
     """
+    if _deserialize_custom_object is None:
+        raise RuntimeError(_LEGACY_HOOKS_UNAVAILABLE)
     _warn_fallback_once()
     return json.loads(s, object_hook=_deserialize_custom_object)
 

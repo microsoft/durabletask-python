@@ -38,3 +38,8 @@ class EntityId(EntityInstanceId):
     def get_entity_id(scheduler_id: str) -> EntityInstanceId:
         """Return an entity ID from a scheduler ID string (``@name@key``)."""
         return EntityInstanceId.parse(scheduler_id)
+
+    @staticmethod
+    def get_entity_id_url_path(entity_id: EntityInstanceId) -> str:
+        """Return the entity URL path (``entities/{name}/{key}``) for an entity ID."""
+        return f"entities/{entity_id.entity}/{entity_id.key}"
