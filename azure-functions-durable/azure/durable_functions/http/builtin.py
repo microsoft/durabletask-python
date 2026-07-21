@@ -148,8 +148,6 @@ def _retry_after_seconds(headers: dict[str, str], now: datetime) -> int:
         retry_at = parsedate_to_datetime(raw)
     except (TypeError, ValueError):
         return _DEFAULT_POLL_INTERVAL_SECONDS
-    if retry_at is None:
-        return _DEFAULT_POLL_INTERVAL_SECONDS
     # ``parsedate_to_datetime`` may return a naive datetime (no zone in the
     # header); treat it as UTC. Normalize ``now`` the same way so the
     # subtraction is well-defined regardless of the caller's tz-awareness.
