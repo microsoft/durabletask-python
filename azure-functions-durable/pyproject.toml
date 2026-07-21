@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "azure-functions-durable"
-version = "2.0.0dev0"
+version = "2.0.0b1"
 description = "Durable Task Python SDK provider implementation for Durable Azure Functions"
 keywords = [
     "durable",

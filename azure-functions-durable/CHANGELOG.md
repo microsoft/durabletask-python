@@ -5,157 +5,143 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 2.0.0b1
+
+First preview (beta) release of `azure-functions-durable` 2.x — a ground-up
+rewrite of the Azure Durable Functions Python SDK built on top of the
+[`durabletask`](https://pypi.org/project/durabletask/) SDK. This is a preview
+release; APIs may change before the stable 2.0.0.
+
+### Why the rewrite
+
+The 1.x SDK implemented the Durable Functions out-of-process programming model
+directly, with its own orchestration action/state model and a JSON protocol
+tailored to the classic Durable Functions host extension. 2.x instead builds on
+the `durabletask` Python SDK — the same gRPC-based runtime that powers the
+Durable Task Scheduler (DTS) and the modern Durable Functions host. Building on
+durabletask means:
+
+- a single orchestration/entity execution core, serialization pipeline, and
+  retry/versioning implementation shared with the broader durabletask
+  ecosystem, instead of a Functions-specific reimplementation;
+- Functions users can adopt durabletask-native APIs and patterns directly,
+  while existing v1 code keeps working through the compatibility layer; and
+- less protocol drift between the Python worker and the durable backend.
+
+### Underlying packages
+
+- [`durabletask`](https://pypi.org/project/durabletask/) — orchestration and
+  entity client/worker, executed over gRPC.
+- [`azure-functions`](https://pypi.org/project/azure-functions/) — the
+  decorator/binding programming model (`DFApp` / `Blueprint`).
+- [`azure-identity`](https://pypi.org/project/azure-identity/) — Managed
+  Identity token acquisition for durable HTTP calls.
+
+### Breaking changes (from `azure-functions-durable` 1.x)
+
+- **Python 3.13+ is now required.** 1.x supported Python 3.10+.
+- **The classic (v1) programming model has been dropped.** Only the
+  decorator-based application model (`DFApp` / `Blueprint`, the Python v2
+  programming model) is supported; the `function.json`-based model is not.
+- **The OpenAI Agents integration has been removed.** The
+  `azure.durable_functions.openai_agents` package (durable OpenAI Agents SDK
+  orchestration) is not part of 2.x.
+- **Runtime target.** 2.x speaks the durabletask gRPC protocol used by the
+  Durable Task Scheduler and the modern Durable Functions host, rather than the
+  classic Durable Functions extension protocol.
+- **Primary client and context APIs use durabletask names.** The main surface
+  is now durabletask's (e.g. `schedule_new_orchestration`,
+  `get_orchestration_state`, `wait_for_orchestration_completion`). The v1
+  `DurableOrchestrationClient` method names remain available as deprecated
+  aliases that emit `DeprecationWarning` (see [Deprecated](#deprecated)).
 
 ### Added
 
-- `DurableFunctionsClient.rewind_orchestration(...)` (inherited from durabletask)
-  rewinds a failed orchestration to its last known good state. The deprecated v1
-  `rewind(...)` method now delegates to it instead of raising
-  `NotImplementedError`.
+New capabilities beyond the v1 surface, most inherited from `durabletask`:
 
-- `DFApp.configure_scheduled_tasks()` opts an app in to durabletask scheduled
-  tasks by registering the schedule entity and operation orchestrator. Once
-  enabled, schedules are managed from a client via
+- **durabletask-native authoring.** Two-argument orchestrator and entity
+  functions (`def orchestrator(ctx, input)`, `def entity(ctx, input)`) and
+  class-based entities (`DurableEntity`) are first-class, alongside the
+  supported v1-style single-argument functions.
+- **`DurableFunctionsClient.rewind_orchestration(...)`** rewinds a failed
+  orchestration to its last known good state (inherited from durabletask).
+- **`DFApp.configure_scheduled_tasks()`** opts an app in to durabletask
+  scheduled (recurring) tasks by registering the schedule entity and operation
+  orchestrator. Schedules are then managed from a client via
   `durabletask.scheduled.ScheduledTaskClient`. Scheduled tasks are not
   registered unless this method is called.
-- `DFApp.configure_history_export()` opts an app in to durabletask history
+- **`DFApp.configure_history_export()`** opts an app in to durabletask history
   export by registering the export-job entity, driving orchestrator, and
-  activities. Once enabled, export jobs are driven from a client via
+  activities. Export jobs are driven from a client via
   `durabletask.extensions.history_export.ExportHistoryClient`; supply the
-  activities' runtime dependencies with `history_export.bind_context(...)`.
-  The instance-enumeration activity uses a Functions-specific implementation
-  based on `QueryInstances` because the Durable Functions host extension does
-  not implement the `ListInstanceIds` gRPC call the core activity relies on.
-- `DurableOrchestrationContext.call_http(...)` for making durable HTTP calls
-  from orchestrators, restoring the v1 API. The request is executed by a
-  built-in activity and, when the endpoint responds with `202 Accepted` and a
-  `Location` header, is automatically polled to completion (honoring
-  `Retry-After`). `ManagedIdentityTokenSource` can be supplied to attach a
-  Managed Identity bearer token to the request. `DurableHttpRequest` and
-  `DurableHttpResponse` are exported from `azure.durable_functions`.
+  activities' runtime dependencies with `history_export.bind_context(...)`. The
+  instance-enumeration activity uses a Functions-specific implementation based
+  on `QueryInstances`, because the Durable Functions host extension does not
+  implement the `ListInstanceIds` gRPC call the core activity relies on.
+- **`DurableOrchestrationContext.call_http(...)`** makes durable HTTP calls from
+  orchestrators, restoring the v1 API. The request is executed by a built-in
+  activity and, when the endpoint responds with `202 Accepted` and a `Location`
+  header, is automatically polled to completion (honoring `Retry-After`).
+  `ManagedIdentityTokenSource` can be supplied to attach a Managed Identity
+  bearer token to the request. `DurableHttpRequest` and `DurableHttpResponse`
+  are exported from `azure.durable_functions`.
+- **`orchestration_trigger(..., input_type=...)`** decodes a v1-style
+  `context.get_input()` to the declared type; a call-site `expected_type` on
+  `get_input` takes precedence.
 
-- The `orchestration_trigger` decorator now accepts an `input_type` argument
-  (v1 parity). When set, a v1-style `context.get_input()` decodes the input to
-  that type; a call-site `expected_type` on `get_input` takes precedence.
-- One-argument (Azure Functions / v1-style) entity functions
-  (``def entity(context):``) are now supported. The worker detects the entity's
-  shape and, for single-argument functions, delivers a functional
-  `DurableEntityContext` that wraps the durabletask `EntityContext` and exposes
-  the v1 entity API: `entity_name`, `entity_key`, `operation_name`,
-  `get_input()`, `get_state()` (with `initializer`), `set_state()`,
-  `set_result()`, and `destruct_on_exit()`. The operation result is taken from
-  `set_result(...)`, falling back to the function's return value.
-  durabletask-native two-argument entity functions and class-based
-  (`DurableEntity`) entities continue to work unchanged.
-- One-argument (Azure Functions / v1-style) orchestrator functions
-  (``def orchestrator(context):``) are now supported. The worker detects the
-  orchestrator's arity and, for single-argument functions, delivers a
-  functional `DurableOrchestrationContext` that wraps the durabletask
-  `OrchestrationContext` and exposes the v1 context API: `get_input()`,
-  `call_activity`/`call_activity_with_retry`,
+### Compatibility with v1
+
+To ease migration, 2.x ships a compatibility layer over the durabletask
+surface:
+
+- **v1-style single-argument functions** (`def orchestrator(context)`,
+  `def entity(context)`) are supported. The worker detects the function shape
+  and, for single-argument functions, delivers a functional
+  `DurableOrchestrationContext` / `DurableEntityContext` that wraps the
+  durabletask context and exposes the v1 API — for orchestrations:
+  `get_input`, `call_activity`/`call_activity_with_retry`,
   `call_sub_orchestrator`/`call_sub_orchestrator_with_retry`, `create_timer`,
   `wait_for_external_event`, `continue_as_new`, `set_custom_status`,
-  `task_all`/`task_any`, `call_entity`/`signal_entity`, and `new_uuid`/`new_guid`.
-  Two-argument (durabletask-native) orchestrators continue to work unchanged.
-  `DurableOrchestrationContext.call_http` schedules a durable HTTP call (see the
-  durable-HTTP entry above).
-- `DurableOrchestrationContext` also exposes `custom_status` (reflecting the
-  value set via `set_custom_status`), `will_continue_as_new` (True once
-  `continue_as_new` has been called), `parent_instance_id`, and
-  `function_context`. Only `histories` raises `NotImplementedError`, because
-  durabletask does not surface that information on the orchestration context.
+  `task_all`/`task_any`, `call_entity`/`signal_entity`, `new_uuid`/`new_guid`,
+  `custom_status`, `will_continue_as_new`, `parent_instance_id`, and
+  `function_context`; and for entities: `entity_name`, `entity_key`,
+  `operation_name`, `get_input`, `get_state` (with `initializer`), `set_state`,
+  `set_result`, and `destruct_on_exit`. The operation result is taken from
+  `set_result(...)`, falling back to the function's return value.
+- **v1 return-type wrappers** `DurableOrchestrationStatus`,
+  `PurgeHistoryResult`, and `EntityStateResponse` are returned by the deprecated
+  client methods and exported from `azure.durable_functions`.
+- **`HttpManagementPayload`** subclasses `dict`, so it is directly
+  JSON-serializable via `json.dumps(payload)` and supports mapping-style access,
+  matching v1 usage.
+- **`create_http_management_payload`** accepts either the durabletask
+  `(request, instance_id)` or the v1 `(instance_id)` signature.
 
-- Backwards-compatible, deprecated aliases on `DurableFunctionsClient` for the
-  v1 `DurableOrchestrationClient` method names: `start_new`, `get_status`,
-  `get_status_all`, `get_status_by`, `raise_event`, `terminate`,
-  `purge_instance_history`, `purge_instance_history_by`, `suspend`, `resume`,
-  `restart`, `read_entity_state`, `get_client_response_links`, and
-  `wait_for_completion_or_create_check_status_response`. Each delegates to the
-  corresponding durabletask method and emits a `DeprecationWarning`; new code
-  should use the durabletask names (e.g. `schedule_new_orchestration`,
-  `get_orchestration_state`).
-- `DurableFunctionsClient.signal_entity` now also accepts the v1
-  `operation_input` keyword (alias for `input`); `task_hub_name` and
-  `connection_name` are accepted for compatibility and ignored.
-- Deprecated v1 compatibility aliases are now exported from
-  `azure.durable_functions`: `DurableOrchestrationClient` (alias for
-  `DurableFunctionsClient`), `DurableOrchestrationContext`, `DurableEntityContext`,
-  `EntityId`, `ManagedIdentityTokenSource`, `TokenSource`, `Entity`, and
+### Deprecated
+
+These v1 names are retained as shims that delegate to their durabletask
+equivalents and emit `DeprecationWarning`; prefer the durabletask names in new
+code:
+
+- `DurableOrchestrationClient` (alias for `DurableFunctionsClient`) and its
+  method names: `start_new`, `get_status`, `get_status_all`, `get_status_by`,
+  `raise_event`, `terminate`, `purge_instance_history`,
+  `purge_instance_history_by`, `suspend`, `resume`, `restart`,
+  `read_entity_state`, `get_client_response_links`, and
+  `wait_for_completion_or_create_check_status_response`.
+- `rewind(...)` — delegates to `rewind_orchestration(...)`.
+- `signal_entity(..., operation_input=...)` — `operation_input` is an alias for
+  `input`; `task_hub_name` / `connection_name` are accepted and ignored.
+- `RetryOptions` — maps the v1 millisecond-based constructor onto durabletask
+  `RetryPolicy` (which uses `timedelta`). `RetryPolicy` is also exported from
+  `azure.durable_functions`.
+- Compatibility aliases exported from `azure.durable_functions`:
+  `DurableOrchestrationContext`, `DurableEntityContext`, `EntityId`,
+  `ManagedIdentityTokenSource`, `TokenSource`, `Entity`, and
   `OrchestrationRuntimeStatus`.
-- v1-compatible return-type wrappers `DurableOrchestrationStatus`,
-  `PurgeHistoryResult`, and `EntityStateResponse` (exported from
-  `azure.durable_functions`). The deprecated client methods now return these:
-  `get_status`/`get_status_all`/`get_status_by` return
-  `DurableOrchestrationStatus` (wrapping durabletask `OrchestrationState`, with
-  v1 attributes like `runtime_status`, `output`, `input_`, `custom_status`, and
-  a falsy value for missing instances); `purge_instance_history`/`_by` return
-  `PurgeHistoryResult` (with `instances_deleted`); and `read_entity_state`
-  returns `EntityStateResponse` (with `entity_exists`/`entity_state`).
-- `RetryOptions`, a deprecated shim that maps the v1 millisecond-based
-  constructor onto durabletask `RetryPolicy` (which uses `timedelta`).
-  `RetryPolicy` is now also exported from `azure.durable_functions`.
 
-### Changed
+### Known limitations
 
-- `DurableFunctionsClient` is now an async client. Its orchestration and entity
-  management methods (e.g. `schedule_new_orchestration`, `get_orchestration_state`,
-  `wait_for_orchestration_completion`) are now coroutines and must be awaited.
-  This aligns the client with the async API surface of the V1
-  `DurableOrchestrationClient`.
-- `create_http_management_payload` now accepts either the durabletask
-  `(request, instance_id)` signature or the v1 `(instance_id)` signature for
-  backwards compatibility.
-- `HttpManagementPayload` now subclasses `dict`, so it is directly
-  JSON-serializable via `json.dumps(payload)` and supports mapping-style access
-  (`payload["statusQueryGetUri"]`, iteration, `in`, `keys()`/`items()`/`values()`)
-  so v1 code that treated the payload as a `dict` keeps working.
-
-### Fixed
-
-- Registering a `Blueprint` into a `DFApp` (via `register_functions` /
-  `register_blueprint`) no longer raises a duplicate-function-name error for the
-  reserved built-in durable-HTTP functions. Both the app and every blueprint
-  auto-register those built-ins, so the app now de-duplicates them during
-  registration (leaving the blueprint itself unmodified). This restores the
-  standard Azure Functions blueprint authoring pattern.
-- `durable_client_input` now injects a rich `DurableFunctionsClient` into the
-  decorated function's client parameter (the binding's JSON string is converted
-  to a client object). Previously the client parameter received the raw string.
-- `DurableFunctionsClient` now applies the host-provided
-  `maxGrpcMessageSizeInBytes` to the gRPC channel's send/receive message limits
-  (when provided), allowing large orchestration payloads to be retrieved. When
-  the host does not supply a value, the gRPC library defaults are left in place.
-- `DurableOrchestrationContext.current_utc_datetime` is now timezone-aware
-  (UTC), matching v1, so comparisons against timezone-aware datetimes (e.g. a
-  parsed scheduled-start time) no longer raise.
-- `DurableOrchestrationStatus.to_json()` now emits orchestration payloads
-  (`output`, `input`, `customStatus`) as their raw JSON representation instead
-  of reconstructed Python objects, so the result is always JSON-serializable
-  even when payloads are custom types.
-- Reading `DurableOrchestrationStatus.output`, `input_`, or `custom_status` on a
-  failed orchestration instance no longer raises `JSONDecodeError`. A failed
-  instance's payload is a plain (non-JSON) error string; these properties now
-  fall back to the raw string, matching `to_json()` and the v1/JS behavior.
-- A v1-style entity operation that calls `context.set_result(None)` now returns
-  `None` as its result instead of falling back to the function's return value.
-  An explicit `None` result is a valid v1 result and is no longer treated as
-  "unset".
-- Restored v1 members that were missing on the compatibility types, avoiding
-  `AttributeError`/`TypeError` for existing code that used them:
-  - `create_http_management_payload(...)` now returns a `dict`-based
-    `HttpManagementPayload`, so `json.dumps(payload)` works directly again.
-  - `RetryOptions.to_json()` returns the v1
-    `firstRetryIntervalInMilliseconds`/`maxNumberOfAttempts` dictionary, and the
-    `first_retry_interval_in_milliseconds` / `max_number_of_attempts` getters
-    remain available.
-  - `DurableOrchestrationStatus.from_json(...)` reconstructs a status from its
-    `to_json()` representation (or the equivalent v1 JSON schema).
-  - `PurgeHistoryResult.from_json(...)` reconstructs a result from its v1 JSON
-    representation.
-  - `DurableOrchestrationContext.version` returns the orchestration instance
-    version (or `None`).
-
-## v0.1.0
-
-- Initial implementation
+- Orchestration history is not exposed on the context;
+  `DurableOrchestrationContext.histories` raises `NotImplementedError`. Use the
+  client's `get_orchestration_history(...)` instead.
