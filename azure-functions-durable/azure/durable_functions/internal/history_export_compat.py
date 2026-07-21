@@ -37,22 +37,24 @@ LIST_TERMINAL_INSTANCES_ACTIVITY = "list_terminal_instances"
 
 def list_terminal_instances(
         _: task.ActivityContext, input: Mapping[str, Any]) -> dict[str, Any]:
-    """Enumerate terminal instances via ``QueryInstances``.
+    """Enumerate terminal instances via ``QueryInstances``, one page at a time.
 
     Drop-in replacement for the core ``list_terminal_instances`` activity that
     avoids the unimplemented ``ListInstanceIds`` call. ``QueryInstances`` filters
     by *created* time whereas the export filters by *completed* time, so the
     completed-time window is applied client-side against each instance's last
-    update time. Every match is returned in a single page
-    (``continuation_token`` is always ``None``) because
-    ``get_all_orchestration_states`` paginates internally.
+    update time.
+
+    ``QueryInstances`` has no server-side completed-time cursor, so each call
+    re-enumerates the matching instances and pages them client-side:
+    the matches are sorted by instance ID and the ``continuation_token`` carries
+    the last instance ID returned (a keyset cursor). A call returns only the
+    instances whose ID sorts strictly after that cursor, sliced to ``page_size``.
+    This keeps the export orchestrator's fan-out bounded to one ``page_size``
+    batch at a time (matching ``max_instances_per_batch``) instead of scheduling
+    an export activity for every matching instance at once.
     """
     ctx = _require_context()
-
-    # A continuation token means the first call already returned everything;
-    # there is no second page under this enumeration strategy.
-    if input.get("continuation_token"):
-        return {"instance_ids": [], "continuation_token": None}
 
     raw_statuses = input.get("runtime_status")
     runtime_status_names: Optional[list[str]] = (
@@ -62,6 +64,11 @@ def list_terminal_instances(
     completed_time_to = dt_from_iso(input.get("completed_time_to"))
     if completed_time_from is None:
         raise ValueError("list_terminal_instances requires 'completed_time_from'")
+
+    page_size_raw = input.get("page_size")
+    page_size: Optional[int] = int(page_size_raw) if page_size_raw is not None else None
+    cursor_raw = input.get("continuation_token")
+    cursor: Optional[str] = str(cursor_raw) if cursor_raw is not None else None
 
     runtime_status: Optional[list[OrchestrationStatus]] = None
     if runtime_status_names is not None:
@@ -80,4 +87,17 @@ def list_terminal_instances(
                 continue
         instance_ids.append(state.instance_id)
 
-    return {"instance_ids": instance_ids, "continuation_token": None}
+    # Deterministic keyset paging: sort by instance ID and return only the
+    # slice strictly after the cursor, capped at ``page_size``.
+    instance_ids.sort()
+    if cursor is not None:
+        instance_ids = [i for i in instance_ids if i > cursor]
+
+    if page_size is not None and len(instance_ids) > page_size:
+        page_ids = instance_ids[:page_size]
+        next_cursor: Optional[str] = page_ids[-1]
+    else:
+        page_ids = instance_ids
+        next_cursor = None
+
+    return {"instance_ids": page_ids, "continuation_token": next_cursor}
