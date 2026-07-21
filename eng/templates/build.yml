@@ -120,9 +120,9 @@ jobs:
 
       # azure-functions-durable unit tests run here. Integration tests that
       # require Azurite or the Azure Functions host emulator are marked
-      # (azurite / dts) and excluded since those external services aren't
-      # provisioned in this network-isolated pool. The full suite runs in
-      # GitHub Actions on PRs to main and main itself.
-      - script: pytest -m "not dts and not azurite" --verbose
+      # (azurite / dts / functions_e2e) and excluded since those external
+      # services aren't provisioned in this network-isolated pool. The full
+      # suite runs in GitHub Actions on PRs to main and main itself.
+      - script: pytest -m "not dts and not azurite and not functions_e2e" --verbose
         displayName: "pytest: azure-functions-durable (unit tests, no emulators)"
         workingDirectory: tests/azure-functions-durable

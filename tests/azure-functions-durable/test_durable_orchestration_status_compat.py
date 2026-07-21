@@ -9,6 +9,7 @@ falsy/empty behaviour for a non-existent instance.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import azure.durable_functions as df
 from azure.durable_functions.internal.compat.durable_orchestration_status import (
@@ -106,3 +107,34 @@ def test_raw_payload_returns_original_string_when_not_json():
 
 def test_raw_payload_none_returns_none():
     assert DurableOrchestrationStatus._raw_payload(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Payload properties tolerate non-JSON (failed instances)
+# ---------------------------------------------------------------------------
+
+def test_payload_properties_parse_json_when_valid():
+    state = SimpleNamespace(
+        serialized_input='{"in": 1}',
+        serialized_output='{"out": 2}',
+        serialized_custom_status='"cs"',
+    )
+    status = DurableOrchestrationStatus(state)
+    assert status.input_ == {"in": 1}
+    assert status.output == {"out": 2}
+    assert status.custom_status == "cs"
+
+
+def test_payload_properties_return_raw_string_on_failed_instance():
+    # A failed orchestration's serialized_output is a plain error string, not
+    # JSON. Reading .output/.input_/.custom_status must fall back to the raw
+    # string (matching to_json) instead of raising JSONDecodeError.
+    state = SimpleNamespace(
+        serialized_input="not json input",
+        serialized_output="Exception: boom",
+        serialized_custom_status="raw status",
+    )
+    status = DurableOrchestrationStatus(state)
+    assert status.input_ == "not json input"
+    assert status.output == "Exception: boom"
+    assert status.custom_status == "raw status"

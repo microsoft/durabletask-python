@@ -114,6 +114,19 @@ def test_wrap_adapts_one_arg_entity_falls_back_to_return_value():
     assert wrapped(fake_ctx, None) == "returned"
 
 
+def test_wrap_uses_explicit_none_result_over_return_value():
+    # v1 treats an explicit set_result(None) as a valid result; it must take
+    # precedence over the function's return value rather than being treated as
+    # "unset".
+    def entity(context):
+        context.set_result(None)
+        return "should-not-be-used"
+
+    wrapped = wrap_entity(entity)
+    fake_ctx = MagicMock()
+    assert wrapped(fake_ctx, None) is None
+
+
 def test_wrap_preserves_entity_name():
     def my_entity(context):
         return None

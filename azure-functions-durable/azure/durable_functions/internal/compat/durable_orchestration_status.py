@@ -104,12 +104,16 @@ class DurableOrchestrationStatus:
     @property
     def input_(self) -> Any:
         """Get the (deserialized) input of the orchestration instance."""
-        return self._state.get_input() if self._state is not None else None
+        if self._state is None:
+            return None
+        return self._raw_payload(self._state.serialized_input)
 
     @property
     def output(self) -> Any:
         """Get the (deserialized) output of the orchestration instance."""
-        return self._state.get_output() if self._state is not None else None
+        if self._state is None:
+            return None
+        return self._raw_payload(self._state.serialized_output)
 
     @property
     def runtime_status(self) -> Optional[OrchestrationRuntimeStatus]:
@@ -123,7 +127,9 @@ class DurableOrchestrationStatus:
     @property
     def custom_status(self) -> Any:
         """Get the (deserialized) custom status payload, if any."""
-        return self._state.get_custom_status() if self._state is not None else None
+        if self._state is None:
+            return None
+        return self._raw_payload(self._state.serialized_custom_status)
 
     @property
     def history(self) -> Optional[list[Any]]:

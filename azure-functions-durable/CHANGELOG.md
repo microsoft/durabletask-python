@@ -133,6 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`output`, `input`, `customStatus`) as their raw JSON representation instead
   of reconstructed Python objects, so the result is always JSON-serializable
   even when payloads are custom types.
+- Reading `DurableOrchestrationStatus.output`, `input_`, or `custom_status` on a
+  failed orchestration instance no longer raises `JSONDecodeError`. A failed
+  instance's payload is a plain (non-JSON) error string; these properties now
+  fall back to the raw string, matching `to_json()` and the v1/JS behavior.
+- A v1-style entity operation that calls `context.set_result(None)` now returns
+  `None` as its result instead of falling back to the function's return value.
+  An explicit `None` result is a valid v1 result and is no longer treated as
+  "unset".
 - Restored v1 members that were missing on the compatibility types, avoiding
   `AttributeError`/`TypeError` for existing code that used them:
   - `create_http_management_payload(...)` now returns a `dict`-based

@@ -7,6 +7,11 @@ from durabletask.entities import EntityContext
 
 from .orchestration_context import accepts_two_positional_args
 
+# Sentinel distinguishing "no result set" from an explicit ``set_result(None)``.
+# v1 treats ``None`` as a valid operation result, so it must not be confused
+# with the unset state.
+_UNSET = object()
+
 
 class DurableEntityContext:
     """Azure Functions-style entity context (v1-compatible).
@@ -21,7 +26,7 @@ class DurableEntityContext:
     def __init__(self, ctx: EntityContext, operation_input: Any = None):
         self._ctx = ctx
         self._input = operation_input
-        self._result: Any = None
+        self._result: Any = _UNSET
 
     # -- identity ------------------------------------------------------------
     @property
@@ -82,7 +87,7 @@ class DurableEntityContext:
 
     def resolve_result(self, fallback: Any) -> Any:
         """Return the value set via :meth:`set_result`, or ``fallback`` if unset."""
-        return self._result if self._result is not None else fallback
+        return fallback if self._result is _UNSET else self._result
 
     def destruct_on_exit(self) -> None:
         """Delete this entity after the operation completes."""
