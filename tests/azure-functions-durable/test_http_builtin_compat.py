@@ -110,6 +110,14 @@ def test_activity_requires_uri():
         builtin_http_activity({"method": "GET"})
 
 
+def test_activity_rejects_non_http_scheme():
+    # Durable HTTP is http(s) only; other schemes urlopen would honor
+    # (file://, ftp://, ...) are rejected.
+    for uri in ("file:///etc/passwd", "ftp://example.com/x", "gopher://x"):
+        with pytest.raises(ValueError, match="http/https"):
+            builtin_http_activity({"method": "GET", "uri": uri})
+
+
 def test_activity_adds_bearer_token_for_token_source():
     fake_resp = _fake_urlopen_response(200, {}, "ok")
     captured = {}

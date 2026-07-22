@@ -36,18 +36,29 @@ def test_get_input_returns_stored_input():
     assert adapter.get_input() == 5
 
 
-def test_get_state_maps_initializer_to_default():
+def test_get_state_returns_existing_state_without_calling_initializer():
     adapter, fake = _adapter()
-    fake.get_state.return_value = 0
-    result = adapter.get_state(initializer=lambda: 0, expected_type=int)
-    assert result == 0
-    fake.get_state.assert_called_once_with(int, 0)
+    # Existing state present: core get_state ignores the default.
+    fake.get_state.side_effect = lambda intended_type, default: 42
+    init = MagicMock()
+    result = adapter.get_state(initializer=init, expected_type=int)
+    assert result == 42
+    # The initializer must not run when state already exists.
+    init.assert_not_called()
 
 
-def test_get_state_without_initializer():
+def test_get_state_uses_initializer_only_when_no_state():
     adapter, fake = _adapter()
-    adapter.get_state()
-    fake.get_state.assert_called_once_with(None, None)
+    # No state: core get_state returns the default the adapter passes.
+    fake.get_state.side_effect = lambda intended_type, default: default
+    result = adapter.get_state(initializer=lambda: 7, expected_type=int)
+    assert result == 7
+
+
+def test_get_state_without_initializer_returns_none_when_no_state():
+    adapter, fake = _adapter()
+    fake.get_state.side_effect = lambda intended_type, default: default
+    assert adapter.get_state() is None
 
 
 def test_set_state_delegates():

@@ -273,6 +273,15 @@ def accepts_two_positional_args(fn: Callable[..., Any]) -> bool:
     Two-argument functions are treated as durabletask-native orchestrators;
     single-argument functions are treated as Azure Functions / v1-style
     orchestrators that receive a wrapped :class:`DurableOrchestrationContext`.
+
+    This is a signature-arity heuristic, so the two contracts are expected to be
+    strict: a v1-style function takes exactly one positional parameter and a
+    durabletask-native function takes exactly two. Unusual shapes can be
+    misclassified -- a wrapper exposing ``*args``, a ``functools.partial`` or
+    callable instance with pre-applied/bound parameters, an un-introspectable
+    callable (assumed native), or a v1 function with a defaulted second
+    parameter -- so orchestrators should adhere to one of the two canonical
+    signatures.
     """
     try:
         sig = inspect.signature(fn)

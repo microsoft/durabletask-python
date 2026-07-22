@@ -70,12 +70,16 @@ class DurableEntityContext:
         ----------
         initializer : Optional[Callable[[], Any]]
             A zero-argument callable providing the initial state when no state
-            exists yet.
+            exists yet. It is invoked lazily -- only when there is no existing
+            state -- so a side-effecting or expensive initializer does not run
+            when state is already present.
         expected_type : Optional[type]
             Optional type used to reconstruct the state.
         """
-        default = initializer() if callable(initializer) else None
-        return self._ctx.get_state(expected_type, default)
+        state = self._ctx.get_state(expected_type, _UNSET)
+        if state is _UNSET:
+            return initializer() if callable(initializer) else None
+        return state
 
     def set_state(self, state: Any) -> None:
         """Set the state of the entity."""

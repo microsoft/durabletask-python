@@ -331,6 +331,45 @@ async def test_wait_for_completion_returns_check_status_on_timeout():
         await client.close()
 
 
+async def test_wait_for_completion_surfaces_failure_details_when_failed():
+    client = _make_client()
+    try:
+        # A failed orchestration carries its error in failure_details;
+        # serialized_output is typically None.
+        state = SimpleNamespace(
+            runtime_status=OrchestrationStatus.FAILED,
+            serialized_output=None,
+            failure_details=SimpleNamespace(
+                message="boom", error_type="ValueError", stack_trace="tb"))
+        with patch.object(client, "wait_for_orchestration_completion",
+                          new=AsyncMock(return_value=state)):
+            with pytest.warns(DeprecationWarning):
+                response = await client.wait_for_completion_or_create_check_status_response(
+                    _make_request(), "abc")
+        assert response.status_code == 500
+        body = json.loads(response.get_body())
+        assert body["message"] == "boom"
+        assert body["errorType"] == "ValueError"
+        assert body["stackTrace"] == "tb"
+    finally:
+        await client.close()
+
+
+async def test_create_check_status_response_location_includes_query_string():
+    client = _make_client()
+    try:
+        response = client.create_check_status_response(_make_request(), "abc")
+        assert response.status_code == 202
+        location = response.headers["Location"]
+        # The Location must carry the required query string so a client that
+        # follows it is authorized, and it matches the body's statusQueryGetUri.
+        assert "code=xyz" in location
+        body = json.loads(response.get_body())
+        assert location == body["statusQueryGetUri"]
+    finally:
+        await client.close()
+
+
 # ---------------------------------------------------------------------------
 # rewind
 # ---------------------------------------------------------------------------

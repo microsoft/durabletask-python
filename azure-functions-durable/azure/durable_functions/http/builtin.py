@@ -32,6 +32,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Generator, Optional
+from urllib.parse import urlparse
 
 from .models import DurableHttpResponse
 
@@ -82,6 +83,13 @@ def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:
     uri = request.get("uri")
     if not uri:
         raise ValueError("A non-empty 'uri' is required for a durable HTTP call.")
+    # Durable HTTP only ever means http(s); reject other schemes (file://,
+    # ftp://, ...) that urlopen would otherwise honor, closing off local-file
+    # reads / SSRF to non-HTTP endpoints from orchestration-supplied URLs.
+    if urlparse(str(uri)).scheme.lower() not in ("http", "https"):
+        raise ValueError(
+            "call_http only supports http/https URLs; "
+            f"got {uri!r}.")
     content = request.get("content")
     headers: dict[str, str] = dict(request.get("headers") or {})
 

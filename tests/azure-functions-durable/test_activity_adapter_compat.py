@@ -30,8 +30,13 @@ def test_two_param_activity_is_adapted_to_single_input():
     assert adapted is not act
     assert list(inspect.signature(adapted).parameters) == ["payload"]
     assert adapted.__name__ == "act"
-    # The context is supplied as None; the input is passed through.
-    assert adapted("value") == (None, "value")
+    # A placeholder context is supplied; the input is passed through.
+    ctx, payload = adapted("value")
+    assert payload == "value"
+    # Reading the placeholder context raises a clear error rather than an
+    # opaque AttributeError on None.
+    with pytest.raises(NotImplementedError, match="ActivityContext is not available"):
+        _ = ctx.orchestration_id
 
 
 def test_adapter_invokes_original_positionally_regardless_of_param_name():

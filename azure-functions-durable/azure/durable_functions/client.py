@@ -111,13 +111,16 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             request (func.HttpRequest): The incoming HTTP request.
             instance_id (str): The ID of the Durable Function instance.
         """
-        location_url = self._get_instance_status_url(request, instance_id)
+        payload = self._get_client_response_links(request, instance_id)
         return func.HttpResponse(
-            body=str(self._get_client_response_links(request, instance_id)),
+            body=str(payload),
             status_code=202,
             headers={
                 'content-type': 'application/json',
-                'Location': location_url,
+                # Match v1: Location points at statusQueryGetUri, which includes
+                # the required query string (webhook key / task hub / connection)
+                # so a client that follows the header is authorized.
+                'Location': payload['statusQueryGetUri'],
             },
         )
 
@@ -393,7 +396,7 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         if state.runtime_status == OrchestrationStatus.TERMINATED:
             return self._create_http_response(200, state.serialized_output)
         if state.runtime_status == OrchestrationStatus.FAILED:
-            return self._create_http_response(500, state.serialized_output)
+            return self._create_http_response(500, _failure_response_body(state))
         return self.create_check_status_response(request, instance_id)
 
     @deprecated("rewind is deprecated; use rewind_orchestration instead.")
@@ -422,3 +425,25 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             body=body_as_json,
             mimetype="application/json",
             headers={"Content-Type": "application/json"})
+
+
+def _failure_response_body(state: Any) -> Any:
+    """Build the 500 response body for a failed orchestration.
+
+    A failed orchestration's error lives in ``failure_details``; its
+    ``serialized_output`` is typically ``None``. Surface the failure details so
+    the caller does not lose the error (matching v1), falling back to the
+    serialized output only when details are absent.
+    """
+    details = getattr(state, "failure_details", None)
+    if details is not None:
+        body: dict[str, Any] = {}
+        if getattr(details, "message", None):
+            body["message"] = details.message
+        if getattr(details, "error_type", None):
+            body["errorType"] = details.error_type
+        if getattr(details, "stack_trace", None):
+            body["stackTrace"] = details.stack_trace
+        if body:
+            return body
+    return state.serialized_output
