@@ -19,6 +19,7 @@ from ..http.builtin import (
     builtin_http_activity,
     builtin_http_poll_orchestrator,
 )
+from ..internal.compat.activity import wrap_activity
 from ..worker import DurableFunctionsWorker
 from ..orchestrator import Orchestrator
 
@@ -138,26 +139,15 @@ class Blueprint(TriggerApi, BindingApi):
         self.entity_trigger(
             context_name="context", entity_name=EXPORT_ENTITY_NAME)(ExportJobEntity)
         self.orchestration_trigger(context_name="context")(export_job_orchestrator)
-
-        def _list_terminal_instances(input: dict[str, Any]) -> dict[str, Any]:
-            return list_terminal_instances(None, input)  # type: ignore[arg-type]
-
-        def _export_instance_history(input: dict[str, Any]) -> dict[str, Any]:
-            return export_instance_history(None, input)  # type: ignore[arg-type]
-
-        _list_terminal_instances.__name__ = LIST_TERMINAL_INSTANCES_ACTIVITY
-        _export_instance_history.__name__ = EXPORT_INSTANCE_HISTORY_ACTIVITY
-        # The worker reads the runtime ``__annotations__`` during indexing and
-        # rejects parameterized generics, so reset them to the bare ``dict`` it
-        # accepts (the signatures above stay typed for static analysis).
-        _list_terminal_instances.__annotations__ = {"input": dict, "return": dict}
-        _export_instance_history.__annotations__ = {"input": dict, "return": dict}
+        # These durabletask activities take a ``(context, input)`` signature;
+        # ``activity_trigger`` adapts such two-argument activities to the
+        # host's single-input calling convention automatically.
         self.activity_trigger(
             input_name="input",
-            activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(_list_terminal_instances)
+            activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(list_terminal_instances)
         self.activity_trigger(
             input_name="input",
-            activity=EXPORT_INSTANCE_HISTORY_ACTIVITY)(_export_instance_history)
+            activity=EXPORT_INSTANCE_HISTORY_ACTIVITY)(export_instance_history)
 
     def _configure_orchestrator_callable(
             self,
@@ -337,15 +327,17 @@ class Blueprint(TriggerApi, BindingApi):
         """
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
-            def decorator() -> FunctionBuilder:
-                fb.add_trigger(
-                    trigger=ActivityTrigger(name=input_name,
-                                            activity=activity))
-                return fb
+            fb.add_trigger(
+                trigger=ActivityTrigger(name=input_name, activity=activity))
+            return fb
 
-            return decorator()
+        def decorator(user_fn: Callable[..., Any]) -> FunctionBuilder:
+            # Adapt a durabletask-native two-argument activity ((ctx, input))
+            # to the host's single-input convention; one-argument activities
+            # pass through unchanged.
+            return wrap(wrap_activity(user_fn, input_name))
 
-        return wrap
+        return decorator
 
     def entity_trigger(self,
                        context_name: str,

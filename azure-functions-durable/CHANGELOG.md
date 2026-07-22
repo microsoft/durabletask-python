@@ -63,10 +63,13 @@ durabletask means:
 
 New capabilities beyond the v1 surface, most inherited from `durabletask`:
 
-- **durabletask-native authoring.** Two-argument orchestrator and entity
-  functions (`def orchestrator(ctx, input)`, `def entity(ctx, input)`) and
-  class-based entities (`DurableEntity`) are first-class, alongside the
-  supported v1-style single-argument functions.
+- **durabletask-native authoring.** Two-argument orchestrator, entity, and
+  activity functions (`def orchestrator(ctx, input)`, `def entity(ctx, input)`,
+  `def activity(ctx, input)`) and class-based entities (`DurableEntity`) are
+  first-class, alongside the supported v1-style single-argument functions. For
+  activities, `activity_trigger` adapts a two-argument `(ctx, input)` function
+  to the host's single-input calling convention automatically (the context is
+  passed as `None`).
 - **`DurableFunctionsClient.rewind_orchestration(...)`** rewinds a failed
   orchestration to its last known good state (inherited from durabletask).
 - **`DFApp.configure_scheduled_tasks()`** opts an app in to durabletask

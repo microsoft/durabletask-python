@@ -74,6 +74,27 @@ def test_activity_trigger_v1_signature():
     assert trigger.activity == "MyActivity"
 
 
+def test_activity_trigger_adapts_durabletask_native_two_param():
+    app = df.DFApp()
+
+    def my_activity(ctx, payload):
+        return {"ctx_is_none": ctx is None, "echo": payload}
+
+    fb = app.activity_trigger(
+        input_name="payload", activity="MyActivity")(my_activity)
+    trigger = _trigger(fb)
+    assert trigger.name == "payload"
+    assert trigger.activity == "MyActivity"
+
+    # The registered function is adapted to a single-input signature named after
+    # ``input_name``, and passes ``None`` as the durabletask activity context.
+    import inspect
+    registered = fb._function._func
+    assert list(inspect.signature(registered).parameters) == ["payload"]
+    assert registered.__name__ == "my_activity"
+    assert registered("hello") == {"ctx_is_none": True, "echo": "hello"}
+
+
 # ---------------------------------------------------------------------------
 # entity_trigger
 # ---------------------------------------------------------------------------
