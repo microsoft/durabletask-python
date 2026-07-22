@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing_extensions import deprecated
+from warnings import deprecated
 
 from durabletask.entities import EntityInstanceId
 
@@ -35,9 +35,15 @@ class EntityId(EntityInstanceId):
         return str(entity_id)
 
     @staticmethod
-    def get_entity_id(scheduler_id: str) -> EntityInstanceId:
-        """Return an entity ID from a scheduler ID string (``@name@key``)."""
-        return EntityInstanceId.parse(scheduler_id)
+    def get_entity_id(scheduler_id: str) -> "EntityId":
+        """Return an entity ID from a scheduler ID string (``@name@key``).
+
+        Returns a v1-compatible :class:`EntityId` (exposing ``.name``) rather
+        than a bare :class:`~durabletask.entities.EntityInstanceId`, so v1 code
+        such as ``EntityId.get_entity_id("@Counter@one").name`` keeps working.
+        """
+        parsed = EntityInstanceId.parse(scheduler_id)
+        return EntityId(name=parsed.entity, key=parsed.key)
 
     @staticmethod
     def get_entity_id_url_path(entity_id: EntityInstanceId) -> str:

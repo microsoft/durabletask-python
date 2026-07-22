@@ -335,10 +335,17 @@ async def test_wait_for_completion_surfaces_failure_details_when_failed():
     client = _make_client()
     try:
         # A failed orchestration carries its error in failure_details;
-        # serialized_output is typically None.
+        # serialized_output is typically None. v1 returns the full status JSON
+        # (runtimeStatus, instanceId, timestamps, output) for terminal states.
         state = SimpleNamespace(
+            name="orch",
+            instance_id="abc",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            last_updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
             runtime_status=OrchestrationStatus.FAILED,
+            serialized_input=None,
             serialized_output=None,
+            serialized_custom_status=None,
             failure_details=SimpleNamespace(
                 message="boom", error_type="ValueError", stack_trace="tb"))
         with patch.object(client, "wait_for_orchestration_completion",
@@ -348,9 +355,10 @@ async def test_wait_for_completion_surfaces_failure_details_when_failed():
                     _make_request(), "abc")
         assert response.status_code == 500
         body = json.loads(response.get_body())
-        assert body["message"] == "boom"
-        assert body["errorType"] == "ValueError"
-        assert body["stackTrace"] == "tb"
+        assert body["runtimeStatus"] == "Failed"
+        assert body["instanceId"] == "abc"
+        # The failure message is surfaced under "output" so the error is not lost.
+        assert body["output"] == "boom"
     finally:
         await client.close()
 

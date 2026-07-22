@@ -189,7 +189,8 @@ class Blueprint(TriggerApi, BindingApi):
 
     def _configure_entity_callable(
             self,
-            wrap: Callable[[Callable[..., Any]], FunctionBuilder]
+            wrap: Callable[[Callable[..., Any]], FunctionBuilder],
+            entity_name: Optional[str] = None
     ) -> Callable[[task.Entity[Any, Any]], FunctionBuilder]:
         """Obtain decorator to construct an Entity class from a user-defined Function.
 
@@ -197,6 +198,12 @@ class Blueprint(TriggerApi, BindingApi):
         ----------
         wrap: Callable
             The next decorator to be applied.
+        entity_name: Optional[str]
+            The configured entity name from the ``entity_trigger`` binding. When
+            provided it is stamped onto the user function via
+            ``__durable_entity_name__`` so the worker registers the entity under
+            this name (matching the ``@Name@key`` work items the host dispatches)
+            rather than under the Python function's ``__name__``.
 
         Returns
         -------
@@ -205,6 +212,12 @@ class Blueprint(TriggerApi, BindingApi):
             wrapped by the next decorator in the sequence.
         """
         def decorator(entity_func: task.Entity[Any, Any]) -> FunctionBuilder:
+            # Preserve the configured entity name so the worker registers the
+            # entity under it. Without this, ``add_entity`` falls back to the
+            # Python function name and a work item for ``@<entity_name>@<key>``
+            # fails to resolve the implementation.
+            if entity_name is not None:
+                entity_func.__durable_entity_name__ = entity_name  # type: ignore[union-attr]
             # Construct an orchestrator based on the end-user code
 
             # TODO: Because this handle method is the one actually exposed to the Functions SDK decorator,
@@ -353,7 +366,6 @@ class Blueprint(TriggerApi, BindingApi):
             Name of Entity Function.
             The value is None by default, in which case the name of the method is used.
         """
-        @self._configure_entity_callable
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
             def decorator() -> FunctionBuilder:
@@ -364,7 +376,7 @@ class Blueprint(TriggerApi, BindingApi):
 
             return decorator()
 
-        return wrap
+        return self._configure_entity_callable(wrap, entity_name)
 
     def durable_client_input(self,
                              client_name: str,

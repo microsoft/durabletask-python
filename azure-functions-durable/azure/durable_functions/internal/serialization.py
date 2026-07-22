@@ -135,7 +135,16 @@ class FunctionsDataConverter(JsonDataConverter):
     def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
         if data is None or data == "":
             return None
-        value = df_loads(data, target_type)
+        # Decode without handing ``target_type`` to ``df_loads``: the SDK's typed
+        # ``df_loads`` validates the decoded value against ``target_type`` in
+        # strict-typing mode (``AZURE_FUNCTIONS_DURABLE_STRICT_TYPING=1``), which
+        # rejects a plain-JSON payload -- e.g. the ``dict`` produced by a built-in
+        # activity/orchestrator such as ``DurableHttpResponse.to_json()`` -- that
+        # is not wrapped in the ``{"__class__", "__module__", "__data__"}``
+        # custom-object envelope. ``df_loads`` still reconstructs envelope
+        # payloads here via its object hook; typed reconstruction of plain values
+        # is deferred to ``coerce`` below.
+        value = df_loads(data)
         # ``df_loads`` reconstructs the custom-object envelope
         # (``{"__class__", "__module__", "__data__"}``), but a payload that was
         # serialized as a plain JSON structure -- e.g. a ``dict`` produced by a

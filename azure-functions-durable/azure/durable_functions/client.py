@@ -5,7 +5,7 @@ import json
 
 from datetime import datetime, timedelta
 from typing import Any, Optional, Union
-from typing_extensions import deprecated
+from warnings import deprecated
 import azure.functions as func
 from urllib.parse import urlparse, quote
 
@@ -279,18 +279,25 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
     @deprecated("read_entity_state is deprecated; use get_entity instead.")
     async def read_entity_state(
             self,
-            entity_instance_id: EntityInstanceId,
+            entity_instance_id: Optional[EntityInstanceId] = None,
             task_hub_name: Optional[str] = None,
-            connection_name: Optional[str] = None) -> EntityStateResponse:
+            connection_name: Optional[str] = None,
+            *,
+            entityId: Optional[EntityInstanceId] = None) -> EntityStateResponse:
         """Deprecated alias for :meth:`get_entity`.
 
         Returns an :class:`EntityStateResponse` wrapping the durabletask
         ``EntityMetadata`` for v1 back-compat.
 
-        The ``task_hub_name`` and ``connection_name`` arguments have no
-        equivalent in durabletask and are ignored.
+        Accepts the v1 ``entityId`` keyword as an alias for
+        ``entity_instance_id``. The ``task_hub_name`` and ``connection_name``
+        arguments have no equivalent in durabletask and are ignored.
         """
-        metadata = await self.get_entity(entity_instance_id)
+        resolved_id = entity_instance_id if entity_instance_id is not None else entityId
+        if resolved_id is None:
+            raise TypeError(
+                "read_entity_state() missing required argument: 'entity_instance_id'")
+        metadata = await self.get_entity(resolved_id)
         return EntityStateResponse.from_entity_metadata(metadata)
 
     @deprecated("get_status_by is deprecated; use get_all_orchestration_states instead.")
@@ -332,23 +339,29 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
 
     async def signal_entity(
             self,
-            entity_instance_id: EntityInstanceId,
-            operation_name: str,
+            entity_instance_id: Optional[EntityInstanceId] = None,
+            operation_name: str = "",
             input: Any = None,
             signal_time: Optional[datetime] = None,
             *,
+            entityId: Optional[EntityInstanceId] = None,
             operation_input: Any = None,
             task_hub_name: Optional[str] = None,
             connection_name: Optional[str] = None) -> None:
         """Signal an entity to perform an operation.
 
         Accepts the durabletask ``input`` argument as well as the v1
-        ``operation_input`` alias. The ``task_hub_name`` and ``connection_name``
+        ``operation_input`` alias, and the v1 ``entityId`` keyword as an alias
+        for ``entity_instance_id``. The ``task_hub_name`` and ``connection_name``
         arguments have no equivalent in durabletask and are ignored.
         """
+        resolved_id = entity_instance_id if entity_instance_id is not None else entityId
+        if resolved_id is None:
+            raise TypeError(
+                "signal_entity() missing required argument: 'entity_instance_id'")
         resolved_input = operation_input if operation_input is not None else input
         await super().signal_entity(
-            entity_instance_id, operation_name, input=resolved_input, signal_time=signal_time)
+            resolved_id, operation_name, input=resolved_input, signal_time=signal_time)
 
     @deprecated(
         "get_client_response_links is deprecated; use create_http_management_payload instead.")
@@ -394,9 +407,11 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         if state.runtime_status == OrchestrationStatus.COMPLETED:
             return self._create_http_response(200, state.serialized_output)
         if state.runtime_status == OrchestrationStatus.TERMINATED:
-            return self._create_http_response(200, state.serialized_output)
+            return self._create_http_response(
+                200, DurableOrchestrationStatus.from_orchestration_state(state).to_json())
         if state.runtime_status == OrchestrationStatus.FAILED:
-            return self._create_http_response(500, _failure_response_body(state))
+            return self._create_http_response(
+                500, DurableOrchestrationStatus.from_orchestration_state(state).to_json())
         return self.create_check_status_response(request, instance_id)
 
     @deprecated("rewind is deprecated; use rewind_orchestration instead.")
@@ -425,25 +440,3 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             body=body_as_json,
             mimetype="application/json",
             headers={"Content-Type": "application/json"})
-
-
-def _failure_response_body(state: Any) -> Any:
-    """Build the 500 response body for a failed orchestration.
-
-    A failed orchestration's error lives in ``failure_details``; its
-    ``serialized_output`` is typically ``None``. Surface the failure details so
-    the caller does not lose the error (matching v1), falling back to the
-    serialized output only when details are absent.
-    """
-    details = getattr(state, "failure_details", None)
-    if details is not None:
-        body: dict[str, Any] = {}
-        if getattr(details, "message", None):
-            body["message"] = details.message
-        if getattr(details, "error_type", None):
-            body["errorType"] = details.error_type
-        if getattr(details, "stack_trace", None):
-            body["stackTrace"] = details.stack_trace
-        if body:
-            return body
-    return state.serialized_output

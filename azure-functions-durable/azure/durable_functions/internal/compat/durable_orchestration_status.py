@@ -161,6 +161,15 @@ class DurableOrchestrationStatus:
             self._state.serialized_output if self._state is not None else None)
         if output is not None:
             result["output"] = output
+        elif self._state is not None:
+            # A failed orchestration carries its error in ``failure_details``
+            # rather than ``serialized_output``; surface it under ``output``
+            # (matching v1, where the failure message was returned through the
+            # status output) so the error is not dropped from the payload.
+            failure = getattr(self._state, "failure_details", None)
+            failure_message = getattr(failure, "message", None) if failure is not None else None
+            if failure_message:
+                result["output"] = failure_message
         input_ = self._raw_payload(
             self._state.serialized_input if self._state is not None else None)
         if input_ is not None:

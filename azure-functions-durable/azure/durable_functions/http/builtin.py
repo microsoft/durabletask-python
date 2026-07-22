@@ -32,7 +32,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Generator, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from .models import DurableHttpResponse
 
@@ -178,12 +178,21 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, dict[str
     response: dict[str, Any] = yield context.call_activity(
         BUILTIN_HTTP_ACTIVITY_NAME, request)
 
+    # Track the URI of the most recent request so a relative ``Location`` can be
+    # resolved against it.
+    current_uri: str = str(request.get("uri") or "")
+
     while response.get("status_code") == 202:
         headers: dict[str, str] = response.get("headers") or {}
         location = _get_header(headers, "Location")
         if not location:
             # Cannot poll without a Location; return the 202 as-is.
             break
+
+        # A ``Location`` may be relative (e.g. ``/operations/42``); resolve it
+        # against the current request URI so the next poll targets an absolute
+        # http(s) URL (the built-in activity rejects non-absolute URIs).
+        location = urljoin(current_uri, location)
 
         now = context.current_utc_datetime
         delay = _retry_after_seconds(headers, now)
@@ -197,6 +206,7 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, dict[str
         if request.get("tokenSource") is not None:
             poll_request["tokenSource"] = request["tokenSource"]
 
+        current_uri = location
         response = yield context.call_activity(BUILTIN_HTTP_ACTIVITY_NAME, poll_request)
 
     return response

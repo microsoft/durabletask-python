@@ -3,7 +3,7 @@
 
 from typing import Any
 
-from typing_extensions import deprecated
+from warnings import deprecated
 
 from ...client import DurableFunctionsClient
 

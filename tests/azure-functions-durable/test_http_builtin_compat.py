@@ -223,6 +223,32 @@ def test_poll_orchestrator_stops_when_202_has_no_location():
     assert len(ctx._activity_calls) == 1
 
 
+def test_poll_orchestrator_resolves_relative_location():
+    # A relative Location must be resolved against the prior request URI so the
+    # next poll targets an absolute http(s) URL (the activity rejects relatives).
+    request = {"method": "GET", "uri": "http://host/api/start"}
+    ctx = _fake_orchestration_context(request)
+    gen = builtin_http_poll_orchestrator(ctx)
+
+    assert next(gen) == ("activity_task", 1)
+
+    # 202 with a relative Location schedules a timer.
+    gen.send({
+        "status_code": 202,
+        "headers": {"Location": "/operations/42"},
+        "content": None,
+    })
+
+    # After the timer, the resolved absolute URL is polled.
+    assert gen.send(None) == ("activity_task", 2)
+    _, poll_input = ctx._activity_calls[1]
+    assert poll_input["uri"] == "http://host/operations/42"
+
+    with pytest.raises(StopIteration) as stop:
+        gen.send({"status_code": 200, "headers": {}, "content": "done"})
+    assert stop.value.value["content"] == "done"
+
+
 # ---------------------------------------------------------------------------
 # Retry-After parsing
 # ---------------------------------------------------------------------------

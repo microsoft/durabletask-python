@@ -3,7 +3,7 @@
 
 from datetime import timedelta
 
-from typing_extensions import deprecated
+from warnings import deprecated
 
 from durabletask.task import RetryPolicy
 
