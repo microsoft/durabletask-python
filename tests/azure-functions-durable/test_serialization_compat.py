@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import json
-
 import pytest
 
 from azure.durable_functions.internal.serialization import (
@@ -71,14 +69,3 @@ def test_coerce_plain_dict_to_type():
     # (already-deserialized) dict into the declared type.
     coerced = DEFAULT_FUNCTIONS_DATA_CONVERTER.coerce({"x": 5, "y": 6}, Point)
     assert coerced == Point(5, 6)
-
-
-def test_deserialize_reconstructs_from_json_type_from_plain_dict():
-    # A payload serialized as a plain JSON object (not the custom-object
-    # envelope) must still be reconstructed to a from_json-capable target type.
-    # This is the path behind ``call_http``, whose built-in poll orchestrator
-    # returns a plain dict that must arrive as a DurableHttpResponse.
-    serialized = json.dumps({"x": 7, "y": 8})
-    result = DEFAULT_FUNCTIONS_DATA_CONVERTER.deserialize(serialized, Point)
-    assert isinstance(result, Point)
-    assert result == Point(7, 8)

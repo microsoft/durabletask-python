@@ -303,8 +303,12 @@ def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     Two-argument (durabletask-native) orchestrators are returned unchanged. The
     returned wrapper deliberately does not set ``__wrapped__`` so durabletask
-    introspects the wrapper's own ``(context, _input)`` signature (and thus
-    passes the raw input) rather than the wrapped function's signature.
+    introspects the wrapper's own ``(context, _input)`` signature rather than the
+    wrapped function's signature. When the ``orchestration_trigger`` decorator
+    declared an ``input_type``, it is stamped onto the wrapper's ``_input``
+    annotation so durabletask's type discovery deserializes the input to that
+    type (required in strict-typing mode, where the codec reconstructs a
+    custom-object payload only when given the destination type).
     """
     if accepts_two_positional_args(fn):
         return fn
@@ -319,10 +323,14 @@ def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
             result: Any = yield from generator
             return result
         _generator_wrapper.__name__ = name
+        if input_type is not None:
+            _generator_wrapper.__annotations__["_input"] = input_type
         return _generator_wrapper
 
     def _wrapper(context: OrchestrationContext, _input: Any = None) -> Any:
         adapter = DurableOrchestrationContext(context, _input, input_type)
         return fn(adapter)
     _wrapper.__name__ = name
+    if input_type is not None:
+        _wrapper.__annotations__["_input"] = input_type
     return _wrapper

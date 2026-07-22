@@ -174,7 +174,8 @@ def test_poll_orchestrator_returns_non_202_immediately():
     assert next(gen) == ("activity_task", 1)
     with pytest.raises(StopIteration) as stop:
         gen.send({"status_code": 200, "headers": {}, "content": "done"})
-    assert stop.value.value["status_code"] == 200
+    assert isinstance(stop.value.value, DurableHttpResponse)
+    assert stop.value.value.status_code == 200
     assert len(ctx._activity_calls) == 1
 
 
@@ -210,7 +211,8 @@ def test_poll_orchestrator_polls_until_complete():
     # A final 200 completes the orchestration.
     with pytest.raises(StopIteration) as stop:
         gen.send({"status_code": 200, "headers": {}, "content": "done"})
-    assert stop.value.value["content"] == "done"
+    assert isinstance(stop.value.value, DurableHttpResponse)
+    assert stop.value.value.content == "done"
 
 
 def test_poll_orchestrator_stops_when_202_has_no_location():
@@ -219,7 +221,8 @@ def test_poll_orchestrator_stops_when_202_has_no_location():
     next(gen)
     with pytest.raises(StopIteration) as stop:
         gen.send({"status_code": 202, "headers": {}, "content": None})
-    assert stop.value.value["status_code"] == 202
+    assert isinstance(stop.value.value, DurableHttpResponse)
+    assert stop.value.value.status_code == 202
     assert len(ctx._activity_calls) == 1
 
 
@@ -246,7 +249,8 @@ def test_poll_orchestrator_resolves_relative_location():
 
     with pytest.raises(StopIteration) as stop:
         gen.send({"status_code": 200, "headers": {}, "content": "done"})
-    assert stop.value.value["content"] == "done"
+    assert isinstance(stop.value.value, DurableHttpResponse)
+    assert stop.value.value.content == "done"
 
 
 # ---------------------------------------------------------------------------

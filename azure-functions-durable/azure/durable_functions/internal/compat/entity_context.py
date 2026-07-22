@@ -5,6 +5,7 @@ from typing import Any, Callable, Optional
 
 from durabletask.entities import EntityContext
 
+from ..serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .orchestration_context import accepts_two_positional_args
 
 # Sentinel distinguishing "no result set" from an explicit ``set_result(None)``.
@@ -56,10 +57,14 @@ class DurableEntityContext:
     def get_input(self, expected_type: Optional[type] = None) -> Any:
         """Get the input for the current operation.
 
-        ``expected_type`` is accepted for v1 compatibility but the input is
-        already deserialized by durabletask, so it is returned as-is.
+        The input is already deserialized by durabletask. When an
+        ``expected_type`` is supplied the value is coerced to that type
+        (matching the v1 ``get_input`` contract); otherwise the raw value is
+        returned.
         """
-        return self._input
+        if expected_type is None:
+            return self._input
+        return DEFAULT_FUNCTIONS_DATA_CONVERTER.coerce(self._input, expected_type)
 
     def get_state(self,
                   initializer: Optional[Callable[[], Any]] = None,

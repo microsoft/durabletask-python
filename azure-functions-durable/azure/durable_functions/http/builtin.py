@@ -166,13 +166,22 @@ def _retry_after_seconds(headers: dict[str, str], now: datetime) -> int:
     return max(int((retry_at - now).total_seconds()), 0)
 
 
-def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, dict[str, Any]]:
+def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, DurableHttpResponse]:
     """Issue a durable HTTP request and poll while it returns ``202``.
 
     Receives the request payload as its input, calls the built-in HTTP activity,
     and while the response is ``202 Accepted`` with a ``Location`` header waits
     on a durable timer (honoring ``Retry-After``) before re-polling the
-    ``Location`` URL. Returns the final response payload.
+    ``Location`` URL. Returns the final response as a
+    :class:`~azure.durable_functions.http.models.DurableHttpResponse`.
+
+    The built-in activity returns the response as a plain JSON ``dict`` (the
+    ``DurableHttpResponse`` wire form), which the polling loop inspects directly.
+    The orchestrator returns a ``DurableHttpResponse`` object so the
+    sub-orchestration result crosses the wire as a type-matched custom-object
+    envelope -- ``call_http`` declares ``return_type=DurableHttpResponse``, so it
+    is reconstructed type-safely (required under strict typing, which will not
+    build a custom type from a bare JSON object).
     """
     request: dict[str, Any] = context.get_input() or {}
     response: dict[str, Any] = yield context.call_activity(
@@ -209,7 +218,7 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, dict[str
         current_uri = location
         response = yield context.call_activity(BUILTIN_HTTP_ACTIVITY_NAME, poll_request)
 
-    return response
+    return DurableHttpResponse.from_json(response)
 
 
 # The durable dispatch name is the registered function name (its ``__name__``).
