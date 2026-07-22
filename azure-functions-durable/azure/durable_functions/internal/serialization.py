@@ -23,13 +23,18 @@ logger = logging.getLogger("azure.functions.DurableFunctions")
 class FunctionsDataConverter(JsonDataConverter):
     """:class:`DataConverter` that serializes via azure-functions' codec.
 
-    Overrides only the string boundary (:meth:`serialize` / :meth:`deserialize`)
-    to route through ``df_dumps`` / ``df_loads`` -- producing the
-    ``{"__class__", "__module__", "__data__"}`` envelope that the Durable
-    Functions host expects -- while inheriting :class:`JsonDataConverter`'s
-    value-level :meth:`coerce` and reconstruction policy
-    (:meth:`can_reconstruct`), which operate on already-parsed values and are
-    wire-format agnostic.
+    Overrides the string boundary (:meth:`serialize` / :meth:`deserialize`) to
+    route through ``df_dumps`` / ``df_loads`` -- producing the format that the
+    Durable Functions host expects.
+
+    :meth:`coerce` and :meth:`can_reconstruct` are overridden so the codec's
+    type rules apply uniformly. :meth:`coerce` round-trips the value through
+    ``serialize`` / ``deserialize`` rather than the base converter's permissive
+    value-level reconstruction, so a coercion is validated exactly like a wire
+    payload. :meth:`can_reconstruct` returns ``True`` so type discovery always
+    hands the declared type to ``deserialize`` and lets ``df_loads`` decide what
+    it can reconstruct, instead of gating on the base converter's narrower
+    dataclass / ``from_json`` policy.
     """
 
     def serialize(self, value: Any) -> str | None:
@@ -41,6 +46,14 @@ class FunctionsDataConverter(JsonDataConverter):
         if data is None or data == "":
             return None
         return df_loads(data, expected_type=target_type)
+
+    def coerce(self, value: Any, target_type: type | None = None) -> Any:
+        if value is None or target_type is None:
+            return value
+        return self.deserialize(self.serialize(value), target_type)
+
+    def can_reconstruct(self, target_type: Any) -> bool:
+        return True
 
 
 # Shared instance: the converter is stateless, so a single instance is reused

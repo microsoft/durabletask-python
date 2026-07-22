@@ -81,6 +81,15 @@ jobs:
     # variables > Actions > Variables) once 2.2.0b6 is available on PyPI, or
     # provide the library build via ``AZURE_FUNCTIONS_PYTHON_LIBRARY``.
     if: ${{ vars.RUN_FUNCTIONS_E2E == 'true' }}
+    # Run the suite in both payload-typing modes: the default (loose) codec and
+    # strict typing (``AZURE_FUNCTIONS_DURABLE_STRICT_TYPING=1``), which requires
+    # every decode call site to supply the destination type. ``0`` is not a
+    # truthy value for the flag, so it selects loose mode.
+    strategy:
+      fail-fast: false
+      matrix:
+        strict-typing: ["0", "1"]
+    name: e2e-tests (strict-typing=${{ matrix.strict-typing }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -115,5 +124,7 @@ jobs:
         # nox provisions each sample app's in-app virtual environment (a link to
         # a single editable install) so the Functions worker loads our
         # grpc/protobuf rather than its bundled copies.
+        env:
+          AZURE_FUNCTIONS_DURABLE_STRICT_TYPING: ${{ matrix.strict-typing }}
         run: nox -s functions_e2e
 

@@ -64,8 +64,9 @@ def test_none_round_trips():
     assert DEFAULT_FUNCTIONS_DATA_CONVERTER.deserialize(None) is None
 
 
-def test_coerce_plain_dict_to_type():
-    # get_input(expected_type=...) relies on the converter coercing a plain
-    # (already-deserialized) dict into the declared type.
-    coerced = DEFAULT_FUNCTIONS_DATA_CONVERTER.coerce({"x": 5, "y": 6}, Point)
+def test_coerce_round_trips_custom_object():
+    # coerce validates through the codec (serialize + deserialize) rather than
+    # permissively reconstructing an arbitrary value, so a custom object
+    # round-trips to its declared type.
+    coerced = DEFAULT_FUNCTIONS_DATA_CONVERTER.coerce(Point(5, 6), Point)
     assert coerced == Point(5, 6)
