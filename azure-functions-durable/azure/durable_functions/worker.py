@@ -72,7 +72,8 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
 
         if response is None:
             raise RuntimeError("Orchestrator execution did not produce a response.")
-        # The Python worker returns the input as type "json", so double-encoding is necessary
+        # Return the protobuf response serialized and base64-encoded, the exact
+        # format the Durable Functions host expects.
         return base64.b64encode(response.SerializeToString()).decode("utf-8")
 
     def execute_entity_batch_request(self, func: task.Entity[Any, Any], context: Any) -> str:
@@ -95,5 +96,6 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
 
         if response is None:
             raise RuntimeError("Entity execution did not produce a response.")
-        # The Python worker returns the input as type "json", so double-encoding is necessary
+        # Return the protobuf response serialized and base64-encoded, the exact
+        # format the Durable Functions host expects.
         return base64.b64encode(response.SerializeToString()).decode("utf-8")
