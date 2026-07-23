@@ -54,7 +54,7 @@ class ScheduleOperationRequest:
         raw_input: Any = data.get("input")
         input_type = _OPERATION_INPUT_TYPES.get(operation_name)
         if input_type is not None and isinstance(raw_input, dict):
-            raw_input = cast("Any", input_type).from_json(raw_input)
+            raw_input = cast(Any, input_type).from_json(raw_input)
         return cls(
             entity_id=data["entity_id"],
             operation_name=operation_name,

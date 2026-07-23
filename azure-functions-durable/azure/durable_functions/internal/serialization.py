@@ -12,12 +12,9 @@ Functions host extension (and the SDK's ``ActivityTriggerConverter``) expect.
 from __future__ import annotations
 from azure.functions._durable_functions import df_dumps, df_loads
 
-import logging
 from typing import Any
 
 from durabletask.serialization import JsonDataConverter
-
-logger = logging.getLogger("azure.functions.DurableFunctions")
 
 
 class FunctionsDataConverter(JsonDataConverter):
