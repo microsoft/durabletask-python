@@ -77,14 +77,18 @@ New capabilities beyond the v1 surface, most inherited from `durabletask`:
   orchestrator. Schedules are then managed from a client via
   `durabletask.scheduled.ScheduledTaskClient`. Scheduled tasks are not
   registered unless this method is called.
-- **`DFApp.configure_history_export()`** opts an app in to durabletask history
-  export by registering the export-job entity, driving orchestrator, and
-  activities. Export jobs are driven from a client via
-  `durabletask.extensions.history_export.ExportHistoryClient`; supply the
-  activities' runtime dependencies with `history_export.bind_context(...)`. The
-  instance-enumeration activity uses a Functions-specific implementation based
-  on `QueryInstances`, because the Durable Functions host extension does not
-  implement the `ListInstanceIds` gRPC call the core activity relies on.
+- **`DFApp.configure_history_export(writer=...)`** opts an app in to durabletask
+  history export by registering the export-job entity, driving orchestrator, and
+  activities. Supply the `HistoryWriter` here; the activities resolve their
+  durabletask client per invocation from a `durable_client_input` binding, so
+  export works across a scaled-out, multi-worker deployment. Export jobs are
+  driven from a client via
+  `azure.durable_functions.extensions.history_export.ExportHistoryClient`, which
+  behaves like the durabletask client but rejects `ExportMode.CONTINUOUS`:
+  continuous tailing needs the host's `ListInstanceIds` gRPC call, which the
+  Durable Functions host extension does not implement. The instance-enumeration
+  activity uses a Functions-specific implementation based on `QueryInstances`
+  for the same reason.
 - **`DurableOrchestrationContext.call_http(...)`** makes durable HTTP calls from
   orchestrators, restoring the v1 API. The request is executed by a built-in
   activity and, when the endpoint responds with `202 Accepted` and a `Location`

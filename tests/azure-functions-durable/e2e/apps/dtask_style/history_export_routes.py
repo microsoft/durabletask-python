@@ -26,7 +26,7 @@ import azure.functions as func
 
 import azure.durable_functions as df
 from durabletask.client import TaskHubGrpcClient
-from durabletask.extensions.history_export import (
+from azure.durable_functions.extensions.history_export import (
     ExportDestination,
     ExportFormat,
     ExportFormatKind,
