@@ -102,6 +102,19 @@ def wrap_activity(fn: Callable[..., Any], input_name: str) -> Callable[..., Any]
     if not accepts_two_positional_args(fn):
         return fn
 
+    # A native Functions activity whose first positional parameter IS the
+    # trigger input (named ``input_name``) may declare additional host bindings
+    # -- for example a ``durable_client_input`` -- as further parameters. Leave
+    # it untouched so the host binds every parameter by name. Only a
+    # durabletask-native ``(ctx, input)`` activity, whose first parameter is the
+    # context rather than the input, is adapted to the single-input convention.
+    try:
+        first_param = next(iter(inspect.signature(fn).parameters.values()), None)
+    except (TypeError, ValueError):
+        first_param = None
+    if first_param is not None and first_param.name == input_name:
+        return fn
+
     if not input_name.isidentifier() or keyword.iskeyword(input_name):
         raise ValueError(
             "activity input_name must be a valid Python identifier; "

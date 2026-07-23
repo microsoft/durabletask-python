@@ -155,6 +155,27 @@ async def test_durable_client_input_injects_rich_client():
         await client.close()
 
 
+async def test_durable_client_input_supports_sync_user_function():
+    # A durable client binding is not exclusive to async client functions -- an
+    # activity may declare one too. The middleware must invoke a synchronous
+    # user function and return its result rather than awaiting it.
+    app = df.DFApp()
+    received = {}
+
+    def activity(input, client):
+        received["client"] = client
+        return {"echo": input}
+
+    fb = app.durable_client_input(client_name="client")(activity)
+    middleware = fb._function._func
+    result = await middleware(input="hi", client=_CLIENT_CONFIG)
+
+    assert result == {"echo": "hi"}
+    client = received["client"]
+    assert isinstance(client, DurableFunctionsClient)
+    await client.close()
+
+
 # ---------------------------------------------------------------------------
 # All decorators register a function builder
 # ---------------------------------------------------------------------------

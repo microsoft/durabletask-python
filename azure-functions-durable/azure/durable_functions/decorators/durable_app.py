@@ -2,6 +2,7 @@
 #  Licensed under the MIT License.
 
 from functools import wraps
+import inspect
 from typing import Any, Callable, Optional, Union
 
 import azure.functions as func
@@ -92,7 +93,7 @@ class Blueprint(TriggerApi, BindingApi):
         self.orchestration_trigger(
             context_name="context")(execute_schedule_operation_orchestrator)
 
-    def configure_history_export(self) -> None:
+    def configure_history_export(self, writer: Any) -> None:
         """Opt in to durabletask history export by registering its built-ins.
 
         Like scheduled tasks, history export is opt-in: its export-job entity,
@@ -100,25 +101,26 @@ class Blueprint(TriggerApi, BindingApi):
         method is called. After calling it, drive export jobs from the client
         with :class:`durabletask.extensions.history_export.ExportHistoryClient`.
 
-        The runtime dependencies the activities need (a durabletask client and a
-        :class:`~durabletask.extensions.history_export.writer.HistoryWriter`) are
-        supplied separately via
-        :func:`durabletask.extensions.history_export.bind_context`, since the
-        client is only available at request time in the host-driven Functions
-        model.
+        Parameters
+        ----------
+        writer:
+            The :class:`~durabletask.extensions.history_export.writer.HistoryWriter`
+            the export activities write each instance's serialized history
+            through. It is not host-injectable, so it is supplied here (at app
+            startup, which runs in every worker process) and reused per
+            invocation.
 
-        The durabletask export activities take a ``(context, input)`` signature;
-        they ignore the context, so they are wrapped as single-input Functions
-        activities to match the host's activity calling convention.
+        The activities' other dependency -- a durabletask client -- is injected
+        per invocation via a ``durable_client_input`` binding, so the host
+        supplies it wherever an export activity is scheduled. This works across a
+        scaled-out, multi-worker deployment, unlike a client bound once in the
+        request process.
 
         The enumeration activity uses a Functions-specific implementation
         (:mod:`azure.durable_functions.internal.history_export_compat`) that
         queries terminal instances via ``QueryInstances`` instead of the core
         ``ListInstanceIds`` call, which the Durable Functions host extension
         does not implement.
-
-        NOTE: We need to consider whether this will perform well on Azure
-        Functions' distributed architecture - later.
         """
         from durabletask.extensions.history_export._constants import (
             ENTITY_NAME as EXPORT_ENTITY_NAME,
@@ -126,28 +128,37 @@ class Blueprint(TriggerApi, BindingApi):
         from durabletask.extensions.history_export.activities import (
             EXPORT_INSTANCE_HISTORY_ACTIVITY,
             LIST_TERMINAL_INSTANCES_ACTIVITY,
-            export_instance_history,
         )
         from durabletask.extensions.history_export.entity import ExportJobEntity
         from durabletask.extensions.history_export.orchestrator import (
             export_job_orchestrator,
         )
         from ..internal.history_export_compat import (
-            list_terminal_instances,
+            export_instance_history_client_bound,
+            list_terminal_instances_client_bound,
+            set_export_writer,
         )
+
+        set_export_writer(writer)
 
         self.entity_trigger(
             context_name="context", entity_name=EXPORT_ENTITY_NAME)(ExportJobEntity)
         self.orchestration_trigger(context_name="context")(export_job_orchestrator)
-        # These durabletask activities take a ``(context, input)`` signature;
-        # ``activity_trigger`` adapts such two-argument activities to the
-        # host's single-input calling convention automatically.
-        self.activity_trigger(
-            input_name="input",
-            activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(list_terminal_instances)
-        self.activity_trigger(
-            input_name="input",
-            activity=EXPORT_INSTANCE_HISTORY_ACTIVITY)(export_instance_history)
+        # The export activities resolve their durabletask client from a
+        # per-invocation ``durable_client_input`` binding (host-supplied in
+        # whatever worker runs them). ``durable_client_input`` is applied as the
+        # outer decorator over ``activity_trigger`` so the built function carries
+        # both bindings.
+        self.durable_client_input(client_name="client")(
+            self.activity_trigger(
+                input_name="input",
+                activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(
+                    list_terminal_instances_client_bound))
+        self.durable_client_input(client_name="client")(
+            self.activity_trigger(
+                input_name="input",
+                activity=EXPORT_INSTANCE_HISTORY_ACTIVITY)(
+                    export_instance_history_client_bound))
 
     def _configure_orchestrator_callable(
             self,
@@ -268,8 +279,14 @@ class Blueprint(TriggerApi, BindingApi):
             client = client_constructor(starter)
             kwargs[parameter_name] = client
 
-            # Invoke user code with rich DF Client binding
-            return await user_code(*args, **kwargs)
+            # Invoke user code with rich DF Client binding. A durable client
+            # binding is not exclusive to async client functions -- an activity
+            # may declare one too -- so support synchronous user functions by
+            # only awaiting an awaitable result.
+            result = user_code(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
 
         # TODO: Is there a better way to support retrieving the unwrapped user code?
         df_client_middleware.client_function = function_obj._func  # pyright: ignore[reportAttributeAccessIssue]

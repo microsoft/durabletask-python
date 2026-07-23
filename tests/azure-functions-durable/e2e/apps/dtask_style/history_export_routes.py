@@ -33,8 +33,6 @@ from durabletask.extensions.history_export import (
     ExportHistoryClient,
     ExportJobCreationOptions,
     ExportMode,
-    HistoryExportContext,
-    bind_context,
 )
 from azure.durable_functions.internal.azurefunctions_grpc_interceptor import (
     AzureFunctionsDefaultClientInterceptorImpl,
@@ -71,6 +69,13 @@ class _FileSystemHistoryWriter:
         path.write_bytes(payload)
 
 
+# Shared writer instance: registered with the export activities via
+# ``configure_history_export`` (in ``function_app.py``) and reused by the route's
+# ``ExportHistoryClient``. Constructing it at import makes it available in every
+# worker process.
+EXPORT_WRITER = _FileSystemHistoryWriter(EXPORT_ROOT)
+
+
 def _sync_client(client: df.DurableFunctionsClient) -> TaskHubGrpcClient:
     """Build a synchronous durabletask client aimed at the same sidecar.
 
@@ -87,14 +92,13 @@ def _sync_client(client: df.DurableFunctionsClient) -> TaskHubGrpcClient:
 
 
 def _export_client(client: df.DurableFunctionsClient) -> ExportHistoryClient:
-    """Build an ExportHistoryClient and bind the activities' runtime context."""
-    sync = _sync_client(client)
-    writer = _FileSystemHistoryWriter(EXPORT_ROOT)
-    # Bind the process-wide context the export activities resolve at runtime.
-    # Binding here (the route shares the worker process with the activities)
-    # makes the client + writer visible before the driving orchestrator runs.
-    bind_context(HistoryExportContext(client=sync, writer=writer))
-    return ExportHistoryClient(sync, writer)
+    """Build an ExportHistoryClient for job management.
+
+    The export activities resolve their own client per-invocation from a durable
+    client binding, so the route no longer binds a process-wide context; it only
+    needs a client for the job-management surface (create / get job).
+    """
+    return ExportHistoryClient(_sync_client(client), EXPORT_WRITER)
 
 
 @bp.route(route="export/start", methods=["POST"])

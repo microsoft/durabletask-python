@@ -60,6 +60,18 @@ def test_adapter_sanitizes_parameterized_generic_annotations():
     assert adapted.__annotations__ == {"payload": dict, "return": dict}
 
 
+def test_native_activity_with_extra_binding_passes_through_unchanged():
+    # A native Functions activity whose first positional parameter IS the
+    # trigger input (== input_name) may declare additional host bindings (for
+    # example a durable client) as further parameters. It must be left untouched
+    # so the host binds each parameter by name, not adapted as a
+    # durabletask-native ``(ctx, input)`` activity.
+    def act(input, client):
+        return (input, client)
+
+    assert wrap_activity(act, "input") is act
+
+
 def test_adapter_preserves_concrete_annotations():
     def act(ctx, name: str) -> str:
         return name

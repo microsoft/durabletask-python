@@ -38,4 +38,6 @@ app.configure_scheduled_tasks()
 
 # Opt in to durabletask history export: registers the export-job entity, driving
 # orchestrator, and activities so export jobs can be driven via ExportHistoryClient.
-app.configure_history_export()
+# The export activities write through this shared writer and resolve their
+# durabletask client per-invocation from a durable client binding.
+app.configure_history_export(writer=history_export_routes.EXPORT_WRITER)

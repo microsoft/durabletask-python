@@ -24,11 +24,27 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from durabletask import task
-from durabletask.client import OrchestrationQuery, OrchestrationStatus
+from durabletask.client import (
+    OrchestrationQuery,
+    OrchestrationStatus,
+    TaskHubGrpcClient,
+)
 from durabletask.internal.helpers import ensure_aware
 
 from durabletask.extensions.history_export._internal import dt_from_iso
-from durabletask.extensions.history_export.activities import _require_context  # pyright: ignore[reportPrivateUsage]
+from durabletask.extensions.history_export.activities import (
+    EXPORT_INSTANCE_HISTORY_ACTIVITY,
+    HistoryExportContext,
+    _require_context,  # pyright: ignore[reportPrivateUsage]
+    bind_context,
+    export_instance_history,
+)
+from durabletask.extensions.history_export.writer import HistoryWriter
+
+from .azurefunctions_grpc_interceptor import (
+    AzureFunctionsDefaultClientInterceptorImpl,
+)
+from .serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 
 # The activity registers under the same name the export orchestrator calls, so
 # it transparently replaces the core activity.
@@ -101,3 +117,90 @@ def list_terminal_instances(
         next_cursor = None
 
     return {"instance_ids": page_ids, "continuation_token": next_cursor}
+
+
+# ---------------------------------------------------------------------------
+# Per-invocation dependency resolution for the export activities.
+#
+# The export activities need a durabletask client and a ``HistoryWriter``. In
+# the host-driven Functions model the client is not ambient in a worker
+# process, so it is injected per-invocation via a ``durable_client_input``
+# binding: the host supplies it wherever the activity runs, which is safe across
+# a scaled-out, multi-worker deployment. The writer is user-supplied and not
+# host-injectable, so it is registered once at app configuration time (which
+# runs in every worker process on import) and reused.
+# ---------------------------------------------------------------------------
+
+_export_writer: Optional[HistoryWriter] = None
+_context_bound = False
+
+
+def set_export_writer(writer: HistoryWriter) -> None:
+    """Register the ``HistoryWriter`` the export activities write through.
+
+    Called from :meth:`DFApp.configure_history_export`, which runs at app import
+    in every worker process, so the writer is available wherever an export
+    activity is scheduled.
+    """
+    global _export_writer
+    _export_writer = writer
+
+
+def _build_sync_client(client: Any) -> TaskHubGrpcClient:
+    """Build a synchronous ``TaskHubGrpcClient`` from an injected durable client.
+
+    The ``durable_client_input`` binding yields an async ``DurableFunctionsClient``
+    carrying the host's RPC endpoint and auth; the export activities use the
+    synchronous client, so this bridges to one aimed at the same endpoint.
+    """
+    interceptors = [AzureFunctionsDefaultClientInterceptorImpl(
+        client.taskHubName, client.requiredQueryStringParameters)]
+    return TaskHubGrpcClient(
+        host_address=client.rpcBaseUrl,
+        secure_channel=False,
+        interceptors=interceptors,
+        data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+
+
+def _ensure_context_bound(client: Any) -> None:
+    """Bind the export activity context once per worker process (lazily).
+
+    Uses the per-invocation injected client to build the synchronous client and
+    pairs it with the configured writer. Binding is idempotent per process: the
+    endpoint and writer are stable for the app's lifetime, so the first
+    invocation in each process establishes the context for the rest.
+    """
+    global _context_bound
+    if _context_bound:
+        return
+    if _export_writer is None:
+        raise RuntimeError(
+            "history export writer is not configured; pass a writer to "
+            "DFApp.configure_history_export(writer=...) at app startup")
+    bind_context(HistoryExportContext(
+        client=_build_sync_client(client), writer=_export_writer))
+    _context_bound = True
+
+
+def list_terminal_instances_client_bound(
+        input: Mapping[str, Any], client: Any) -> dict[str, Any]:
+    """``list_terminal_instances`` with the client injected per-invocation."""
+    _ensure_context_bound(client)
+    return list_terminal_instances(task.ActivityContext("", 0), input)
+
+
+def export_instance_history_client_bound(
+        input: Mapping[str, Any], client: Any) -> dict[str, Any]:
+    """``export_instance_history`` with the client injected per-invocation."""
+    _ensure_context_bound(client)
+    return export_instance_history(task.ActivityContext("", 0), input)
+
+
+# The host indexer rejects parameterized generics on trigger parameters and
+# requires the registered function name to match the durable activity name the
+# export orchestrator calls. Set both explicitly (the ``durable_client_input``
+# decorator adds the ``client`` annotation when it is applied).
+list_terminal_instances_client_bound.__name__ = LIST_TERMINAL_INSTANCES_ACTIVITY
+list_terminal_instances_client_bound.__annotations__ = {"input": dict, "return": dict}
+export_instance_history_client_bound.__name__ = EXPORT_INSTANCE_HISTORY_ACTIVITY
+export_instance_history_client_bound.__annotations__ = {"input": dict, "return": dict}
