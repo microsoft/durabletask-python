@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.8.0
+
+- Updates base dependency to durabletask v1.8.0.
 - Added `rewind_orchestration()` to `DurableTaskSchedulerClient` and `AsyncDurableTaskSchedulerClient` (inherited from the base clients) to rewind a failed orchestration instance to its last known good state.
 - Fixed Durable Task Scheduler workers stopping permanently when the service reset
   the `GetWorkItems` stream.
