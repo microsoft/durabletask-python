@@ -26,7 +26,7 @@ import azure.functions as func
 
 import azure.durable_functions as df
 from durabletask.client import TaskHubGrpcClient
-from azure.durable_functions.extensions.history_export import (
+from durabletask.extensions.history_export import (
     ExportDestination,
     ExportFormat,
     ExportFormatKind,
@@ -115,14 +115,25 @@ async def start_export(
     completed_from = (
         datetime.fromisoformat(completed_from_raw)
         if completed_from_raw else now - timedelta(hours=1))
-    options = ExportJobCreationOptions(
-        mode=ExportMode.BATCH,
-        completed_time_from=completed_from,
-        completed_time_to=now + timedelta(hours=1),
-        destination=ExportDestination(container=body.get("container", "exports")),
-        # Uncompressed single-JSON-document-per-instance so the test can read it.
-        format=ExportFormat(kind=ExportFormatKind.JSON),
-    )
+    container = body.get("container", "exports")
+    if str(body.get("mode", "batch")).lower() == "continuous":
+        # Continuous mode forbids completed_time_to. It is unsupported on
+        # Functions and must be rejected by the export entity.
+        options = ExportJobCreationOptions(
+            mode=ExportMode.CONTINUOUS,
+            completed_time_from=completed_from,
+            destination=ExportDestination(container=container),
+            format=ExportFormat(kind=ExportFormatKind.JSON),
+        )
+    else:
+        options = ExportJobCreationOptions(
+            mode=ExportMode.BATCH,
+            completed_time_from=completed_from,
+            completed_time_to=now + timedelta(hours=1),
+            destination=ExportDestination(container=container),
+            # Uncompressed single-JSON-document-per-instance so the test can read it.
+            format=ExportFormat(kind=ExportFormatKind.JSON),
+        )
     desc = export.create_job(options, job_id=body.get("job_id"))
     return func.HttpResponse(
         json.dumps({

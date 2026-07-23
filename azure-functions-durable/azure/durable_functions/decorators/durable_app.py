@@ -129,11 +129,11 @@ class Blueprint(TriggerApi, BindingApi):
             EXPORT_INSTANCE_HISTORY_ACTIVITY,
             LIST_TERMINAL_INSTANCES_ACTIVITY,
         )
-        from durabletask.extensions.history_export.entity import ExportJobEntity
         from durabletask.extensions.history_export.orchestrator import (
             export_job_orchestrator,
         )
         from ..internal.history_export_compat import (
+            FunctionsExportJobEntity,
             export_instance_history_client_bound,
             list_terminal_instances_client_bound,
             set_export_writer,
@@ -141,8 +141,12 @@ class Blueprint(TriggerApi, BindingApi):
 
         set_export_writer(writer)
 
+        # Register the Functions-specific export entity, which rejects
+        # ``ExportMode.CONTINUOUS`` at ``create`` (unsupported on Functions) so
+        # the mode is impossible to start regardless of which client is used.
         self.entity_trigger(
-            context_name="context", entity_name=EXPORT_ENTITY_NAME)(ExportJobEntity)
+            context_name="context",
+            entity_name=EXPORT_ENTITY_NAME)(FunctionsExportJobEntity)
         self.orchestration_trigger(context_name="context")(export_job_orchestrator)
         # The export activities resolve their durabletask client from a
         # per-invocation ``durable_client_input`` binding (host-supplied in

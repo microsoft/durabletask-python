@@ -21,7 +21,8 @@ instead -- a method the extension does implement.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any, Optional, cast
 
 from durabletask import task
 from durabletask.client import (
@@ -38,6 +39,13 @@ from durabletask.extensions.history_export.activities import (
     _require_context,  # pyright: ignore[reportPrivateUsage]
     bind_context,
     export_instance_history,
+)
+from durabletask.extensions.history_export.entity import ExportJobEntity
+from durabletask.extensions.history_export.models import (
+    ExportJobConfiguration,
+    ExportJobState,
+    ExportJobStatus,
+    ExportMode,
 )
 from durabletask.extensions.history_export.writer import HistoryWriter
 
@@ -204,3 +212,57 @@ list_terminal_instances_client_bound.__name__ = LIST_TERMINAL_INSTANCES_ACTIVITY
 list_terminal_instances_client_bound.__annotations__ = {"input": dict, "return": dict}
 export_instance_history_client_bound.__name__ = EXPORT_INSTANCE_HISTORY_ACTIVITY
 export_instance_history_client_bound.__annotations__ = {"input": dict, "return": dict}
+
+
+# ---------------------------------------------------------------------------
+# Continuous-mode guard (enforced at the entity boundary).
+#
+# The QueryInstances-based enumeration pages a fixed completed-time window and
+# cannot safely tail a growing set, so continuous export is unsupported on
+# Functions. Rejecting it only in a client wrapper is bypassable (the core
+# ``ExportHistoryClient`` signals the same entity), so the guard lives on the
+# entity that every job-creation path must signal.
+# ---------------------------------------------------------------------------
+
+_CONTINUOUS_UNSUPPORTED_MESSAGE = (
+    "Continuous history export (ExportMode.CONTINUOUS) is not supported on "
+    "Azure Functions: the enumeration path pages a fixed completed-time window "
+    "via QueryInstances and cannot safely tail a growing set, so continuous "
+    "jobs would miss terminal histories. Use ExportMode.BATCH with a bounded "
+    "completed-time window."
+)
+
+
+def _created_at_from(payload: Mapping[str, Any]) -> datetime:
+    raw = payload.get("created_at")
+    parsed = dt_from_iso(raw) if raw else None
+    return parsed or datetime.now(timezone.utc)
+
+
+class FunctionsExportJobEntity(ExportJobEntity):
+    """Export-job entity for Azure Functions that rejects ``CONTINUOUS`` mode.
+
+    ``configure_history_export`` registers this in place of the core
+    ``ExportJobEntity`` so continuous export is refused at the entity boundary --
+    the single choke point every job-creation path signals -- rather than only
+    in an optional client wrapper. A continuous ``create`` is marked ``FAILED``
+    with a clear reason (and the driving orchestrator is not scheduled) instead
+    of starting a job whose enumeration would silently miss histories.
+    """
+
+    def create(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        config_dict = payload.get("config")
+        if isinstance(config_dict, Mapping) and config_dict:
+            config = ExportJobConfiguration.from_dict(
+                cast("Mapping[str, Any]", config_dict))
+            if config.mode is ExportMode.CONTINUOUS:
+                created_at = _created_at_from(payload)
+                state = ExportJobState(
+                    status=ExportJobStatus.FAILED,
+                    config=config,
+                    created_at=created_at,
+                    last_modified_at=created_at,
+                    last_error=_CONTINUOUS_UNSUPPORTED_MESSAGE,
+                )
+                return self._save(state)
+        return super().create(payload)

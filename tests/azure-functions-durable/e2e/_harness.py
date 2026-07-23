@@ -421,17 +421,22 @@ class FunctionApp:
 
     def start_export(self, container: str = "exports",
                      job_id: Optional[str] = None,
-                     completed_from: Optional[str] = None) -> dict[str, Any]:
+                     completed_from: Optional[str] = None,
+                     mode: Optional[str] = None) -> dict[str, Any]:
         """Start a history-export job via the app's ``/api/export/start`` route.
 
         ``completed_from`` (an ISO-8601 timestamp) narrows the export window so
-        it only covers instances completed at/after that time.
+        it only covers instances completed at/after that time. ``mode`` selects
+        the export mode (``"batch"`` by default; ``"continuous"`` to exercise the
+        Functions rejection path).
         """
         data: dict[str, Any] = {"container": container}
         if job_id is not None:
             data["job_id"] = job_id
         if completed_from is not None:
             data["completed_from"] = completed_from
+        if mode is not None:
+            data["mode"] = mode
         result = http_request("POST", f"{self.base_url}/api/export/start", data=data, timeout=90)
         assert result.status == 200, f"start export failed: {result.status} {result.body}"
         return result.json()

@@ -51,3 +51,17 @@ def test_history_export_batch(dtask_app):
     exported_text = "\n".join(f.read_text(encoding="utf-8") for f in files)
     for iid in instance_ids:
         assert iid in exported_text, f"instance {iid} not found in exported history"
+
+
+def test_history_export_continuous_is_rejected(dtask_app):
+    # Continuous export is unsupported on Azure Functions (the QueryInstances
+    # enumeration can't safely tail a growing set). The Functions export entity
+    # must reject it at create: the job ends FAILED with an explanatory reason,
+    # rather than starting and silently missing histories.
+    container = f"exp-cont-{int(time.time() * 1000)}"
+    started = dtask_app.start_export(container=container, mode="continuous")
+    job_id = started["jobId"]
+
+    final = dtask_app.wait_for_export(job_id)
+    assert final["status"] == "Failed", final
+    assert "continuous" in (final.get("lastError") or "").lower(), final

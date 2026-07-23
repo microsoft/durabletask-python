@@ -35,15 +35,20 @@ class EntityId(EntityInstanceId):
         return str(entity_id)
 
     @staticmethod
-    def get_entity_id(scheduler_id: str) -> "EntityId":
+    def get_entity_id(scheduler_id: str) -> "EntityId":  # pyright: ignore[reportDeprecated]
         """Return an entity ID from a scheduler ID string (``@name@key``).
 
         Returns a v1-compatible :class:`EntityId` (exposing ``.name``) rather
         than a bare :class:`~durabletask.entities.EntityInstanceId`, so v1 code
         such as ``EntityId.get_entity_id("@Counter@one").name`` keeps working.
+
+        The return annotation and the construction below reference the
+        deprecated public :class:`EntityId` on purpose (that is this factory's
+        contract), so the internal ``reportDeprecated`` diagnostics are
+        suppressed while the public deprecation stays intact for callers.
         """
         parsed = EntityInstanceId.parse(scheduler_id)
-        return EntityId(name=parsed.entity, key=parsed.key)
+        return EntityId(name=parsed.entity, key=parsed.key)  # pyright: ignore[reportDeprecated]
 
     @staticmethod
     def get_entity_id_url_path(entity_id: EntityInstanceId) -> str:
