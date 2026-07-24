@@ -66,6 +66,16 @@ jobs:
         run: |
           pip install . --no-deps --force-reinstall
 
+      # ``requirements.txt`` (shared with the core 3.10-3.14 CI) leaves
+      # azure-functions unpinned so it can resolve on Python < 3.13. The
+      # provider needs azure-functions>=2.3.0b2 (which requires 3.13+ and
+      # provides ``register_converter``); the local installs above use
+      # ``--no-deps``, so install that floor explicitly here. This job only runs
+      # on 3.13/3.14, where 2.3.0b2 is available.
+      - name: Install azure-functions (>=2.3.0b2)
+        run: |
+          pip install "azure-functions>=2.3.0b2"
+
       - name: Run unit tests
         working-directory: tests/azure-functions-durable
         run: |
