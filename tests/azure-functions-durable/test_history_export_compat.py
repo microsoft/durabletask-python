@@ -17,6 +17,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from durabletask.extensions.history_export import (
+    ExportDestination,
+    ExportJobCreationOptions,
+    ExportJobInvalidTransitionError,
+    ExportJobStatus,
+    ExportMode,
+)
+from durabletask.extensions.history_export.models import ExportJobState
+
 import azure.durable_functions.internal.history_export_compat as hec
 
 _FROM = "2025-01-01T00:00:00+00:00"
@@ -100,3 +109,71 @@ def test_empty_result(monkeypatch):
         None, {"completed_time_from": _FROM, "page_size": 10})
     assert page["instance_ids"] == []
     assert page["continuation_token"] is None
+
+
+# ---------------------------------------------------------------------------
+# FunctionsExportJobEntity.create -- CONTINUOUS-mode rejection must not
+# discard an existing ACTIVE job when its ID is reused.
+# ---------------------------------------------------------------------------
+
+class _FakeEntityContext:
+    """Minimal entity context backing state with an in-memory value."""
+
+    def __init__(self, state=None, key="job-1"):
+        self._state = state
+        self.entity_id = SimpleNamespace(key=key)
+
+    def get_state(self, intended_type=None, default=None):
+        return self._state if self._state is not None else default
+
+    def set_state(self, state):
+        self._state = state
+
+
+def _config_dict(mode: ExportMode) -> dict:
+    # ``completed_time_to`` is required for BATCH and disallowed for CONTINUOUS.
+    completed_time_to = _COMPLETED if mode is ExportMode.BATCH else None
+    return ExportJobCreationOptions(
+        mode=mode,
+        completed_time_from=_COMPLETED,
+        completed_time_to=completed_time_to,
+        destination=ExportDestination(container="exports", prefix="run-1"),
+    ).to_configuration().to_dict()
+
+
+def _make_entity(ctx: _FakeEntityContext) -> hec.FunctionsExportJobEntity:
+    entity = hec.FunctionsExportJobEntity()
+    entity.entity_context = ctx  # type: ignore[assignment]
+    return entity
+
+
+def test_continuous_create_over_active_job_is_rejected_and_preserves_state():
+    active_state = ExportJobState(
+        status=ExportJobStatus.ACTIVE,
+        config=ExportJobCreationOptions(
+            mode=ExportMode.BATCH,
+            completed_time_from=_COMPLETED,
+            completed_time_to=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            destination=ExportDestination(container="exports", prefix="run-1"),
+        ).to_configuration(),
+        created_at=_COMPLETED,
+        last_modified_at=_COMPLETED,
+    ).to_dict()
+    ctx = _FakeEntityContext(state=active_state)
+    entity = _make_entity(ctx)
+
+    with pytest.raises(ExportJobInvalidTransitionError):
+        entity.create({"config": _config_dict(ExportMode.CONTINUOUS)})
+
+    # The persisted ACTIVE job must be untouched -- not overwritten with FAILED.
+    assert ctx._state == active_state
+
+
+def test_continuous_create_on_fresh_entity_is_marked_failed():
+    ctx = _FakeEntityContext(state=None)
+    entity = _make_entity(ctx)
+
+    result = entity.create({"config": _config_dict(ExportMode.CONTINUOUS)})
+
+    assert result["status"] == ExportJobStatus.FAILED.value
+    assert result["last_error"]

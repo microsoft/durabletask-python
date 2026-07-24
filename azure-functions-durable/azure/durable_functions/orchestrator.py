@@ -45,8 +45,8 @@ class Orchestrator:
         Returns
         -------
         str
-            The JSON-formatted string representing the user's orchestration
-            state after this invocation
+            The base64-encoded protobuf ``OrchestratorResponse`` string (the
+            Durable Functions host wire format) produced by this invocation.
         """
         self.durable_context = context
         return DurableFunctionsWorker().execute_orchestration_request(self.fn, context)

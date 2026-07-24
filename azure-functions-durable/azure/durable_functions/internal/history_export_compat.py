@@ -47,6 +47,7 @@ from durabletask.extensions.history_export.models import (
     ExportJobStatus,
     ExportMode,
 )
+from durabletask.extensions.history_export.transitions import assert_valid_transition
 from durabletask.extensions.history_export.writer import HistoryWriter
 
 from .azurefunctions_grpc_interceptor import (
@@ -256,6 +257,15 @@ class FunctionsExportJobEntity(ExportJobEntity):
             config = ExportJobConfiguration.from_dict(
                 cast("Mapping[str, Any]", config_dict))
             if config.mode is ExportMode.CONTINUOUS:
+                # Validate the create transition first, exactly as the base
+                # ``create`` does. Reusing an existing ACTIVE job's ID must be
+                # rejected (raising ``ExportJobInvalidTransitionError``) so its
+                # progress and configuration are preserved, rather than being
+                # silently discarded and overwritten with a FAILED state.
+                assert_valid_transition(
+                    self.OP_CREATE, self._current_status(),
+                    ExportJobStatus.ACTIVE, job_id=self._job_id(),
+                )
                 created_at = _created_at_from(payload)
                 state = ExportJobState(
                     status=ExportJobStatus.FAILED,

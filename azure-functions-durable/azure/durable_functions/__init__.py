@@ -52,5 +52,4 @@ __all__ = [
     "RetryOptions",
     "RetryPolicy",
     "TokenSource",
-    "version",
 ]

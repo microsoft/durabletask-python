@@ -19,7 +19,10 @@ from .internal.compat.orchestration_context import wrap_orchestrator
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 
 
-# Worker class used for Durable Task Scheduler (DTS)
+# Host-driven Azure Functions execution engine for orchestrator and entity
+# functions. Despite subclassing ``TaskHubGrpcWorker``, it never opens a gRPC
+# channel or streams work items from a sidecar: the Functions host delivers work
+# items directly to the ``execute_*`` methods below.
 class DurableFunctionsWorker(TaskHubGrpcWorker):
     """A worker that can execute orchestrator and entity functions in the context of Azure Functions.
 
