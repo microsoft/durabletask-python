@@ -15,11 +15,8 @@ Usage:
     nox -s functions_unit          # fast unit tests (no func/azurite needed)
     nox -s functions_e2e           # end-to-end tests (needs func + azurite)
 
-``azure-functions>=2.3.0b2`` is not published to PyPI, so it is installed from a
-local build of the azure-functions Python library. Point at it with the
-``AZURE_FUNCTIONS_PYTHON_LIBRARY`` environment variable, or place that repo as a
-sibling of this one (``../azure-functions-python-library``), which is used
-automatically when present.
+``azure-functions>=2.3.0b2`` is published to PyPI and installed as a declared
+dependency of ``azure-functions-durable``, so no local build is required.
 """
 
 import os
@@ -32,39 +29,20 @@ nox.options.reuse_existing_virtualenvs = True
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 AZURE_FUNCTIONS_DURABLE = os.path.join(REPO_ROOT, "azure-functions-durable")
-DEFAULT_AF_LIBRARY = os.path.join(
-    os.path.dirname(REPO_ROOT), "azure-functions-python-library")
 E2E_APPS_DIR = os.path.join(
     REPO_ROOT, "tests", "azure-functions-durable", "e2e", "apps")
 # Sample apps that need an in-app virtual environment for the E2E suite.
 E2E_APPS = ("v1_style", "dtask_style")
 
 
-def _resolve_af_library(session: nox.Session) -> "str | None":
-    """Return the local azure-functions build path, or ``None`` if unavailable."""
-    af_library = os.environ.get("AZURE_FUNCTIONS_PYTHON_LIBRARY")
-    if not af_library and os.path.isdir(DEFAULT_AF_LIBRARY):
-        af_library = DEFAULT_AF_LIBRARY
-    if not af_library:
-        session.warn(
-            "No local azure-functions build found. Set "
-            "AZURE_FUNCTIONS_PYTHON_LIBRARY or place the "
-            "azure-functions-python-library repo alongside this one. Falling "
-            "back to the package index, which will fail if 2.3.0b2 is "
-            "unavailable there.")
-    return af_library
-
-
 def _install_packages(session: nox.Session, editable: bool = False) -> None:
-    """Install azure-functions (local build), durabletask, and the provider.
+    """Install durabletask and the azure-functions-durable provider.
 
-    When ``editable`` is set, the two local repo packages are installed with
-    ``-e`` so source edits are picked up without reinstalling (and so ``nox -R``
-    stays fast).
+    ``azure-functions`` is pulled from PyPI as a declared dependency of the
+    provider. When ``editable`` is set, the two local repo packages are
+    installed with ``-e`` so source edits are picked up without reinstalling
+    (and so ``nox -R`` stays fast).
     """
-    af_library = _resolve_af_library(session)
-    if af_library:
-        session.install(af_library)
     if editable:
         session.install("-e", REPO_ROOT)
         session.install("-e", AZURE_FUNCTIONS_DURABLE)
