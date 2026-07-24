@@ -392,7 +392,19 @@ class Blueprint(TriggerApi, BindingApi):
 
             return decorator()
 
-        return wrap
+        def attach_client_function(user_fn: Callable[..., Any]) -> FunctionBuilder:
+            # Expose the raw client function for unit testing, mirroring the
+            # ``.orchestrator_function`` and ``.entity_function`` attributes.
+            # Unlike v1 there is no client middleware wrapper (the durableClient
+            # binding converter builds the rich client during decode), so the
+            # user function is registered directly and ``.client_function``
+            # points back at it. Internal callers pass an already-built
+            # ``FunctionBuilder`` (e.g. history export), which is left untouched.
+            if not isinstance(user_fn, FunctionBuilder):
+                user_fn.client_function = user_fn  # pyright: ignore[reportFunctionMemberAccess]
+            return wrap(user_fn)
+
+        return attach_client_function
 
 
 class DFApp(Blueprint, FunctionRegister):
