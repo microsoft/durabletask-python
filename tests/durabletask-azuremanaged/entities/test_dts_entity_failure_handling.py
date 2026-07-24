@@ -38,7 +38,7 @@ def test_class_entity_unhandled_failure_fails():
     assert state.name == task.get_name(test_orchestrator)
     assert state.instance_id == id
     assert state.failure_details is not None
-    assert state.failure_details.error_type == "TaskFailedError"
+    assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
     # NOTE: Because FailureDetails does not support inner_failure, we can't verify that the inner failure type is
     # EntityOperationFailedException. In the future, we should consider adding support for inner failures in
     # FailureDetails to make this more robust. This applies to all tests in this file. For now, the error message's
@@ -72,7 +72,7 @@ def test_function_entity_unhandled_failure_fails():
     assert state.name == task.get_name(test_orchestrator)
     assert state.instance_id == id
     assert state.failure_details is not None
-    assert state.failure_details.error_type == "TaskFailedError"
+    assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
     assert state.failure_details.message == "Operation 'fail' on entity '@failing_entity@testEntity' failed with " \
                                             "error: Something went wrong!"
     assert state.runtime_status == client.OrchestrationStatus.FAILED

@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `FailureDetails.is_caused_by()` to check whether a task failure was caused by a given exception type, mirroring .NET's `TaskFailureDetails.IsCausedBy<T>()` and Java's `FailureDetails.isCausedBy()`. Passing an exception type performs a base-type-aware match (a failure caused by a subclass matches its base type) against exception classes already imported in the process; passing a string matches by qualified or unqualified name.
+
+CHANGED
+
+- **Breaking:** `FailureDetails.error_type` — and the `errorType` value sent over the wire — is now the fully-qualified type name (`module.ClassName`, e.g. `builtins.ValueError`, `durabletask.task.TaskFailedError`) instead of the bare class name, matching the .NET and Java SDKs. Code that compared `error_type` against a bare name (for example `== "ValueError"`) must be updated to the qualified name or, preferably, switched to `FailureDetails.is_caused_by()`. Because this value is persisted and crosses the orchestration boundary, failures produced by older workers may still carry a bare name; `is_caused_by()` accepts both.
+
 ## v1.8.0
 
 ADDED

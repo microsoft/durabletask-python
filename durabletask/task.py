@@ -456,6 +456,88 @@ class FailureDetails:
     error_type: str
     stack_trace: str | None
 
+    def is_caused_by(self, error_type: str | type[BaseException]) -> bool:
+        """Return ``True`` if this failure was caused by ``error_type``.
+
+        This mirrors the .NET ``TaskFailureDetails.IsCausedBy<T>()`` and Java
+        ``FailureDetails.isCausedBy(Class)`` helpers, letting a caller introspect
+        a failure instead of comparing :attr:`error_type` strings by hand::
+
+            try:
+                yield ctx.call_activity(my_activity)
+            except TaskFailedError as e:
+                if e.details.is_caused_by(ValueError):
+                    ...
+
+        ``error_type`` may be either an exception type or a name string:
+
+        * When an exception **type** is given, the check is base-type aware: it
+          returns ``True`` if the failure's type is ``error_type`` or any of its
+          subclasses. To stay safe, this only inspects exception subclasses that
+          are already imported in the current process (it never imports a type by
+          name), so a subclass whose module has not been imported yet will not be
+          matched. Passing a non-exception type raises :class:`TypeError`.
+        * When a **string** is given, it is compared by name only (no base-type
+          awareness). The name may be fully qualified (``"module.ClassName"``) or
+          unqualified (``"ClassName"``); an unqualified name matches on the class
+          name alone and therefore cannot distinguish same-named types from
+          different modules.
+
+        Only this failure's own :attr:`error_type` is considered; chained/inner
+        causes are not traversed.
+        """
+        if isinstance(error_type, str):
+            return self._name_matches(error_type)
+        # The annotation restricts callers to exception types, but this is a
+        # public API, so validate at runtime against arbitrary objects.
+        if not (isinstance(error_type, type) and issubclass(error_type, BaseException)):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise TypeError(
+                "is_caused_by() expects an exception type or a type-name string, "
+                f"but got {error_type!r}.")
+
+        # Base-type-aware match without importing the failure's type: walk the
+        # target type and its already-loaded subclasses (visited-marked to guard
+        # against diamond inheritance) and compare each candidate's qualified
+        # name against this failure's error_type.
+        visited: set[int] = set()
+        stack: list[type] = [error_type]
+        while stack:
+            candidate = stack.pop()
+            if id(candidate) in visited:
+                continue
+            visited.add(id(candidate))
+            if self._type_matches(candidate):
+                return True
+            stack.extend(candidate.__subclasses__())
+        return False
+
+    def _type_matches(self, candidate: type) -> bool:
+        if not self.error_type:
+            return False
+        candidate_name = pbh.get_qualified_name(candidate)
+        if self.error_type == candidate_name:
+            return True
+        # Back-compat: a bare (non-qualified) stored name -- e.g. produced by an
+        # older SDK version or a non-Python SDK -- can only be compared by the
+        # unqualified class name.
+        if "." not in self.error_type:
+            return self.error_type == candidate_name.rsplit(".", 1)[-1]
+        return False
+
+    def _name_matches(self, name: str) -> bool:
+        stored = self.error_type
+        if not stored or not name:
+            return False
+        if stored == name:
+            return True
+        # When both names are fully qualified, require an exact match so that
+        # same-named types from different modules are not confused. Otherwise,
+        # honor the "qualified or unqualified" contract by comparing the
+        # unqualified (trailing) segment.
+        if "." in stored and "." in name:
+            return False
+        return stored.rsplit(".", 1)[-1] == name.rsplit(".", 1)[-1]
+
 
 class TaskFailedError(Exception):
     """Exception type for all orchestration task failures."""
