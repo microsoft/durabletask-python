@@ -75,10 +75,10 @@ jobs:
     needs: run-tests
     runs-on: ubuntu-latest
     # The end-to-end suite launches a real Azure Functions host, which requires
-    # ``azure-functions>=2.2.0b6``. That build is not yet published to PyPI, so
+    # ``azure-functions>=2.3.0b2``. That build is not yet published to PyPI, so
     # this job is skipped by default. Enable it by setting the repository
     # variable ``RUN_FUNCTIONS_E2E`` to ``true`` (Settings > Secrets and
-    # variables > Actions > Variables) once 2.2.0b6 is available on PyPI, or
+    # variables > Actions > Variables) once 2.3.0b2 is available on PyPI, or
     # provide the library build via ``AZURE_FUNCTIONS_PYTHON_LIBRARY``.
     if: ${{ vars.RUN_FUNCTIONS_E2E == 'true' }}
     # Run the suite in both payload-typing modes: the default (loose) codec and

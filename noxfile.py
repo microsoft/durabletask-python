@@ -15,7 +15,7 @@ Usage:
     nox -s functions_unit          # fast unit tests (no func/azurite needed)
     nox -s functions_e2e           # end-to-end tests (needs func + azurite)
 
-``azure-functions>=2.2.0b6`` is not published to PyPI, so it is installed from a
+``azure-functions>=2.3.0b2`` is not published to PyPI, so it is installed from a
 local build of the azure-functions Python library. Point at it with the
 ``AZURE_FUNCTIONS_PYTHON_LIBRARY`` environment variable, or place that repo as a
 sibling of this one (``../azure-functions-python-library``), which is used
@@ -50,7 +50,7 @@ def _resolve_af_library(session: nox.Session) -> "str | None":
             "No local azure-functions build found. Set "
             "AZURE_FUNCTIONS_PYTHON_LIBRARY or place the "
             "azure-functions-python-library repo alongside this one. Falling "
-            "back to the package index, which will fail if 2.2.0b6 is "
+            "back to the package index, which will fail if 2.3.0b2 is "
             "unavailable there.")
     return af_library
 

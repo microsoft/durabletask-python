@@ -29,7 +29,7 @@ readme = "README.md"
 dependencies = [
     "durabletask>=1.8.0",
     "azure-identity>=1.19.0",
-    "azure-functions>=2.2.0b6"
+    "azure-functions>=2.3.0b2"
 ]
 
 [project.urls]
