@@ -23,10 +23,14 @@ from .internal.compat.compat_aliases import (
     DurableOrchestrationClient,
     Entity,
 )
+from .internal.converters import register_durable_converters
 
-# IMPORTANT: DO NOT REMOVE. `azure-functions` relies on the presence and value of this variable
-# for version detection
-version = "2.x"
+# Register this package's binding converters with azure-functions, overriding
+# the SDK's built-in durable converters. The SDK exposes ``register_converter``
+# for exactly this purpose; importing this package (which the Functions host
+# does when it loads a durable app) installs the durabletask-based converters
+# before the host indexes any functions.
+register_durable_converters()
 
 __all__ = [
     "Blueprint",

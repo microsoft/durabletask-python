@@ -1,24 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import json
-
 import azure.durable_functions as df
-from azure.durable_functions import DurableFunctionsClient
 from azure.durable_functions.constants import (
     ACTIVITY_TRIGGER,
     DURABLE_CLIENT,
     ENTITY_TRIGGER,
     ORCHESTRATION_TRIGGER,
 )
-
-
-_CLIENT_CONFIG = json.dumps({
-    "taskHubName": "TestHub",
-    "requiredQueryStringParameters": "code=xyz",
-    "baseUrl": "http://localhost:7071/runtime/webhooks/durabletask",
-    "rpcBaseUrl": "http://localhost:8080/",
-})
 
 
 def _trigger(fb):
@@ -134,46 +123,17 @@ def test_durable_client_input_v1_signature_registers_binding():
     assert binding.connection_name == "conn"
 
 
-async def test_durable_client_input_injects_rich_client():
+async def test_durable_client_input_does_not_wrap_user_function():
+    # The durableClient binding converter (``DurableClientConverter``)
+    # constructs the rich ``DurableFunctionsClient`` during decode, so the
+    # decorator no longer wraps the user function in client-building middleware.
     app = df.DFApp()
-    received = {}
 
     async def starter(client):
-        received["client"] = client
+        return None
 
     fb = app.durable_client_input(client_name="client")(starter)
-    # _add_rich_client replaces the user function with middleware that builds
-    # a DurableFunctionsClient from the binding's JSON string.
-    middleware = fb._function._func
-    await middleware(client=_CLIENT_CONFIG)
-
-    client = received["client"]
-    assert isinstance(client, DurableFunctionsClient)
-    try:
-        assert client.taskHubName == "TestHub"
-    finally:
-        await client.close()
-
-
-async def test_durable_client_input_supports_sync_user_function():
-    # A durable client binding is not exclusive to async client functions -- an
-    # activity may declare one too. The middleware must invoke a synchronous
-    # user function and return its result rather than awaiting it.
-    app = df.DFApp()
-    received = {}
-
-    def activity(input, client):
-        received["client"] = client
-        return {"echo": input}
-
-    fb = app.durable_client_input(client_name="client")(activity)
-    middleware = fb._function._func
-    result = await middleware(input="hi", client=_CLIENT_CONFIG)
-
-    assert result == {"echo": "hi"}
-    client = received["client"]
-    assert isinstance(client, DurableFunctionsClient)
-    await client.close()
+    assert fb._function._func is starter
 
 
 # ---------------------------------------------------------------------------

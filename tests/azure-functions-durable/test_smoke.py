@@ -13,7 +13,6 @@ def test_public_api_is_importable():
     emulator should be marked (e.g. ``azurite``) so they can be excluded on
     the network-isolated ADO build pool.
     """
-    assert df.version
     assert df.DFApp is not None
     assert df.Blueprint is not None
     assert df.DurableFunctionsClient is not None

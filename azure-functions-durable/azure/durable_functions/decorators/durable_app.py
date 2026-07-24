@@ -1,8 +1,6 @@
 #  Copyright (c) Microsoft Corporation. All rights reserved.
 #  Licensed under the MIT License.
 
-from functools import wraps
-import inspect
 from typing import Any, Callable, Optional, Union
 
 import azure.functions as func
@@ -13,7 +11,6 @@ from durabletask import task
 
 from .metadata import OrchestrationTrigger, ActivityTrigger, EntityTrigger, \
     DurableClient
-from ..client import DurableFunctionsClient
 from ..http.builtin import (
     BUILTIN_HTTP_ACTIVITY_NAME,
     BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
@@ -254,49 +251,6 @@ class Blueprint(TriggerApi, BindingApi):
 
         return decorator
 
-    def _add_rich_client(
-            self,
-            fb: FunctionBuilder,
-            parameter_name: str,
-            client_constructor: Callable[[Any], Any]
-    ) -> None:
-        # Obtain user-code and force type annotation on the client-binding parameter to be `str`.
-        # This ensures a passing type-check of that specific parameter,
-        # circumventing a limitation of the worker in type-checking rich DF Client objects.
-        # TODO: Once rich-binding type checking is possible, remove the annotation change.
-        # ``FunctionBuilder._function`` and ``Function._func`` are private to
-        # azure-functions with no public accessor for mutating the wrapped
-        # user function. Holding it as ``Any`` keeps the single private-access
-        # waiver here rather than spreading it across each ``._func`` use.
-        function_obj: Any = fb._function  # pyright: ignore[reportPrivateUsage]
-        user_code = function_obj._func
-        user_code.__annotations__[parameter_name] = str
-
-        # `wraps` This ensures we re-export the same method-signature as the decorated method
-        @wraps(user_code)
-        async def df_client_middleware(*args: Any, **kwargs: Any) -> Any:
-
-            # Obtain JSON-string currently passed as DF Client,
-            # construct rich object from it,
-            # and assign parameter to that rich object
-            starter = kwargs[parameter_name]
-            client = client_constructor(starter)
-            kwargs[parameter_name] = client
-
-            # Invoke user code with rich DF Client binding. A durable client
-            # binding is not exclusive to async client functions -- an activity
-            # may declare one too -- so support synchronous user functions by
-            # only awaiting an awaitable result.
-            result = user_code(*args, **kwargs)
-            if inspect.isawaitable(result):
-                return await result
-            return result
-
-        # TODO: Is there a better way to support retrieving the unwrapped user code?
-        df_client_middleware.client_function = function_obj._func  # pyright: ignore[reportAttributeAccessIssue]
-
-        function_obj._func = df_client_middleware
-
     def _build_function(
             self,
             wrap: Callable[[FunctionBuilder], FunctionBuilder]
@@ -425,7 +379,11 @@ class Blueprint(TriggerApi, BindingApi):
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
             def decorator() -> FunctionBuilder:
-                self._add_rich_client(fb, client_name, DurableFunctionsClient)
+                # The durableClient binding converter
+                # (``DurableClientConverter``) constructs the rich
+                # ``DurableFunctionsClient`` from the host-supplied configuration
+                # string during decode, so no per-function client middleware is
+                # needed here.
                 fb.add_binding(
                     binding=DurableClient(name=client_name,
                                           task_hub=task_hub,
