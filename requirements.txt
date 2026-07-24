@@ -5,7 +5,7 @@ pytest
 pytest-asyncio
 pytest-cov
 azure-identity
-azure-functions
+azure-functions>=2.3.0b2
 typing-extensions
 asyncio
 packaging
