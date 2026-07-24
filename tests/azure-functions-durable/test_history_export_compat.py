@@ -177,3 +177,50 @@ def test_continuous_create_on_fresh_entity_is_marked_failed():
 
     assert result["status"] == ExportJobStatus.FAILED.value
     assert result["last_error"]
+
+
+# ---------------------------------------------------------------------------
+# Sync export client lifecycle -- the process-wide client bound into the export
+# context is closed at interpreter exit.
+# ---------------------------------------------------------------------------
+
+def test_ensure_context_bound_registers_and_closes_sync_client(monkeypatch):
+    fake_client = MagicMock()
+    monkeypatch.setattr(hec, "_build_sync_client", lambda _c: fake_client)
+    monkeypatch.setattr(hec, "_export_writer", MagicMock())
+    monkeypatch.setattr(hec, "_context_bound", False)
+    monkeypatch.setattr(hec, "_sync_export_client", None)
+
+    bind_calls = []
+    monkeypatch.setattr(hec, "bind_context", lambda ctx: bind_calls.append(ctx))
+    registered = []
+    monkeypatch.setattr(hec.atexit, "register", lambda fn: registered.append(fn))
+
+    hec._ensure_context_bound(object())
+
+    assert hec._sync_export_client is fake_client
+    assert hec._context_bound is True
+    assert len(bind_calls) == 1
+    assert hec._close_sync_export_client in registered
+
+    # A second bind is a no-op: no new client, no duplicate registration.
+    hec._ensure_context_bound(object())
+    assert len(bind_calls) == 1
+    assert registered.count(hec._close_sync_export_client) == 1
+
+    # Closing releases the client, resets state, and is idempotent + safe.
+    hec._close_sync_export_client()
+    fake_client.close.assert_called_once()
+    assert hec._sync_export_client is None
+    hec._close_sync_export_client()
+    fake_client.close.assert_called_once()
+
+
+def test_close_sync_export_client_swallows_errors(monkeypatch):
+    fake_client = MagicMock()
+    fake_client.close.side_effect = RuntimeError("boom")
+    monkeypatch.setattr(hec, "_sync_export_client", fake_client)
+
+    # Cleanup at shutdown must never raise.
+    hec._close_sync_export_client()
+    assert hec._sync_export_client is None

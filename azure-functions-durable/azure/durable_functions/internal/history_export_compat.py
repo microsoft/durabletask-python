@@ -20,6 +20,8 @@ instead -- a method the extension does implement.
 
 from __future__ import annotations
 
+import atexit
+import threading
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
@@ -78,6 +80,15 @@ def list_terminal_instances(
     This keeps the export orchestrator's fan-out bounded to one ``page_size``
     batch at a time (matching ``max_instances_per_batch``) instead of scheduling
     an export activity for every matching instance at once.
+
+    > [!IMPORTANT]
+    > This is experimental and intended for bounded, low-volume batch-export
+    > windows. Because each batch re-scans and re-sorts the whole terminal
+    > population, cost grows with the total number of terminal instances, not
+    > with the page size, so it is not yet suited to production-scale history
+    > export. Efficient large exports require a host-side completed-time paging
+    > API (e.g. ``ListInstanceIds``) that the Durable Functions host extension
+    > does not yet implement.
     """
     ctx = _require_context()
 
@@ -142,6 +153,11 @@ def list_terminal_instances(
 
 _export_writer: Optional[HistoryWriter] = None
 _context_bound = False
+# The process-wide sync client bound into the export context, retained so it can
+# be closed at interpreter exit. Guarded by ``_context_lock`` together with the
+# first-bind race.
+_sync_export_client: Optional[TaskHubGrpcClient] = None
+_context_lock = threading.Lock()
 
 
 def set_export_writer(writer: HistoryWriter) -> None:
@@ -161,6 +177,13 @@ def _build_sync_client(client: Any) -> TaskHubGrpcClient:
     The ``durable_client_input`` binding yields an async ``DurableFunctionsClient``
     carrying the host's RPC endpoint and auth; the export activities use the
     synchronous client, so this bridges to one aimed at the same endpoint.
+
+    > [!NOTE]
+    > This async->sync adapter is temporary. Once a first-class synchronous
+    > durable-client binding exists
+    > (https://github.com/microsoft/durabletask-python/issues/181), the export
+    > activities can be injected with a sync client directly and this bridge --
+    > along with the separate channel it opens -- can be removed.
     """
     interceptors = [AzureFunctionsDefaultClientInterceptorImpl(
         client.taskHubName, client.requiredQueryStringParameters)]
@@ -171,24 +194,51 @@ def _build_sync_client(client: Any) -> TaskHubGrpcClient:
         data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
 
 
+def _close_sync_export_client() -> None:
+    """Close the process-wide sync export client (registered via ``atexit``).
+
+    The client is bound once per worker process and reused across every export
+    activity, so it lives for the app's lifetime; closing it at interpreter
+    exit releases its gRPC channel on graceful shutdown. Idempotent and
+    exception-safe -- shutdown must never surface an error from cleanup.
+    """
+    global _sync_export_client
+    with _context_lock:
+        client = _sync_export_client
+        _sync_export_client = None
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
 def _ensure_context_bound(client: Any) -> None:
     """Bind the export activity context once per worker process (lazily).
 
     Uses the per-invocation injected client to build the synchronous client and
     pairs it with the configured writer. Binding is idempotent per process: the
     endpoint and writer are stable for the app's lifetime, so the first
-    invocation in each process establishes the context for the rest.
+    invocation in each process establishes the context for the rest. A lock
+    guards the first-bind race so concurrent fan-out activities do not each open
+    a channel; the built client is closed at process exit.
     """
-    global _context_bound
+    global _context_bound, _sync_export_client
     if _context_bound:
         return
-    if _export_writer is None:
-        raise RuntimeError(
-            "history export writer is not configured; pass a writer to "
-            "DFApp.configure_history_export(writer=...) at app startup")
-    bind_context(HistoryExportContext(
-        client=_build_sync_client(client), writer=_export_writer))
-    _context_bound = True
+    with _context_lock:
+        if _context_bound:
+            return
+        if _export_writer is None:
+            raise RuntimeError(
+                "history export writer is not configured; pass a writer to "
+                "DFApp.configure_history_export(writer=...) at app startup")
+        sync_client = _build_sync_client(client)
+        _sync_export_client = sync_client
+        atexit.register(_close_sync_export_client)
+        bind_context(HistoryExportContext(
+            client=sync_client, writer=_export_writer))
+        _context_bound = True
 
 
 def list_terminal_instances_client_bound(

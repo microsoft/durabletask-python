@@ -24,6 +24,7 @@ from .internal.compat.compat_aliases import (
     Entity,
 )
 from .internal.converters import register_durable_converters
+from .internal.lifecycle import register_durable_client_lifecycle
 
 # Register this package's binding converters with azure-functions, overriding
 # the SDK's built-in durable converters. The SDK exposes ``register_converter``
@@ -31,6 +32,10 @@ from .internal.converters import register_durable_converters
 # does when it loads a durable app) installs the durabletask-based converters
 # before the host indexes any functions.
 register_durable_converters()
+
+# Install the app-level post-invocation hook that closes the per-invocation
+# durable-client gRPC channel each ``durable_client_input`` decode opens.
+register_durable_client_lifecycle()
 
 __all__ = [
     "Blueprint",

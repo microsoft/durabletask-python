@@ -128,8 +128,9 @@ def test_activity_adds_bearer_token_for_token_source():
 
     fake_credential = MagicMock()
     fake_credential.get_token.return_value = SimpleNamespace(token="THE_TOKEN")
-    with patch("azure.durable_functions.http.builtin.urllib.request.urlopen",
-               side_effect=_capture), \
+    with patch("azure.durable_functions.http.builtin._cached_credential", None), \
+            patch("azure.durable_functions.http.builtin.urllib.request.urlopen",
+                  side_effect=_capture), \
             patch("azure.identity.DefaultAzureCredential",
                   return_value=fake_credential):
         builtin_http_activity({
@@ -142,6 +143,33 @@ def test_activity_adds_bearer_token_for_token_source():
     assert captured["headers"]["Authorization"] == "Bearer THE_TOKEN"
     fake_credential.get_token.assert_called_once_with(
         "https://management.core.windows.net/.default")
+
+
+def test_credential_is_reused_across_activity_calls():
+    # The credential is created once per worker process and reused, so repeated
+    # managed-identity polls do not re-run credential-chain discovery.
+    fake_credential = MagicMock()
+    fake_credential.get_token.return_value = SimpleNamespace(token="T")
+
+    def _ok(req):
+        return _fake_urlopen_response(200, {}, "ok")
+
+    with patch("azure.durable_functions.http.builtin._cached_credential", None), \
+            patch("azure.durable_functions.http.builtin.urllib.request.urlopen",
+                  side_effect=_ok), \
+            patch("azure.identity.DefaultAzureCredential",
+                  return_value=fake_credential) as credential_ctor:
+        payload = {
+            "method": "GET",
+            "uri": "http://example.com",
+            "tokenSource": {"resource": "https://management.core.windows.net/"},
+        }
+        builtin_http_activity(dict(payload))
+        builtin_http_activity(dict(payload))
+
+    # Two token acquisitions, but only a single credential construction.
+    assert credential_ctor.call_count == 1
+    assert fake_credential.get_token.call_count == 2
 
 
 # ---------------------------------------------------------------------------

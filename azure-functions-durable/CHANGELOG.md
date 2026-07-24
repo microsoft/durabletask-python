@@ -81,7 +81,9 @@ New capabilities beyond the v1 surface, most inherited from `durabletask`:
   history export by registering the export-job entity, driving orchestrator, and
   activities. Supply the `HistoryWriter` here; the activities resolve their
   durabletask client per invocation from a `durable_client_input` binding, so
-  export works across a scaled-out, multi-worker deployment. Export jobs are
+  the export activities run correctly across a scaled-out, multi-worker
+  deployment (each invocation resolves its own client). This is a correctness
+  property, not a large-export throughput guarantee. Export jobs are
   driven from a client via
   `durabletask.extensions.history_export.ExportHistoryClient`. Continuous export
   (`ExportMode.CONTINUOUS`) is not supported on Azure Functions: the
@@ -89,7 +91,13 @@ New capabilities beyond the v1 surface, most inherited from `durabletask`:
   `FAILED` with an explanatory reason). Continuous tailing needs the host's
   `ListInstanceIds` gRPC call, which the Durable Functions host extension does
   not implement; the instance-enumeration activity uses a Functions-specific
-  implementation based on `QueryInstances` for the same reason.
+  implementation based on `QueryInstances` for the same reason. This is an
+  experimental beta feature intended for bounded, low-volume batch-export
+  windows: the `QueryInstances`-based enumeration re-scans and re-sorts the
+  terminal-instance population for each batch, so it is not yet suited to
+  production-scale history export. Efficient large exports depend on a
+  host-side completed-time paging API that the host extension does not yet
+  provide.
 - **`DurableOrchestrationContext.call_http(...)`** makes durable HTTP calls from
   orchestrators, restoring the v1 API. The request is executed by a built-in
   activity and, when the endpoint responds with `202 Accepted` and a `Location`

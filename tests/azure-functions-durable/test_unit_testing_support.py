@@ -103,6 +103,24 @@ def test_orchestrator_wrapper_throws_task_exception_into_generator():
     assert values[-1] == "caught: activity failed"
 
 
+def test_orchestrator_wrapper_handles_immediate_return_without_yield():
+    """An orchestrator that returns without yielding completes immediately.
+
+    ``next(generator)`` raises ``StopIteration`` for such orchestrators; the
+    wrapper must surface the return value rather than leaking the exception.
+    """
+
+    @app.orchestration_trigger(context_name="context")
+    def returns_immediately(context):
+        return "done"
+        yield  # pragma: no cover - makes the function a generator
+
+    func_call = returns_immediately.build().get_user_function().orchestrator_function
+
+    values = list(orchestrator_generator_wrapper(func_call(Mock())))
+    assert values == ["done"]
+
+
 def test_client_function_is_exposed_for_testing():
     """The documented client test pattern works end to end."""
     func_call = http_start.build().get_user_function().client_function

@@ -33,7 +33,16 @@ def orchestrator_generator_wrapper(
         Each task object yielded by the orchestrator, followed by the
         orchestrator's final return value.
     """
-    previous = next(generator)
+    try:
+        previous = next(generator)
+    except StopIteration as e:
+        # An orchestrator that returns immediately without yielding any task
+        # completes right away (mirroring the runtime, which finishes the
+        # orchestration on the first return). Surface its output as the final
+        # value and stop -- ``next`` raising here otherwise leaks as an
+        # unhandled ``StopIteration``.
+        yield e.value
+        return
     yield previous
     while True:
         try:

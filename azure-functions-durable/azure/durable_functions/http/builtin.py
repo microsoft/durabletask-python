@@ -46,18 +46,37 @@ BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME = "BuiltIn__HttpPollOrchestrator"
 # usable ``Retry-After`` header.
 _DEFAULT_POLL_INTERVAL_SECONDS = 1
 
+# Process-wide credential cache. ``DefaultAzureCredential`` is safe to reuse and
+# caches tokens internally, so a single worker-local instance avoids repeating
+# credential-chain discovery and token acquisition on every durable HTTP
+# activity. This is worker-local state: each worker process holds its own
+# instance, which is naturally rebuilt when the process recycles.
+_cached_credential: Optional[Any] = None
+
+
+def _get_credential() -> Any:
+    """Return a lazily-created, process-wide ``DefaultAzureCredential``.
+
+    ``azure-identity`` is imported lazily so the dependency is only touched when
+    a token source is actually used.
+    """
+    global _cached_credential
+    if _cached_credential is None:
+        from azure.identity import DefaultAzureCredential
+
+        _cached_credential = DefaultAzureCredential()
+    return _cached_credential
+
 
 def _acquire_bearer_token(resource: str) -> str:
     """Acquire an AAD bearer token for ``resource`` via ``azure-identity``.
 
-    Imported lazily so the dependency is only touched when a token source is
-    actually used.
+    Uses a process-wide :class:`DefaultAzureCredential` (see
+    :func:`_get_credential`) so a long-running ``202`` managed-identity poll does
+    not repeat credential-chain discovery and token acquisition on every poll.
     """
-    from azure.identity import DefaultAzureCredential
-
-    credential = DefaultAzureCredential()
     scope = resource.rstrip("/") + "/.default"
-    return credential.get_token(scope).token
+    return _get_credential().get_token(scope).token
 
 
 def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:

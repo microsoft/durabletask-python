@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import asyncio
 import json
 
 from datetime import datetime, timedelta
@@ -80,6 +81,46 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             interceptors=interceptors,
             channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+
+        # The gRPC aio channel is bound to the event loop it is created on. A
+        # ``durable_client_input`` decode runs on the worker's invocation loop,
+        # so capturing it here lets the post-invocation lifecycle extension
+        # close the channel on the right loop after the invocation. ``None``
+        # when constructed outside a running loop (e.g. in a unit test); the
+        # close is then scheduled on whatever loop is running at close time.
+        try:
+            self._creation_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._creation_loop = None
+        self._close_scheduled = False
+
+    def schedule_close(self) -> None:
+        """Schedule the underlying gRPC channel to close after the invocation.
+
+        Called by the durable-client lifecycle extension right after the user
+        function returns. Each ``durable_client_input`` decode builds a client
+        that owns a distinct channel; without this, every invocation leaks one.
+
+        The async channel must be closed on its owning event loop, so the close
+        is scheduled there rather than run inline (the extension hook is
+        synchronous). Idempotent: repeated calls schedule the close only once.
+        """
+        if self._close_scheduled:
+            return
+        self._close_scheduled = True
+
+        loop = self._creation_loop
+        if loop is None or loop.is_closed():
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No loop available to close on; fall back to GC finalization.
+                return
+        try:
+            loop.call_soon_threadsafe(lambda: loop.create_task(self.close()))
+        except RuntimeError:
+            # Loop is not running / already shut down; nothing to schedule.
+            pass
 
     def _parse_client_configuration(self, client_as_string: str) -> None:
         """Parses the client configuration JSON string and sets instance variables.
