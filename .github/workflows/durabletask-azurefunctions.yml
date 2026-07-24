@@ -134,3 +134,16 @@ jobs:
           AZURE_FUNCTIONS_DURABLE_STRICT_TYPING: ${{ matrix.strict-typing }}
         run: nox -s functions_e2e
 
+      # The harness captures each sample app's ``func start`` stdout/stderr to
+      # ``<app>/_func_host.log``. On failure that log holds the real host/worker
+      # error (durable extension load, storage wiring, worker crash) that the
+      # pytest summary does not surface, so upload it for diagnosis.
+      - name: Upload Functions host logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: func-host-logs-strict-${{ matrix.strict-typing }}
+          path: tests/azure-functions-durable/e2e/apps/*/_func_host.log
+          if-no-files-found: warn
+          retention-days: 7
+
