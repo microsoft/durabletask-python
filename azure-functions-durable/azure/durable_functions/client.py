@@ -133,17 +133,26 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         """
         client = json.loads(client_as_string)
 
-        self.taskHubName = client.get("taskHubName", "")
-        self.connectionName = client.get("connectionName", "")
-        self.creationUrls = client.get("creationUrls", {})
-        self.managementUrls = client.get("managementUrls", {})
-        self.baseUrl = client.get("baseUrl", "")
-        self.requiredQueryStringParameters = client.get("requiredQueryStringParameters", "")
-        self.rpcBaseUrl = client.get("rpcBaseUrl", "")
-        self.httpBaseUrl = client.get("httpBaseUrl", "")
-        self.maxGrpcMessageSizeInBytes = client.get("maxGrpcMessageSizeInBytes", 0)
+        # Depending on the extension-bundle version, the host may send a field
+        # explicitly as ``null`` rather than omitting it. ``dict.get(key,
+        # default)`` only substitutes the default for *absent* keys, so a
+        # present-but-``null`` value slips through as ``None`` (this crashed the
+        # ``maxGrpcMessageSizeInBytes > 0`` guard in __init__ on newer bundles).
+        # Use ``... or default`` so an explicit ``null`` -- like a missing key --
+        # always collapses to the intended default. Every default here is falsy
+        # and no field carries a meaningful falsy value, so this never discards a
+        # real value.
+        self.taskHubName = client.get("taskHubName") or ""
+        self.connectionName = client.get("connectionName") or ""
+        self.creationUrls = client.get("creationUrls") or {}
+        self.managementUrls = client.get("managementUrls") or {}
+        self.baseUrl = client.get("baseUrl") or ""
+        self.requiredQueryStringParameters = client.get("requiredQueryStringParameters") or ""
+        self.rpcBaseUrl = client.get("rpcBaseUrl") or ""
+        self.httpBaseUrl = client.get("httpBaseUrl") or ""
+        self.maxGrpcMessageSizeInBytes = client.get("maxGrpcMessageSizeInBytes") or 0
         # TODO: convert the string value back to timedelta - annoying regex?
-        self.grpcHttpClientTimeout = client.get("grpcHttpClientTimeout", timedelta(seconds=30))
+        self.grpcHttpClientTimeout = client.get("grpcHttpClientTimeout") or timedelta(seconds=30)
 
     def create_check_status_response(self, request: func.HttpRequest, instance_id: str) -> func.HttpResponse:
         """Creates an HTTP response for checking the status of a Durable Function instance.

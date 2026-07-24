@@ -34,6 +34,51 @@ def _make_client() -> df.DurableFunctionsClient:
     return df.DurableFunctionsClient(_CLIENT_CONFIG)
 
 
+def test_client_handles_null_max_grpc_message_size():
+    # The Durable Functions host may send ``maxGrpcMessageSizeInBytes``
+    # explicitly as ``null`` (not just omit it). ``dict.get(key, 0)`` returns
+    # ``None`` in that case, which previously blew up the ``> 0`` guard in
+    # ``__init__`` (``TypeError: '>' not supported between 'NoneType' and
+    # 'int'``) and made every durable-client binding decode fail with a 500.
+    config = json.dumps({
+        "taskHubName": "TestHub",
+        "rpcBaseUrl": "http://localhost:8080/",
+        "maxGrpcMessageSizeInBytes": None,
+    })
+    client = df.DurableFunctionsClient(config)
+    assert client.maxGrpcMessageSizeInBytes == 0
+
+
+def test_client_handles_all_config_fields_sent_as_null():
+    # Newer host extension bundles serialize the full client configuration and
+    # can send any field explicitly as ``null``. Every field must collapse to
+    # its (falsy) default rather than ``None`` so construction never crashes and
+    # downstream code sees well-typed values.
+    config = json.dumps({
+        "taskHubName": None,
+        "connectionName": None,
+        "creationUrls": None,
+        "managementUrls": None,
+        "baseUrl": None,
+        "requiredQueryStringParameters": None,
+        "rpcBaseUrl": None,
+        "httpBaseUrl": None,
+        "maxGrpcMessageSizeInBytes": None,
+        "grpcHttpClientTimeout": None,
+    })
+    client = df.DurableFunctionsClient(config)
+    assert client.taskHubName == ""
+    assert client.connectionName == ""
+    assert client.creationUrls == {}
+    assert client.managementUrls == {}
+    assert client.baseUrl == ""
+    assert client.requiredQueryStringParameters == ""
+    assert client.rpcBaseUrl == ""
+    assert client.httpBaseUrl == ""
+    assert client.maxGrpcMessageSizeInBytes == 0
+    assert client.grpcHttpClientTimeout == timedelta(seconds=30)
+
+
 # ---------------------------------------------------------------------------
 # RetryOptions shim
 # ---------------------------------------------------------------------------
