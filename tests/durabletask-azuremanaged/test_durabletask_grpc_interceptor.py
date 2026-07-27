@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import asyncio
 import unittest
 from concurrent import futures
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,10 @@ from azure.core.credentials import AccessToken
 
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.internal import durabletask_grpc_interceptor
-from durabletask.azuremanaged.internal.access_token_manager import AccessTokenManager
+from durabletask.azuremanaged.internal.access_token_manager import (
+    AccessTokenManager,
+    AsyncAccessTokenManager,
+)
 from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
     DTSAsyncDefaultClientInterceptorImpl,
     DTSDefaultClientInterceptorImpl,
@@ -285,6 +289,109 @@ class TestAccessTokenManagerThreadSafety(unittest.TestCase):
 
         self._get_access_token_concurrently(manager)
 
+        self.assertEqual(2, credential.calls)
+
+
+class _CredentialError(Exception):
+    pass
+
+
+class _TestAsyncTokenCredential:
+    def __init__(self, delay: float = 0.02):
+        self.calls = 0
+        self._delay = delay
+
+    async def get_token(self, _scope):
+        # Counting before the await means every coroutine that reaches the credential
+        # is recorded, which is what makes a thundering herd observable.
+        self.calls += 1
+        call_number = self.calls
+        await asyncio.sleep(self._delay)
+        return AccessToken(f"token-{call_number}", int(time.time()) + 3600)
+
+
+class _FlakyAsyncTokenCredential:
+    def __init__(self):
+        self.calls = 0
+        self.fail = True
+
+    async def get_token(self, _scope):
+        self.calls += 1
+        await asyncio.sleep(0)
+        if self.fail:
+            raise _CredentialError("credential unavailable")
+        return AccessToken("token-recovered", int(time.time()) + 3600)
+
+
+class TestAsyncAccessTokenManagerSingleFlight(unittest.IsolatedAsyncioTestCase):
+    async def test_deferred_first_acquisition_performs_single_acquisition(self):
+        credential = _TestAsyncTokenCredential()
+        manager = AsyncAccessTokenManager(credential)
+
+        self.assertEqual(0, credential.calls, "Constructing the manager must not acquire a token")
+
+        # The async manager has always deferred the first acquisition (a constructor
+        # cannot await), so the cold-start burst goes through the same refresh guard
+        # as a later refresh and must likewise be single-flight.
+        tokens = await asyncio.gather(*(manager.get_access_token() for _ in range(16)))
+
+        self.assertEqual(1, credential.calls)
+        self.assertEqual({"token-1"}, {token.token for token in tokens})
+
+    async def test_concurrent_refresh_performs_single_refresh(self):
+        credential = _TestAsyncTokenCredential()
+        manager = AsyncAccessTokenManager(credential)
+        await manager.get_access_token()
+        self.assertEqual(1, credential.calls)
+
+        manager.expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        tokens = await asyncio.gather(*(manager.get_access_token() for _ in range(16)))
+
+        self.assertEqual(2, credential.calls)
+        self.assertEqual({"token-2"}, {token.token for token in tokens})
+
+    async def test_valid_token_is_returned_without_contacting_credential(self):
+        credential = _TestAsyncTokenCredential()
+        manager = AsyncAccessTokenManager(credential)
+
+        first = await manager.get_access_token()
+        second = await manager.get_access_token()
+
+        self.assertEqual(1, credential.calls)
+        self.assertIs(first, second)
+
+    async def test_credential_failure_propagates_and_does_not_deadlock(self):
+        credential = _FlakyAsyncTokenCredential()
+        manager = AsyncAccessTokenManager(credential)
+
+        results = await asyncio.gather(
+            *(manager.get_access_token() for _ in range(4)), return_exceptions=True)
+
+        self.assertTrue(all(isinstance(result, _CredentialError) for result in results))
+
+        # The guard must have been released on failure so a later attempt can succeed.
+        credential.fail = False
+        token = await manager.get_access_token()
+        self.assertIsNotNone(token)
+        self.assertEqual("token-recovered", token.token)
+
+
+class TestAsyncAccessTokenManagerEventLoopBinding(unittest.TestCase):
+    def test_manager_is_reusable_across_event_loops(self):
+        credential = _TestAsyncTokenCredential(delay=0)
+        manager = AsyncAccessTokenManager(credential)
+
+        first = asyncio.run(manager.get_access_token())
+
+        manager.expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        # The second run uses a distinct event loop; the refresh guard must not stay
+        # bound to the first, now-closed loop.
+        second = asyncio.run(manager.get_access_token())
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
         self.assertEqual(2, credential.calls)
 
 
