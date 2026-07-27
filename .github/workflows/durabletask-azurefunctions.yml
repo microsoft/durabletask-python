@@ -23,17 +23,11 @@ jobs:
       with:
         python-version: 3.13
     - name: Install dependencies
-      working-directory: azure-functions-durable
       run: |
         python -m pip install --upgrade pip
-        pip install setuptools wheel tox
-        pip install flake8
-    - name: Run flake8 Linter
-      working-directory: azure-functions-durable
-      run: flake8 .
-    - name: Run flake8 Linter
-      working-directory: tests/azure-functions-durable
-      run: flake8 .
+        pip install nox
+    - name: Run lint checks
+      run: nox -s lint
 
   run-tests:
     strategy:
@@ -51,35 +45,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install durabletask dependencies
+      - name: Install Nox
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 pytest
-          pip install -r requirements.txt
-
-      - name: Install durabletask locally
-        run: |
-          pip install . --no-deps --force-reinstall
-
-      - name: Install azure-functions-durable locally
-        working-directory: azure-functions-durable
-        run: |
-          pip install . --no-deps --force-reinstall
-
-      # ``requirements.txt`` (shared with the core 3.10-3.14 CI) leaves
-      # azure-functions unpinned so it can resolve on Python < 3.13. The
-      # provider needs azure-functions>=2.3.0b2 (which requires 3.13+ and
-      # provides ``register_converter``); the local installs above use
-      # ``--no-deps``, so install that floor explicitly here. This job only runs
-      # on 3.13/3.14, where 2.3.0b2 is available.
-      - name: Install azure-functions (>=2.3.0b2)
-        run: |
-          pip install "azure-functions>=2.3.0b2"
+          pip install nox
 
       - name: Run unit tests
-        working-directory: tests/azure-functions-durable
-        run: |
-          pytest -m "not dts and not azurite and not functions_e2e" --verbose
+        run: nox -s functions_unit-${{ matrix.python-version }}
 
   e2e-tests:
     needs: run-tests
@@ -115,17 +87,6 @@ jobs:
           npm install -g azurite@latest
           npm install -g azure-functions-core-tools@4 --unsafe-perm true
 
-      - name: Start Azurite
-        shell: bash
-        # The DurableTask.AzureStorage provider in recent extension bundles uses
-        # a newer Azure Storage REST API version than the CI Azurite build
-        # recognizes, which otherwise fails task-hub creation with "The API
-        # version ... is not supported by Azurite". ``--skipApiVersionCheck``
-        # bypasses that guard so the durable provider can talk to Azurite.
-        run: |
-          azurite --silent --skipApiVersionCheck --location /tmp/azurite --blobPort 10000 --queuePort 10001 --tablePort 10002 &
-          sleep 2
-
       - name: Install nox
         run: |
           python -m pip install --upgrade pip
@@ -151,4 +112,3 @@ jobs:
           path: tests/azure-functions-durable/e2e/apps/*/_func_host.log
           if-no-files-found: warn
           retention-days: 7
-
