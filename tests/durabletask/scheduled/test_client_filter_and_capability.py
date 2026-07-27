@@ -4,9 +4,13 @@
 """Unit tests for ScheduleClient filtering and scheduled-tasks worker capability."""
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 import durabletask.internal.orchestrator_service_pb2 as pb
-from durabletask.scheduled.client import ScheduledTaskClient
+from durabletask.client import OrchestrationStatus
+from durabletask.scheduled.client import AsyncScheduleClient, ScheduledTaskClient
 from durabletask.scheduled.models import (ScheduleConfiguration,
                                           ScheduleCreationOptions, ScheduleQuery,
                                           ScheduleState)
@@ -76,8 +80,35 @@ class TestScheduledTasksCapability:
         assert pb.WORKER_CAPABILITY_SCHEDULED_TASKS not in worker._capabilities  # pyright: ignore[reportPrivateUsage]
 
     def test_add_capability_rejected_while_running(self):
-        import pytest
         worker = TaskHubGrpcWorker()
         worker._is_running = True  # pyright: ignore[reportPrivateUsage]
         with pytest.raises(RuntimeError):
             worker.add_capability(pb.WORKER_CAPABILITY_SCHEDULED_TASKS)
+
+
+async def test_async_schedule_operation_raises_failure_details():
+    client = MagicMock()
+    client.schedule_new_orchestration = AsyncMock(return_value="operation-id")
+    client.wait_for_orchestration_completion = AsyncMock(return_value=SimpleNamespace(
+        runtime_status=OrchestrationStatus.FAILED,
+        failure_details=SimpleNamespace(message="operation failed"),
+    ))
+    schedule = AsyncScheduleClient(client, "schedule-id")
+
+    with pytest.raises(RuntimeError, match="operation failed"):
+        await schedule.create(ScheduleCreationOptions(
+            schedule_id="schedule-id",
+            orchestration_name="orchestration",
+            interval=timedelta(minutes=1),
+        ))
+
+
+async def test_async_schedule_operation_propagates_timeout():
+    client = MagicMock()
+    client.schedule_new_orchestration = AsyncMock(return_value="operation-id")
+    client.wait_for_orchestration_completion = AsyncMock(
+        side_effect=TimeoutError("operation timed out"))
+    schedule = AsyncScheduleClient(client, "schedule-id")
+
+    with pytest.raises(TimeoutError, match="operation timed out"):
+        await schedule.pause()

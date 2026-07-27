@@ -408,8 +408,10 @@ class Blueprint(TriggerApi, BindingApi):
                         if isinstance(user_fn, FunctionBuilder) else user_fn)
             signature = inspect.signature(function)
 
-            @wraps(function)
-            async def client_bound(*args: Any, **kwargs: Any) -> Any:
+            def bind_client(
+                    args: tuple[Any, ...],
+                    kwargs: dict[str, Any],
+            ) -> tuple[inspect.BoundArguments, DurableFunctionsClient | SyncDurableFunctionsClient]:
                 bound = signature.bind(*args, **kwargs)
                 if client_name not in bound.arguments:
                     raise TypeError(
@@ -422,15 +424,35 @@ class Blueprint(TriggerApi, BindingApi):
                 client = (SyncDurableFunctionsClient.get_cached(raw_client) if sync
                           else DurableFunctionsClient(raw_client))
                 bound.arguments[client_name] = client
-                try:
-                    result = function(*bound.args, **bound.kwargs)
-                    return await result if inspect.isawaitable(result) else result
-                finally:
-                    if isinstance(client, DurableFunctionsClient):
-                        client.schedule_close()
+                return bound, client
 
-            client_bound.__annotations__[client_name] = str
-            setattr(client_bound, "client_function", function)
+            def set_client_metadata(client_bound: Callable[..., Any]) -> None:
+                annotations = dict(function.__annotations__)
+                annotations.setdefault(client_name, str)
+                client_bound.__annotations__ = annotations
+                setattr(client_bound, "client_function", function)
+
+            if inspect.iscoroutinefunction(function):
+                @wraps(function)
+                async def client_bound(*args: Any, **kwargs: Any) -> Any:
+                    bound, client = bind_client(args, kwargs)
+                    try:
+                        result = function(*bound.args, **bound.kwargs)
+                        return await result
+                    finally:
+                        if isinstance(client, DurableFunctionsClient):
+                            client.schedule_close()
+            else:
+                @wraps(function)
+                def client_bound(*args: Any, **kwargs: Any) -> Any:
+                    bound, client = bind_client(args, kwargs)
+                    try:
+                        return function(*bound.args, **bound.kwargs)
+                    finally:
+                        if isinstance(client, DurableFunctionsClient):
+                            client.schedule_close()
+
+            set_client_metadata(client_bound)
             if isinstance(user_fn, FunctionBuilder):
                 user_fn._function._func = client_bound  # pyright: ignore[reportPrivateUsage]
                 return wrap(user_fn)

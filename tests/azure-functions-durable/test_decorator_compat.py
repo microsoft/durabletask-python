@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import azure.durable_functions as df
+import inspect
 import pytest
 from azure.durable_functions.constants import (
     ACTIVITY_TRIGGER,
@@ -134,7 +135,7 @@ async def test_durable_client_input_wraps_host_configuration_as_async_client():
     assert await fb._function._func(client="{}") == "DurableFunctionsClient"
 
 
-async def test_durable_client_input_sync_injects_sync_client():
+def test_durable_client_input_sync_injects_sync_client():
     app = df.DFApp()
     clients = []
 
@@ -143,8 +144,9 @@ async def test_durable_client_input_sync_injects_sync_client():
         return type(client).__name__
 
     fb = app.durable_client_input_sync(client_name="client")(starter)
-    assert await fb._function._func(client="{}") == "SyncDurableFunctionsClient"
-    assert await fb._function._func(client="{}") == "SyncDurableFunctionsClient"
+    assert not inspect.iscoroutinefunction(fb._function._func)
+    assert fb._function._func(client="{}") == "SyncDurableFunctionsClient"
+    assert fb._function._func(client="{}") == "SyncDurableFunctionsClient"
     assert clients[0] is clients[1]
 
 
@@ -157,6 +159,17 @@ async def test_durable_client_input_rejects_missing_binding_parameter():
     fb = app.durable_client_input(client_name="client")(starter)
     with pytest.raises(TypeError, match="binding parameter 'client' is not declared"):
         await fb._function._func(other="{}")
+
+
+async def test_durable_client_input_preserves_client_annotation():
+    app = df.DFApp()
+
+    async def starter(client: df.DurableFunctionsClient):
+        return type(client).__name__
+
+    fb = app.durable_client_input(client_name="client")(starter)
+    assert starter.__annotations__["client"] is df.DurableFunctionsClient
+    assert await fb._function._func(client="{}") == "DurableFunctionsClient"
 
 
 # ---------------------------------------------------------------------------
