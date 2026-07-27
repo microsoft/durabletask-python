@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from unittest.mock import patch
 
+import pytest
+
 from durabletask import entities, task, worker
 from durabletask.internal import type_discovery
 from durabletask.internal.entity_state_shim import StateShim
@@ -348,6 +350,29 @@ class TestSignatureCaching:
         assert type_discovery.activity_input_type(act) is Order
         assert type_discovery.activity_input_type(act) is Order
         assert type_discovery.activity_output_type(act) is Order
+
+    def test_unhashable_dataclass_handler_registered_by_name_resolves(self):
+        # A ``@dataclass`` with ``__call__`` is the realistic shape of this:
+        # dataclasses default to ``eq=True``, which sets ``__hash__ = None``.
+        # Such a handler has no ``__name__``, so it reaches the worker through
+        # the explicit-name registration API rather than ``add_activity()``.
+        @dataclass
+        class ConfiguredActivity:
+            retries: int = 3
+
+            def __call__(self, ctx, order: Order) -> Order:
+                ...
+
+        handler = ConfiguredActivity()
+        with pytest.raises(TypeError):
+            hash(handler)
+
+        registry = worker._Registry()
+        registry.add_named_activity("process_order", handler)
+        registered = registry.get_activity("process_order")
+
+        assert type_discovery.activity_input_type(registered) is Order
+        assert type_discovery.activity_output_type(registered) is Order
 
 
 # ----- activity executor inbound coercion -----

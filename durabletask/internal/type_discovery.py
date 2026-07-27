@@ -61,8 +61,15 @@ def _resolved_hints(fn: Callable[..., Any]) -> dict[str, Any] | None:
 
 # Sentinel for "there is no annotation here worth asking the converter about"
 # (parameter absent, unannotated, ``Any``, or an unresolvable string
-# annotation). It is deliberately distinct from ``None`` so that a literal
-# ``None`` annotation still reaches the converter exactly as before.
+# annotation). It is deliberately distinct from ``None`` because the two
+# annotation paths treat a literal ``None`` differently, and both behaviours
+# predate this cache:
+#   * parameters -- a ``None`` annotation is a real annotation and is still
+#     passed to the converter, so it must not collapse into the sentinel;
+#   * return values -- ``activity_output_type()`` has always short-circuited on
+#     ``annotation is None``, so ``_build_signature_info()`` normalizes a
+#     ``-> None`` return annotation to this sentinel and it never reaches the
+#     converter.
 _NO_ANNOTATION: Any = object()
 
 
@@ -113,6 +120,9 @@ def _build_signature_info(fn: Any, *, memoized: bool) -> _SignatureInfo | None:
     )
     return_annotation = _resolve_annotation(sig.return_annotation, "return", hints)
     if return_annotation is None:
+        # ``activity_output_type()`` has always treated an explicit ``-> None``
+        # as "nothing to reconstruct". Fold it into the sentinel here so the
+        # special case stays out of the per-call path.
         return_annotation = _NO_ANNOTATION
     return _SignatureInfo(positional, return_annotation)
 
