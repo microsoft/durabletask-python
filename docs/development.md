@@ -26,6 +26,8 @@ nox -s ci -- 3.14
 
 Run the versioned test sessions directly when a change needs complete matrix
 coverage, for example `nox -s core_tests` or `nox -s azuremanaged_tests`.
+Nox fails rather than silently skipping a session when its required Python
+interpreter is unavailable.
 
 Nox starts Azurite automatically for the core and Azure Functions tests. The
 Azure Managed tests start a disposable DTS emulator Docker container. Start

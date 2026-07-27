@@ -35,6 +35,7 @@ from typing import Sequence
 import nox
 
 nox.options.reuse_existing_virtualenvs = True
+nox.options.error_on_missing_interpreters = True
 
 REPO_ROOT = Path(__file__).parent
 AZUREMANAGED = REPO_ROOT / "durabletask-azuremanaged"
@@ -118,6 +119,21 @@ def _wait_for_ports(ports: Sequence[int], timeout: int = 30) -> bool:
     return False
 
 
+def _pytest_arguments(
+    default_target: str,
+    posargs: Sequence[str],
+) -> tuple[str, ...]:
+    """Keep the default target when positional arguments are only pytest options."""
+    if not posargs:
+        return (default_target,)
+
+    has_target = any(
+        "::" in argument or Path(argument).exists()
+        for argument in posargs
+    )
+    return tuple(posargs) if has_target else (default_target, *posargs)
+
+
 def _start_azurite(
     session: nox.Session,
     ports: Sequence[int],
@@ -162,18 +178,32 @@ def _start_azurite(
         session.log("Started Azurite for this session.")
         return process
 
-    if process.poll() is None:
-        process.terminate()
-    process.wait()
+    _stop_process(process)
     session.error("Azurite did not become ready within 30 seconds.")
     return None
 
 
 def _stop_process(process: subprocess.Popen[bytes] | None) -> None:
     """Stop a service process that this Nox session started."""
-    if process is not None and process.poll() is None:
+    if process is None:
+        return
+
+    if os.name == "nt":
+        script = f"""
+function Stop-ProcessTree([int] $processId) {{
+    Get-CimInstance Win32_Process -Filter "ParentProcessId = $processId" |
+        ForEach-Object {{ Stop-ProcessTree $_.ProcessId }}
+    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+}}
+Stop-ProcessTree {process.pid}
+"""
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            check=True,
+        )
+    elif process.poll() is None:
         process.terminate()
-        process.wait()
+    process.wait()
 
 
 def _new_test_namespace(prefix: str) -> str:
@@ -304,10 +334,10 @@ def core_tests(session: nox.Session) -> None:
     try:
         session.install("-r", "requirements.txt")
         session.install("-e", f"{REPO_ROOT}[azure-blob-payloads]", "aiohttp")
-        targets = session.posargs or ("tests/durabletask",)
+        arguments = _pytest_arguments("tests/durabletask", session.posargs)
         session.run(
             "pytest",
-            *targets,
+            *arguments,
             "-m",
             "not dts",
             "--verbose",
@@ -331,8 +361,11 @@ def azuremanaged_tests(session: nox.Session) -> None:
             "-e",
             str(AZUREMANAGED),
         )
-        targets = session.posargs or ("tests/durabletask-azuremanaged",)
-        session.run("pytest", *targets, "-m", "dts", "--verbose")
+        arguments = _pytest_arguments(
+            "tests/durabletask-azuremanaged",
+            session.posargs,
+        )
+        session.run("pytest", *arguments, "-m", "dts", "--verbose")
     finally:
         _stop_dts_emulator(container_name)
 
@@ -343,9 +376,9 @@ def functions_unit(session: nox.Session) -> None:
     session.install("-r", "requirements.txt")
     _install_packages(session, editable=True)
     session.install("pytest")
-    targets = session.posargs or ("tests/azure-functions-durable",)
+    arguments = _pytest_arguments("tests/azure-functions-durable", session.posargs)
     session.run(
-        "pytest", *targets,
+        "pytest", *arguments,
         "-m", "not dts and not azurite and not functions_e2e",
     )
 
@@ -391,9 +424,12 @@ def functions_e2e(session: nox.Session) -> None:
         session.install("pytest")
         for app in E2E_APPS:
             _link_app_venv(session, E2E_APPS_DIR / app)
-        targets = session.posargs or ("tests/azure-functions-durable/e2e",)
+        arguments = _pytest_arguments(
+            "tests/azure-functions-durable/e2e",
+            session.posargs,
+        )
         session.run(
-            "pytest", *targets,
+            "pytest", *arguments,
             "-m", "functions_e2e",
         )
     finally:
@@ -419,10 +455,10 @@ def ci(session: nox.Session) -> None:
             f"{', '.join(PYTHON_VERSIONS)}.")
 
     python_version = session.posargs[0] if session.posargs else DEFAULT_CI_PYTHON
-    session.notify("lint")
-    session.notify("typecheck_core")
-    session.notify("typecheck_functions")
-    session.notify(f"core_tests-{python_version}")
-    session.notify(f"azuremanaged_tests-{python_version}")
-    session.notify("functions_unit-3.13")
-    session.notify("functions_e2e")
+    session.notify("lint", ())
+    session.notify("typecheck_core", ())
+    session.notify("typecheck_functions", ())
+    session.notify(f"core_tests-{python_version}", ())
+    session.notify(f"azuremanaged_tests-{python_version}", ())
+    session.notify("functions_unit-3.13", ())
+    session.notify("functions_e2e", ())
