@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 
+import pytest
 from google.protobuf import wrappers_pb2
 
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -523,3 +524,57 @@ class TestEntityMethodSignatureCacheBounds:
             thread.join()
 
         assert len(cache) == 8
+
+    @pytest.mark.parametrize("max_size", [0, -1, -1024])
+    def test_non_positive_max_size_is_clamped_to_one(self, max_size: int):
+        """A non-positive bound must not produce a zero-capacity cache.
+
+        Without clamping, a bound of 0 would evict every entry immediately
+        after inserting it, so every lookup would miss and the signature
+        reflection this cache exists to avoid would run on every operation
+        again. A negative bound is worse still: the eviction loop would keep
+        popping past an already-empty dict.
+        """
+        cache = _EntityMethodSignatureCache(max_size=max_size)
+
+        cache[(int, "op")] = True
+
+        assert len(cache) == 1
+        assert cache.get((int, "op")) is True
+        assert (int, "op") in cache
+
+    def test_clamped_cache_still_evicts_and_serves_hits(self):
+        """A clamped cache behaves as a working size-1 cache, not a no-op."""
+        cache = _EntityMethodSignatureCache(max_size=0)
+
+        cache[(int, "op")] = True
+        cache[(str, "op")] = False
+
+        # The newest entry is retained and readable; the older one is evicted
+        # because the effective bound is one, not because caching is disabled.
+        assert len(cache) == 1
+        assert cache.get((str, "op")) is False
+        assert cache.get((int, "op")) is None
+
+    def test_executor_with_clamped_cache_still_caches_reflection(self, monkeypatch):
+        """An executor handed a clamped cache must still avoid re-reflecting."""
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        registry = _Registry()
+        registry.add_entity(Counter)
+        executor = _EntityExecutor(
+            registry,
+            logging.getLogger("test"),
+            JsonDataConverter(),
+            entity_method_cache=_EntityMethodSignatureCache(max_size=0),
+        )
+
+        entity_id = entities.EntityInstanceId("Counter", "test-key")
+        state = StateShim(None, JsonDataConverter())
+        for _ in range(3):
+            executor.execute("test-orch", entity_id, "add", state, "1")
+            state.commit()
+
+        assert len(counting.signature_calls) == 1
+        assert state.get_state(int) == 3
