@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -42,7 +42,10 @@ class HistoryEvent:
     timestamp: datetime
 
     def to_dict(self) -> dict[str, Any]:
-        return _to_serializable(asdict(self))
+        return {
+            name: _to_serializable(getattr(self, name))
+            for name in _field_names(type(self))
+        }
 
 
 @dataclass(slots=True)
@@ -326,7 +329,47 @@ def _message_to_dict(msg: Message) -> dict[str, Any]:
     return json_format.MessageToDict(msg, preserving_proto_field_name=True)
 
 
+# Field names are looked up once per dataclass type. History export walks
+# many events of the same handful of types, so caching avoids repeatedly
+# rebuilding the tuple returned by ``dataclasses.fields``.
+_FIELD_NAMES: dict[type[Any], tuple[str, ...]] = {}
+
+# Values of these exact types are already JSON-native and need no
+# conversion. Checking ``type(value)`` against a set is a single hash
+# lookup, which short-circuits the common case (most event fields are
+# strings, ints, or ``None``) before the ``isinstance`` chain below.
+_JSON_NATIVE_TYPES: frozenset[type[Any]] = frozenset({bool, float, int, str, type(None)})
+
+
+def _field_names(cls: type[Any]) -> tuple[str, ...]:
+    names = _FIELD_NAMES.get(cls)
+    if names is None:
+        names = tuple(field.name for field in fields(cast(Any, cls)))
+        _FIELD_NAMES[cls] = names
+    return names
+
+
 def _to_serializable(value: Any) -> Any:
+    """Recursively convert *value* into a JSON-safe structure.
+
+    This walks dataclass instances directly instead of going through
+    ``dataclasses.asdict``, which would deep-copy the whole event graph
+    into a throwaway intermediate structure that then has to be walked a
+    second time. The output is identical to that two-pass form: nested
+    dataclasses become dicts in field order, datetimes become ISO 8601
+    strings, lists and dicts are rebuilt, and every other value is
+    passed through unchanged.
+    """
+    value_type = cast('type[Any]', type(value))
+    if value_type in _JSON_NATIVE_TYPES:
+        return value
+    # Mirrors the private ``dataclasses._is_dataclass_instance`` check that
+    # ``asdict`` used: dataclass *types* are leaves, only instances recurse.
+    if hasattr(value_type, '__dataclass_fields__'):
+        return {
+            name: _to_serializable(getattr(value, name))
+            for name in _field_names(value_type)
+        }
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, list):
