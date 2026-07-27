@@ -409,11 +409,12 @@ class ScheduleState:
         self.execution_token = _new_token()
 
     def to_json(self) -> dict[str, Any]:
-        # ``schedule_configuration`` is returned as the object itself; the
-        # serializer recurses into it and fires its own ``to_json`` hook. Keys
-        # and value shapes mirror the .NET ``ScheduleState`` so the Durable Task
-        # Scheduler dashboard can deserialize the raw entity state: PascalCase
-        # names, the status as its numeric ordinal, and datetimes as ISO strings.
+        # ``schedule_configuration`` is emitted via its own ``to_json`` hook as a
+        # plain mapping (not a nested custom-object envelope) so a strict-typing
+        # serializer can encode it; ``from_json`` rebuilds it. Keys and value
+        # shapes mirror the .NET ``ScheduleState`` so the Durable Task Scheduler
+        # dashboard can deserialize the raw entity state: PascalCase names, the
+        # status as its numeric ordinal, and datetimes as ISO strings.
         return {
             "Status": self.status.to_dotnet_ordinal(),
             "ExecutionToken": self.execution_token,
@@ -421,7 +422,10 @@ class ScheduleState:
             "NextRunAt": _to_iso(self.next_run_at),
             "ScheduleCreatedAt": _to_iso(self.schedule_created_at),
             "ScheduleLastModifiedAt": _to_iso(self.schedule_last_modified_at),
-            "ScheduleConfiguration": self.schedule_configuration,
+            "ScheduleConfiguration": (
+                self.schedule_configuration.to_json()
+                if self.schedule_configuration is not None else None
+            ),
         }
 
     @classmethod

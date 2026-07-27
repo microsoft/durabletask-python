@@ -3,6 +3,7 @@
 
 import asyncio
 import inspect
+import itertools
 import json
 import logging
 import os
@@ -1135,10 +1136,12 @@ class TaskHubGrpcWorker:
         if self._payload_store is not None:
             payload_helpers.deexternalize_payloads(req, self._payload_store)
 
-        # Extract parent trace context from executionStarted event
+        # Extract parent trace context from executionStarted event.
+        # Chain the two event lists lazily so that long histories are not
+        # copied just to locate the first executionStarted event.
         parent_trace_ctx = None
         orchestration_name = "<unknown>"
-        for e in list(req.pastEvents) + list(req.newEvents):
+        for e in itertools.chain(req.pastEvents, req.newEvents):
             if e.HasField("executionStarted"):
                 orchestration_name = e.executionStarted.name
                 if e.executionStarted.HasField("parentTraceContext"):
@@ -2143,10 +2146,12 @@ class _OrchestrationExecutor:
             old_events: Sequence[pb.HistoryEvent],
             new_events: Sequence[pb.HistoryEvent],
     ) -> ExecutionResults:
-        orchestration_name = "<unknown>"
-        orchestration_started_events = [e for e in old_events if e.HasField("executionStarted")]
-        if len(orchestration_started_events) >= 1:
-            orchestration_name = orchestration_started_events[0].executionStarted.name
+        # Only the first executionStarted event is needed, so stop at the
+        # first match instead of materializing every matching event.
+        orchestration_name = next(
+            (e.executionStarted.name for e in old_events if e.HasField("executionStarted")),
+            "<unknown>",
+        )
         self._orchestration_name = orchestration_name
 
         self._logger.debug(
@@ -2297,21 +2302,22 @@ class _OrchestrationExecutor:
 
         rewind_event: pb.ExecutionRewoundEvent = new_events[1].executionRewound
 
-        all_events = list(old_events) + list(new_events)
         # Generate a new execution ID for the rewound execution.
         new_execution_id = uuid.uuid4().hex
 
         # First pass: collect the task-scheduled IDs that correspond to
         # failed activities so we can remove the matching taskScheduled
-        # events in the second pass.
+        # events in the second pass.  Both arguments are sequences, so each
+        # pass chains them lazily (old events first, then new events)
+        # instead of copying the whole history into a combined list.
         failed_task_ids: set[int] = set()
-        for event in all_events:
+        for event in itertools.chain(old_events, new_events):
             if event.HasField("taskFailed"):
                 failed_task_ids.add(event.taskFailed.taskScheduledId)
 
         # Second pass: build the clean history.
         clean_history: list[pb.HistoryEvent] = []
-        for event in all_events:
+        for event in itertools.chain(old_events, new_events):
             if event.HasField("taskFailed"):
                 continue
             if event.HasField("taskScheduled") and event.eventId in failed_task_ids:
