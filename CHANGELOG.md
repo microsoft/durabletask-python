@@ -17,6 +17,10 @@ CHANGED
 - **Breaking:** `FailureDetails.error_type` — and the `errorType` value sent over the wire — is now the fully-qualified type name (`module.ClassName`, e.g. `builtins.ValueError`, `durabletask.task.TaskFailedError`) instead of the bare class name, matching the .NET and Java SDKs. Code that compared `error_type` against a bare name (for example `== "ValueError"`) must be updated to the qualified name or, preferably, switched to `FailureDetails.is_caused_by()`. Because this value is persisted and crosses the orchestration boundary, failures produced by older workers may still carry a bare name; `is_caused_by()` accepts both.
 - **Breaking:** Retired the process-global history-export context. `durabletask.extensions.history_export.bind_context()` and `clear_context()` have been removed; the export activities now resolve their `HistoryExportContext` per invocation via a resolver captured at registration. `ExportHistoryClient.register_worker()` continues to wire this up automatically, so most callers are unaffected. Code that called `bind_context(HistoryExportContext(client, writer))` directly should instead register the activities with `durabletask.extensions.history_export.activities.register(worker, lambda: HistoryExportContext(client, writer))` (or a lazier resolver), or use `ExportHistoryClient.register_worker()`.
 
+FIXED
+
+- Fixed the worker allocating one `asyncio` task per queued work item before applying the concurrency limit, which made memory use and event-loop scheduling overhead grow with the queue backlog during bursts. In-flight work item tasks are now bounded by the configured `ConcurrencyOptions` limits.
+
 ## v1.8.0
 
 ADDED
