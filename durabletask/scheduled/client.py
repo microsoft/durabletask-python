@@ -131,13 +131,13 @@ class ScheduledTaskClient:
             state = metadata.get_typed_state(ScheduleState)
             if state is None or state.schedule_configuration is None:
                 continue
-            if not self._matches_filter(state, schedule_query):
+            if not self.matches_filter(state, schedule_query):
                 continue
             results.append(state.to_description())
         return results
 
     @staticmethod
-    def _matches_filter(state: ScheduleState, schedule_query: ScheduleQuery | None) -> bool:
+    def matches_filter(state: ScheduleState, schedule_query: ScheduleQuery | None) -> bool:
         if schedule_query is None:
             return True
         if schedule_query.status is not None and state.status != schedule_query.status:
@@ -261,6 +261,6 @@ class AsyncScheduledTaskClient:
         for metadata in await self._client.get_all_entities(query):
             state = metadata.get_typed_state(ScheduleState)
             if state is not None and state.schedule_configuration is not None and \
-                    ScheduledTaskClient._matches_filter(state, schedule_query):
+                    ScheduledTaskClient.matches_filter(state, schedule_query):
                 results.append(state.to_description())
         return results
