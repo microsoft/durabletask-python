@@ -152,12 +152,12 @@ class Blueprint(TriggerApi, BindingApi):
         # whatever worker runs them). ``durable_client_input`` is applied as the
         # outer decorator over ``activity_trigger`` so the built function carries
         # both bindings.
-        self.durable_client_input(client_name="client", sync=True)(
+        self.durable_client_input(client_name="client")(
             self.activity_trigger(
                 input_name="input",
                 activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(
                     list_terminal_instances_client_bound))
-        self.durable_client_input(client_name="client", sync=True)(
+        self.durable_client_input(client_name="client")(
             self.activity_trigger(
                 input_name="input",
                 activity=EXPORT_INSTANCE_HISTORY_ACTIVITY)(
@@ -359,10 +359,12 @@ class Blueprint(TriggerApi, BindingApi):
                              client_name: str,
                              task_hub: Optional[str] = None,
                              connection_name: Optional[str] = None,
-                             *,
-                             sync: bool = False,
                              ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
         """Register a Durable-client Function.
+
+        Coroutine functions receive an asynchronous
+        :class:`DurableFunctionsClient`; synchronous functions receive a cached
+        :class:`SyncDurableFunctionsClient`.
 
         Parameters
         ----------
@@ -378,17 +380,14 @@ class Blueprint(TriggerApi, BindingApi):
             The storage account represented by this connection string must be the same one
             used by the target orchestrator functions. If not specified, the default storage
             account connection string for the function app is used.
-        sync: bool
-            When ``True``, inject a :class:`SyncDurableFunctionsClient`. The
-            default injects the asynchronous :class:`DurableFunctionsClient`.
         """
 
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
             def decorator() -> FunctionBuilder:
                 # The converter returns the host configuration string. The
-                # function wrapper below constructs and closes the requested
-                # synchronous or asynchronous rich client per invocation.
+                # function wrapper below constructs the rich client matching
+                # the decorated function's synchronous or asynchronous type.
                 fb.add_binding(
                     binding=DurableClient(name=client_name,
                                           task_hub=task_hub,
@@ -407,6 +406,7 @@ class Blueprint(TriggerApi, BindingApi):
             function = (user_fn._function._func  # pyright: ignore[reportPrivateUsage]
                         if isinstance(user_fn, FunctionBuilder) else user_fn)
             signature = inspect.signature(function)
+            is_async_function = inspect.iscoroutinefunction(function)
 
             def bind_client(
                     args: tuple[Any, ...],
@@ -421,8 +421,8 @@ class Blueprint(TriggerApi, BindingApi):
                 if not isinstance(raw_client, str):
                     raise TypeError(
                         f"durable client binding '{client_name}' did not provide its configuration")
-                client = (SyncDurableFunctionsClient.get_cached(raw_client) if sync
-                          else DurableFunctionsClient(raw_client))
+                client = (DurableFunctionsClient(raw_client) if is_async_function
+                          else SyncDurableFunctionsClient.get_cached(raw_client))
                 bound.arguments[client_name] = client
                 return bound, client
 
@@ -439,7 +439,7 @@ class Blueprint(TriggerApi, BindingApi):
                 client_bound.__annotations__ = annotations
                 setattr(client_bound, "client_function", function)
 
-            if inspect.iscoroutinefunction(function):
+            if is_async_function:
                 @wraps(function)
                 async def async_client_bound(*args: Any, **kwargs: Any) -> Any:
                     bound, client = bind_client(args, kwargs)
@@ -468,16 +468,6 @@ class Blueprint(TriggerApi, BindingApi):
             return wrap(client_bound)
 
         return attach_client_function
-
-    def durable_client_input_sync(
-            self,
-            client_name: str,
-            task_hub: Optional[str] = None,
-            connection_name: Optional[str] = None,
-    ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
-        """Register a durable-client binding that injects a synchronous client."""
-        return self.durable_client_input(
-            client_name, task_hub, connection_name, sync=True)
 
 
 class DFApp(Blueprint, FunctionRegister):

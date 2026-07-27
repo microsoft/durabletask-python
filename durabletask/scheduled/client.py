@@ -269,7 +269,10 @@ class AsyncScheduledTaskClient:
         results: list[ScheduleDescription] = []
         for metadata in await self._client.get_all_entities(query):
             state = metadata.get_typed_state(ScheduleState)
-            if state is not None and state.schedule_configuration is not None and \
-                    ScheduledTaskClient.matches_filter(state, schedule_query):
+            if (
+                    state is not None
+                    and state.schedule_configuration is not None
+                    and ScheduledTaskClient.matches_filter(state, schedule_query)
+            ):
                 results.append(state.to_description())
         return results
