@@ -516,7 +516,7 @@ def test_retry_policies():
             assert state is not None
             assert state.runtime_status == client.OrchestrationStatus.FAILED
             assert state.failure_details is not None
-            assert state.failure_details.error_type == "TaskFailedError"
+            assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
             assert state.failure_details.message.startswith("Sub-orchestration task #1 failed:")
             assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
             assert state.failure_details.stack_trace is not None
@@ -556,7 +556,7 @@ def test_retry_timeout():
             assert state is not None
             assert state.runtime_status == client.OrchestrationStatus.FAILED
             assert state.failure_details is not None
-            assert state.failure_details.error_type == "TaskFailedError"
+            assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
             assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
             assert state.failure_details.stack_trace is not None
             assert throw_activity_counter == 4

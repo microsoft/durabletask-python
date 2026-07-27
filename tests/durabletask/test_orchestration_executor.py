@@ -124,7 +124,7 @@ def test_orchestrator_not_registered():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == "OrchestratorNotRegisteredError"
+    assert complete_action.failureDetails.errorType == "durabletask.worker.OrchestratorNotRegisteredError"
     assert complete_action.failureDetails.errorMessage
 
 
@@ -666,7 +666,7 @@ def test_activity_task_failed():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
+    assert complete_action.failureDetails.errorType == 'durabletask.task.TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
 
     # Make sure the line of code where the exception was raised is included in the stack trace
@@ -1128,7 +1128,7 @@ def test_nondeterminism_expected_timer():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'NonDeterminismError'
+    assert complete_action.failureDetails.errorType == 'durabletask.task.NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
     assert "create_timer" in complete_action.failureDetails.errorMessage  # expected method name
     assert "call_activity" in complete_action.failureDetails.errorMessage  # actual method name
@@ -1156,7 +1156,7 @@ def test_nondeterminism_expected_activity_call_no_task_id():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'NonDeterminismError'
+    assert complete_action.failureDetails.errorType == 'durabletask.task.NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
     assert "call_activity" in complete_action.failureDetails.errorMessage  # expected method name
 
@@ -1186,7 +1186,7 @@ def test_nondeterminism_expected_activity_call_wrong_task_type():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'NonDeterminismError'
+    assert complete_action.failureDetails.errorType == 'durabletask.task.NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
     assert "call_activity" in complete_action.failureDetails.errorMessage  # expected method name
     assert "create_timer" in complete_action.failureDetails.errorMessage  # unexpected method name
@@ -1217,7 +1217,7 @@ def test_nondeterminism_wrong_activity_name():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'NonDeterminismError'
+    assert complete_action.failureDetails.errorType == 'durabletask.task.NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
     assert "call_activity" in complete_action.failureDetails.errorMessage  # expected method name
     assert "original_activity" in complete_action.failureDetails.errorMessage  # expected activity name
@@ -1281,7 +1281,7 @@ def test_sub_orchestration_task_failed():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
+    assert complete_action.failureDetails.errorType == 'durabletask.task.TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
 
     # Make sure the line of code where the exception was raised is included in the stack trace
@@ -1312,7 +1312,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_no_task():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'NonDeterminismError'
+    assert complete_action.failureDetails.errorType == 'durabletask.task.NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
     assert "call_sub_orchestrator" in complete_action.failureDetails.errorMessage  # expected method name
 
@@ -1342,7 +1342,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_wrong_task_ty
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'NonDeterminismError'
+    assert complete_action.failureDetails.errorType == 'durabletask.task.NonDeterminismError'
     assert "1" in complete_action.failureDetails.errorMessage  # task ID
     assert "call_sub_orchestrator" in complete_action.failureDetails.errorMessage  # expected method name
 
@@ -1642,7 +1642,7 @@ def test_fan_in_with_single_failure():
 
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Is this the right error type?
+    assert complete_action.failureDetails.errorType == 'durabletask.task.TaskFailedError'  # TODO: Is this the right error type?
     assert str(ex) in complete_action.failureDetails.errorMessage
 
 
@@ -2137,7 +2137,7 @@ def test_when_all_with_retry():
     actions = result.actions
     complete_action = get_and_validate_complete_orchestration_action_list(4, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete_action.failureDetails.errorType == 'TaskFailedError'  # TODO: Should this be the specific error?
+    assert complete_action.failureDetails.errorType == 'durabletask.task.TaskFailedError'  # TODO: Should this be the specific error?
     assert str(ex) in complete_action.failureDetails.errorMessage
 
 

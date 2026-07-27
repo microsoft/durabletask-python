@@ -411,7 +411,7 @@ async def test_retry_policies():
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.FAILED
         assert state.failure_details is not None
-        assert state.failure_details.error_type == "TaskFailedError"
+        assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
         assert state.failure_details.message.startswith("Sub-orchestration task #1 failed:")
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
@@ -449,7 +449,7 @@ async def test_retry_timeout():
         assert state is not None
         assert state.runtime_status == client.OrchestrationStatus.FAILED
         assert state.failure_details is not None
-        assert state.failure_details.error_type == "TaskFailedError"
+        assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
         assert throw_activity_counter == 4
@@ -536,7 +536,7 @@ async def test_orchestration_with_unparsable_output_fails():
     assert state.name == task.get_name(test_orchestrator)
     assert state.instance_id == id
     assert state.failure_details is not None
-    assert state.failure_details.error_type == "JsonEncodeOutputException"
+    assert state.failure_details.error_type == "durabletask.internal.json_encode_output_exception.JsonEncodeOutputException"
     assert state.failure_details.message.startswith("The orchestration result could not be encoded. Object details:")
     assert state.failure_details.message.find("This is not JSON serializable") != -1
     assert state.runtime_status == client.OrchestrationStatus.FAILED
