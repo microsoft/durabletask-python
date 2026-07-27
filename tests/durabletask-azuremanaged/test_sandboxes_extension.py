@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import inspect
+import random
 import threading
 
 import grpc
@@ -20,6 +21,7 @@ from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
     SandboxWorkerProfileImageOptions,
 )
 from durabletask.azuremanaged.preview.sandboxes.profile_builder import (
+    _ActivityOwnerIndex,
     _build_sandbox_worker_profile,
     build_sandbox_worker_profiles,
 )
@@ -28,6 +30,7 @@ from durabletask.azuremanaged.preview.sandboxes.worker_messages import (
     build_sandbox_worker_start,
 )
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
+from durabletask.azuremanaged.preview.sandboxes.helpers import activities_overlap
 from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.internal import sandbox_service_pb2_grpc as stubs
@@ -206,6 +209,9 @@ def test_build_sandbox_worker_profiles_rejects_activity_overlap() -> None:
         try:
             build_sandbox_worker_profiles()
         except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestoverlapremotehello' is assigned to both worker profile "
+                "'pytest-overlap-profile-a' and 'pytest-overlap-profile-b'.")
             assert "pytestoverlapremotehello" in str(ex)
             assert "pytest-overlap-profile-a" in str(ex)
             assert "pytest-overlap-profile-b" in str(ex)
@@ -250,6 +256,128 @@ def test_build_sandbox_worker_profiles_allows_same_activity_name_different_versi
     finally:
         sandbox_worker_profiles._worker_profiles.pop("pytest-version-profile-a", None)
         sandbox_worker_profiles._worker_profiles.pop("pytest-version-profile-b", None)
+
+
+def test_build_sandbox_worker_profiles_rejects_versioned_activity_overlapping_unversioned_owner() -> None:
+    @sandbox_worker_profile("pytest-unversioned-owner-profile-a")
+    class PytestUnversionedOwnerProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestUnversionedOwner", version=None)
+
+    @sandbox_worker_profile("pytest-unversioned-owner-profile-b")
+    class PytestUnversionedOwnerProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("pytestunversionedowner", version="v9")
+
+    try:
+        try:
+            build_sandbox_worker_profiles()
+        except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestunversionedowner@v9' is assigned to both worker profile "
+                "'pytest-unversioned-owner-profile-a' and 'pytest-unversioned-owner-profile-b'.")
+        else:
+            raise AssertionError(
+                "Expected an unversioned sandbox activity to overlap every version of the same name.")
+    finally:
+        sandbox_worker_profiles._worker_profiles.pop("pytest-unversioned-owner-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-unversioned-owner-profile-b", None)
+
+
+def test_build_sandbox_worker_profiles_rejects_unversioned_activity_overlapping_versioned_owner() -> None:
+    @sandbox_worker_profile("pytest-versioned-owner-profile-a")
+    class PytestVersionedOwnerProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestVersionedOwner", version="v9")
+
+    @sandbox_worker_profile("pytest-versioned-owner-profile-b")
+    class PytestVersionedOwnerProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("pytestversionedowner", version=None)
+
+    try:
+        try:
+            build_sandbox_worker_profiles()
+        except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestversionedowner' is assigned to both worker profile "
+                "'pytest-versioned-owner-profile-a' and 'pytest-versioned-owner-profile-b'.")
+        else:
+            raise AssertionError(
+                "Expected an unversioned sandbox activity to overlap an existing versioned owner.")
+    finally:
+        sandbox_worker_profiles._worker_profiles.pop("pytest-versioned-owner-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-versioned-owner-profile-b", None)
+
+
+def test_build_sandbox_worker_profiles_rejects_identical_activity_versions() -> None:
+    @sandbox_worker_profile("pytest-same-version-profile-a")
+    class PytestSameVersionProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestSameVersionActivity", version="v3")
+
+    @sandbox_worker_profile("pytest-same-version-profile-b")
+    class PytestSameVersionProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("pytestsameversionactivity", version="v3")
+
+    try:
+        try:
+            build_sandbox_worker_profiles()
+        except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestsameversionactivity@v3' is assigned to both worker profile "
+                "'pytest-same-version-profile-a' and 'pytest-same-version-profile-b'.")
+        else:
+            raise AssertionError("Expected identical sandbox activity versions to overlap.")
+    finally:
+        sandbox_worker_profiles._worker_profiles.pop("pytest-same-version-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-same-version-profile-b", None)
+
+
+def test_activity_owner_index_matches_linear_overlap_scan() -> None:
+    registrations = [
+        (SandboxActivity(name, version), worker_profile_id)
+        for name in ("Alpha", "alpha", "BETA", "Gamma")
+        for version in (None, "v1", "v2", "V1")
+        for worker_profile_id in ("profile-a", "profile-b", "profile-c")
+    ]
+
+    for seed in range(25):
+        shuffled = list(registrations)
+        random.Random(seed).shuffle(shuffled)
+
+        index = _ActivityOwnerIndex()
+        owners: list[tuple[SandboxActivity, str]] = []
+        for activity, worker_profile_id in shuffled:
+            expected = next(
+                (owner_profile for owner_activity, owner_profile in owners
+                 if activities_overlap(owner_activity, activity)
+                 and owner_profile != worker_profile_id),
+                None)
+
+            assert index.find_conflicting_profile(activity, worker_profile_id) == expected
+
+            owners.append((activity, worker_profile_id))
+            index.add(activity, worker_profile_id)
 
 
 def test_profile_options_add_activity_accepts_callable() -> None:
