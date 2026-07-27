@@ -98,7 +98,11 @@ def test_worker_concurrency_loop_async():
 
 
 def _start_manager_and_wait_for_queues(manager):
-    """Start the manager loop and wait until its queues are bound to this loop."""
+    """Start the manager loop and return an awaitable that resolves once its queues exist.
+
+    The second element of the returned tuple is an already-created coroutine
+    object (a readiness awaitable), not a callable -- await it directly.
+    """
     worker_task = asyncio.create_task(manager.run())
 
     async def wait_for_queues():
@@ -160,8 +164,8 @@ def test_async_worker_manager_bounds_task_allocation():
 
     async def run_test():
         manager.prepare_for_run()
-        worker_task, wait_for_queues = _start_manager_and_wait_for_queues(manager)
-        await wait_for_queues
+        worker_task, queues_ready = _start_manager_and_wait_for_queues(manager)
+        await queues_ready
         assert manager.activity_queue is not None
         for i in range(total_items):
             manager.submit_activity(slow_work, cancel_work, i)
@@ -204,8 +208,8 @@ def test_async_worker_manager_calls_task_done_exactly_once_on_failure():
 
     async def run_test():
         manager.prepare_for_run()
-        worker_task, wait_for_queues = _start_manager_and_wait_for_queues(manager)
-        await wait_for_queues
+        worker_task, queues_ready = _start_manager_and_wait_for_queues(manager)
+        await queues_ready
         queue = manager.activity_queue
         assert queue is not None
         original_task_done = queue.task_done
