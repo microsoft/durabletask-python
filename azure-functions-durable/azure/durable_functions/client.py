@@ -2,7 +2,9 @@
 # Licensed under the MIT License.
 
 import asyncio
+import atexit
 import json
+import threading
 
 from datetime import datetime, timedelta
 from typing import Any, Optional, Union
@@ -28,6 +30,10 @@ from .internal.compat.durable_orchestration_status import DurableOrchestrationSt
 from .internal.compat.entity_state_response import EntityStateResponse
 from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus, to_durabletask_statuses
 from .internal.compat.purge_history_result import PurgeHistoryResult
+
+
+_sync_client_cache: dict[str, "SyncDurableFunctionsClient"] = {}
+_sync_client_cache_lock = threading.Lock()
 
 
 # Client class used for Durable Functions
@@ -527,6 +533,21 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
 
+    @classmethod
+    def get_cached(cls, client_as_string: str) -> "SyncDurableFunctionsClient":
+        """Get the process-wide client for a durable-client binding configuration.
+
+        Synchronous Functions bindings can be invoked frequently by history
+        export fan-out activities. Reusing the gRPC channel avoids creating and
+        tearing down a channel for every activity invocation.
+        """
+        with _sync_client_cache_lock:
+            cached = _sync_client_cache.get(client_as_string)
+            if cached is None:
+                cached = cls(client_as_string)
+                _sync_client_cache[client_as_string] = cached
+            return cached
+
     def _parse_client_configuration(self, client_as_string: str) -> None:
         client = json.loads(client_as_string)
         self.taskHubName = client.get("taskHubName") or ""
@@ -585,3 +606,15 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
                 f"/runtime/webhooks/durabletask/instances/{encoded_instance_id}")
         base_url = self.baseUrl.rstrip("/") if self.baseUrl else ""
         return f"{base_url}/instances/{encoded_instance_id}"
+
+
+def _close_cached_sync_clients() -> None:
+    """Release process-wide synchronous durable-client channels on shutdown."""
+    with _sync_client_cache_lock:
+        clients = list(_sync_client_cache.values())
+        _sync_client_cache.clear()
+    for client in clients:
+        client.close()
+
+
+atexit.register(_close_cached_sync_clients)

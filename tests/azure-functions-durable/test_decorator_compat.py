@@ -135,12 +135,16 @@ async def test_durable_client_input_wraps_host_configuration_as_async_client():
 
 async def test_durable_client_input_sync_injects_sync_client():
     app = df.DFApp()
+    clients = []
 
     def starter(client):
+        clients.append(client)
         return type(client).__name__
 
     fb = app.durable_client_input_sync(client_name="client")(starter)
     assert await fb._function._func(client="{}") == "SyncDurableFunctionsClient"
+    assert await fb._function._func(client="{}") == "SyncDurableFunctionsClient"
+    assert clients[0] is clients[1]
 
 
 # ---------------------------------------------------------------------------

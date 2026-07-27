@@ -415,7 +415,7 @@ class Blueprint(TriggerApi, BindingApi):
                 if not isinstance(raw_client, str):
                     raise TypeError(
                         f"durable client binding '{client_name}' did not provide its configuration")
-                client = (SyncDurableFunctionsClient(raw_client) if sync
+                client = (SyncDurableFunctionsClient.get_cached(raw_client) if sync
                           else DurableFunctionsClient(raw_client))
                 bound.arguments[client_name] = client
                 try:
@@ -424,8 +424,6 @@ class Blueprint(TriggerApi, BindingApi):
                 finally:
                     if isinstance(client, DurableFunctionsClient):
                         client.schedule_close()
-                    else:
-                        client.close()
 
             client_bound.__annotations__[client_name] = str
             setattr(client_bound, "client_function", function)
