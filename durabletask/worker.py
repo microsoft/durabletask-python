@@ -3434,43 +3434,57 @@ class _AsyncWorkerManager:
                 self._pool_is_shutdown = True
 
     async def _consume_queue(self, queue: asyncio.Queue[_WorkItem], semaphore: asyncio.Semaphore) -> None:
-        # List to track running tasks
+        # Set of running tasks. Completed tasks remove themselves through a done
+        # callback so that this loop never has to scan the whole set.
         running_tasks: set[asyncio.Task[Any]] = set()
 
         while True:
-            # Clean up completed tasks
-            done_tasks = {task for task in running_tasks if task.done()}
-            running_tasks -= done_tasks
-
             # Exit if shutdown is set and the queue is empty and no tasks are running
             if self._shutdown and queue.empty() and not running_tasks:
                 break
 
+            # Reserve concurrency capacity *before* dequeuing a work item so that
+            # the number of allocated tasks stays bounded by the configured
+            # concurrency limit instead of growing with the queue depth. The
+            # permit is handed off to the task created below, which releases it
+            # once the work item has been processed.
+            await semaphore.acquire()
+            permit_owned = True
             try:
-                work = await asyncio.wait_for(queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
+                try:
+                    work = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
 
-            func, cancellation_func, args, kwargs = work
-            # Create a concurrent task for processing
-            task = asyncio.create_task(
-                self._process_work_item(semaphore, queue, func, cancellation_func, args, kwargs)
-            )
-            running_tasks.add(task)
+                func, cancellation_func, args, kwargs = work
+                # Create a concurrent task for processing
+                task = asyncio.create_task(
+                    self._process_work_item(semaphore, queue, func, cancellation_func, args, kwargs)
+                )
+                permit_owned = False
+                running_tasks.add(task)
+                task.add_done_callback(running_tasks.discard)
+            finally:
+                if permit_owned:
+                    semaphore.release()
 
     async def _process_work_item(
             self, semaphore: asyncio.Semaphore, queue: asyncio.Queue[_WorkItem],
             func: Callable[..., Any], cancellation_func: Callable[..., Any],
             args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:
-        async with semaphore:
+        # The semaphore permit is acquired by ``_consume_queue`` before this task
+        # is created and is released here once the work item is done.
+        try:
+            await self._run_func(func, *args, **kwargs)
+        except Exception as work_exception:
+            self._logger.error(f"Uncaught error while processing work item, item will be abandoned: {work_exception}")
+            await self._run_func(cancellation_func, *args, **kwargs)
+        finally:
             try:
-                await self._run_func(func, *args, **kwargs)
-            except Exception as work_exception:
-                self._logger.error(f"Uncaught error while processing work item, item will be abandoned: {work_exception}")
-                await self._run_func(cancellation_func, *args, **kwargs)
-            finally:
                 queue.task_done()
+            finally:
+                semaphore.release()
 
     async def _run_func(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if inspect.iscoroutinefunction(func):
