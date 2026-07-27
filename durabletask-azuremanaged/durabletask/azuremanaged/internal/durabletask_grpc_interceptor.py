@@ -52,13 +52,13 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
             self._metadata.append(("workerid", worker_id))
         super().__init__(self._metadata)
 
+        # Token acquisition is deferred to the first _intercept_call invocation rather
+        # than happening in __init__, so that constructing a client or worker does not
+        # block on a credential round trip before any RPC is made.
         self._token_manager = None
         if token_credential is not None:
             self._token_credential = token_credential
             self._token_manager = AccessTokenManager(token_credential=self._token_credential)
-            access_token = self._token_manager.get_access_token()
-            if access_token is not None:
-                self._upsert_authorization_header(access_token.token)
 
     def _upsert_authorization_header(self, token: str) -> None:
         found = False

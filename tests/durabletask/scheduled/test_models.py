@@ -222,6 +222,31 @@ class TestScheduleState:
         assert payload["ExecutionToken"] == state.execution_token
         assert "status" not in payload
 
+    def test_serialized_schedule_configuration_is_a_plain_mapping(self):
+        # The persisted entity state the Durable Task Scheduler dashboard reads
+        # must carry ``ScheduleConfiguration`` as a plain, .NET-shaped mapping --
+        # never a Python-specific ``{"__class__": ..., "__data__": ...}``
+        # envelope. ``to_json`` inlines ``ScheduleConfiguration.to_json()`` so
+        # the default converter emits the mapping directly. This pins that wire
+        # shape so it cannot silently regress to an object/envelope form.
+        state = ScheduleState()
+        state.schedule_configuration = ScheduleConfiguration.from_create_options(
+            ScheduleCreationOptions(schedule_id="s1", orchestration_name="orch",
+                                    interval=timedelta(seconds=5)))
+
+        payload = state.to_json()
+        nested = payload["ScheduleConfiguration"]
+        assert isinstance(nested, dict)
+        assert nested["ScheduleId"] == "s1"
+        assert nested["OrchestrationName"] == "orch"
+
+        wire = converter.serialize(state)
+        assert wire is not None
+        # No Python type metadata may leak into the persisted state.
+        assert "__class__" not in wire
+        assert "__module__" not in wire
+        assert "__data__" not in wire
+
     def test_from_json_accepts_legacy_string_status(self):
         legacy = {
             "status": "Active",
