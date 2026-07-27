@@ -539,7 +539,9 @@ class AsyncExportHistoryClient:
         return ExportJobDescription.from_state_dict(job_id, cast("dict[str, Any]", state))
 
     async def list_jobs(
-            self, query: ExportJobQuery | None = None) -> AsyncIterator[ExportJobDescription]:
+            self,
+            query: ExportJobQuery | None = None,
+    ) -> AsyncIterator[ExportJobDescription]:
         """Asynchronously enumerate export jobs matching *query*."""
         if query is None:
             query = ExportJobQuery()

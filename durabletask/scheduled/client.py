@@ -172,7 +172,9 @@ class AsyncScheduleClient:
         return self._schedule_id
 
     async def _run_operation(
-            self, operation_name: str, input: object | None = None) -> None:
+            self,
+            operation_name: str,
+            input: object | None = None) -> None:
         request = ScheduleOperationRequest(
             entity_id=str(self._entity_id),
             operation_name=operation_name,
@@ -222,8 +224,11 @@ class AsyncScheduleClient:
 class AsyncScheduledTaskClient:
     """Asynchronous client for managing scheduled tasks."""
 
-    def __init__(self, client: AsyncTaskHubGrpcClient, *,
-                 operation_timeout: float = 60):
+    def __init__(
+            self,
+            client: AsyncTaskHubGrpcClient,
+            *,
+            operation_timeout: float = 60):
         self._client = client
         self._operation_timeout = operation_timeout
 
@@ -233,7 +238,9 @@ class AsyncScheduledTaskClient:
             self._client, schedule_id, operation_timeout=self._operation_timeout)
 
     async def create_schedule(
-            self, options: ScheduleCreationOptions) -> AsyncScheduleClient:
+            self,
+            options: ScheduleCreationOptions,
+    ) -> AsyncScheduleClient:
         """Create a new schedule and return a client for managing it."""
         schedule_client = self.get_schedule_client(options.schedule_id)
         await schedule_client.create(options)
@@ -247,7 +254,9 @@ class AsyncScheduledTaskClient:
             return None
 
     async def list_schedules(
-            self, schedule_query: ScheduleQuery | None = None) -> list[ScheduleDescription]:
+            self,
+            schedule_query: ScheduleQuery | None = None,
+    ) -> list[ScheduleDescription]:
         """List schedules matching the given filter criteria."""
         prefix = schedule_query.schedule_id_prefix if schedule_query and schedule_query.schedule_id_prefix else ""
         page_size = (schedule_query.page_size if schedule_query and schedule_query.page_size
