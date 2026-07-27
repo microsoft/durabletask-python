@@ -3,6 +3,7 @@
 
 import inspect
 import random
+import threading
 
 import grpc
 from azure.core.credentials import AccessToken
@@ -892,6 +893,147 @@ def test_sandbox_registration_retries_failed_precondition_until_structured_reaso
         _FakeRpcError(grpc.StatusCode.INVALID_ARGUMENT))
     assert sandbox_worker._is_retriable_registration_failure(
         _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, "worker profile does not match"))
+
+
+def test_sandbox_registration_recreates_transport_only_when_channel_is_unusable() -> None:
+    assert not sandbox_worker._requires_new_registration_transport(
+        _FakeRpcError(grpc.StatusCode.UNAVAILABLE))
+    assert not sandbox_worker._requires_new_registration_transport(
+        _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, "sandbox not ready"))
+    assert not sandbox_worker._requires_new_registration_transport(
+        _FakeRpcError(grpc.StatusCode.CANCELLED, "Locally cancelled by application!"))
+    assert sandbox_worker._requires_new_registration_transport(
+        _FakeRpcError(grpc.StatusCode.CANCELLED, "Channel closed!"))
+    assert sandbox_worker._requires_new_registration_transport(OSError("connection reset"))
+
+
+def test_sandbox_registration_reuses_one_transport_across_retriable_failures(monkeypatch) -> None:
+    worker = _build_registration_test_worker(monkeypatch)
+    attempts = 0
+
+    def connect(_messages):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 3:
+            raise _FakeRpcError(grpc.StatusCode.UNAVAILABLE)
+        worker._sandbox_registration_stop.set()
+        return object()
+
+    transports = _install_fake_registration_transport(monkeypatch, connect)
+    backoff = _StubBackoff()
+    monkeypatch.setattr(sandbox_worker, "random", backoff)
+
+    worker._run_sandbox_registration_loop()
+
+    assert attempts == 4
+    assert len(transports) == 1
+    assert transports[0].close_count == 1
+    # The existing exponential backoff schedule must be preserved.
+    assert backoff.upper_bounds == [1.0, 2.0, 4.0]
+
+
+def test_sandbox_registration_rebuilds_transport_after_channel_shutdown(monkeypatch) -> None:
+    worker = _build_registration_test_worker(monkeypatch)
+    attempts = 0
+
+    def connect(_messages):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise _FakeRpcError(grpc.StatusCode.CANCELLED, "Channel closed!")
+        worker._sandbox_registration_stop.set()
+        return object()
+
+    transports = _install_fake_registration_transport(monkeypatch, connect)
+    monkeypatch.setattr(sandbox_worker, "random", _StubBackoff())
+
+    worker._run_sandbox_registration_loop()
+
+    assert attempts == 2
+    assert len(transports) == 2
+    assert [transport.close_count for transport in transports] == [1, 1]
+
+
+def test_sandbox_registration_loop_exits_promptly_on_stop_signal(monkeypatch) -> None:
+    worker = _build_registration_test_worker(monkeypatch)
+    worker._sandbox_heartbeat_interval_seconds = 0.05
+    connected = threading.Event()
+
+    def connect(messages):
+        connected.set()
+        for _ in messages:
+            pass
+        return object()
+
+    transports = _install_fake_registration_transport(monkeypatch, connect)
+
+    thread = threading.Thread(target=worker._run_sandbox_registration_loop, daemon=True)
+    thread.start()
+    try:
+        assert connected.wait(10)
+        worker._sandbox_registration_stop.set()
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        worker._sandbox_registration_stop.set()
+        thread.join(timeout=10)
+
+    assert len(transports) == 1
+    assert transports[0].close_count == 1
+
+
+class _StubBackoff:
+    """Records the backoff window used for each retry and never actually sleeps."""
+
+    def __init__(self) -> None:
+        self.upper_bounds: list[float] = []
+
+    def uniform(self, lower: float, upper: float) -> float:
+        self.upper_bounds.append(upper)
+        return 0.0
+
+
+class _FakeRegistrationTransport:
+    def __init__(self, connect, kwargs) -> None:
+        self.kwargs = kwargs
+        self.close_count = 0
+        self._connect = connect
+
+    def connect_sandbox_activity_worker(self, messages):
+        return self._connect(messages)
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
+def _install_fake_registration_transport(
+        monkeypatch, connect) -> list[_FakeRegistrationTransport]:
+    transports: list[_FakeRegistrationTransport] = []
+
+    def factory(**kwargs) -> _FakeRegistrationTransport:
+        transport = _FakeRegistrationTransport(connect, kwargs)
+        transports.append(transport)
+        return transport
+
+    monkeypatch.setattr(sandbox_worker, "SandboxActivitiesGrpcTransport", factory)
+    return transports
+
+
+def _build_registration_test_worker(monkeypatch) -> SandboxWorker:
+    monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
+    monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
+    monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
+    monkeypatch.setenv("DTS_SANDBOX_PROVIDER", "Sandbox")
+    _configure_sandbox_worker_auth(monkeypatch)
+
+    def RegistrationActivity(_ctx, value):
+        return value
+
+    worker = SandboxWorker()
+    worker.add_activity(RegistrationActivity)
+    worker._configure_sandbox_activity_filters()
+    worker._sandbox_registration_stop.clear()
+    return worker
 
 
 class _RecordingChannel:
