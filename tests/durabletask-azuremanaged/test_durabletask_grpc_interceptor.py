@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from importlib.metadata import version
 import threading
 import time
+from typing import Any
 
 import grpc
 from azure.core.credentials import AccessToken
@@ -41,6 +42,21 @@ class MockTaskHubSidecarServiceServicer(stubs.TaskHubSidecarServiceServicer):
         # Return a mock response
         response = pb.GetInstanceResponse(exists=False)
         return response
+
+
+class _TestTokenCredential:
+    """Minimal TokenCredential stub that counts how often a token is requested."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.calls = 0
+
+    def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
+        with self._lock:
+            self.calls += 1
+            call_number = self.calls
+        time.sleep(0.02)
+        return AccessToken(f"token-{call_number}", int(time.time()) + 3600)
 
 
 class TestDurableTaskGrpcInterceptor(unittest.TestCase):
@@ -144,34 +160,76 @@ class TestDurableTaskGrpcInterceptor(unittest.TestCase):
         self.assertIn("workerid", metadata)
         self.assertTrue(metadata["workerid"])
 
+    def test_client_construction_does_not_acquire_token(self):
+        """Token acquisition is deferred from construction to the first request."""
+        credential = _TestTokenCredential()
 
-class _TestTokenCredential:
-    def __init__(self):
-        self._lock = threading.Lock()
-        self.calls = 0
+        task_hub_client = DurableTaskSchedulerClient(
+            host_address=self.server_address,
+            secure_channel=False,
+            taskhub="test-taskhub",
+            token_credential=credential,
+        )
 
-    def get_token(self, _scope):
-        with self._lock:
-            self.calls += 1
-            call_number = self.calls
-        time.sleep(0.02)
-        return AccessToken(f"token-{call_number}", int(time.time()) + 3600)
+        self.assertEqual(0, credential.calls, "Constructing a client must not acquire a token")
+
+        task_hub_client.get_orchestration_state("test-instance-id")
+
+        self.assertEqual(1, credential.calls, "The first request should acquire exactly one token")
+        self.assertIn("authorization", self.mock_servicer.captured_metadata)
+
+        task_hub_client.get_orchestration_state("test-instance-id")
+
+        self.assertEqual(1, credential.calls, "A cached, unexpired token should be reused")
+        self.assertEqual(2, self.mock_servicer.requests_received)
+
+    def test_worker_construction_does_not_acquire_token(self):
+        """Token acquisition is deferred from worker construction to the first request."""
+        credential = _TestTokenCredential()
+
+        DurableTaskSchedulerWorker(
+            host_address=self.server_address,
+            secure_channel=False,
+            taskhub="test-taskhub",
+            token_credential=credential,
+        )
+
+        self.assertEqual(0, credential.calls, "Constructing a worker must not acquire a token")
 
 
 class TestAccessTokenManagerThreadSafety(unittest.TestCase):
+
+    @staticmethod
+    def _get_access_token_concurrently(manager: AccessTokenManager, thread_count: int = 8) -> None:
+        threads = [threading.Thread(target=manager.get_access_token) for _ in range(thread_count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    def test_deferred_first_acquisition_performs_single_acquisition(self):
+        credential = _TestTokenCredential()
+        manager = AccessTokenManager(credential)
+
+        self.assertEqual(0, credential.calls, "Constructing the manager must not acquire a token")
+
+        self._get_access_token_concurrently(manager)
+
+        self.assertEqual(1, credential.calls)
+        token = manager.get_access_token()
+        self.assertIsNotNone(token)
+        self.assertEqual("token-1", token.token)  # type: ignore[union-attr]
+        self.assertEqual(1, credential.calls, "A cached, unexpired token should be reused")
+
     def test_concurrent_refresh_performs_single_refresh(self):
         credential = _TestTokenCredential()
         manager = AccessTokenManager(credential)
+        manager.get_access_token()
+        self.assertEqual(1, credential.calls)
+
         manager.expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
 
-        threads = []
-        for _ in range(8):
-            thread = threading.Thread(target=manager.get_access_token)
-            thread.start()
-            threads.append(thread)
-
-        for thread in threads:
-            thread.join()
+        self._get_access_token_concurrently(manager)
 
         self.assertEqual(2, credential.calls)
 
