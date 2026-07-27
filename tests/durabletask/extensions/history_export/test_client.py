@@ -13,12 +13,16 @@ from __future__ import annotations
 import gzip
 import json
 import threading
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import grpc
 
 from durabletask import client, task, worker
 from durabletask.extensions.history_export import (
+    AsyncExportHistoryClient,
+    AsyncExportHistoryJobClient,
     ExportDestination,
     ExportFormat,
     ExportFormatKind,
@@ -146,6 +150,88 @@ def test_create_get_and_wait_for_job_end_to_end(
         raw = gzip.decompress(entry["payload"]).decode("utf-8")
         first = json.loads(raw.strip().split("\n")[0])
         assert first["kind"] == "metadata"
+
+
+async def test_async_client_create_list_wait_and_delete(
+    writer, seeded_terminal_instances,
+):
+    async with client.AsyncTaskHubGrpcClient(host_address=HOST) as dt_client:
+        export_client = AsyncExportHistoryClient(dt_client, writer)
+        now = datetime.now(timezone.utc)
+        desc = await export_client.create_job(ExportJobCreationOptions(
+            mode=ExportMode.BATCH,
+            completed_time_from=now - timedelta(hours=1),
+            completed_time_to=now + timedelta(hours=1),
+            destination=ExportDestination(container="exports", prefix="async"),
+            format=ExportFormat(kind=ExportFormatKind.JSON),
+        ))
+
+        job_client = export_client.get_job_client(desc.job_id)
+        assert isinstance(job_client, AsyncExportHistoryJobClient)
+        assert job_client.job_id == desc.job_id
+        assert job_client.orchestrator_instance_id == orchestrator_instance_id_for(
+            desc.job_id)
+
+        final = await job_client.wait(timeout=30, poll_interval=0.1)
+        assert final.status == ExportJobStatus.COMPLETED
+        assert (await job_client.describe()) is not None
+        assert desc.job_id in {
+            job.job_id async for job in export_client.list_jobs()
+        }
+
+        await job_client.delete()
+        assert await job_client.describe() is None
+
+
+async def test_async_client_get_job_returns_none_for_empty_state(writer):
+    dt_client = MagicMock()
+    metadata = MagicMock()
+    metadata.get_typed_state.return_value = {}
+    dt_client.get_entity = AsyncMock(return_value=metadata)
+    export_client = AsyncExportHistoryClient(dt_client, writer)
+
+    assert await export_client.get_job("empty-state") is None
+
+
+async def test_async_wait_for_job_raises_lookup_when_job_never_exists(writer):
+    export_client = AsyncExportHistoryClient(MagicMock(), writer)
+    export_client.get_job = AsyncMock(return_value=None)
+
+    with pytest.raises(ExportJobNotFoundError):
+        await export_client.wait_for_job(
+            "never-created", timeout=0.01, poll_interval=0.001)
+
+
+async def test_async_wait_for_job_times_out_when_status_stays_active(writer):
+    export_client = AsyncExportHistoryClient(MagicMock(), writer)
+    export_client.get_job = AsyncMock(
+        return_value=MagicMock(status=ExportJobStatus.ACTIVE))
+
+    with pytest.raises(TimeoutError, match="did not reach a terminal status"):
+        await export_client.wait_for_job(
+            "stuck-job", timeout=0.01, poll_interval=0.001)
+
+
+class _NotFoundRpcError(grpc.RpcError):
+    def code(self):
+        return grpc.StatusCode.NOT_FOUND
+
+
+async def test_async_delete_job_ignores_not_found_errors(writer):
+    dt_client = MagicMock()
+    dt_client.signal_entity = AsyncMock()
+    dt_client.terminate_orchestration = AsyncMock(side_effect=_NotFoundRpcError())
+    dt_client.wait_for_orchestration_completion = AsyncMock(
+        side_effect=_NotFoundRpcError())
+    dt_client.purge_orchestration = AsyncMock(side_effect=_NotFoundRpcError())
+    export_client = AsyncExportHistoryClient(dt_client, writer)
+
+    await export_client.delete_job("missing-job")
+
+    dt_client.signal_entity.assert_awaited_once()
+    dt_client.terminate_orchestration.assert_awaited_once()
+    dt_client.wait_for_orchestration_completion.assert_awaited_once()
+    dt_client.purge_orchestration.assert_awaited_once()
 
 
 def test_get_job_returns_none_for_unknown_id(export_client):

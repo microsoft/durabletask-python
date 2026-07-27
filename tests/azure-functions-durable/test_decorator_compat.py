@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 
 import azure.durable_functions as df
+import inspect
+import pytest
 from azure.durable_functions.constants import (
     ACTIVITY_TRIGGER,
     DURABLE_CLIENT,
@@ -123,17 +125,62 @@ def test_durable_client_input_v1_signature_registers_binding():
     assert binding.connection_name == "conn"
 
 
-async def test_durable_client_input_does_not_wrap_user_function():
-    # The durableClient binding converter (``DurableClientConverter``)
-    # constructs the rich ``DurableFunctionsClient`` during decode, so the
-    # decorator no longer wraps the user function in client-building middleware.
+async def test_durable_client_input_wraps_host_configuration_as_async_client():
     app = df.DFApp()
 
     async def starter(client):
-        return None
+        return type(client).__name__
 
     fb = app.durable_client_input(client_name="client")(starter)
-    assert fb._function._func is starter
+    assert await fb._function._func(client="{}") == "DurableFunctionsClient"
+
+
+def test_durable_client_input_injects_sync_client_for_sync_function():
+    app = df.DFApp()
+    clients = []
+
+    def starter(client):
+        clients.append(client)
+        return type(client).__name__
+
+    fb = app.durable_client_input(client_name="client")(starter)
+    assert not inspect.iscoroutinefunction(fb._function._func)
+    assert fb._function._func(client="{}") == "SyncDurableFunctionsClient"
+    assert fb._function._func(client="{}") == "SyncDurableFunctionsClient"
+    assert clients[0] is clients[1]
+
+
+async def test_durable_client_input_rejects_missing_binding_parameter():
+    app = df.DFApp()
+
+    async def starter(other):
+        return other
+
+    fb = app.durable_client_input(client_name="client")(starter)
+    with pytest.raises(TypeError, match="binding parameter 'client' is not declared"):
+        await fb._function._func(other="{}")
+
+
+async def test_durable_client_input_preserves_client_annotation():
+    app = df.DFApp()
+
+    async def starter(client: df.DurableFunctionsClient):
+        return type(client).__name__
+
+    fb = app.durable_client_input(client_name="client")(starter)
+    assert starter.__annotations__["client"] is df.DurableFunctionsClient
+    assert await fb._function._func(client="{}") == "DurableFunctionsClient"
+
+
+async def test_durable_client_input_replaces_unsupported_client_annotation():
+    app = df.DFApp()
+
+    async def starter(client: int):
+        return type(client).__name__
+
+    fb = app.durable_client_input(client_name="client")(starter)
+    assert fb._function._func.__annotations__["client"] is str
+    assert starter.__annotations__["client"] is int
 
 
 # ---------------------------------------------------------------------------

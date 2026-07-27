@@ -2,7 +2,9 @@
 # Licensed under the MIT License.
 
 import asyncio
+import atexit
 import json
+import threading
 
 from datetime import datetime, timedelta
 from typing import Any, Optional, Union
@@ -14,16 +16,24 @@ from durabletask.client import (
     AsyncTaskHubGrpcClient,
     OrchestrationQuery,
     OrchestrationStatus,
+    TaskHubGrpcClient,
 )
 from durabletask.entities import EntityInstanceId
 from durabletask.grpc_options import GrpcChannelOptions
-from .internal.azurefunctions_grpc_interceptor import AzureFunctionsAsyncDefaultClientInterceptorImpl
+from .internal.azurefunctions_grpc_interceptor import (
+    AzureFunctionsAsyncDefaultClientInterceptorImpl,
+    AzureFunctionsDefaultClientInterceptorImpl,
+)
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http import HttpManagementPayload
 from .internal.compat.durable_orchestration_status import DurableOrchestrationStatus
 from .internal.compat.entity_state_response import EntityStateResponse
 from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus, to_durabletask_statuses
 from .internal.compat.purge_history_result import PurgeHistoryResult
+
+
+_sync_client_cache: dict[str, "SyncDurableFunctionsClient"] = {}
+_sync_client_cache_lock = threading.Lock()
 
 
 # Client class used for Durable Functions
@@ -490,3 +500,121 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             body=body_as_json,
             mimetype="application/json",
             headers={"Content-Type": "application/json"})
+
+
+class SyncDurableFunctionsClient(TaskHubGrpcClient):
+    """Synchronous durable client supplied by a Functions durable-client binding."""
+
+    taskHubName: str
+    connectionName: str
+    creationUrls: dict[str, str]
+    managementUrls: dict[str, str]
+    baseUrl: str
+    requiredQueryStringParameters: str
+    rpcBaseUrl: str
+    httpBaseUrl: str
+    maxGrpcMessageSizeInBytes: int
+    grpcHttpClientTimeout: timedelta | str
+
+    def __init__(self, client_as_string: str):
+        self._parse_client_configuration(client_as_string)
+        interceptors = [AzureFunctionsDefaultClientInterceptorImpl(
+            self.taskHubName, self.requiredQueryStringParameters)]
+        channel_options: GrpcChannelOptions | None = None
+        if self.maxGrpcMessageSizeInBytes > 0:
+            channel_options = GrpcChannelOptions(
+                max_receive_message_length=self.maxGrpcMessageSizeInBytes,
+                max_send_message_length=self.maxGrpcMessageSizeInBytes)
+        super().__init__(
+            host_address=self.rpcBaseUrl,
+            secure_channel=False,
+            metadata=None,
+            interceptors=interceptors,
+            channel_options=channel_options,
+            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+
+    @classmethod
+    def get_cached(cls, client_as_string: str) -> "SyncDurableFunctionsClient":
+        """Get the process-wide client for a durable-client binding configuration.
+
+        Synchronous Functions bindings can be invoked frequently by history
+        export fan-out activities. Reusing the gRPC channel avoids creating and
+        tearing down a channel for every activity invocation.
+        """
+        with _sync_client_cache_lock:
+            cached = _sync_client_cache.get(client_as_string)
+            if cached is None:
+                cached = cls(client_as_string)
+                _sync_client_cache[client_as_string] = cached
+            return cached
+
+    def _parse_client_configuration(self, client_as_string: str) -> None:
+        client = json.loads(client_as_string)
+        self.taskHubName = client.get("taskHubName") or ""
+        self.connectionName = client.get("connectionName") or ""
+        self.creationUrls = client.get("creationUrls") or {}
+        self.managementUrls = client.get("managementUrls") or {}
+        self.baseUrl = client.get("baseUrl") or ""
+        self.requiredQueryStringParameters = client.get(
+            "requiredQueryStringParameters") or ""
+        self.rpcBaseUrl = client.get("rpcBaseUrl") or ""
+        self.httpBaseUrl = client.get("httpBaseUrl") or ""
+        self.maxGrpcMessageSizeInBytes = client.get(
+            "maxGrpcMessageSizeInBytes") or 0
+        self.grpcHttpClientTimeout = client.get(
+            "grpcHttpClientTimeout") or timedelta(seconds=30)
+
+    def create_check_status_response(
+            self, request: func.HttpRequest, instance_id: str) -> func.HttpResponse:
+        payload = self._get_client_response_links(request, instance_id)
+        return func.HttpResponse(
+            body=str(payload),
+            status_code=202,
+            headers={
+                "content-type": "application/json",
+                "Location": payload["statusQueryGetUri"],
+            },
+        )
+
+    def create_http_management_payload(
+            self,
+            request: func.HttpRequest | str | None = None,
+            instance_id: str | None = None) -> HttpManagementPayload:
+        if instance_id is None and isinstance(request, str):
+            instance_id = request
+            request = None
+        if instance_id is None:
+            raise TypeError("instance_id is required")
+        resolved_request = request if isinstance(request, func.HttpRequest) else None
+        return self._get_client_response_links(resolved_request, instance_id)
+
+    def _get_client_response_links(
+            self, request: func.HttpRequest | None,
+            instance_id: str) -> HttpManagementPayload:
+        return HttpManagementPayload(
+            instance_id,
+            self._get_instance_status_url(request, instance_id),
+            self.requiredQueryStringParameters)
+
+    def _get_instance_status_url(
+            self, request: func.HttpRequest | None, instance_id: str) -> str:
+        encoded_instance_id = quote(instance_id)
+        if request is not None:
+            request_url = urlparse(request.url)
+            return (
+                f"{request_url.scheme}://{request_url.netloc}"
+                f"/runtime/webhooks/durabletask/instances/{encoded_instance_id}")
+        base_url = self.baseUrl.rstrip("/") if self.baseUrl else ""
+        return f"{base_url}/instances/{encoded_instance_id}"
+
+
+def _close_cached_sync_clients() -> None:
+    """Release process-wide synchronous durable-client channels on shutdown."""
+    with _sync_client_cache_lock:
+        clients = list(_sync_client_cache.values())
+        _sync_client_cache.clear()
+    for client in clients:
+        client.close()
+
+
+atexit.register(_close_cached_sync_clients)

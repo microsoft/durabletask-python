@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import inspect
+from functools import wraps
 from typing import Any, Callable, Optional, Union
 
 import azure.functions as func
@@ -356,9 +358,13 @@ class Blueprint(TriggerApi, BindingApi):
     def durable_client_input(self,
                              client_name: str,
                              task_hub: Optional[str] = None,
-                             connection_name: Optional[str] = None
+                             connection_name: Optional[str] = None,
                              ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
         """Register a Durable-client Function.
+
+        Coroutine functions receive an asynchronous
+        :class:`DurableFunctionsClient`; synchronous functions receive a cached
+        :class:`SyncDurableFunctionsClient`.
 
         Parameters
         ----------
@@ -379,11 +385,9 @@ class Blueprint(TriggerApi, BindingApi):
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
             def decorator() -> FunctionBuilder:
-                # The durableClient binding converter
-                # (``DurableClientConverter``) constructs the rich
-                # ``DurableFunctionsClient`` from the host-supplied configuration
-                # string during decode, so no per-function client middleware is
-                # needed here.
+                # The converter returns the host configuration string. The
+                # function wrapper below constructs the rich client matching
+                # the decorated function's synchronous or asynchronous type.
                 fb.add_binding(
                     binding=DurableClient(name=client_name,
                                           task_hub=task_hub,
@@ -393,16 +397,75 @@ class Blueprint(TriggerApi, BindingApi):
             return decorator()
 
         def attach_client_function(user_fn: Callable[..., Any]) -> FunctionBuilder:
-            # Expose the raw client function for unit testing, mirroring the
-            # ``.orchestrator_function`` and ``.entity_function`` attributes.
-            # Unlike v1 there is no client middleware wrapper (the durableClient
-            # binding converter builds the rich client during decode), so the
-            # user function is registered directly and ``.client_function``
-            # points back at it. Internal callers pass an already-built
-            # ``FunctionBuilder`` (e.g. history export), which is left untouched.
-            if not isinstance(user_fn, FunctionBuilder):
-                user_fn.client_function = user_fn  # pyright: ignore[reportFunctionMemberAccess]
-            return wrap(user_fn)
+            # Expose the original client function for unit testing, mirroring
+            # ``.orchestrator_function`` and ``.entity_function``. The registered
+            # wrapper resolves the client from the binding configuration and
+            # closes it after the invocation.
+            from ..client import DurableFunctionsClient, SyncDurableFunctionsClient
+
+            function = (user_fn._function._func  # pyright: ignore[reportPrivateUsage]
+                        if isinstance(user_fn, FunctionBuilder) else user_fn)
+            signature = inspect.signature(function)
+            is_async_function = inspect.iscoroutinefunction(function)
+
+            def bind_client(
+                    args: tuple[Any, ...],
+                    kwargs: dict[str, Any],
+            ) -> tuple[inspect.BoundArguments, DurableFunctionsClient | SyncDurableFunctionsClient]:
+                bound = signature.bind(*args, **kwargs)
+                if client_name not in bound.arguments:
+                    raise TypeError(
+                        f"durable client binding parameter '{client_name}' is not "
+                        f"declared by function '{function.__name__}'")
+                raw_client = bound.arguments[client_name]
+                if not isinstance(raw_client, str):
+                    raise TypeError(
+                        f"durable client binding '{client_name}' did not provide its configuration")
+                client = (DurableFunctionsClient(raw_client) if is_async_function
+                          else SyncDurableFunctionsClient.get_cached(raw_client))
+                bound.arguments[client_name] = client
+                return bound, client
+
+            def set_client_metadata(client_bound: Callable[..., Any]) -> None:
+                annotations = dict(function.__annotations__)
+                supported_client_types = (
+                    str,
+                    bytes,
+                    DurableFunctionsClient,
+                    SyncDurableFunctionsClient,
+                )
+                if annotations.get(client_name) not in supported_client_types:
+                    annotations[client_name] = str
+                client_bound.__annotations__ = annotations
+                setattr(client_bound, "client_function", function)
+
+            if is_async_function:
+                @wraps(function)
+                async def async_client_bound(*args: Any, **kwargs: Any) -> Any:
+                    bound, client = bind_client(args, kwargs)
+                    try:
+                        result = function(*bound.args, **bound.kwargs)
+                        return await result
+                    finally:
+                        if isinstance(client, DurableFunctionsClient):
+                            client.schedule_close()
+                client_bound = async_client_bound
+            else:
+                @wraps(function)
+                def sync_client_bound(*args: Any, **kwargs: Any) -> Any:
+                    bound, client = bind_client(args, kwargs)
+                    try:
+                        return function(*bound.args, **bound.kwargs)
+                    finally:
+                        if isinstance(client, DurableFunctionsClient):
+                            client.schedule_close()
+                client_bound = sync_client_bound
+
+            set_client_metadata(client_bound)
+            if isinstance(user_fn, FunctionBuilder):
+                user_fn._function._func = client_bound  # pyright: ignore[reportPrivateUsage]
+                return wrap(user_fn)
+            return wrap(client_bound)
 
         return attach_client_function
 
