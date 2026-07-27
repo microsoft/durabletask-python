@@ -42,6 +42,7 @@ E2E_APPS_DIR = REPO_ROOT / "tests" / "azure-functions-durable" / "e2e" / "apps"
 # Sample apps that need an in-app virtual environment for the E2E suite.
 E2E_APPS = ("v1_style", "dtask_style")
 PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14")
+DEFAULT_CI_PYTHON = "3.14"
 
 
 def _install_packages(session: nox.Session, editable: bool = False) -> None:
@@ -139,7 +140,12 @@ def _start_azurite(
             "Azurite is required for this session. Install it with "
             "`npm install -g azurite` and run the session again.")
 
-    command = [executable, *arguments]
+    command = [
+        executable,
+        *arguments,
+        "--location",
+        session.create_tmp(),
+    ]
     if os.name == "nt" and executable.endswith(".ps1"):
         command = [
             "powershell",
@@ -147,8 +153,7 @@ def _start_azurite(
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            executable,
-            *arguments,
+            *command,
         ]
 
     process = subprocess.Popen(command)
@@ -399,11 +404,23 @@ def functions_e2e(session: nox.Session) -> None:
 
 @nox.session(python=False)
 def ci(session: nox.Session) -> None:
-    """Run all lint, type, unit, emulator, and end-to-end CI-equivalent checks."""
+    """Run the representative local lint, type, test, emulator, and E2E checks.
+
+    Pass a core/Azure Managed Python version after ``--`` to override the
+    default representative version, for example ``nox -s ci -- 3.10``.
+    """
+    if len(session.posargs) > 1 or (
+        session.posargs and session.posargs[0] not in PYTHON_VERSIONS
+    ):
+        session.error(
+            "Pass at most one supported Python version after `--`: "
+            f"{', '.join(PYTHON_VERSIONS)}.")
+
+    python_version = session.posargs[0] if session.posargs else DEFAULT_CI_PYTHON
     session.notify("lint")
     session.notify("typecheck_core")
     session.notify("typecheck_functions")
-    session.notify("core_tests")
-    session.notify("azuremanaged_tests")
-    session.notify("functions_unit")
+    session.notify(f"core_tests-{python_version}")
+    session.notify(f"azuremanaged_tests-{python_version}")
+    session.notify("functions_unit-3.14")
     session.notify("functions_e2e")

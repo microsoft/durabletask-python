@@ -6,18 +6,26 @@ require that `make` is installed on your local machine. If you're using Windows,
 
 ## Validation
 
-Use Nox to run the same correctness checks as the GitHub Actions workflows:
+Use Nox to run the representative local correctness checks:
 
 ```sh
 python -m pip install -r dev-requirements.txt
 nox -s ci
 ```
 
-The `ci` session runs linting, strict type checks, the core SDK test matrix
-(Python 3.10--3.14), Azure Managed emulator tests, Azure Functions unit tests,
-and Azure Functions end-to-end tests. Install each Python version in the matrix
-to run the complete suite locally. Nox reports a missing interpreter clearly
-when one is unavailable.
+The `ci` session runs linting, strict type checks, core SDK and Azure Managed
+tests on Python 3.14, Azure Functions unit tests on Python 3.14, and Azure
+Functions end-to-end tests on Python 3.13. It intentionally runs one
+representative version rather than the complete CI matrix, keeping routine
+local validation fast. To use another supported version (3.10--3.14) for the
+core SDK and Azure Managed tests, pass it after `--`:
+
+```sh
+nox -s ci -- 3.10
+```
+
+Run the versioned test sessions directly when a change needs complete matrix
+coverage, for example `nox -s core_tests` or `nox -s azuremanaged_tests`.
 
 Nox starts Azurite automatically for the core and Azure Functions tests. The
 Azure Managed tests start a disposable DTS emulator Docker container. Start
