@@ -2,19 +2,25 @@
 
 ## Project Overview
 
-This is the Durable Task Python SDK, providing a client and worker for
-building durable orchestrations. The repo contains two packages:
+This repository provides the Durable Task Python SDK and Azure Functions
+provider implementations for building durable orchestrations. It contains
+three packages:
 
 - `durabletask` — core SDK (in `durabletask/`)
 - `durabletask.azuremanaged` — Azure Durable Task Scheduler provider (in `durabletask-azuremanaged/`)
+- `azure-functions-durable` — Azure Durable Functions provider (in
+  `azure-functions-durable/`)
 
 ## Changelog Requirements
 
-- ALWAYS document user-facing changes in the appropriate changelog under
-  `## Unreleased`.
-- Update `CHANGELOG.md` for core SDK changes and
-  `durabletask-azuremanaged/CHANGELOG.md` for provider changes.
-- If a change affects both packages, update both changelogs.
+- ALWAYS document user-facing changes in the applicable changelog under
+  `## Unreleased`. Create that section if the changelog does not yet have one.
+- Update `CHANGELOG.md` for core SDK changes,
+  `durabletask-azuremanaged/CHANGELOG.md` for Durable Task Scheduler provider
+  changes, and `azure-functions-durable/CHANGELOG.md` for Azure Functions
+  provider changes.
+- If a change affects multiple packages, update each affected package's
+  changelog.
 - Include changelog entries for externally observable outcomes only, such as
   new public APIs, behavior changes, bug fixes users can notice, breaking
   changes, and new configuration capabilities.
@@ -24,8 +30,14 @@ building durable orchestrations. The repo contains two packages:
 - When in doubt, write the changelog entry in terms of user impact (what users
   can now do or what behavior changed), not implementation mechanism (how it
   was implemented internally).
+- Changelogs are not covered by the CI Markdown lint step. Review changes to
+  them manually.
+- Use the current unindented changelog style: category labels such as `ADDED`,
+  `CHANGED`, and `FIXED` are plain, unindented lines, and wrapped entry text
+  remains unindented rather than being aligned beneath the bullet.
 
 Examples:
+
 - Include: "Added `get_orchestration_history()` to retrieve orchestration history from the client."
 - Exclude: "Added internal helper functions to aggregate streamed history chunks."
 
@@ -61,10 +73,16 @@ priority over style.
 ## Python Linting
 
 This repository uses [flake8](https://flake8.pycqa.org/) for Python
-linting. Run it after making changes to verify there are no issues:
+linting. Run it after making changes to verify there are no issues. Lint
+package source and its tests separately, matching CI:
 
 ```bash
-python -m flake8 path/to/changed/file.py
+python -m flake8 durabletask
+python -m flake8 tests/durabletask
+python -m flake8 durabletask-azuremanaged
+python -m flake8 tests/durabletask-azuremanaged
+python -m flake8 azure-functions-durable
+python -m flake8 tests/azure-functions-durable
 ```
 
 ## Markdown Style
@@ -117,17 +135,41 @@ python -m pip install -r dev-requirements.txt
 
 ## Building and Testing
 
-Install the packages locally in editable mode:
+Use the repository-root `.venv` for core and Azure Managed development, and
+for Azure Functions Durable linting, type checking, and unit tests. The Azure
+Functions Durable package requires Python 3.13+, so use a 3.13+ root virtual
+environment for that work. Install packages locally in editable mode:
 
 ```bash
-python -m pip install -e . -e ./durabletask-azuremanaged
+python -m pip install -e . -e ./durabletask-azuremanaged \
+  -e ./azure-functions-durable
 ```
 
-Run tests with pytest:
+Run the applicable unit tests with pytest. Azure Functions Durable unit tests
+exclude tests that require an Azure Functions host or external services:
 
 ```bash
 python -m pytest
+python -m pytest tests/azure-functions-durable \
+  -m "not dts and not azurite and not functions_e2e"
 ```
+
+Run Azure Functions Durable E2E tests through Nox, not directly from the root
+virtual environment. Nox creates an isolated Python 3.13 session environment,
+installs the local packages editable, and links it into each sample Function
+app so the Functions worker loads the app's grpc/protobuf dependencies. The
+suite requires Azure Functions Core Tools (`func`) on `PATH` and a running
+Azurite instance with blob storage on port 10000:
+
+```bash
+nox -s functions_e2e
+```
+
+After the first successful run, use `nox -R -s functions_e2e` for E2E reruns.
+`-R` reuses the Nox environment and skips reinstalls; because the packages are
+editable, source changes are still picked up. Pass pytest selectors after `--`,
+for example `nox -R -s functions_e2e -- -k "dtask_client"`. Do not manually
+activate or modify the per-app `.venv` directories created by Nox.
 
 ## Project Structure
 
@@ -140,9 +182,22 @@ python -m pytest
   - `testing/` — in-memory backend for testing without a sidecar
   - `internal/` — protobuf definitions, gRPC helpers, tracing (not public API)
 - `durabletask-azuremanaged/` — Azure managed provider source
+- `azure-functions-durable/` — Azure Durable Functions provider source
 - `examples/` — example orchestrations (see `examples/README.md`)
 - `tests/` — test suite
 - `dev-requirements.txt` — development dependencies
+
+## External Dependencies
+
+The Azure Functions Durable provider integrates with APIs and runtime behavior
+owned by these repositories. Consult their current source when changing
+decorators, bindings, converters, or worker integration behavior:
+
+- [Azure Functions Python library](https://github.com/Azure/azure-functions-python-library)
+  — application, decorator, and binding APIs.
+- [Azure Functions Python worker](https://github.com/Azure/azure-functions-python-worker)
+  — function loading, binding conversion, dependency isolation, and invocation
+  behavior.
 
 ## Cross-Package Compatibility
 
