@@ -15,17 +15,27 @@ Two activities cooperate to drive an export job:
   blob through a :class:`HistoryWriter`.
 
 The client and writer are not serializable, so they cannot be passed
-through orchestrator inputs.  Instead, the public client registers a
-module-level :class:`HistoryExportContext` once at worker startup.
-The activities resolve their dependencies from that context at
-execution time.  This is acceptable because activities run in-process
-within the worker that registered them.
+through orchestrator inputs.  Instead, each activity resolves its
+dependencies from a :class:`HistoryExportContext` supplied *per
+invocation* by a resolver callable.  The resolver is captured in the
+activity closure at registration time (see :func:`build_activities`
+and :func:`register`), so the dependencies never live in a
+process-global.  This lets any hosting model — including host-driven,
+multi-process models such as Azure Functions, where the process that
+registers the export job is not the worker that runs an export
+activity — supply the client and writer lazily at execution time.
+
+The pure activity bodies (:func:`run_list_terminal_instances` and
+:func:`run_export_instance_history`) take the resolved context
+explicitly, so a host with its own per-invocation dependency injection
+can call them directly without going through the resolver-based
+registration helpers.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -74,57 +84,29 @@ class HistoryExportContext:
     writer: HistoryWriter
 
 
-_context: HistoryExportContext | None = None
-
-
-def bind_context(context: HistoryExportContext) -> None:
-    """Install the runtime dependencies for the history-export activities.
-
-    The bound context is process-wide.  Calling this more than once in
-    the same process — for example by constructing two
-    :class:`ExportHistoryClient` instances with different writers —
-    silently replaces the previously-bound writer for *all* in-flight
-    activities.  Such a rebind emits a logger warning so the
-    misconfiguration is visible at runtime.
-    """
-    global _context
-    if _context is not None and _context is not context:
-        from durabletask.extensions.history_export._logging import logger
-        logger.warning(
-            "history_export.bind_context() replacing an existing bound "
-            "context (writer=%r); only one writer can be active per process. "
-            "Run a separate worker process per writer if you need multiple "
-            "destinations.",
-            type(context.writer).__name__,
-        )
-    _context = context
-
-
-def clear_context() -> None:
-    """Remove the bound context.  Useful for tests."""
-    global _context
-    _context = None
-
-
-def _require_context() -> HistoryExportContext:
-    if _context is None:
-        raise RuntimeError(
-            "history-export activities invoked without a bound context; "
-            "call bind_context(HistoryExportContext(...)) before starting the worker"
-        )
-    return _context
+# A resolver produces the :class:`HistoryExportContext` to use for a
+# single activity invocation.  It is invoked once per activity
+# execution, so a host can build (or look up) the client and writer
+# lazily — for example from a per-invocation binding — instead of
+# relying on a process-global installed at startup.
+HistoryExportContextResolver = Callable[[], HistoryExportContext]
 
 
 # ----------------------------------------------------------------------
 # Activity bodies
 # ----------------------------------------------------------------------
 
-def list_terminal_instances(
-    _: task.ActivityContext, input: Mapping[str, Any],
+def run_list_terminal_instances(
+    context: HistoryExportContext, input: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Activity: fetch one page of terminal instance IDs."""
-    ctx = _require_context()
+    """Fetch one page of terminal instance IDs using *context*.
 
+    Pure activity body: the caller supplies the resolved
+    :class:`HistoryExportContext` explicitly.  :func:`build_activities`
+    wraps this into a worker-registrable activity that resolves the
+    context per invocation; hosts with their own dependency injection
+    can call it directly instead.
+    """
     raw_statuses = input.get("runtime_status")
     runtime_status_names: list[str] | None = (
         list(raw_statuses) if raw_statuses is not None else None
@@ -147,7 +129,7 @@ def list_terminal_instances(
             client_module.OrchestrationStatus[name] for name in runtime_status_names
         ]
 
-    page = ctx.client.list_instance_ids(
+    page = context.client.list_instance_ids(
         runtime_status=runtime_status,
         completed_time_from=completed_time_from,
         completed_time_to=completed_time_to,
@@ -161,12 +143,16 @@ def list_terminal_instances(
     }
 
 
-def export_instance_history(
-    _: task.ActivityContext, input: Mapping[str, Any],
+def run_export_instance_history(
+    context: HistoryExportContext, input: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Activity: serialize and write one instance's history."""
-    ctx = _require_context()
+    """Serialize and write one instance's history using *context*.
 
+    Pure activity body: the caller supplies the resolved
+    :class:`HistoryExportContext` explicitly.  See
+    :func:`run_list_terminal_instances` for how this relates to
+    :func:`build_activities`.
+    """
     instance_id = str(input["instance_id"])
     fmt_input = input.get("format") or {
         "kind": ExportFormatKind.JSONL_GZIP.value,
@@ -190,7 +176,7 @@ def export_instance_history(
         # now, we refuse to write a partial/empty blob and surface a
         # specific failure to the orchestrator.  Matches the .NET
         # ``ExportInstanceHistoryActivity`` guard.
-        state = ctx.client.get_orchestration_state(
+        state = context.client.get_orchestration_state(
             instance_id, fetch_payloads=True,
         )
         if state is None:
@@ -212,7 +198,7 @@ def export_instance_history(
                 ),
             }
 
-        events = ctx.client.get_orchestration_history(instance_id)
+        events = context.client.get_orchestration_history(instance_id)
         # The exported blob is self-describing: it carries the
         # serialized ``OrchestrationState`` metadata alongside the
         # event list.  Matches the .NET behavior.
@@ -238,7 +224,7 @@ def export_instance_history(
             prefix=prefix,
             fmt=fmt,
         )
-        ctx.writer.write(
+        context.writer.write(
             instance_id=instance_id,
             container=container,
             blob_name=blob_name,
@@ -316,10 +302,51 @@ def _dotnet_o_format(dt: datetime) -> str:
     return f"{base}.{fractional}{offset_str}"
 
 
-def register(worker_instance: worker_module.TaskHubGrpcWorker) -> None:
-    """Convenience helper to register both activities on *worker*."""
-    worker_instance.add_activity(list_terminal_instances)
-    worker_instance.add_activity(export_instance_history)
+def build_activities(
+    resolver: HistoryExportContextResolver,
+) -> tuple[task.Activity[Any, Any], task.Activity[Any, Any]]:
+    """Build the two history-export activities bound to *resolver*.
+
+    Returns ``(list_terminal_instances, export_instance_history)`` — a
+    pair of activity callables with the canonical activity names
+    (:data:`LIST_TERMINAL_INSTANCES_ACTIVITY` and
+    :data:`EXPORT_INSTANCE_HISTORY_ACTIVITY`).  *resolver* is invoked
+    once per activity execution to obtain the
+    :class:`HistoryExportContext`, so the client and writer are
+    captured in the returned closures rather than in a process-global.
+    """
+    def list_terminal_instances(
+        _: task.ActivityContext, input: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return run_list_terminal_instances(resolver(), input)
+
+    def export_instance_history(
+        _: task.ActivityContext, input: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return run_export_instance_history(resolver(), input)
+
+    # The activity name registered with the worker is ``fn.__name__``
+    # (see :func:`durabletask.task.get_name`); pin both to the
+    # canonical names the orchestrator calls.
+    list_terminal_instances.__name__ = LIST_TERMINAL_INSTANCES_ACTIVITY
+    export_instance_history.__name__ = EXPORT_INSTANCE_HISTORY_ACTIVITY
+    return list_terminal_instances, export_instance_history
+
+
+def register(
+    worker_instance: worker_module.TaskHubGrpcWorker,
+    resolver: HistoryExportContextResolver,
+) -> None:
+    """Register both activities on *worker*, resolving deps via *resolver*.
+
+    *resolver* is invoked per activity execution to obtain the
+    :class:`HistoryExportContext` (client + writer).  Pass
+    ``lambda: HistoryExportContext(client, writer)`` for a fixed
+    client/writer, or a factory that builds them lazily per invocation.
+    """
+    list_activity, export_activity = build_activities(resolver)
+    worker_instance.add_activity(list_activity)
+    worker_instance.add_activity(export_activity)
 
 
 # Used by the orchestrator to build a fresh activity input from the
