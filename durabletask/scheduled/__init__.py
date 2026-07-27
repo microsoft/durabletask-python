@@ -9,7 +9,9 @@ entities and a helper orchestrator. Enable it on a worker via
 manage schedules from the client via :class:`ScheduledTaskClient`.
 """
 
-from durabletask.scheduled.client import ScheduleClient, ScheduledTaskClient
+from durabletask.scheduled.client import (AsyncScheduleClient,
+                                          AsyncScheduledTaskClient,
+                                          ScheduleClient, ScheduledTaskClient)
 from durabletask.scheduled.exceptions import (ScheduleClientValidationError,
                                               ScheduleError,
                                               ScheduleInvalidTransitionError,
@@ -21,7 +23,9 @@ from durabletask.scheduled.schedule_status import ScheduleStatus
 
 __all__ = [
     "ScheduledTaskClient",
+    "AsyncScheduledTaskClient",
     "ScheduleClient",
+    "AsyncScheduleClient",
     "ScheduleCreationOptions",
     "ScheduleUpdateOptions",
     "ScheduleDescription",

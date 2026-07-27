@@ -189,36 +189,17 @@ def test_continuous_create_on_fresh_entity_is_marked_failed():
 # is built once from the injected client and closed at interpreter exit.
 # ---------------------------------------------------------------------------
 
-def test_context_for_builds_caches_and_closes_sync_client(monkeypatch):
+def test_context_for_uses_invocation_sync_client(monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(hec, "_build_sync_client", lambda _c: fake_client)
     writer = MagicMock()
     monkeypatch.setattr(hec, "_export_writer", writer)
-    monkeypatch.setattr(hec, "_export_context", None)
 
-    registered = []
-    monkeypatch.setattr(hec.atexit, "register", lambda fn: registered.append(fn))
+    context = hec._context_for(fake_client)
 
-    context = hec._context_for(object())
-
-    # The context pairs the built sync client with the configured writer and is
-    # cached for the process.
+    # The context pairs the native injected client with the configured writer.
     assert context.client is fake_client
     assert context.writer is writer
-    assert hec._export_context is context
-    assert hec._close_sync_export_client in registered
-
-    # A second resolution is a no-op: same cached context, no duplicate
-    # registration and no new client build.
-    assert hec._context_for(object()) is context
-    assert registered.count(hec._close_sync_export_client) == 1
-
-    # Closing releases the client, resets state, and is idempotent + safe.
-    hec._close_sync_export_client()
-    fake_client.close.assert_called_once()
-    assert hec._export_context is None
-    hec._close_sync_export_client()
-    fake_client.close.assert_called_once()
+    assert hec._context_for(fake_client) is not context
 
 
 def test_context_for_requires_configured_writer(monkeypatch):

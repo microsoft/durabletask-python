@@ -14,10 +14,14 @@ from durabletask.client import (
     AsyncTaskHubGrpcClient,
     OrchestrationQuery,
     OrchestrationStatus,
+    TaskHubGrpcClient,
 )
 from durabletask.entities import EntityInstanceId
 from durabletask.grpc_options import GrpcChannelOptions
-from .internal.azurefunctions_grpc_interceptor import AzureFunctionsAsyncDefaultClientInterceptorImpl
+from .internal.azurefunctions_grpc_interceptor import (
+    AzureFunctionsAsyncDefaultClientInterceptorImpl,
+    AzureFunctionsDefaultClientInterceptorImpl,
+)
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http import HttpManagementPayload
 from .internal.compat.durable_orchestration_status import DurableOrchestrationStatus
@@ -490,3 +494,30 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             body=body_as_json,
             mimetype="application/json",
             headers={"Content-Type": "application/json"})
+
+
+class SyncDurableFunctionsClient(TaskHubGrpcClient):
+    """Synchronous durable client supplied by a Functions durable-client binding."""
+
+    def __init__(self, client_as_string: str):
+        self._parse_client_configuration(client_as_string)
+        interceptors = [AzureFunctionsDefaultClientInterceptorImpl(
+            self.taskHubName, self.requiredQueryStringParameters)]
+        channel_options: GrpcChannelOptions | None = None
+        if self.maxGrpcMessageSizeInBytes > 0:
+            channel_options = GrpcChannelOptions(
+                max_receive_message_length=self.maxGrpcMessageSizeInBytes,
+                max_send_message_length=self.maxGrpcMessageSizeInBytes)
+        super().__init__(
+            host_address=self.rpcBaseUrl,
+            secure_channel=False,
+            metadata=None,
+            interceptors=interceptors,
+            channel_options=channel_options,
+            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+
+    _parse_client_configuration = DurableFunctionsClient._parse_client_configuration
+    create_check_status_response = DurableFunctionsClient.create_check_status_response
+    create_http_management_payload = DurableFunctionsClient.create_http_management_payload
+    _get_client_response_links = DurableFunctionsClient._get_client_response_links
+    _get_instance_status_url = DurableFunctionsClient._get_instance_status_url

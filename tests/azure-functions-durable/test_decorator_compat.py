@@ -123,17 +123,24 @@ def test_durable_client_input_v1_signature_registers_binding():
     assert binding.connection_name == "conn"
 
 
-async def test_durable_client_input_does_not_wrap_user_function():
-    # The durableClient binding converter (``DurableClientConverter``)
-    # constructs the rich ``DurableFunctionsClient`` during decode, so the
-    # decorator no longer wraps the user function in client-building middleware.
+async def test_durable_client_input_wraps_host_configuration_as_async_client():
     app = df.DFApp()
 
     async def starter(client):
-        return None
+        return type(client).__name__
 
     fb = app.durable_client_input(client_name="client")(starter)
-    assert fb._function._func is starter
+    assert await fb._function._func(client="{}") == "DurableFunctionsClient"
+
+
+async def test_durable_client_input_sync_injects_sync_client():
+    app = df.DFApp()
+
+    def starter(client):
+        return type(client).__name__
+
+    fb = app.durable_client_input_sync(client_name="client")(starter)
+    assert await fb._function._func(client="{}") == "SyncDurableFunctionsClient"
 
 
 # ---------------------------------------------------------------------------

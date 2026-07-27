@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added asynchronous `AsyncScheduledTaskClient` / `AsyncScheduleClient` and
+  `AsyncExportHistoryClient` / `AsyncExportHistoryJobClient` APIs. Applications
+  using `AsyncTaskHubGrpcClient` can now manage scheduled tasks and history
+  export jobs without a synchronous client bridge.
 - Added `FailureDetails.is_caused_by()` to check whether a task failure was caused by a given exception type, mirroring .NET's `TaskFailureDetails.IsCausedBy<T>()` and Java's `FailureDetails.isCausedBy()`. Passing an exception type performs a base-type-aware match (a failure caused by a subclass matches its base type) against exception classes already imported in the process; passing a string matches by qualified or unqualified name.
 - Added a per-invocation dependency-resolution API to `durabletask.extensions.history_export` so any hosting model can supply the export client and writer without a process-global. The export activities now resolve their `HistoryExportContext` from a resolver invoked once per activity execution; new public building blocks are the `HistoryExportContextResolver` type, the pure activity bodies `run_list_terminal_instances(context, input)` and `run_export_instance_history(context, input)`, and the `build_activities(resolver)` factory. This lets host-driven, multi-process models (such as Azure Functions, where the process that starts an export job is not the worker that runs an export activity) inject dependencies lazily per invocation.
 

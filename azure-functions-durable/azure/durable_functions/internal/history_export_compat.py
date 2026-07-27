@@ -20,7 +20,6 @@ instead -- a method the extension does implement.
 
 from __future__ import annotations
 
-import atexit
 import threading
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -217,30 +216,13 @@ def _close_sync_export_client() -> None:
             pass
 
 
-def _context_for(client: Any) -> HistoryExportContext:
-    """Return the per-process export context, building it once from *client*.
-
-    Uses the per-invocation injected client to build the synchronous client and
-    pairs it with the configured writer. The result is cached per process: the
-    endpoint and writer are stable for the app's lifetime, so the first
-    invocation in each process establishes the context for the rest. A lock
-    guards the first-build race so concurrent fan-out activities do not each open
-    a channel; the built client is closed at process exit.
-    """
-    global _export_context
-    if _export_context is not None:
-        return _export_context
-    with _context_lock:
-        if _export_context is None:
-            if _export_writer is None:
-                raise RuntimeError(
-                    "history export writer is not configured; pass a writer to "
-                    "DFApp.configure_history_export(writer=...) at app startup")
-            context = HistoryExportContext(
-                client=_build_sync_client(client), writer=_export_writer)
-            atexit.register(_close_sync_export_client)
-            _export_context = context
-    return _export_context
+def _context_for(client: TaskHubGrpcClient) -> HistoryExportContext:
+    """Resolve an export context for the invocation's native sync client."""
+    if _export_writer is None:
+        raise RuntimeError(
+            "history export writer is not configured; pass a writer to "
+            "DFApp.configure_history_export(writer=...) at app startup")
+    return HistoryExportContext(client=client, writer=_export_writer)
 
 
 def list_terminal_instances_client_bound(

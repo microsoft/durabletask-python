@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import inspect
+from functools import wraps
 from typing import Any, Callable, Optional, Union
 
 import azure.functions as func
@@ -150,12 +152,12 @@ class Blueprint(TriggerApi, BindingApi):
         # whatever worker runs them). ``durable_client_input`` is applied as the
         # outer decorator over ``activity_trigger`` so the built function carries
         # both bindings.
-        self.durable_client_input(client_name="client")(
+        self.durable_client_input(client_name="client", sync=True)(
             self.activity_trigger(
                 input_name="input",
                 activity=LIST_TERMINAL_INSTANCES_ACTIVITY)(
                     list_terminal_instances_client_bound))
-        self.durable_client_input(client_name="client")(
+        self.durable_client_input(client_name="client", sync=True)(
             self.activity_trigger(
                 input_name="input",
                 activity=EXPORT_INSTANCE_HISTORY_ACTIVITY)(
@@ -356,7 +358,9 @@ class Blueprint(TriggerApi, BindingApi):
     def durable_client_input(self,
                              client_name: str,
                              task_hub: Optional[str] = None,
-                             connection_name: Optional[str] = None
+                             connection_name: Optional[str] = None,
+                             *,
+                             sync: bool = False,
                              ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
         """Register a Durable-client Function.
 
@@ -374,6 +378,9 @@ class Blueprint(TriggerApi, BindingApi):
             The storage account represented by this connection string must be the same one
             used by the target orchestrator functions. If not specified, the default storage
             account connection string for the function app is used.
+        sync: bool
+            When ``True``, inject a :class:`SyncDurableFunctionsClient`. The
+            default injects the asynchronous :class:`DurableFunctionsClient`.
         """
 
         @self._build_function
@@ -400,11 +407,49 @@ class Blueprint(TriggerApi, BindingApi):
             # user function is registered directly and ``.client_function``
             # points back at it. Internal callers pass an already-built
             # ``FunctionBuilder`` (e.g. history export), which is left untouched.
-            if not isinstance(user_fn, FunctionBuilder):
-                user_fn.client_function = user_fn  # pyright: ignore[reportFunctionMemberAccess]
-            return wrap(user_fn)
+            from ..client import DurableFunctionsClient, SyncDurableFunctionsClient
+
+            function = (user_fn._function._func if isinstance(user_fn, FunctionBuilder)
+                        else user_fn)
+            signature = inspect.signature(function)
+
+            @wraps(function)
+            async def client_bound(*args: Any, **kwargs: Any) -> Any:
+                bound = signature.bind(*args, **kwargs)
+                raw_client = bound.arguments[client_name]
+                if not isinstance(raw_client, str):
+                    raise TypeError(
+                        f"durable client binding '{client_name}' did not provide its configuration")
+                client = (SyncDurableFunctionsClient(raw_client) if sync
+                          else DurableFunctionsClient(raw_client))
+                bound.arguments[client_name] = client
+                try:
+                    result = function(*bound.args, **bound.kwargs)
+                    return await result if inspect.isawaitable(result) else result
+                finally:
+                    if sync:
+                        client.close()
+                    else:
+                        client.schedule_close()
+
+            client_bound.__annotations__[client_name] = str
+            client_bound.client_function = function  # pyright: ignore[reportFunctionMemberAccess]
+            if isinstance(user_fn, FunctionBuilder):
+                user_fn._function._func = client_bound
+                return wrap(user_fn)
+            return wrap(client_bound)
 
         return attach_client_function
+
+    def durable_client_input_sync(
+            self,
+            client_name: str,
+            task_hub: Optional[str] = None,
+            connection_name: Optional[str] = None,
+    ) -> Callable[[Callable[..., Any]], FunctionBuilder]:
+        """Register a durable-client binding that injects a synchronous client."""
+        return self.durable_client_input(
+            client_name, task_hub, connection_name, sync=True)
 
 
 class DFApp(Blueprint, FunctionRegister):
