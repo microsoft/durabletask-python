@@ -535,6 +535,9 @@ class TaskHubGrpcWorker:
             data_converter: DataConverter | None = None,
     ):
         self._registry = _Registry()
+        # Shared by every entity batch this worker processes so that reflected
+        # entity method signatures are computed once instead of per operation.
+        self._entity_method_cache = _EntityMethodSignatureCache()
         self._host_address = (
             host_address if host_address else shared.get_default_host_address()
         )
@@ -1373,9 +1376,17 @@ class TaskHubGrpcWorker:
             raise RuntimeError(f"Invalid entity instance ID '{instance_id}' in entity operation request.")
 
         results: list[pb.OperationResult] = []
+        # A single executor serves the whole batch and shares the worker's
+        # bounded signature cache, so entity method reflection is not repeated
+        # for every operation.
+        executor = _EntityExecutor(
+            self._registry,
+            self._logger,
+            self._data_converter,
+            entity_method_cache=self._entity_method_cache,
+        )
         for operation in req.operations:
             start_time = datetime.now(timezone.utc)
-            executor = _EntityExecutor(self._registry, self._logger, self._data_converter)
 
             operation_result = None
 
@@ -3107,13 +3118,61 @@ class _ActivityExecutor:
         return encoded_output
 
 
+class _EntityMethodSignatureCache:
+    """Bounded, thread-safe cache of reflected entity method signatures.
+
+    Dispatching an operation on a class-based entity requires knowing whether
+    the target method declares a required parameter, which is answered with an
+    ``inspect.signature()`` call. The answer depends only on the entity type
+    and the operation name, so it is cached here and shared across entity
+    batches (and therefore across the worker threads that process them
+    concurrently).
+
+    The cache is bounded because entity types and operation names originate
+    from user code and are unbounded in principle; once the limit is reached
+    the oldest entries are evicted instead of growing without limit.
+    """
+
+    DEFAULT_MAX_SIZE = 1024
+
+    def __init__(self, max_size: int = DEFAULT_MAX_SIZE):
+        self._max_size = max(1, max_size)
+        self._lock = Lock()
+        self._entries: dict[tuple[type, str], bool] = {}
+
+    def get(self, key: tuple[type, str]) -> bool | None:
+        """Returns the cached result for ``key``, or ``None`` when not cached."""
+        return self._entries.get(key)
+
+    def __setitem__(self, key: tuple[type, str], value: bool) -> None:
+        with self._lock:
+            self._entries[key] = value
+            # Dicts preserve insertion order, so the first key is the oldest.
+            while len(self._entries) > self._max_size:
+                self._entries.pop(next(iter(self._entries)), None)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._entries
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
 class _EntityExecutor:
     def __init__(self, registry: _Registry, logger: logging.Logger,
-                 data_converter: DataConverter):
+                 data_converter: DataConverter,
+                 entity_method_cache: _EntityMethodSignatureCache | None = None):
         self._registry = registry
         self._logger = logger
         self._data_converter = data_converter
-        self._entity_method_cache: dict[tuple[type, str], bool] = {}
+        # When the caller supplies a cache (the worker does), reflected entity
+        # method signatures are shared with it and therefore survive beyond the
+        # lifetime of this executor.
+        self._entity_method_cache: _EntityMethodSignatureCache = (
+            entity_method_cache
+            if entity_method_cache is not None
+            else _EntityMethodSignatureCache()
+        )
 
     def execute(
             self,

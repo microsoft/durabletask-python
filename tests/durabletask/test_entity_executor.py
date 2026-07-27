@@ -2,13 +2,24 @@
 # Licensed under the MIT License.
 
 """Unit tests for the _EntityExecutor class in durabletask.worker."""
+import inspect
 import json
 import logging
+import threading
 
-from durabletask import entities
+import pytest
+from google.protobuf import wrappers_pb2
+
+import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask import entities, worker
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.serialization import JsonDataConverter
-from durabletask.worker import _EntityExecutor, _Registry
+from durabletask.worker import (
+    TaskHubGrpcWorker,
+    _EntityExecutor,
+    _EntityMethodSignatureCache,
+    _Registry,
+)
 
 
 def _make_executor(*entity_args) -> _EntityExecutor:
@@ -289,3 +300,281 @@ class TestStateShimDeferredDeserialization:
         state = StateShim("0", JsonDataConverter(), is_serialized=True)
         assert state.get_state(int) == 0
         assert state.encode_state() == "0"
+
+
+class _CountingInspect:
+    """Delegates to :mod:`inspect` while counting ``signature()`` calls."""
+
+    def __init__(self):
+        self.signature_calls: list[object] = []
+
+    def signature(self, obj, *args, **kwargs):
+        self.signature_calls.append(obj)
+        return inspect.signature(obj, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(inspect, name)
+
+
+class _RecordingEntityStub:
+    """Captures the batch results the worker would send to the sidecar."""
+
+    def __init__(self):
+        self.completed: list[pb.EntityBatchResult] = []
+
+    def CompleteEntityTask(self, batch_result):
+        self.completed.append(batch_result)
+
+
+def _entity_batch_request(instance_id: str, operations) -> pb.EntityBatchRequest:
+    """Builds an entity batch request from (operation, encoded_input) pairs."""
+    return pb.EntityBatchRequest(
+        instanceId=instance_id,
+        operations=[
+            pb.OperationRequest(
+                operation=name,
+                requestId=str(index),
+                input=(
+                    wrappers_pb2.StringValue(value=encoded_input)
+                    if encoded_input is not None
+                    else None
+                ),
+            )
+            for index, (name, encoded_input) in enumerate(operations)
+        ],
+    )
+
+
+class Counter(entities.DurableEntity):
+    """Entity exercising both input-argument and no-argument dispatch."""
+
+    def add(self, value: int):
+        current = self.get_state(int, 0)
+        self.set_state(current + value)
+        return current + value
+
+    def get(self):
+        return self.get_state(int, 0)
+
+
+class TestEntityMethodSignatureCaching:
+    """Reflection of an entity method signature must happen only once."""
+
+    def test_repeated_operations_reflect_once_per_executor(self, monkeypatch):
+        executor = _make_executor(Counter)
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        entity_id = entities.EntityInstanceId("Counter", "test-key")
+        state = StateShim(None, JsonDataConverter())
+        for _ in range(5):
+            executor.execute("test-orch", entity_id, "add", state, "1")
+            state.commit()
+
+        assert len(counting.signature_calls) == 1
+        assert state.get_state(int) == 5
+
+    def test_cache_is_shared_between_executors(self, monkeypatch):
+        shared_cache = _EntityMethodSignatureCache()
+        registry = _Registry()
+        registry.add_entity(Counter)
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        entity_id = entities.EntityInstanceId("Counter", "test-key")
+        for _ in range(3):
+            executor = _EntityExecutor(
+                registry, logging.getLogger("test"), JsonDataConverter(),
+                entity_method_cache=shared_cache,
+            )
+            executor.execute(
+                "test-orch", entity_id, "add",
+                StateShim(None, JsonDataConverter()), "1")
+
+        assert len(counting.signature_calls) == 1
+
+    def test_executor_without_shared_cache_still_caches(self, monkeypatch):
+        # Constructing the executor with the historical three-argument form
+        # keeps working and still avoids repeated reflection.
+        registry = _Registry()
+        registry.add_entity(Counter)
+        executor = _EntityExecutor(
+            registry, logging.getLogger("test"), JsonDataConverter())
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        entity_id = entities.EntityInstanceId("Counter", "test-key")
+        state = StateShim(None, JsonDataConverter())
+        executor.execute("test-orch", entity_id, "add", state, "1")
+        executor.execute("test-orch", entity_id, "add", state, "1")
+
+        assert len(counting.signature_calls) == 1
+
+
+class TestEntityBatchSignatureCaching:
+    """The worker must not recompute signatures for every batch operation."""
+
+    @staticmethod
+    def _make_worker() -> TaskHubGrpcWorker:
+        instance = TaskHubGrpcWorker()
+        instance.add_entity(Counter)
+        return instance
+
+    def test_batch_reflects_once_for_repeated_operations(self, monkeypatch):
+        instance = self._make_worker()
+        stub = _RecordingEntityStub()
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        request = _entity_batch_request("@counter@key", [("add", "1")] * 5)
+        result = instance._execute_entity_batch(request, stub, b"token")
+
+        assert [r.WhichOneof("resultType") for r in result.results] == ["success"] * 5
+        assert json.loads(result.entityState.value) == 5
+        assert len(counting.signature_calls) == 1
+        assert len(stub.completed) == 1
+
+    def test_cache_survives_across_batches(self, monkeypatch):
+        instance = self._make_worker()
+        stub = _RecordingEntityStub()
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        for _ in range(3):
+            instance._execute_entity_batch(
+                _entity_batch_request("@counter@key", [("add", "1")]), stub, b"token")
+
+        assert len(counting.signature_calls) == 1
+
+    def test_worker_cache_is_populated_by_batch(self):
+        instance = self._make_worker()
+        instance._execute_entity_batch(
+            _entity_batch_request("@counter@key", [("add", "1")]),
+            _RecordingEntityStub(), b"token")
+
+        assert (Counter, "add") in instance._entity_method_cache
+
+    def test_no_arg_and_input_arg_dispatch_preserved(self, monkeypatch):
+        instance = self._make_worker()
+        stub = _RecordingEntityStub()
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        request = _entity_batch_request(
+            "@counter@key",
+            [("add", "2"), ("get", None), ("add", "3"), ("get", None)],
+        )
+        result = instance._execute_entity_batch(request, stub, b"token")
+
+        assert [r.success.result.value for r in result.results] == ["2", "2", "5", "5"]
+        # One reflection per distinct operation, regardless of repeat count.
+        assert len(counting.signature_calls) == 2
+
+    def test_unknown_operation_failure_is_unchanged(self):
+        instance = self._make_worker()
+        result = instance._execute_entity_batch(
+            _entity_batch_request("@counter@key", [("missing", None)]),
+            _RecordingEntityStub(), b"token")
+
+        failure = result.results[0]
+        assert failure.WhichOneof("resultType") == "failure"
+        details = failure.failure.failureDetails
+        assert details.errorType == "builtins.AttributeError"
+        assert "does not have operation 'missing'" in details.errorMessage
+
+
+class TestEntityMethodSignatureCacheBounds:
+    """The shared signature cache must stay bounded and thread-safe."""
+
+    def test_get_returns_none_for_unknown_key(self):
+        cache = _EntityMethodSignatureCache()
+        assert cache.get((int, "missing")) is None
+
+    def test_false_values_are_distinguishable_from_misses(self):
+        cache = _EntityMethodSignatureCache()
+        cache[(int, "op")] = False
+        assert cache.get((int, "op")) is False
+        assert (int, "op") in cache
+
+    def test_evicts_oldest_entries_when_full(self):
+        cache = _EntityMethodSignatureCache(max_size=2)
+        cache[(int, "op")] = True
+        cache[(str, "op")] = True
+        cache[(float, "op")] = True
+
+        assert len(cache) == 2
+        assert cache.get((int, "op")) is None
+        assert cache.get((str, "op")) is True
+        assert cache.get((float, "op")) is True
+
+    def test_concurrent_writes_stay_within_bound(self):
+        cache = _EntityMethodSignatureCache(max_size=8)
+        entity_types = [type(f"Entity{index}", (), {}) for index in range(64)]
+        barrier = threading.Barrier(4)
+
+        def writer(worker_index: int) -> None:
+            barrier.wait()
+            for index, entity_type in enumerate(entity_types):
+                cache[(entity_type, f"op{worker_index}")] = index % 2 == 0
+
+        threads = [threading.Thread(target=writer, args=(index,)) for index in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert len(cache) == 8
+
+    @pytest.mark.parametrize("max_size", [0, -1, -1024])
+    def test_non_positive_max_size_is_clamped_to_one(self, max_size: int):
+        """A non-positive bound must not produce a zero-capacity cache.
+
+        Without clamping, a bound of 0 would evict every entry immediately
+        after inserting it, so every lookup would miss and the signature
+        reflection this cache exists to avoid would run on every operation
+        again. A negative bound is worse still: the eviction loop would keep
+        popping past an already-empty dict.
+        """
+        cache = _EntityMethodSignatureCache(max_size=max_size)
+
+        cache[(int, "op")] = True
+
+        assert len(cache) == 1
+        assert cache.get((int, "op")) is True
+        assert (int, "op") in cache
+
+    def test_clamped_cache_still_evicts_and_serves_hits(self):
+        """A clamped cache behaves as a working size-1 cache, not a no-op."""
+        cache = _EntityMethodSignatureCache(max_size=0)
+
+        cache[(int, "op")] = True
+        cache[(str, "op")] = False
+
+        # The newest entry is retained and readable; the older one is evicted
+        # because the effective bound is one, not because caching is disabled.
+        assert len(cache) == 1
+        assert cache.get((str, "op")) is False
+        assert cache.get((int, "op")) is None
+
+    def test_executor_with_clamped_cache_still_caches_reflection(self, monkeypatch):
+        """An executor handed a clamped cache must still avoid re-reflecting."""
+        counting = _CountingInspect()
+        monkeypatch.setattr(worker, "inspect", counting)
+
+        registry = _Registry()
+        registry.add_entity(Counter)
+        executor = _EntityExecutor(
+            registry,
+            logging.getLogger("test"),
+            JsonDataConverter(),
+            entity_method_cache=_EntityMethodSignatureCache(max_size=0),
+        )
+
+        entity_id = entities.EntityInstanceId("Counter", "test-key")
+        state = StateShim(None, JsonDataConverter())
+        for _ in range(3):
+            executor.execute("test-orch", entity_id, "add", state, "1")
+            state.commit()
+
+        assert len(counting.signature_calls) == 1
+        assert state.get_state(int) == 3
