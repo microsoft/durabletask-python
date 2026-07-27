@@ -56,4 +56,5 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "azurite: tests that require Azurite (local Azure Storage emulator)",
+    "functions_e2e: end-to-end tests that require the Azure Functions Core Tools (func) and Azurite",
 ]
