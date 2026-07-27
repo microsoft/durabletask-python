@@ -13,6 +13,7 @@ import durabletask.internal.shared as shared
 class AccessTokenManager:
 
     _token: AccessToken | None
+    expiry_time: datetime | None
 
     def __init__(self, token_credential: TokenCredential | None, refresh_interval_seconds: int = 600):
         self._scope = "https://durabletask.io/.default"
@@ -22,12 +23,12 @@ class AccessTokenManager:
         self._credential = token_credential
         self._refresh_lock = Lock()
 
-        if self._credential is not None:
-            self._token = self._credential.get_token(self._scope)
-            self.expiry_time = datetime.fromtimestamp(self._token.expires_on, tz=timezone.utc)
-        else:
-            self._token = None
-            self.expiry_time = None
+        # Token acquisition is deferred to the first get_access_token() call so that
+        # constructing a client or worker does not perform a blocking credential round
+        # trip. The deferred first acquisition still goes through the double-checked
+        # refresh lock below, so it remains single-flight across threads.
+        self._token = None
+        self.expiry_time = None
 
     def get_access_token(self) -> AccessToken | None:
         if self._token is None or self.is_token_expired():

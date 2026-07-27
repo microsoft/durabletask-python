@@ -1,0 +1,226 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""Unit tests for the Functions history-export enumeration shim.
+
+The shim replaces the core ``list_terminal_instances`` activity (which uses the
+unimplemented ``ListInstanceIds`` gRPC call) with a ``QueryInstances``-based
+implementation that pages the matching instances client-side. These tests drive
+the activity directly with a stubbed history-export context.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from durabletask.extensions.history_export import (
+    ExportDestination,
+    ExportJobCreationOptions,
+    ExportJobInvalidTransitionError,
+    ExportJobStatus,
+    ExportMode,
+)
+from durabletask.extensions.history_export.models import ExportJobState
+
+import azure.durable_functions.internal.history_export_compat as hec
+
+_FROM = "2025-01-01T00:00:00+00:00"
+_COMPLETED = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _state(instance_id: str, completed_at: datetime = _COMPLETED) -> SimpleNamespace:
+    return SimpleNamespace(instance_id=instance_id, last_updated_at=completed_at)
+
+
+def _bind_states(monkeypatch, states) -> MagicMock:
+    client = MagicMock()
+    client.get_all_orchestration_states.return_value = states
+    monkeypatch.setattr(hec, "_require_context", lambda: SimpleNamespace(client=client))
+    return client
+
+
+def test_single_page_when_all_fit(monkeypatch):
+    _bind_states(monkeypatch, [_state("id-1"), _state("id-0")])
+    page = hec.list_terminal_instances(
+        None, {"completed_time_from": _FROM, "page_size": 10})
+    # Sorted deterministically, single page, no further pages.
+    assert page["instance_ids"] == ["id-0", "id-1"]
+    assert page["continuation_token"] is None
+
+
+def test_pages_by_page_size_with_keyset_cursor(monkeypatch):
+    states = [_state(f"id-{i}") for i in (3, 1, 4, 0, 2)]
+    _bind_states(monkeypatch, states)
+    base = {"completed_time_from": _FROM, "page_size": 2}
+
+    p1 = hec.list_terminal_instances(None, dict(base))
+    assert p1["instance_ids"] == ["id-0", "id-1"]
+    assert p1["continuation_token"] == "id-1"
+
+    p2 = hec.list_terminal_instances(
+        None, {**base, "continuation_token": p1["continuation_token"]})
+    assert p2["instance_ids"] == ["id-2", "id-3"]
+    assert p2["continuation_token"] == "id-3"
+
+    # Final page has fewer than page_size items -> no continuation token.
+    p3 = hec.list_terminal_instances(
+        None, {**base, "continuation_token": p2["continuation_token"]})
+    assert p3["instance_ids"] == ["id-4"]
+    assert p3["continuation_token"] is None
+
+
+def test_exact_multiple_of_page_size_terminates(monkeypatch):
+    _bind_states(monkeypatch, [_state("id-0"), _state("id-1")])
+    base = {"completed_time_from": _FROM, "page_size": 2}
+
+    p1 = hec.list_terminal_instances(None, dict(base))
+    assert p1["instance_ids"] == ["id-0", "id-1"]
+    # Exactly page_size items remained, so this is the last page.
+    assert p1["continuation_token"] is None
+
+
+def test_completed_time_window_is_applied(monkeypatch):
+    early = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    late = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    _bind_states(monkeypatch, [
+        _state("early", early), _state("in-window", _COMPLETED), _state("late", late)])
+    page = hec.list_terminal_instances(None, {
+        "completed_time_from": _FROM,
+        "completed_time_to": "2027-01-01T00:00:00+00:00",
+        "page_size": 10,
+    })
+    assert page["instance_ids"] == ["in-window"]
+    assert page["continuation_token"] is None
+
+
+def test_requires_completed_time_from(monkeypatch):
+    _bind_states(monkeypatch, [])
+    with pytest.raises(ValueError, match="completed_time_from"):
+        hec.list_terminal_instances(None, {"page_size": 10})
+
+
+def test_empty_result(monkeypatch):
+    _bind_states(monkeypatch, [])
+    page = hec.list_terminal_instances(
+        None, {"completed_time_from": _FROM, "page_size": 10})
+    assert page["instance_ids"] == []
+    assert page["continuation_token"] is None
+
+
+# ---------------------------------------------------------------------------
+# FunctionsExportJobEntity.create -- CONTINUOUS-mode rejection must not
+# discard an existing ACTIVE job when its ID is reused.
+# ---------------------------------------------------------------------------
+
+class _FakeEntityContext:
+    """Minimal entity context backing state with an in-memory value."""
+
+    def __init__(self, state=None, key="job-1"):
+        self._state = state
+        self.entity_id = SimpleNamespace(key=key)
+
+    def get_state(self, intended_type=None, default=None):
+        return self._state if self._state is not None else default
+
+    def set_state(self, state):
+        self._state = state
+
+
+def _config_dict(mode: ExportMode) -> dict:
+    # ``completed_time_to`` is required for BATCH and disallowed for CONTINUOUS.
+    completed_time_to = _COMPLETED if mode is ExportMode.BATCH else None
+    return ExportJobCreationOptions(
+        mode=mode,
+        completed_time_from=_COMPLETED,
+        completed_time_to=completed_time_to,
+        destination=ExportDestination(container="exports", prefix="run-1"),
+    ).to_configuration().to_dict()
+
+
+def _make_entity(ctx: _FakeEntityContext) -> hec.FunctionsExportJobEntity:
+    entity = hec.FunctionsExportJobEntity()
+    entity.entity_context = ctx  # type: ignore[assignment]
+    return entity
+
+
+def test_continuous_create_over_active_job_is_rejected_and_preserves_state():
+    active_state = ExportJobState(
+        status=ExportJobStatus.ACTIVE,
+        config=ExportJobCreationOptions(
+            mode=ExportMode.BATCH,
+            completed_time_from=_COMPLETED,
+            completed_time_to=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            destination=ExportDestination(container="exports", prefix="run-1"),
+        ).to_configuration(),
+        created_at=_COMPLETED,
+        last_modified_at=_COMPLETED,
+    ).to_dict()
+    ctx = _FakeEntityContext(state=active_state)
+    entity = _make_entity(ctx)
+
+    with pytest.raises(ExportJobInvalidTransitionError):
+        entity.create({"config": _config_dict(ExportMode.CONTINUOUS)})
+
+    # The persisted ACTIVE job must be untouched -- not overwritten with FAILED.
+    assert ctx._state == active_state
+
+
+def test_continuous_create_on_fresh_entity_is_marked_failed():
+    ctx = _FakeEntityContext(state=None)
+    entity = _make_entity(ctx)
+
+    result = entity.create({"config": _config_dict(ExportMode.CONTINUOUS)})
+
+    assert result["status"] == ExportJobStatus.FAILED.value
+    assert result["last_error"]
+
+
+# ---------------------------------------------------------------------------
+# Sync export client lifecycle -- the process-wide client bound into the export
+# context is closed at interpreter exit.
+# ---------------------------------------------------------------------------
+
+def test_ensure_context_bound_registers_and_closes_sync_client(monkeypatch):
+    fake_client = MagicMock()
+    monkeypatch.setattr(hec, "_build_sync_client", lambda _c: fake_client)
+    monkeypatch.setattr(hec, "_export_writer", MagicMock())
+    monkeypatch.setattr(hec, "_context_bound", False)
+    monkeypatch.setattr(hec, "_sync_export_client", None)
+
+    bind_calls = []
+    monkeypatch.setattr(hec, "bind_context", lambda ctx: bind_calls.append(ctx))
+    registered = []
+    monkeypatch.setattr(hec.atexit, "register", lambda fn: registered.append(fn))
+
+    hec._ensure_context_bound(object())
+
+    assert hec._sync_export_client is fake_client
+    assert hec._context_bound is True
+    assert len(bind_calls) == 1
+    assert hec._close_sync_export_client in registered
+
+    # A second bind is a no-op: no new client, no duplicate registration.
+    hec._ensure_context_bound(object())
+    assert len(bind_calls) == 1
+    assert registered.count(hec._close_sync_export_client) == 1
+
+    # Closing releases the client, resets state, and is idempotent + safe.
+    hec._close_sync_export_client()
+    fake_client.close.assert_called_once()
+    assert hec._sync_export_client is None
+    hec._close_sync_export_client()
+    fake_client.close.assert_called_once()
+
+
+def test_close_sync_export_client_swallows_errors(monkeypatch):
+    fake_client = MagicMock()
+    fake_client.close.side_effect = RuntimeError("boom")
+    monkeypatch.setattr(hec, "_sync_export_client", fake_client)
+
+    # Cleanup at shutdown must never raise.
+    hec._close_sync_export_client()
+    assert hec._sync_export_client is None
