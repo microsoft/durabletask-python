@@ -1,0 +1,154 @@
+name: Durable Task Scheduler SDK (azure-functions-durable)
+
+on:
+  push:
+    branches: 
+      - "main"
+    tags:
+      - "azurefunctions-v*"  # Only run for tags starting with "azurefunctions-v"
+  pull_request:
+    branches: 
+      - "main"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.13
+    - name: Install dependencies
+      working-directory: azure-functions-durable
+      run: |
+        python -m pip install --upgrade pip
+        pip install setuptools wheel tox
+        pip install flake8
+    - name: Run flake8 Linter
+      working-directory: azure-functions-durable
+      run: flake8 .
+    - name: Run flake8 Linter
+      working-directory: tests/azure-functions-durable
+      run: flake8 .
+
+  run-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install durabletask dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest
+          pip install -r requirements.txt
+
+      - name: Install durabletask locally
+        run: |
+          pip install . --no-deps --force-reinstall
+
+      - name: Install azure-functions-durable locally
+        working-directory: azure-functions-durable
+        run: |
+          pip install . --no-deps --force-reinstall
+
+      # ``requirements.txt`` (shared with the core 3.10-3.14 CI) leaves
+      # azure-functions unpinned so it can resolve on Python < 3.13. The
+      # provider needs azure-functions>=2.3.0b2 (which requires 3.13+ and
+      # provides ``register_converter``); the local installs above use
+      # ``--no-deps``, so install that floor explicitly here. This job only runs
+      # on 3.13/3.14, where 2.3.0b2 is available.
+      - name: Install azure-functions (>=2.3.0b2)
+        run: |
+          pip install "azure-functions>=2.3.0b2"
+
+      - name: Run unit tests
+        working-directory: tests/azure-functions-durable
+        run: |
+          pytest -m "not dts and not azurite and not functions_e2e" --verbose
+
+  e2e-tests:
+    needs: run-tests
+    runs-on: ubuntu-latest
+    # The end-to-end suite launches a real Azure Functions host, which requires
+    # ``azure-functions>=2.3.0b2``. That build is published to PyPI and pulled
+    # in as a declared dependency of ``azure-functions-durable``.
+    # Run the suite in both payload-typing modes: the default (loose) codec and
+    # strict typing (``AZURE_FUNCTIONS_DURABLE_STRICT_TYPING=1``), which requires
+    # every decode call site to supply the destination type. ``0`` is not a
+    # truthy value for the flag, so it selects loose mode.
+    strategy:
+      fail-fast: false
+      matrix:
+        strict-typing: ["0", "1"]
+    name: e2e-tests (strict-typing=${{ matrix.strict-typing }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js (needed for Azurite and Functions Core Tools)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      - name: Install Azurite and Azure Functions Core Tools
+        run: |
+          npm install -g azurite@latest
+          npm install -g azure-functions-core-tools@4 --unsafe-perm true
+
+      - name: Start Azurite
+        shell: bash
+        # The DurableTask.AzureStorage provider in recent extension bundles uses
+        # a newer Azure Storage REST API version than the CI Azurite build
+        # recognizes, which otherwise fails task-hub creation with "The API
+        # version ... is not supported by Azurite". ``--skipApiVersionCheck``
+        # bypasses that guard so the durable provider can talk to Azurite.
+        run: |
+          azurite --silent --skipApiVersionCheck --location /tmp/azurite --blobPort 10000 --queuePort 10001 --tablePort 10002 &
+          sleep 2
+
+      - name: Install nox
+        run: |
+          python -m pip install --upgrade pip
+          pip install nox
+
+      - name: Run end-to-end tests
+        # nox provisions each sample app's in-app virtual environment (a link to
+        # a single editable install) so the Functions worker loads our
+        # grpc/protobuf rather than its bundled copies.
+        env:
+          AZURE_FUNCTIONS_DURABLE_STRICT_TYPING: ${{ matrix.strict-typing }}
+        run: nox -s functions_e2e
+
+      # The harness captures each sample app's ``func start`` stdout/stderr to
+      # ``<app>/_func_host.log``. On failure that log holds the real host/worker
+      # error (durable extension load, storage wiring, worker crash) that the
+      # pytest summary does not surface, so upload it for diagnosis.
+      - name: Upload Functions host logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: func-host-logs-strict-${{ matrix.strict-typing }}
+          path: tests/azure-functions-durable/e2e/apps/*/_func_host.log
+          if-no-files-found: warn
+          retention-days: 7
+
