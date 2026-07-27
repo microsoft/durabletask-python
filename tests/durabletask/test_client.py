@@ -214,9 +214,10 @@ def install_resilient_test_stubs(client):
     call so newly created stubs continue to participate in failure tracking.
 
     The interceptor's ``_on_recreate`` callback is intentionally left alone:
-    it is the client's ``_schedule_recreate`` (fire-and-forget), and tests
-    that need to observe the recreate's completion can wait on
-    ``client._recreate_done_event``.
+    it is the client's ``_schedule_recreate`` (fire-and-forget). Synchronous
+    tests that chain recreates must observe completion via
+    ``await_sync_recreate``; waiting on ``client._recreate_done_event`` alone
+    is not sufficient (see that helper's docstring).
     """
     is_async = inspect.iscoroutinefunction(client._maybe_recreate_channel)
     wrapper_cls = _ResilientAsyncTestStub if is_async else _ResilientSyncTestStub
@@ -239,6 +240,28 @@ def install_resilient_test_stubs(client):
             wrap_if_needed()
 
     client._maybe_recreate_channel = wrapped_recreate
+
+
+def await_sync_recreate(client: TaskHubGrpcClient, timeout: float = 5.0) -> None:
+    """Block until the synchronous client's recreate thread has fully exited.
+
+    ``_recreate_done_event`` is set by ``_run_recreate`` from *inside* the
+    recreate thread, so the event is signalled while that thread is still
+    alive. ``_schedule_recreate`` single-flights on ``is_alive()``, so a
+    trigger issued in that window is dropped *before* it reaches
+    ``_recreate_done_event.clear()`` -- leaving the event set from the
+    previous recreate. A later ``wait()`` would then return immediately off
+    that stale signal, and assertions about the next recreate would fail.
+
+    Tests that chain recreates must therefore wait on the same condition the
+    single-flight guard reads. Joining the thread makes ``is_alive()``
+    deterministically ``False`` before the next trigger is issued.
+    """
+    assert client._recreate_done_event.wait(timeout=timeout)
+    recreate_thread = client._recreate_thread
+    if recreate_thread is not None:
+        recreate_thread.join(timeout=timeout)
+        assert not recreate_thread.is_alive()
 
 
 class FakePayloadStore(PayloadStore):
@@ -669,10 +692,10 @@ def test_sync_client_close_closes_all_retired_sdk_channels_immediately():
         # Wait for the first fire-and-forget recreate to complete so the
         # single-flight guard in _schedule_recreate does not drop the second
         # trigger.
-        assert client._recreate_done_event.wait(timeout=5.0)
+        await_sync_recreate(client)
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
-        assert client._recreate_done_event.wait(timeout=5.0)
+        await_sync_recreate(client)
 
         client.close()
 
@@ -912,7 +935,7 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
             client.get_orchestration_state("abc")
         # Wait for the fire-and-forget recreate to complete before asserting
         # the channel was swapped.
-        assert client._recreate_done_event.wait(timeout=5.0)
+        await_sync_recreate(client)
         assert client._channel is second_channel
         assert mock_get_channel.call_count == 2
 
@@ -920,13 +943,13 @@ def test_sync_client_recreate_cooldown_prevents_immediate_repeated_recreation():
             client.get_orchestration_state("abc")
         # Cooldown should fire-and-forget but exit without recreating; wait
         # for the no-op recreate to complete so the assertion is deterministic.
-        assert client._recreate_done_event.wait(timeout=5.0)
+        await_sync_recreate(client)
         assert client._channel is second_channel
         assert mock_get_channel.call_count == 2
 
         with pytest.raises(FakeRpcError):
             client.get_orchestration_state("abc")
-        assert client._recreate_done_event.wait(timeout=5.0)
+        await_sync_recreate(client)
         assert client._channel is third_channel
 
     expected_channel_call = call(
