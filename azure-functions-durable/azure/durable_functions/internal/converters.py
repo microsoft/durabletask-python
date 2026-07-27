@@ -224,8 +224,9 @@ def register_durable_converters() -> None:
     """Register this package's durable binding converters with azure-functions.
 
     Overrides the SDK's built-in converters for the four durable binding types
-    so the host uses the durabletask-based encodings and the durable-client
-    binding is decoded to a :class:`DurableFunctionsClient`.
+    so the host uses the durabletask-based encodings. The durable-client binding
+    is decoded to its host configuration string, which the decorator converts to
+    the requested synchronous or asynchronous rich client per invocation.
     """
     func.register_converter(
         ORCHESTRATION_TRIGGER, OrchestrationTriggerConverter, overwrite=True)

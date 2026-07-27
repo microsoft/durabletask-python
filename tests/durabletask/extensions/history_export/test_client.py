@@ -19,6 +19,7 @@ import pytest
 
 from durabletask import client, task, worker
 from durabletask.extensions.history_export import (
+    AsyncExportHistoryClient,
     ExportDestination,
     ExportFormat,
     ExportFormatKind,
@@ -146,6 +147,32 @@ def test_create_get_and_wait_for_job_end_to_end(
         raw = gzip.decompress(entry["payload"]).decode("utf-8")
         first = json.loads(raw.strip().split("\n")[0])
         assert first["kind"] == "metadata"
+
+
+async def test_async_client_create_list_wait_and_delete(
+    writer, seeded_terminal_instances,
+):
+    async with client.AsyncTaskHubGrpcClient(host_address=HOST) as dt_client:
+        export_client = AsyncExportHistoryClient(dt_client, writer)
+        now = datetime.now(timezone.utc)
+        desc = await export_client.create_job(ExportJobCreationOptions(
+            mode=ExportMode.BATCH,
+            completed_time_from=now - timedelta(hours=1),
+            completed_time_to=now + timedelta(hours=1),
+            destination=ExportDestination(container="exports", prefix="async"),
+            format=ExportFormat(kind=ExportFormatKind.JSON),
+        ))
+
+        final = await export_client.wait_for_job(
+            desc.job_id, timeout=30, poll_interval=0.1)
+        assert final.status == ExportJobStatus.COMPLETED
+        assert (await export_client.get_job(desc.job_id)) is not None
+        assert desc.job_id in {
+            job.job_id async for job in export_client.list_jobs()
+        }
+
+        await export_client.delete_job(desc.job_id)
+        assert await export_client.get_job(desc.job_id) is None
 
 
 def test_get_job_returns_none_for_unknown_id(export_client):

@@ -10,9 +10,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from durabletask import client, task, worker
-from durabletask.scheduled import (ScheduledTaskClient, ScheduleCreationOptions,
-                                   ScheduleQuery, ScheduleStatus,
-                                   ScheduleUpdateOptions)
+from durabletask.scheduled import (AsyncScheduledTaskClient,
+                                   ScheduledTaskClient,
+                                   ScheduleCreationOptions, ScheduleQuery,
+                                   ScheduleStatus, ScheduleUpdateOptions)
 from durabletask.testing import create_test_backend
 
 from tests.durabletask._port_utils import find_free_port
@@ -111,6 +112,31 @@ def test_get_nonexistent_returns_none():
         with client.TaskHubGrpcClient(host_address=HOST) as c:
             scheduled = ScheduledTaskClient(c)
             assert scheduled.get_schedule("does-not-exist") is None
+
+
+async def test_async_client_create_list_and_delete():
+    with _make_worker() as w:
+        w.start()
+        async with client.AsyncTaskHubGrpcClient(host_address=HOST) as c:
+            scheduled = AsyncScheduledTaskClient(c)
+            schedule = await scheduled.create_schedule(ScheduleCreationOptions(
+                schedule_id="async-schedule",
+                orchestration_name=task.get_name(target_orchestrator),
+                interval=timedelta(seconds=30),
+                start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            ))
+
+            assert (await scheduled.get_schedule("async-schedule")) is not None
+            listed = await scheduled.list_schedules(
+                ScheduleQuery(schedule_id_prefix="async-"))
+            assert [item.schedule_id for item in listed] == ["async-schedule"]
+
+            await schedule.pause()
+            assert (await schedule.describe()).status == ScheduleStatus.PAUSED
+            await schedule.resume()
+            assert (await schedule.describe()).status == ScheduleStatus.ACTIVE
+            await schedule.delete()
+            assert await scheduled.get_schedule("async-schedule") is None
 
 
 def test_pause_and_resume():

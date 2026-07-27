@@ -386,11 +386,9 @@ class Blueprint(TriggerApi, BindingApi):
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
             def decorator() -> FunctionBuilder:
-                # The durableClient binding converter
-                # (``DurableClientConverter``) constructs the rich
-                # ``DurableFunctionsClient`` from the host-supplied configuration
-                # string during decode, so no per-function client middleware is
-                # needed here.
+                # The converter returns the host configuration string. The
+                # function wrapper below constructs and closes the requested
+                # synchronous or asynchronous rich client per invocation.
                 fb.add_binding(
                     binding=DurableClient(name=client_name,
                                           task_hub=task_hub,
@@ -400,13 +398,10 @@ class Blueprint(TriggerApi, BindingApi):
             return decorator()
 
         def attach_client_function(user_fn: Callable[..., Any]) -> FunctionBuilder:
-            # Expose the raw client function for unit testing, mirroring the
-            # ``.orchestrator_function`` and ``.entity_function`` attributes.
-            # Unlike v1 there is no client middleware wrapper (the durableClient
-            # binding converter builds the rich client during decode), so the
-            # user function is registered directly and ``.client_function``
-            # points back at it. Internal callers pass an already-built
-            # ``FunctionBuilder`` (e.g. history export), which is left untouched.
+            # Expose the original client function for unit testing, mirroring
+            # ``.orchestrator_function`` and ``.entity_function``. The registered
+            # wrapper resolves the client from the binding configuration and
+            # closes it after the invocation.
             from ..client import DurableFunctionsClient, SyncDurableFunctionsClient
 
             function = (user_fn._function._func  # pyright: ignore[reportPrivateUsage]

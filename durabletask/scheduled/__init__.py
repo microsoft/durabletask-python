@@ -6,7 +6,8 @@
 This package provides a recurring schedule feature built on top of durable
 entities and a helper orchestrator. Enable it on a worker via
 :meth:`durabletask.worker.TaskHubGrpcWorker.configure_scheduled_tasks`, then
-manage schedules from the client via :class:`ScheduledTaskClient`.
+manage schedules from a synchronous :class:`ScheduledTaskClient` or
+asynchronous :class:`AsyncScheduledTaskClient`.
 """
 
 from durabletask.scheduled.client import (AsyncScheduleClient,
