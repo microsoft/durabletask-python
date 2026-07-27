@@ -434,7 +434,7 @@ class Blueprint(TriggerApi, BindingApi):
 
             if inspect.iscoroutinefunction(function):
                 @wraps(function)
-                async def client_bound(*args: Any, **kwargs: Any) -> Any:
+                async def async_client_bound(*args: Any, **kwargs: Any) -> Any:
                     bound, client = bind_client(args, kwargs)
                     try:
                         result = function(*bound.args, **bound.kwargs)
@@ -442,15 +442,17 @@ class Blueprint(TriggerApi, BindingApi):
                     finally:
                         if isinstance(client, DurableFunctionsClient):
                             client.schedule_close()
+                client_bound = async_client_bound
             else:
                 @wraps(function)
-                def client_bound(*args: Any, **kwargs: Any) -> Any:
+                def sync_client_bound(*args: Any, **kwargs: Any) -> Any:
                     bound, client = bind_client(args, kwargs)
                     try:
                         return function(*bound.args, **bound.kwargs)
                     finally:
                         if isinstance(client, DurableFunctionsClient):
                             client.schedule_close()
+                client_bound = sync_client_bound
 
             set_client_metadata(client_bound)
             if isinstance(user_fn, FunctionBuilder):
