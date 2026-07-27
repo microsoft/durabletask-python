@@ -172,6 +172,17 @@ async def test_durable_client_input_preserves_client_annotation():
     assert await fb._function._func(client="{}") == "DurableFunctionsClient"
 
 
+async def test_durable_client_input_replaces_unsupported_client_annotation():
+    app = df.DFApp()
+
+    async def starter(client: int):
+        return type(client).__name__
+
+    fb = app.durable_client_input(client_name="client")(starter)
+    assert fb._function._func.__annotations__["client"] is str
+    assert starter.__annotations__["client"] is int
+
+
 # ---------------------------------------------------------------------------
 # All decorators register a function builder
 # ---------------------------------------------------------------------------

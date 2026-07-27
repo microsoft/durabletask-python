@@ -428,7 +428,14 @@ class Blueprint(TriggerApi, BindingApi):
 
             def set_client_metadata(client_bound: Callable[..., Any]) -> None:
                 annotations = dict(function.__annotations__)
-                annotations.setdefault(client_name, str)
+                supported_client_types = (
+                    str,
+                    bytes,
+                    DurableFunctionsClient,
+                    SyncDurableFunctionsClient,
+                )
+                if annotations.get(client_name) not in supported_client_types:
+                    annotations[client_name] = str
                 client_bound.__annotations__ = annotations
                 setattr(client_bound, "client_function", function)
 
