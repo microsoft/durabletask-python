@@ -6,14 +6,15 @@ MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/
 Validation](https://github.com/microsoft/durabletask-python/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/microsoft/durabletask-python/actions/workflows/pr-validation.yml)
 [![PyPI version](https://badge.fury.io/py/durabletask.svg)](https://badge.fury.io/py/durabletask)
 
-This repo contains a Python SDK for use with the [Azure Durable Task
-Scheduler](https://github.com/Azure/Durable-Task-Scheduler). With this SDK, you can define,
-schedule, and manage durable orchestrations using ordinary Python code.
+This repository contains Python SDKs for building durable orchestrations with
+[Azure Durable Task Scheduler](https://github.com/Azure/Durable-Task-Scheduler)
+and [Azure Durable Functions](https://learn.microsoft.com/azure/azure-functions/durable/):
 
-> Note that this SDK is **not** currently compatible with [Azure Durable
-Functions](https://learn.microsoft.com/azure/azure-functions/durable/durable-functions-overview). If
-you are looking for a Python SDK for Azure Durable Functions, please see [this
-repo](https://github.com/Azure/azure-functions-durable-python).
+- [`durabletask`](./durabletask/) is the core orchestration SDK.
+- [`durabletask.azuremanaged`](./durabletask-azuremanaged/) is the Azure Durable
+  Task Scheduler provider.
+- [`azure-functions-durable`](./azure-functions-durable/) is a preview Azure
+  Durable Functions provider built on `durabletask`.
 
 ## References
 
@@ -21,6 +22,7 @@ repo](https://github.com/Azure/azure-functions-durable-python).
 - [Available Features](./docs/features.md)
 - [Getting Started](./docs/getting-started.md)
 - [Development Guide](./docs/development.md)
+- [Azure Functions Durable 2.x](./azure-functions-durable/README.md)
 - [Contributing Guide](./CONTRIBUTING.md)
 
 ## Optional Features

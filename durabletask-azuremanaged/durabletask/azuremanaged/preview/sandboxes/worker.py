@@ -130,30 +130,50 @@ class SandboxWorker(DurableTaskSchedulerWorker):
 
     def _run_sandbox_registration_loop(self) -> None:
         retry_delay = 1.0
-        while not self._sandbox_registration_stop.is_set():
-            try:
-                client = SandboxActivitiesGrpcTransport(
-                    host_address=self._sandbox_host_address,
-                    taskhub=self._sandbox_taskhub,
-                    token_credential=self._sandbox_token_credential,
-                    secure_channel=self._sandbox_secure_channel)
+        client: Optional[SandboxActivitiesGrpcTransport] = None
+        try:
+            while not self._sandbox_registration_stop.is_set():
                 try:
+                    if client is None:
+                        client = SandboxActivitiesGrpcTransport(
+                            host_address=self._sandbox_host_address,
+                            taskhub=self._sandbox_taskhub,
+                            token_credential=self._sandbox_token_credential,
+                            secure_channel=self._sandbox_secure_channel)
                     client.connect_sandbox_activity_worker(self._registration_messages())
                     retry_delay = 1.0
-                finally:
-                    client.close()
-            except Exception as ex:
-                if self._sandbox_registration_stop.is_set():
-                    break
-                if not _is_retriable_registration_failure(ex):
-                    self._sandbox_logger.error(
-                        "Sandbox activity worker registration failed permanently: %s", ex)
-                    self._sandbox_registration_stop.set()
-                    break
-                self._sandbox_logger.warning("Sandbox activity worker registration failed: %s", ex)
-                delay = random.uniform(0, retry_delay)
-                self._sandbox_registration_stop.wait(delay)
-                retry_delay = min(retry_delay * 2, 30.0)
+                except Exception as ex:
+                    # gRPC channels reconnect on their own after transient stream
+                    # failures, so the transport (and its channel, stub, and cached
+                    # access token) is reused instead of being rebuilt per attempt.
+                    if _requires_new_registration_transport(ex):
+                        self._close_sandbox_registration_transport(client)
+                        client = None
+                    if self._sandbox_registration_stop.is_set():
+                        break
+                    if not _is_retriable_registration_failure(ex):
+                        self._sandbox_logger.error(
+                            "Sandbox activity worker registration failed permanently: %s", ex)
+                        self._sandbox_registration_stop.set()
+                        break
+                    self._sandbox_logger.warning(
+                        "Sandbox activity worker registration failed: %s", ex)
+                    delay = random.uniform(0, retry_delay)
+                    self._sandbox_registration_stop.wait(delay)
+                    retry_delay = min(retry_delay * 2, 30.0)
+        finally:
+            self._close_sandbox_registration_transport(client)
+
+    def _close_sandbox_registration_transport(
+            self,
+            client: Optional[SandboxActivitiesGrpcTransport]) -> None:
+        if client is None:
+            return
+        try:
+            client.close()
+        except Exception as ex:
+            self._sandbox_logger.debug(
+                "Sandbox activity worker registration transport failed to close: %s", ex)
 
     def _registration_messages(self) -> Iterator[pb.SandboxActivityWorkerMessage]:
         yield build_sandbox_worker_start(
@@ -262,6 +282,26 @@ def _is_retriable_registration_failure(ex: Exception) -> bool:
         return False
 
     return isinstance(ex, OSError)
+
+
+def _requires_new_registration_transport(ex: Exception) -> bool:
+    """Returns whether a failure leaves the registration transport unusable.
+
+    A gRPC channel transparently reconnects after a stream fails, so the same
+    transport can serve the next registration attempt. A channel that has been
+    shut down rejects every later RPC, and a failure raised outside of gRPC (for
+    example while the channel itself is being created) can leave the transport
+    only partially initialized, so both cases need a replacement transport.
+    """
+    if not isinstance(ex, grpc.RpcError):
+        return True
+
+    if ex.code() != grpc.StatusCode.CANCELLED:
+        return False
+
+    details = getattr(ex, "details", None)
+    resolved_details = details() if callable(details) else None
+    return isinstance(resolved_details, str) and "channel closed" in resolved_details.lower()
 
 
 def _resolve_max_concurrent_activities() -> int:
