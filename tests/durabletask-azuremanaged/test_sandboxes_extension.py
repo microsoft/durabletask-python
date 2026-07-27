@@ -138,12 +138,24 @@ assert "_LAZY_EXPORTS" not in globals()
 """
 
 
+_ISOLATED_PROBE_TIMEOUT_SECONDS = 60
+
+
 def _run_isolated(source: str) -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", source],
-        capture_output=True,
-        text=True,
-        check=False)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", source],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_ISOLATED_PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"isolated import probe did not complete within "
+            f"{_ISOLATED_PROBE_TIMEOUT_SECONDS}s and was terminated. "
+            f"This usually means the import deadlocked.\n"
+            f"stdout: {exc.stdout or ''}\n"
+            f"stderr: {exc.stderr or ''}")
     assert result.returncode == 0, result.stdout + result.stderr
 
 
