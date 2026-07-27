@@ -54,6 +54,21 @@ EAGERLY_IMPORTED_WORKER_MODULES = [
     "durabletask.internal.type_discovery",
 ]
 
+# Submodules that the previous eager imports left bound as attributes of the
+# package as a side effect. A bare ``import durabletask`` must keep them
+# reachable through attribute access alone - without an explicit
+# ``import durabletask.<name>`` - because that was observable behavior before
+# the public exports became lazy.
+EAGERLY_BOUND_SUBMODULES = [
+    "entities",
+    "grpc_options",
+    "internal",
+    "payload",
+    "serialization",
+    "task",
+    "worker",
+]
+
 
 def _run_python(code: str) -> "subprocess.CompletedProcess[str]":
     """Run a snippet in a fresh interpreter so ``sys.modules`` starts clean."""
@@ -176,6 +191,54 @@ def test_submodules_remain_importable_from_the_package():
     result = _run_python(
         "from durabletask import client, entities, task, worker\n"
         "assert task.__name__ == 'durabletask.task'\n"
+    )
+    _assert_ok(result)
+
+
+@pytest.mark.parametrize("name", EAGERLY_BOUND_SUBMODULES)
+def test_submodule_is_reachable_by_attribute_after_a_bare_import(name: str):
+    """``import durabletask`` then ``durabletask.<submodule>`` must still work.
+
+    This is distinct from ``from durabletask import <submodule>``, which
+    succeeds either way because the import system falls back to importing the
+    submodule when ``__getattr__`` raises. Plain attribute access has no such
+    fallback, so the names have to be resolvable through ``__getattr__``.
+    """
+    result = _run_python(
+        "import durabletask\n"
+        f"module = getattr(durabletask, {name!r})\n"
+        f"assert module.__name__ == 'durabletask.{name}', module.__name__\n"
+    )
+    _assert_ok(result)
+
+
+def test_bare_import_does_not_newly_bind_the_client_submodule():
+    """The lazily bound submodules must mirror the old surface, not exceed it.
+
+    ``durabletask.client`` was never pulled in by the previous eager imports,
+    so attribute access on it failed before this change and must keep failing;
+    binding it now would expand the public surface rather than preserve it.
+    """
+    result = _run_python(
+        "import durabletask\n"
+        "try:\n"
+        "    durabletask.client\n"
+        "except AttributeError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise AssertionError('durabletask.client should not be bound')\n"
+    )
+    _assert_ok(result)
+
+
+def test_attribute_access_to_a_submodule_stays_lazy():
+    """Reaching a submodule by attribute must not happen at package import."""
+    result = _run_python(
+        "import sys\n"
+        "import durabletask\n"
+        "assert 'durabletask.task' not in sys.modules\n"
+        "durabletask.task\n"
+        "assert 'durabletask.task' in sys.modules\n"
     )
     _assert_ok(result)
 

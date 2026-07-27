@@ -51,16 +51,35 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkItemFilters": "durabletask.worker",
 }
 
+# Submodules that the previous eager imports bound as attributes of this package
+# as a side effect. Attribute access keeps them reachable without an explicit
+# ``import durabletask.<name>``, exactly as before, but they are now imported
+# only when actually touched. This list mirrors the old surface and must not be
+# extended: ``durabletask.client``, for instance, was never bound this way.
+_LAZY_SUBMODULES: frozenset[str] = frozenset({
+    "entities",
+    "grpc_options",
+    "internal",
+    "payload",
+    "serialization",
+    "task",
+    "worker",
+})
+
 
 def __getattr__(name: str) -> Any:
-    """Import and return a lazily exported public name (PEP 562)."""
+    """Import and return a lazily exported public name or submodule (PEP 562)."""
     module_name = _LAZY_EXPORTS.get(name)
-    if module_name is None:
+    if module_name is None and name not in _LAZY_SUBMODULES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
     from importlib import import_module
 
-    value = getattr(import_module(module_name), name)
+    if module_name is not None:
+        value = getattr(import_module(module_name), name)
+    else:
+        value = import_module(f".{name}", __name__)
+
     # Cache on the module so subsequent lookups bypass this hook entirely.
     globals()[name] = value
     return value
@@ -68,4 +87,4 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     """Include lazily exported names that have not been resolved yet."""
-    return sorted(set(globals()) | set(__all__))
+    return sorted(set(globals()) | set(__all__) | _LAZY_SUBMODULES)
