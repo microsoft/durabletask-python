@@ -180,8 +180,9 @@ class DurableClientConverter(meta.InConverter,
 
     @classmethod
     def check_input_type_annotation(cls, pytype: type) -> bool:
-        from ..client import DurableFunctionsClient
-        return issubclass(pytype, (str, bytes, DurableFunctionsClient))
+        from ..client import DurableFunctionsClient, SyncDurableFunctionsClient
+        return issubclass(
+            pytype, (str, bytes, DurableFunctionsClient, SyncDurableFunctionsClient))
 
     @classmethod
     def check_output_type_annotation(cls, pytype: type) -> bool:
@@ -213,16 +214,19 @@ class DurableClientConverter(meta.InConverter,
     @classmethod
     def decode(cls, data: meta.Datum, *,
                trigger_metadata: _TriggerMetadata) -> Any:
-        from ..client import DurableFunctionsClient
-        return DurableFunctionsClient(data.value)
+        # The decorator turns this host configuration into the requested sync or
+        # async rich client. Keeping conversion here as a string lets one binding
+        # type support both client shapes without a hidden sync bridge.
+        return data.value
 
 
 def register_durable_converters() -> None:
     """Register this package's durable binding converters with azure-functions.
 
     Overrides the SDK's built-in converters for the four durable binding types
-    so the host uses the durabletask-based encodings and the durable-client
-    binding is decoded to a :class:`DurableFunctionsClient`.
+    so the host uses the durabletask-based encodings. The durable-client binding
+    is decoded to its host configuration string, which the decorator converts to
+    the requested synchronous or asynchronous rich client per invocation.
     """
     func.register_converter(
         ORCHESTRATION_TRIGGER, OrchestrationTriggerConverter, overwrite=True)

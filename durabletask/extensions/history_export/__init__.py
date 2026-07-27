@@ -28,6 +28,8 @@ from durabletask.extensions.history_export.activities import (
     run_list_terminal_instances,
 )
 from durabletask.extensions.history_export.client import (
+    AsyncExportHistoryClient,
+    AsyncExportHistoryJobClient,
     ExportHistoryClient,
     ExportHistoryJobClient,
 )
@@ -67,6 +69,8 @@ __all__ = [
     "ExportFormatKind",
     "ExportHistoryClient",
     "ExportHistoryJobClient",
+    "AsyncExportHistoryClient",
+    "AsyncExportHistoryJobClient",
     "ExportJobConfiguration",
     "ExportJobCreationOptions",
     "ExportJobDescription",

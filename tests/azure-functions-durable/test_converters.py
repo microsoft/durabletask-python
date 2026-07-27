@@ -9,7 +9,6 @@ that importing the package installs our converters over the SDK defaults, and
 that the converters use the durabletask-based encodings the host expects.
 """
 
-from unittest.mock import patch
 
 import json
 
@@ -110,8 +109,13 @@ def test_activity_trigger_decode_falls_back_to_raw_string():
 # ---------------------------------------------------------------------------
 
 def test_durable_client_accepts_client_and_string_annotations():
-    from azure.durable_functions.client import DurableFunctionsClient
+    from azure.durable_functions.client import (
+        DurableFunctionsClient,
+        SyncDurableFunctionsClient,
+    )
     assert DurableClientConverter.check_input_type_annotation(DurableFunctionsClient)
+    assert DurableClientConverter.check_input_type_annotation(
+        SyncDurableFunctionsClient)
     assert DurableClientConverter.check_input_type_annotation(str)
     assert DurableClientConverter.check_input_type_annotation(bytes)
     assert not DurableClientConverter.check_input_type_annotation(int)
@@ -122,23 +126,14 @@ def test_durable_client_has_no_trigger_support_or_implicit_output():
     assert DurableClientConverter.has_implicit_output() is False
 
 
-def test_durable_client_decode_constructs_client_from_value():
-    with patch(
-        "azure.durable_functions.client.DurableFunctionsClient"
-    ) as mock_client:
-        result = DurableClientConverter.decode(
-            meta.Datum(type="string", value="client-config"),
-            trigger_metadata=None)
-    mock_client.assert_called_once_with("client-config")
-    assert result is mock_client.return_value
+def test_durable_client_decode_returns_host_configuration():
+    result = DurableClientConverter.decode(
+        meta.Datum(type="string", value="client-config"),
+        trigger_metadata=None)
+    assert result == "client-config"
 
 
-async def test_durable_client_decode_builds_working_client_from_config():
-    # End-to-end: decode parses a host-style configuration string into a live
-    # DurableFunctionsClient (the construction that previously lived in the
-    # decorator's client middleware).
-    from azure.durable_functions.client import DurableFunctionsClient
-
+def test_durable_client_decode_preserves_host_configuration():
     config = json.dumps({
         "taskHubName": "TestHub",
         "requiredQueryStringParameters": "code=xyz",
@@ -146,10 +141,6 @@ async def test_durable_client_decode_builds_working_client_from_config():
         "rpcBaseUrl": "http://localhost:8080/",
     })
 
-    client = DurableClientConverter.decode(
+    value = DurableClientConverter.decode(
         meta.Datum(type="string", value=config), trigger_metadata=None)
-    assert isinstance(client, DurableFunctionsClient)
-    try:
-        assert client.taskHubName == "TestHub"
-    finally:
-        await client.close()
+    assert value == config
