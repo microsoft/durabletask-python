@@ -4,3 +4,6 @@ exclude =
     .git
     *_pb2*
     __pycache__
+    .venv
+    .nox
+    .python_packages

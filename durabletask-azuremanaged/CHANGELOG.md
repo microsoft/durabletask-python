@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- `DurableTaskSchedulerClient` and `DurableTaskSchedulerWorker` no longer block on an Azure
+  credential round trip while being constructed. The access token is now acquired on the first
+  request instead, so constructing a client or worker that is never used costs nothing. As a
+  result, credential failures (for example an unavailable managed identity or a misconfigured
+  `DefaultAzureCredential`) now surface from the first request rather than from the constructor.
+  The exception type and message are unchanged; only the timing differs.
 - Importing `durabletask.azuremanaged.preview.sandboxes` no longer loads the sandbox worker
   runtime or `azure-identity` up front. The package's public names are now resolved on first
   use, which roughly halves import cost for callers that only declare sandbox worker profiles

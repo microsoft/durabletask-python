@@ -93,6 +93,49 @@ def test_orchestrator_parent_instance_id_none_for_top_level():
     assert observed["parent"] is None
 
 
+def test_orchestration_name_resolved_from_committed_history():
+    """The orchestration name is taken from the first executionStarted event in old events."""
+
+    def dummy_activity(ctx, _):
+        pass
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = yield ctx.call_activity(dummy_activity, input=None)
+        return result
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    # executionStarted is not the first event, so the whole prefix of the
+    # committed history has to be scanned before the name is found.
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity))]
+    new_events = [helpers.new_task_completed_event(1, json.dumps("done!"))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    assert executor._orchestration_name == name
+
+
+def test_orchestration_name_unknown_without_committed_history():
+    """The orchestration name falls back to '<unknown>' when old events carry no executionStarted."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    new_events = [helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None)]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    executor.execute(TEST_INSTANCE_ID, [], new_events)
+
+    assert executor._orchestration_name == "<unknown>"
+
+
 def test_complete_orchestration_actions():
     """Tests the actions output for a completed orchestration"""
 
