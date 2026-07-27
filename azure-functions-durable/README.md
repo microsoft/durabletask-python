@@ -38,6 +38,9 @@ calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 - [Changelog](CHANGELOG.md)
 - [Durable Functions documentation](https://learn.microsoft.com/azure/azure-functions/durable/)
 - [`durabletask` on PyPI](https://pypi.org/project/durabletask/)
+- [Azure Functions Durable 1.x source](https://github.com/Azure/azure-functions-durable-python)
+- [Azure Functions Python library](https://github.com/Azure/azure-functions-python-library)
+- [Azure Functions Python worker](https://github.com/Azure/azure-functions-python-worker)
 - [Repository](https://github.com/microsoft/durabletask-python)
 
 ## License
