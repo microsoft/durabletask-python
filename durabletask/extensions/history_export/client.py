@@ -534,7 +534,7 @@ class AsyncExportHistoryClient:
         if meta is None:
             return None
         state = meta.get_typed_state()
-        if not isinstance(state, dict):
+        if not isinstance(state, dict) or not state:
             return None
         return ExportJobDescription.from_state_dict(job_id, cast("dict[str, Any]", state))
 

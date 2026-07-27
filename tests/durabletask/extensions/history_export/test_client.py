@@ -13,6 +13,7 @@ from __future__ import annotations
 import gzip
 import json
 import threading
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -173,6 +174,16 @@ async def test_async_client_create_list_wait_and_delete(
 
         await export_client.delete_job(desc.job_id)
         assert await export_client.get_job(desc.job_id) is None
+
+
+async def test_async_client_get_job_returns_none_for_empty_state(writer):
+    dt_client = MagicMock()
+    metadata = MagicMock()
+    metadata.get_typed_state.return_value = {}
+    dt_client.get_entity = AsyncMock(return_value=metadata)
+    export_client = AsyncExportHistoryClient(dt_client, writer)
+
+    assert await export_client.get_job("empty-state") is None
 
 
 def test_get_job_returns_none_for_unknown_id(export_client):
