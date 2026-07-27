@@ -20,6 +20,8 @@ Usage:
 dependency of ``azure-functions-durable``, so no local build is required.
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import socket
