@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import azure.durable_functions as df
+import pytest
 from azure.durable_functions.constants import (
     ACTIVITY_TRIGGER,
     DURABLE_CLIENT,
@@ -145,6 +146,17 @@ async def test_durable_client_input_sync_injects_sync_client():
     assert await fb._function._func(client="{}") == "SyncDurableFunctionsClient"
     assert await fb._function._func(client="{}") == "SyncDurableFunctionsClient"
     assert clients[0] is clients[1]
+
+
+async def test_durable_client_input_rejects_missing_binding_parameter():
+    app = df.DFApp()
+
+    async def starter(other):
+        return other
+
+    fb = app.durable_client_input(client_name="client")(starter)
+    with pytest.raises(TypeError, match="binding parameter 'client' is not declared"):
+        await fb._function._func(other="{}")
 
 
 # ---------------------------------------------------------------------------

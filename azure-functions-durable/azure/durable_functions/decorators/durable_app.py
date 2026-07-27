@@ -411,6 +411,10 @@ class Blueprint(TriggerApi, BindingApi):
             @wraps(function)
             async def client_bound(*args: Any, **kwargs: Any) -> Any:
                 bound = signature.bind(*args, **kwargs)
+                if client_name not in bound.arguments:
+                    raise TypeError(
+                        f"durable client binding parameter '{client_name}' is not "
+                        f"declared by function '{function.__name__}'")
                 raw_client = bound.arguments[client_name]
                 if not isinstance(raw_client, str):
                     raise TypeError(
