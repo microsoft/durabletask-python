@@ -112,13 +112,18 @@ jobs:
 
       - name: Install Azurite and Azure Functions Core Tools
         run: |
-          npm install -g azurite
+          npm install -g azurite@latest
           npm install -g azure-functions-core-tools@4 --unsafe-perm true
 
       - name: Start Azurite
         shell: bash
+        # The DurableTask.AzureStorage provider in recent extension bundles uses
+        # a newer Azure Storage REST API version than the CI Azurite build
+        # recognizes, which otherwise fails task-hub creation with "The API
+        # version ... is not supported by Azurite". ``--skipApiVersionCheck``
+        # bypasses that guard so the durable provider can talk to Azurite.
         run: |
-          azurite --silent --location /tmp/azurite --blobPort 10000 --queuePort 10001 --tablePort 10002 &
+          azurite --silent --skipApiVersionCheck --location /tmp/azurite --blobPort 10000 --queuePort 10001 --tablePort 10002 &
           sleep 2
 
       - name: Install nox
