@@ -14,8 +14,8 @@ instead -- a method the extension does implement.
 > This shim exists only because the Durable Functions host extension does not
 > yet implement ``ListInstanceIds``. Once it does, delete this module and have
 > :meth:`DFApp.configure_history_export` register the core
-> ``durabletask.extensions.history_export.activities.list_terminal_instances``
-> activity directly.
+> ``durabletask.extensions.history_export.activities.run_list_terminal_instances``
+> body (via a client-bound wrapper like the export one below) directly.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
-from durabletask import task
 from durabletask.client import (
     OrchestrationQuery,
     OrchestrationStatus,
@@ -38,9 +37,7 @@ from durabletask.extensions.history_export._internal import dt_from_iso
 from durabletask.extensions.history_export.activities import (
     EXPORT_INSTANCE_HISTORY_ACTIVITY,
     HistoryExportContext,
-    _require_context,  # pyright: ignore[reportPrivateUsage]
-    bind_context,
-    export_instance_history,
+    run_export_instance_history,
 )
 from durabletask.extensions.history_export.entity import ExportJobEntity
 from durabletask.extensions.history_export.models import (
@@ -63,7 +60,7 @@ LIST_TERMINAL_INSTANCES_ACTIVITY = "list_terminal_instances"
 
 
 def list_terminal_instances(
-        _: task.ActivityContext, input: Mapping[str, Any]) -> dict[str, Any]:
+        context: HistoryExportContext, input: Mapping[str, Any]) -> dict[str, Any]:
     """Enumerate terminal instances via ``QueryInstances``, one page at a time.
 
     Drop-in replacement for the core ``list_terminal_instances`` activity that
@@ -81,6 +78,10 @@ def list_terminal_instances(
     batch at a time (matching ``max_instances_per_batch``) instead of scheduling
     an export activity for every matching instance at once.
 
+    Like the core activity bodies, the resolved :class:`HistoryExportContext`
+    (client + writer) is passed in explicitly rather than read from a
+    process-global.
+
     > [!IMPORTANT]
     > This is experimental and intended for bounded, low-volume batch-export
     > windows. Because each batch re-scans and re-sorts the whole terminal
@@ -90,8 +91,6 @@ def list_terminal_instances(
     > API (e.g. ``ListInstanceIds``) that the Durable Functions host extension
     > does not yet implement.
     """
-    ctx = _require_context()
-
     raw_statuses = input.get("runtime_status")
     runtime_status_names: Optional[list[str]] = (
         list(raw_statuses) if raw_statuses is not None else None
@@ -110,7 +109,7 @@ def list_terminal_instances(
     if runtime_status_names is not None:
         runtime_status = [OrchestrationStatus[name] for name in runtime_status_names]
 
-    states = ctx.client.get_all_orchestration_states(
+    states = context.client.get_all_orchestration_states(
         OrchestrationQuery(runtime_status=runtime_status))
 
     instance_ids: list[str] = []
@@ -149,14 +148,19 @@ def list_terminal_instances(
 # a scaled-out, multi-worker deployment. The writer is user-supplied and not
 # host-injectable, so it is registered once at app configuration time (which
 # runs in every worker process on import) and reused.
+#
+# The core export activities take their resolved ``HistoryExportContext``
+# explicitly (per invocation), so this adapter simply builds that context from
+# the injected client + configured writer and passes it in -- no process-global
+# ``bind_context`` is involved. The built context is cached per process because
+# the endpoint and writer are stable for the app's lifetime.
 # ---------------------------------------------------------------------------
 
 _export_writer: Optional[HistoryWriter] = None
-_context_bound = False
-# The process-wide sync client bound into the export context, retained so it can
-# be closed at interpreter exit. Guarded by ``_context_lock`` together with the
-# first-bind race.
-_sync_export_client: Optional[TaskHubGrpcClient] = None
+# The per-process export context (sync client + writer), built lazily from the
+# first injected durable client and reused across every export activity. Guarded
+# by ``_context_lock`` for the first-build race; its client is closed at exit.
+_export_context: Optional[HistoryExportContext] = None
 _context_lock = threading.Lock()
 
 
@@ -197,62 +201,58 @@ def _build_sync_client(client: Any) -> TaskHubGrpcClient:
 def _close_sync_export_client() -> None:
     """Close the process-wide sync export client (registered via ``atexit``).
 
-    The client is bound once per worker process and reused across every export
+    The client is built once per worker process and reused across every export
     activity, so it lives for the app's lifetime; closing it at interpreter
     exit releases its gRPC channel on graceful shutdown. Idempotent and
     exception-safe -- shutdown must never surface an error from cleanup.
     """
-    global _sync_export_client
+    global _export_context
     with _context_lock:
-        client = _sync_export_client
-        _sync_export_client = None
-    if client is not None:
+        context = _export_context
+        _export_context = None
+    if context is not None:
         try:
-            client.close()
+            context.client.close()
         except Exception:
             pass
 
 
-def _ensure_context_bound(client: Any) -> None:
-    """Bind the export activity context once per worker process (lazily).
+def _context_for(client: Any) -> HistoryExportContext:
+    """Return the per-process export context, building it once from *client*.
 
     Uses the per-invocation injected client to build the synchronous client and
-    pairs it with the configured writer. Binding is idempotent per process: the
+    pairs it with the configured writer. The result is cached per process: the
     endpoint and writer are stable for the app's lifetime, so the first
     invocation in each process establishes the context for the rest. A lock
-    guards the first-bind race so concurrent fan-out activities do not each open
+    guards the first-build race so concurrent fan-out activities do not each open
     a channel; the built client is closed at process exit.
     """
-    global _context_bound, _sync_export_client
-    if _context_bound:
-        return
+    global _export_context
+    if _export_context is not None:
+        return _export_context
     with _context_lock:
-        if _context_bound:
-            return
-        if _export_writer is None:
-            raise RuntimeError(
-                "history export writer is not configured; pass a writer to "
-                "DFApp.configure_history_export(writer=...) at app startup")
-        sync_client = _build_sync_client(client)
-        _sync_export_client = sync_client
-        atexit.register(_close_sync_export_client)
-        bind_context(HistoryExportContext(
-            client=sync_client, writer=_export_writer))
-        _context_bound = True
+        if _export_context is None:
+            if _export_writer is None:
+                raise RuntimeError(
+                    "history export writer is not configured; pass a writer to "
+                    "DFApp.configure_history_export(writer=...) at app startup")
+            context = HistoryExportContext(
+                client=_build_sync_client(client), writer=_export_writer)
+            atexit.register(_close_sync_export_client)
+            _export_context = context
+    return _export_context
 
 
 def list_terminal_instances_client_bound(
         input: Mapping[str, Any], client: Any) -> dict[str, Any]:
     """``list_terminal_instances`` with the client injected per-invocation."""
-    _ensure_context_bound(client)
-    return list_terminal_instances(task.ActivityContext("", 0), input)
+    return list_terminal_instances(_context_for(client), input)
 
 
 def export_instance_history_client_bound(
         input: Mapping[str, Any], client: Any) -> dict[str, Any]:
     """``export_instance_history`` with the client injected per-invocation."""
-    _ensure_context_bound(client)
-    return export_instance_history(task.ActivityContext("", 0), input)
+    return run_export_instance_history(_context_for(client), input)
 
 
 # The host indexer rejects parameterized generics on trigger parameters and
