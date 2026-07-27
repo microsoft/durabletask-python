@@ -13,6 +13,7 @@ ADDED
 
 CHANGED
 
+- Importing `durabletask` no longer eagerly imports the worker implementation and its dependencies (gRPC, protobuf, entities, serialization, OpenTelemetry). The public names re-exported from the package — `ActivityWorkItemFilter`, `ConcurrencyOptions`, `EntityWorkItemFilter`, `GrpcChannelOptions`, `GrpcRetryPolicyOptions`, `LargePayloadStorageOptions`, `OrchestrationWorkItemFilter`, `PayloadStore`, `VersioningOptions`, and `WorkItemFilters` — are now resolved on first use, so `import durabletask` is substantially faster and loads far fewer modules. This measurably reduces cold-start time for client-only applications, including those using `durabletask.azuremanaged`, which shares the same `durabletask` namespace. All existing import paths, `__all__`, `dir()`, and star-imports behave exactly as before.
 - **Breaking:** `FailureDetails.error_type` — and the `errorType` value sent over the wire — is now the fully-qualified type name (`module.ClassName`, e.g. `builtins.ValueError`, `durabletask.task.TaskFailedError`) instead of the bare class name, matching the .NET and Java SDKs. Code that compared `error_type` against a bare name (for example `== "ValueError"`) must be updated to the qualified name or, preferably, switched to `FailureDetails.is_caused_by()`. Because this value is persisted and crosses the orchestration boundary, failures produced by older workers may still carry a bare name; `is_caused_by()` accepts both.
 
 ## v1.8.0

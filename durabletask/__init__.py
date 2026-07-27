@@ -3,16 +3,19 @@
 
 """Durable Task SDK for Python"""
 
-from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
-from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
-from durabletask.worker import (
-    ActivityWorkItemFilter,
-    ConcurrencyOptions,
-    EntityWorkItemFilter,
-    OrchestrationWorkItemFilter,
-    VersioningOptions,
-    WorkItemFilters,
-)
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
+    from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
+    from durabletask.worker import (
+        ActivityWorkItemFilter,
+        ConcurrencyOptions,
+        EntityWorkItemFilter,
+        OrchestrationWorkItemFilter,
+        VersioningOptions,
+        WorkItemFilters,
+    )
 
 __all__ = [
     "ActivityWorkItemFilter",
@@ -28,3 +31,41 @@ __all__ = [
 ]
 
 PACKAGE_NAME = "durabletask"
+
+# Public names are resolved lazily so that merely importing the ``durabletask``
+# package - which also happens implicitly when importing anything from the
+# ``durabletask.azuremanaged`` distribution, since both share this namespace -
+# does not pull in the worker dependency graph (gRPC, protobuf, entities,
+# serialization, OpenTelemetry). Client-only applications would otherwise pay
+# that cost at process startup.
+_LAZY_EXPORTS: dict[str, str] = {
+    "ActivityWorkItemFilter": "durabletask.worker",
+    "ConcurrencyOptions": "durabletask.worker",
+    "EntityWorkItemFilter": "durabletask.worker",
+    "GrpcChannelOptions": "durabletask.grpc_options",
+    "GrpcRetryPolicyOptions": "durabletask.grpc_options",
+    "LargePayloadStorageOptions": "durabletask.payload.store",
+    "OrchestrationWorkItemFilter": "durabletask.worker",
+    "PayloadStore": "durabletask.payload.store",
+    "VersioningOptions": "durabletask.worker",
+    "WorkItemFilters": "durabletask.worker",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Import and return a lazily exported public name (PEP 562)."""
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    from importlib import import_module
+
+    value = getattr(import_module(module_name), name)
+    # Cache on the module so subsequent lookups bypass this hook entirely.
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    """Include lazily exported names that have not been resolved yet."""
+    return sorted(set(globals()) | set(__all__))
