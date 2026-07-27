@@ -3,8 +3,8 @@
 
 import logging
 
-from durabletask.client import (EntityQuery, OrchestrationStatus,
-                                TaskHubGrpcClient)
+from durabletask.client import (AsyncTaskHubGrpcClient, EntityQuery,
+                                OrchestrationStatus, TaskHubGrpcClient)
 from durabletask.entities import EntityInstanceId
 from durabletask.internal.helpers import ensure_aware
 from durabletask.scheduled import transitions
@@ -131,13 +131,13 @@ class ScheduledTaskClient:
             state = metadata.get_typed_state(ScheduleState)
             if state is None or state.schedule_configuration is None:
                 continue
-            if not self._matches_filter(state, schedule_query):
+            if not self.matches_filter(state, schedule_query):
                 continue
             results.append(state.to_description())
         return results
 
     @staticmethod
-    def _matches_filter(state: ScheduleState, schedule_query: ScheduleQuery | None) -> bool:
+    def matches_filter(state: ScheduleState, schedule_query: ScheduleQuery | None) -> bool:
         if schedule_query is None:
             return True
         if schedule_query.status is not None and state.status != schedule_query.status:
@@ -152,3 +152,127 @@ class ScheduledTaskClient:
         if schedule_query.created_to is not None and not (created_at and created_at < schedule_query.created_to):
             return False
         return True
+
+
+class AsyncScheduleClient:
+    """Asynchronous client for managing a single schedule instance."""
+
+    def __init__(self, client: AsyncTaskHubGrpcClient, schedule_id: str,
+                 *, operation_timeout: float = 60):
+        if not schedule_id:
+            raise ValueError("schedule_id cannot be empty.")
+        self._client = client
+        self._schedule_id = schedule_id
+        self._entity_id = EntityInstanceId(ENTITY_NAME, schedule_id)
+        self._operation_timeout = operation_timeout
+
+    @property
+    def schedule_id(self) -> str:
+        """Gets the ID of this schedule."""
+        return self._schedule_id
+
+    async def _run_operation(
+            self,
+            operation_name: str,
+            input: object | None = None) -> None:
+        request = ScheduleOperationRequest(
+            entity_id=str(self._entity_id),
+            operation_name=operation_name,
+            input=input,
+        )
+        instance_id = await self._client.schedule_new_orchestration(
+            execute_schedule_operation_orchestrator, input=request)
+        state = await self._client.wait_for_orchestration_completion(
+            instance_id, timeout=self._operation_timeout)
+        if state is None or state.runtime_status != OrchestrationStatus.COMPLETED:
+            failure = state.failure_details if state else None
+            message = failure.message if failure else "unknown error"
+            raise RuntimeError(
+                f"Failed to '{operation_name}' schedule '{self._schedule_id}': {message}")
+
+    async def create(self, options: ScheduleCreationOptions) -> None:
+        """Create or update this schedule with the given configuration."""
+        await self._run_operation(transitions.CREATE_SCHEDULE, options)
+
+    async def update(self, options: ScheduleUpdateOptions) -> None:
+        """Update this schedule's configuration."""
+        await self._run_operation(transitions.UPDATE_SCHEDULE, options)
+
+    async def pause(self) -> None:
+        """Pause this schedule."""
+        await self._run_operation(transitions.PAUSE_SCHEDULE)
+
+    async def resume(self) -> None:
+        """Resume this schedule."""
+        await self._run_operation(transitions.RESUME_SCHEDULE)
+
+    async def delete(self) -> None:
+        """Delete this schedule."""
+        await self._run_operation(DELETE_OPERATION)
+
+    async def describe(self) -> ScheduleDescription:
+        """Retrieve the current details of this schedule."""
+        metadata = await self._client.get_entity(self._entity_id, include_state=True)
+        if metadata is None:
+            raise ScheduleNotFoundError(self._schedule_id)
+        state = metadata.get_typed_state(ScheduleState)
+        if state is None:
+            raise ScheduleNotFoundError(self._schedule_id)
+        return state.to_description()
+
+
+class AsyncScheduledTaskClient:
+    """Asynchronous client for managing scheduled tasks."""
+
+    def __init__(
+            self,
+            client: AsyncTaskHubGrpcClient,
+            *,
+            operation_timeout: float = 60):
+        self._client = client
+        self._operation_timeout = operation_timeout
+
+    def get_schedule_client(self, schedule_id: str) -> AsyncScheduleClient:
+        """Get an asynchronous handle for a specific schedule."""
+        return AsyncScheduleClient(
+            self._client, schedule_id, operation_timeout=self._operation_timeout)
+
+    async def create_schedule(
+            self,
+            options: ScheduleCreationOptions,
+    ) -> AsyncScheduleClient:
+        """Create a new schedule and return a client for managing it."""
+        schedule_client = self.get_schedule_client(options.schedule_id)
+        await schedule_client.create(options)
+        return schedule_client
+
+    async def get_schedule(self, schedule_id: str) -> ScheduleDescription | None:
+        """Get a schedule description by ID, or None if it does not exist."""
+        try:
+            return await self.get_schedule_client(schedule_id).describe()
+        except ScheduleNotFoundError:
+            return None
+
+    async def list_schedules(
+            self,
+            schedule_query: ScheduleQuery | None = None,
+    ) -> list[ScheduleDescription]:
+        """List schedules matching the given filter criteria."""
+        prefix = schedule_query.schedule_id_prefix if schedule_query and schedule_query.schedule_id_prefix else ""
+        page_size = (schedule_query.page_size if schedule_query and schedule_query.page_size
+                     else ScheduleQuery.DEFAULT_PAGE_SIZE)
+        query = EntityQuery(
+            instance_id_starts_with=f"@{ENTITY_NAME}@{prefix}",
+            include_state=True,
+            page_size=page_size,
+        )
+        results: list[ScheduleDescription] = []
+        for metadata in await self._client.get_all_entities(query):
+            state = metadata.get_typed_state(ScheduleState)
+            if (
+                    state is not None
+                    and state.schedule_configuration is not None
+                    and ScheduledTaskClient.matches_filter(state, schedule_query)
+            ):
+                results.append(state.to_description())
+        return results
