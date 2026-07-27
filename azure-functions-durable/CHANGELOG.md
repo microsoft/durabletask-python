@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ADDED
 
 - Added `SyncDurableFunctionsClient` and
-  `DFApp.durable_client_input_sync()` for synchronous durable-client functions.
-  Both synchronous and asynchronous Functions durable clients can now use the
-  scheduled-tasks and history-export client APIs without an async-to-sync bridge.
+`DFApp.durable_client_input_sync()` for synchronous durable-client functions.
+Both synchronous and asynchronous Functions durable clients can now use the
+scheduled-tasks and history-export client APIs without an async-to-sync bridge.
 
 ## 2.0.0b1
 
