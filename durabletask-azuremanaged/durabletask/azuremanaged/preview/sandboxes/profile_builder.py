@@ -7,7 +7,6 @@ from typing import Iterable, Optional
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.preview.sandboxes.helpers import (
     SandboxActivity,
-    activities_overlap,
     format_activity,
     normalize_required,
     resolve_activities,
@@ -91,22 +90,109 @@ def _build_sandbox_worker_profile(
     return worker_profile
 
 
+class _ActivityOwnerSlot:
+    """Earliest worker profiles recorded for a single activity overlap bucket.
+
+    Only two owners ever need to be retained to answer "which worker profile
+    first claimed an activity in this bucket, ignoring `worker_profile_id`":
+    the very first owner, plus the first owner that differs from it.
+    """
+
+    __slots__ = ("_first", "_first_other")
+
+    def __init__(self) -> None:
+        self._first: Optional[tuple[int, str]] = None
+        self._first_other: Optional[tuple[int, str]] = None
+
+    def add(self, order: int, worker_profile_id: str) -> None:
+        if self._first is None:
+            self._first = (order, worker_profile_id)
+        elif self._first_other is None and worker_profile_id != self._first[1]:
+            self._first_other = (order, worker_profile_id)
+
+    def first_owner_other_than(self, worker_profile_id: str) -> Optional[tuple[int, str]]:
+        if self._first is not None and self._first[1] != worker_profile_id:
+            return self._first
+        return self._first_other
+
+
+class _ActivityOwnerIndex:
+    """Indexes activity ownership so overlap checks cost O(1) per activity.
+
+    Reproduces the semantics of
+    :func:`durabletask.azuremanaged.preview.sandboxes.helpers.activities_overlap`
+    exactly: activity names are compared case insensitively, an unversioned
+    activity overlaps every version of the same name, and two activities with
+    the same name overlap when their explicit versions are equal. Registration
+    order is tracked so the reported conflict matches the first overlapping
+    activity, exactly as a linear scan would report it.
+    """
+
+    def __init__(self) -> None:
+        self._registration_count = 0
+        self._by_name: dict[str, _ActivityOwnerSlot] = {}
+        self._by_name_and_version: dict[tuple[str, Optional[str]], _ActivityOwnerSlot] = {}
+
+    def find_conflicting_profile(
+            self,
+            activity: SandboxActivity,
+            worker_profile_id: str) -> Optional[str]:
+        """Return the profile that first claimed an overlapping activity, if any."""
+        name_key = activity.name.casefold()
+        if activity.version is None:
+            # An unversioned activity overlaps every version of the same name.
+            owner = _first_owner_other_than(self._by_name.get(name_key), worker_profile_id)
+        else:
+            # A versioned activity overlaps the same version plus any
+            # unversioned registration of the same name.
+            owner = _earlier_owner(
+                _first_owner_other_than(
+                    self._by_name_and_version.get((name_key, None)), worker_profile_id),
+                _first_owner_other_than(
+                    self._by_name_and_version.get((name_key, activity.version)), worker_profile_id))
+        return None if owner is None else owner[1]
+
+    def add(self, activity: SandboxActivity, worker_profile_id: str) -> None:
+        """Record `worker_profile_id` as an owner of `activity`."""
+        name_key = activity.name.casefold()
+        order = self._registration_count
+        self._registration_count += 1
+        self._by_name.setdefault(name_key, _ActivityOwnerSlot()).add(order, worker_profile_id)
+        self._by_name_and_version.setdefault(
+            (name_key, activity.version), _ActivityOwnerSlot()).add(order, worker_profile_id)
+
+
+def _first_owner_other_than(
+        slot: Optional[_ActivityOwnerSlot],
+        worker_profile_id: str) -> Optional[tuple[int, str]]:
+    return None if slot is None else slot.first_owner_other_than(worker_profile_id)
+
+
+def _earlier_owner(
+        left: Optional[tuple[int, str]],
+        right: Optional[tuple[int, str]]) -> Optional[tuple[int, str]]:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left if left[0] <= right[0] else right
+
+
 def build_sandbox_worker_profiles() -> list[pb.SandboxWorkerProfile]:
     """Build sandbox worker_profiles from worker profile configuration."""
     worker_profiles: list[pb.SandboxWorkerProfile] = []
-    activity_owners: list[tuple[SandboxActivity, str]] = []
+    activity_owners = _ActivityOwnerIndex()
     for profile in registered_sandbox_worker_profiles():
         activities = resolve_activities(profile.activities)
 
         for activity in activities:
-            existing_profile = next((owner_profile for owner_activity, owner_profile in activity_owners
-                                     if activities_overlap(owner_activity, activity)
-                                     and owner_profile != profile.worker_profile_id), None)
+            existing_profile = activity_owners.find_conflicting_profile(
+                activity, profile.worker_profile_id)
             if existing_profile:
                 raise ValueError(
                     f"Sandbox activity '{format_activity(activity)}' is assigned to both worker profile "
                     f"'{existing_profile}' and '{profile.worker_profile_id}'.")
-            activity_owners.append((activity, profile.worker_profile_id))
+            activity_owners.add(activity, profile.worker_profile_id)
 
         worker_profiles.append(_build_sandbox_worker_profile(
             activities=activities,
