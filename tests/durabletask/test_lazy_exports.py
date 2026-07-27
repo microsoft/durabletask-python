@@ -115,6 +115,9 @@ def test_importing_package_does_not_import_grpc_or_protobuf():
 
 def test_importing_azuremanaged_client_does_not_import_worker():
     """The Azure managed client shares the namespace but is client-only."""
+    # The provider is distributed separately and is not installed in every CI
+    # job that runs this suite, so skip rather than fail where it is absent.
+    pytest.importorskip("durabletask.azuremanaged")
     result = _run_python(
         "import sys\n"
         "import durabletask.azuremanaged.client\n"
