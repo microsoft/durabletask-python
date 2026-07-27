@@ -32,15 +32,16 @@ its query packs, so it is not included in the local `ci` session.
 
 For iterative validation, use `-R` to reuse the session virtual environment.
 The local packages are editable in test sessions, so source changes are picked
-up without reinstalling. Pass file paths, test node IDs, or pytest selectors
-after `--`; Nox forwards them unchanged to the underlying tool. Multiple paths
-and selectors are supported.
+up without reinstalling. Pass file or directory paths after `--` to lint and
+type-check sessions. Pytest-based sessions also accept test node IDs and pytest
+selectors such as `-k`. Nox forwards these arguments unchanged to the
+underlying tool, and multiple paths or selectors are supported.
 
 For a focused change, run just the relevant session:
 
 ```sh
 nox -R -s lint -- durabletask/client.py tests/durabletask/test_client.py
-nox -R -s typecheck_core -- durabletask/client.py examples/history_export
+nox -R -s typecheck_core -- durabletask/client.py durabletask/extensions/history_export
 nox -R -s typecheck_functions -- azure-functions-durable/azure
 nox -R -s core_tests-3.10 -- tests/durabletask/test_client.py::test_get_grpc_channel_insecure
 nox -R -s azuremanaged_tests-3.10 -- tests/durabletask-azuremanaged/test_dts_orchestration_e2e.py
