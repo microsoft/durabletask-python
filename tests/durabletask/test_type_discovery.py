@@ -3,10 +3,12 @@
 
 """Tests for annotation-based input type discovery and inbound coercion."""
 
+import inspect
 import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Optional
+from unittest.mock import patch
 
 from durabletask import entities, task, worker
 from durabletask.internal import type_discovery
@@ -197,6 +199,155 @@ class TestActivityOutputTypeDiscovery:
 
     def test_string_name_returns_none(self):
         assert type_discovery.activity_output_type("some_activity_name") is None
+
+
+# ----- signature-structure caching -----
+
+
+class _CountingConverter(JsonDataConverter):
+    """Records every ``can_reconstruct`` call so per-call evaluation is visible."""
+
+    def __init__(self):
+        self.seen: list[Any] = []
+
+    def can_reconstruct(self, target_type: Any) -> bool:
+        self.seen.append(target_type)
+        return super().can_reconstruct(target_type)
+
+
+class TestSignatureCaching:
+    """The signature *structure* is cached per callable, but the converter's
+    reconstructability decision is still made on every call."""
+
+    def test_signature_inspected_once_per_function(self):
+        def act(ctx, order: Order) -> Money:
+            ...
+
+        real_signature = inspect.signature
+        calls: list[Any] = []
+
+        def counting_signature(obj, *args, **kwargs):
+            calls.append(obj)
+            return real_signature(obj, *args, **kwargs)
+
+        with patch.object(inspect, "signature", counting_signature):
+            assert type_discovery.activity_input_type(act) is Order
+            after_first = len(calls)
+            for _ in range(5):
+                assert type_discovery.activity_input_type(act) is Order
+            # The input and output helpers share one cached structure, so the
+            # return annotation costs no additional inspection either.
+            assert type_discovery.activity_output_type(act) is Money
+            assert type_discovery.orchestrator_input_type(act) is Order
+
+        assert after_first >= 1
+        assert len(calls) == after_first, "signature() was re-inspected for a cached function"
+
+    def test_entity_operation_signature_inspected_once(self):
+        class Store(entities.DurableEntity):
+            def add(self, order: Order):
+                ...
+
+        real_signature = inspect.signature
+        calls: list[Any] = []
+
+        def counting_signature(obj, *args, **kwargs):
+            calls.append(obj)
+            return real_signature(obj, *args, **kwargs)
+
+        with patch.object(inspect, "signature", counting_signature):
+            assert type_discovery.entity_input_type(Store, "add") is Order
+            after_first = len(calls)
+            for _ in range(5):
+                assert type_discovery.entity_input_type(Store, "add") is Order
+
+        assert after_first >= 1
+        assert len(calls) == after_first
+
+    def test_converter_decision_is_made_per_call(self):
+        class Widget:
+            pass
+
+        class WidgetConverter(JsonDataConverter):
+            def can_reconstruct(self, target_type: Any) -> bool:
+                if isinstance(target_type, type) and issubclass(target_type, Widget):
+                    return True
+                return super().can_reconstruct(target_type)
+
+        def act(ctx, w: Widget) -> Widget:
+            ...
+
+        # Prime the cache with the converter that *does* recognize Widget, then
+        # switch back: the cached structure must not bake in the first answer.
+        assert type_discovery.activity_input_type(act, WidgetConverter()) is Widget
+        assert type_discovery.activity_input_type(act) is None
+        assert type_discovery.activity_input_type(act, WidgetConverter()) is Widget
+
+        assert type_discovery.activity_output_type(act, WidgetConverter()) is Widget
+        assert type_discovery.activity_output_type(act) is None
+        assert type_discovery.activity_output_type(act, WidgetConverter()) is Widget
+
+    def test_stateful_converter_answer_is_not_cached(self):
+        class Widget:
+            pass
+
+        class ToggleConverter(JsonDataConverter):
+            def __init__(self):
+                self.enabled = False
+
+            def can_reconstruct(self, target_type: Any) -> bool:
+                if self.enabled and target_type is Widget:
+                    return True
+                return super().can_reconstruct(target_type)
+
+        def act(ctx, w: Widget):
+            ...
+
+        converter = ToggleConverter()
+        assert type_discovery.activity_input_type(act, converter) is None
+        converter.enabled = True
+        assert type_discovery.activity_input_type(act, converter) is Widget
+        converter.enabled = False
+        assert type_discovery.activity_input_type(act, converter) is None
+
+    def test_converter_is_consulted_on_every_call(self):
+        def act(ctx, order: Order) -> Order:
+            ...
+
+        converter = _CountingConverter()
+        for _ in range(3):
+            assert type_discovery.activity_input_type(act, converter) is Order
+        assert converter.seen == [Order, Order, Order]
+
+        converter.seen.clear()
+        for _ in range(3):
+            assert type_discovery.activity_output_type(act, converter) is Order
+        assert converter.seen == [Order, Order, Order]
+
+    def test_unannotated_parameters_are_not_offered_to_the_converter(self):
+        def act(ctx, value, *args, keyword_only: Order = None, **kwargs):
+            ...
+
+        converter = _CountingConverter()
+        assert type_discovery.activity_input_type(act, converter) is None
+        # *args/**kwargs and keyword-only parameters are not positional inputs,
+        # and an unannotated parameter never reaches the converter at all.
+        assert converter.seen == []
+
+    def test_unhashable_callable_still_resolves(self):
+        class Callable_:
+            # Defining __eq__ without __hash__ makes instances unhashable, so
+            # they cannot be used as a cache key.
+            def __eq__(self, other):
+                return self is other
+
+            def __call__(self, ctx, order: Order) -> Order:
+                ...
+
+        act = Callable_()
+        assert type_discovery.activity_input_type(act) is Order
+        assert type_discovery.activity_input_type(act) is Order
+        assert type_discovery.activity_output_type(act) is Order
 
 
 # ----- activity executor inbound coercion -----

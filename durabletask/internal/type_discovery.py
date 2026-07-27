@@ -27,7 +27,7 @@ from __future__ import annotations
 import functools
 import inspect
 import typing
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 from durabletask.serialization import DEFAULT_DATA_CONVERTER, DataConverter
 
@@ -37,21 +37,105 @@ def _resolve_converter(converter: DataConverter | None) -> DataConverter:
     return converter if converter is not None else DEFAULT_DATA_CONVERTER
 
 
+def _resolve_hints(fn: Callable[..., Any]) -> dict[str, Any] | None:
+    """Resolve a function's type hints, honoring postponed annotations."""
+    try:
+        return typing.get_type_hints(fn)
+    except Exception:
+        return None
+
+
 # Bounded so a worker that registers dynamically-created functions or closures
 # cannot accumulate cache entries unboundedly over the process lifetime. The
 # common case (a fixed set of module-level orchestrators/activities) fits well
 # within this bound.
 @functools.lru_cache(maxsize=2048)
 def _resolved_hints(fn: Callable[..., Any]) -> dict[str, Any] | None:
-    """Resolve a function's type hints, honoring postponed annotations.
+    """Memoized :func:`_resolve_hints`.
 
     Results are memoized per function because discovery runs on every
     orchestrator/activity/entity execution (including replay).
     """
+    return _resolve_hints(fn)
+
+
+# Sentinel for "there is no annotation here worth asking the converter about"
+# (parameter absent, unannotated, ``Any``, or an unresolvable string
+# annotation). It is deliberately distinct from ``None`` so that a literal
+# ``None`` annotation still reaches the converter exactly as before.
+_NO_ANNOTATION: Any = object()
+
+
+class _SignatureInfo(NamedTuple):
+    """The converter-independent shape of a callable's signature.
+
+    ``positional`` holds the resolved annotation of each positional parameter in
+    declaration order, and ``return_annotation`` the resolved return annotation.
+    Entries are :data:`_NO_ANNOTATION` when there is nothing to reconstruct.
+
+    This depends only on the callable, so it is safe to memoize. The
+    converter-dependent decision (:meth:`DataConverter.can_reconstruct`) is
+    deliberately *not* part of it and stays at call time, so the same function
+    discovered through two different converters still gets two answers.
+    """
+
+    positional: tuple[Any, ...]
+    return_annotation: Any
+
+
+def _resolve_annotation(raw: Any, name: str, hints: dict[str, Any] | None) -> Any:
+    """Resolve one raw annotation, or return :data:`_NO_ANNOTATION`."""
+    annotation: Any = raw
+    if hints is not None and name in hints:
+        annotation = hints[name]
+    elif isinstance(annotation, str):
+        # Could not resolve a postponed (string) annotation -- give up.
+        return _NO_ANNOTATION
+
+    if annotation is inspect.Parameter.empty or annotation is Any:
+        return _NO_ANNOTATION
+    return annotation
+
+
+def _build_signature_info(fn: Any, *, memoized: bool) -> _SignatureInfo | None:
+    """Inspect ``fn`` and resolve its annotations, or return ``None``."""
     try:
-        return typing.get_type_hints(fn)
-    except Exception:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
         return None
+
+    hints = _resolved_hints(fn) if memoized else _resolve_hints(fn)
+    positional = tuple(
+        _resolve_annotation(p.annotation, p.name, hints)
+        for p in sig.parameters.values()
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                      inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    )
+    return_annotation = _resolve_annotation(sig.return_annotation, "return", hints)
+    if return_annotation is None:
+        return_annotation = _NO_ANNOTATION
+    return _SignatureInfo(positional, return_annotation)
+
+
+@functools.lru_cache(maxsize=2048)
+def _memoized_signature_info(fn: Any) -> _SignatureInfo | None:
+    return _build_signature_info(fn, memoized=True)
+
+
+def _signature_info(fn: Any) -> _SignatureInfo | None:
+    """Return ``fn``'s resolved signature shape, or ``None`` when unavailable.
+
+    ``inspect.signature()`` and annotation resolution are comparatively
+    expensive and their result depends only on the callable, so the result is
+    memoized: discovery runs once per work item, and a worker executes the same
+    registered functions over and over.
+    """
+    try:
+        return _memoized_signature_info(fn)
+    except TypeError:
+        # Unhashable callable, so it cannot be used as a cache key. Fall back to
+        # computing the shape on every call rather than failing.
+        return _build_signature_info(fn, memoized=False)
 
 
 def _input_annotation(fn: Callable[..., Any], position: int,
@@ -64,29 +148,12 @@ def _input_annotation(fn: Callable[..., Any], position: int,
     position 1). Returns ``None`` when the parameter is absent, unannotated, or
     its annotation is not reconstructable by ``converter``.
     """
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
+    info = _signature_info(fn)
+    if info is None or position >= len(info.positional):
         return None
 
-    positional = [
-        p for p in sig.parameters.values()
-        if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                      inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    if position >= len(positional):
-        return None
-    param = positional[position]
-
-    annotation: Any = param.annotation
-    hints = _resolved_hints(fn)
-    if hints is not None and param.name in hints:
-        annotation = hints[param.name]
-    elif isinstance(annotation, str):
-        # Could not resolve a postponed (string) annotation -- give up.
-        return None
-
-    if annotation is inspect.Parameter.empty or annotation is Any:
+    annotation = info.positional[position]
+    if annotation is _NO_ANNOTATION:
         return None
     return annotation if _resolve_converter(converter).can_reconstruct(annotation) else None
 
@@ -114,20 +181,13 @@ def activity_output_type(fn: Any, converter: DataConverter | None = None) -> Any
     """
     if not callable(fn):
         return None
-    try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):
+
+    info = _signature_info(fn)
+    if info is None:
         return None
 
-    annotation: Any = sig.return_annotation
-    hints = _resolved_hints(fn)
-    if hints is not None and "return" in hints:
-        annotation = hints["return"]
-    elif isinstance(annotation, str):
-        # Could not resolve a postponed (string) annotation -- give up.
-        return None
-
-    if annotation is inspect.Signature.empty or annotation is Any or annotation is None:
+    annotation = info.return_annotation
+    if annotation is _NO_ANNOTATION:
         return None
     return annotation if _resolve_converter(converter).can_reconstruct(annotation) else None
 
