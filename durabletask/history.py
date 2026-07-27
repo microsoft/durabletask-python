@@ -433,14 +433,20 @@ def _to_serializable(value: Any) -> Any:
     if value_type is list:
         return [_to_serializable(item) for item in value]
     if value_type is dict:
-        # ``asdict`` recursed into keys but the conversion pass that followed
-        # it did not, so keys get ``asdict`` semantics only. Native keys are
-        # returned as-is because ``asdict`` leaves those untouched too.
-        return {
-            (key if type(key) in _JSON_NATIVE_TYPES else _asdict_only(key)):
-                _to_serializable(item)
-            for key, item in value.items()
-        }
+        # ``asdict`` rebuilt keys and collapsed any that compared equal
+        # afterwards, and only then did the conversion pass run, so a value
+        # whose entry lost a collision was never converted. Converting
+        # inline would visit those dropped entries, which is observable if
+        # conversion raises or has side effects. Only a key that ``asdict``
+        # would rebuild can collide -- native keys pass through untouched
+        # and a mapping's keys are already distinct -- so the presence of
+        # one is the signal to hand the whole mapping to the legacy path.
+        # This is checked before any value is converted, because bailing
+        # out partway would already have visited earlier entries.
+        for key in value:
+            if type(key) not in _JSON_NATIVE_TYPES:
+                return _legacy_compat(value)
+        return {key: _to_serializable(item) for key, item in value.items()}
     return _legacy_compat(value)
 
 

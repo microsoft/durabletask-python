@@ -610,6 +610,34 @@ class _ClassSpoofer:
         return f'_ClassSpoofer({self.tag!r})'
 
 
+class _CollidingKey:
+    """Distinct keys that all deep-copy to the same value.
+
+    ``asdict`` rebuilt keys before anything was converted, so entries that
+    collided after reconstruction were dropped and their values never
+    reached the conversion pass.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> str:
+        return 'same-key'
+
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _CollidingKey) and other.name == self.name
+
+
+class _ThrowingIsoDatetime(datetime):
+    """A value that can be deep-copied but cannot be converted."""
+
+    def isoformat(self, *args: Any, **kwargs: Any) -> str:
+        raise ValueError('isoformat exploded')
+
+
 _EXOTIC_PAYLOADS = [
     pytest.param(_OddIsoDatetime(2024, 1, 2, 3, 4, 5), id='datetime-subclass'),
     pytest.param(
@@ -637,6 +665,17 @@ _EXOTIC_PAYLOADS = [
     pytest.param(b'abc', id='bytes'),
     pytest.param(_MutableLeaf(1), id='custom-object'),
     pytest.param(_ClassSpoofer('t'), id='class-spoofing-object'),
+    pytest.param(
+        {
+            _CollidingKey('first'): _ThrowingIsoDatetime(2024, 1, 2, 3, 4, 5),
+            _CollidingKey('second'): 'survivor',
+        },
+        id='colliding-keys-discard-a-throwing-value',
+    ),
+    pytest.param(
+        {_CollidingKey('a'): 1, _CollidingKey('b'): 2},
+        id='colliding-keys-last-entry-wins',
+    ),
 ]
 
 
@@ -818,6 +857,37 @@ class TestLegacyCompatibility:
         assert type(exported) is _ClassSpoofer
         assert exported.tag == 't'
         assert _legacy_to_dict(event)['orchestration_state']['value'] is not spoofer
+
+    def test_colliding_keys_discard_their_value_before_conversion(self) -> None:
+        """Key reconstruction must finish before any value is converted.
+
+        ``asdict`` rebuilt the mapping first, so the entry that lost the
+        collision disappeared and its value was never handed to the
+        conversion pass. Converting values inline, as they are iterated,
+        visits that discarded value instead -- which is observable here
+        because converting it raises.
+        """
+        discarded = _ThrowingIsoDatetime(2024, 1, 2, 3, 4, 5)
+        event = _state_event({
+            _CollidingKey('first'): discarded,
+            _CollidingKey('second'): 'survivor',
+        })
+
+        expected = _legacy_to_dict(event)['orchestration_state']['value']
+        assert expected == {'same-key': 'survivor'}
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert exported == expected
+
+    def test_colliding_keys_keep_the_last_entry(self) -> None:
+        """The surviving value is the last one, as ``asdict`` left it."""
+        event = _state_event({_CollidingKey('a'): 1, _CollidingKey('b'): 2})
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert exported == {'same-key': 2}
+        assert exported == _legacy_to_dict(event)['orchestration_state']['value']
 
 
 class TestTupleHandling:
