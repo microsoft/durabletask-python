@@ -380,6 +380,7 @@ def functions_unit(session: nox.Session) -> None:
     session.run(
         "pytest", *arguments,
         "-m", "not dts and not azurite and not functions_e2e",
+        "--verbose",
     )
 
 

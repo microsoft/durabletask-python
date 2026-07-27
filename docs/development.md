@@ -1,8 +1,6 @@
 # Development
 
-The following is more information about how to develop this project. Note that development commands
-require that `make` is installed on your local machine. If you're using Windows, you can install
-`make` using [Chocolatey](https://chocolatey.org/) or use WSL.
+The following is more information about how to develop this project.
 
 ## Validation
 
@@ -65,6 +63,9 @@ nox -R -s functions_e2e -- -k "dtask_client"
 > provisioning, not these required runtime services.
 
 ## Generating protobufs
+
+These commands require `make`. If you're using Windows, you can install `make`
+using [Chocolatey](https://chocolatey.org/) or use WSL.
 
 ```sh
 pip3 install -r dev-requirements.txt
