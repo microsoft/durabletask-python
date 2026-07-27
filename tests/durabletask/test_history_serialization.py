@@ -13,6 +13,7 @@ original two-pass form so the optimization stays behavior-preserving.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, NamedTuple, cast
@@ -62,6 +63,17 @@ class _Point(NamedTuple):
 
     x: Any
     y: Any
+
+
+@dataclass(frozen=True)
+class _FrozenKey:
+    """A hashable dataclass, usable as a mapping key until ``asdict`` runs.
+
+    ``asdict`` recurses into keys, turning this into an unhashable dict,
+    so using one as a key has always raised. That failure must survive.
+    """
+
+    name: str
 
 
 class _MutableLeaf:
@@ -485,92 +497,301 @@ class TestToDictIsolation:
         assert exported is not leaf
 
 
-class TestTupleHandling:
-    """Tuples must recurse the same way lists do.
+class _OddIsoDatetime(datetime):
+    """A datetime subclass that overrides the method the walker calls."""
 
-    The old two-pass form got this wrong in a way worth spelling out.
-    ``dataclasses.asdict`` *did* rebuild tuples, converting any nested
-    dataclass into a dict, but the ``_to_serializable`` pass that ran
-    afterwards had no tuple branch, so datetimes sitting inside a tuple
-    were never converted. The result was a value that could not be JSON
-    encoded. The single-pass walker handles tuples exactly like lists,
-    which diverges from the old output on purpose.
+    def isoformat(self, sep: str = 'T', timespec: str = 'auto') -> str:
+        return 'CUSTOM:' + super().isoformat(sep, timespec)
+
+
+class _OddCopyDatetime(datetime):
+    """A datetime subclass that changes when it is deep-copied.
+
+    ``asdict`` deep-copied every leaf, so the conversion pass that ran
+    afterwards called ``isoformat`` on the *copy*, not the original. That
+    is only observable when copying is not the identity, which is exactly
+    what this fixture makes it.
     """
 
-    def test_tuple_containing_dataclass_is_converted(self) -> None:
-        event = _state_event((_Inner('a', _TS),))
-        exported = event.to_dict()['orchestration_state']['value']
-        assert exported == ({'label': 'a', 'when': _TS.isoformat()},)
+    def __deepcopy__(self, memo: dict[int, Any]) -> datetime:
+        return datetime(1999, 9, 9, 9, 9, 9)
 
-    def test_datetime_inside_tuple_is_converted(self) -> None:
-        event = _state_event((_TS,))
+
+class _DedupeList(list[Any]):
+    """A list subclass whose constructor changes the contents.
+
+    The constructor deliberately is *not* idempotent: it appends a marker
+    every time it runs. ``asdict`` rebuilt list subclasses through their
+    own constructor, so the marker appears exactly once in the legacy
+    output. Walking the original in place instead would skip it, so an
+    idempotent constructor here would let that regression pass unnoticed.
+    """
+
+    def __init__(self, items: Any = ()) -> None:
+        seen: list[Any] = []
+        for item in items:
+            if item not in seen:
+                seen.append(item)
+        seen.append('ctor-ran')
+        super().__init__(seen)
+
+
+class _UpperDict(dict[Any, Any]):
+    """A dict subclass whose constructor changes the mapping.
+
+    Like :class:`_DedupeList`, this records that it ran so that skipping
+    the constructor is detectable rather than silently equivalent.
+    """
+
+    def __init__(self, items: Any = ()) -> None:
+        rebuilt = {
+            key.upper() if isinstance(key, str) else key: value
+            for key, value in dict(items).items()
+        }
+        rebuilt['ctor-ran'] = True
+        super().__init__(rebuilt)
+
+
+class _IterOnlyTuple(tuple[Any, ...]):
+    """A tuple subclass that only accepts an iterator, never a sequence.
+
+    ``asdict`` rebuilds tuple subclasses from a generator expression, so a
+    constructor like this one round-trips fine. Passing an already-built
+    list instead would raise, which is what makes this a regression guard.
+    """
+
+    def __new__(cls, items: Any = ()) -> '_IterOnlyTuple':
+        if isinstance(items, (list, tuple)):
+            raise TypeError('iterator-only constructor')
+        return super().__new__(cls, items)
+
+
+class _DeepCopyKey:
+    """A mapping key that turns into a plain string when deep-copied."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> str:
+        return 'deepcopied:' + self.name
+
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _DeepCopyKey) and other.name == self.name
+
+
+_EXOTIC_PAYLOADS = [
+    pytest.param(_OddIsoDatetime(2024, 1, 2, 3, 4, 5), id='datetime-subclass'),
+    pytest.param(
+        _OddCopyDatetime(2024, 1, 2, 3, 4, 5), id='datetime-subclass-deepcopy',
+    ),
+    pytest.param(_DedupeList([1, 2, 2, 3]), id='list-subclass'),
+    pytest.param(_DedupeList([_TS, _TS]), id='list-subclass-of-datetime'),
+    pytest.param(_UpperDict({'a': 1, 'b': 2}), id='dict-subclass'),
+    pytest.param(defaultdict(int, {'a': 1}), id='defaultdict'),
+    pytest.param(_IterOnlyTuple(iter([1, 2])), id='tuple-subclass-iterator-only'),
+    pytest.param((1, 'x'), id='plain-tuple'),
+    pytest.param((), id='empty-tuple'),
+    pytest.param((_TS,), id='tuple-of-datetime'),
+    pytest.param((_Inner('a', _TS),), id='tuple-of-dataclass'),
+    pytest.param(_Point(1, 2), id='namedtuple'),
+    pytest.param(_Point(_TS, _Inner('b', _TS)), id='namedtuple-of-datetime'),
+    pytest.param({'k': [(_Inner('c', _TS),)]}, id='tuple-nested-in-dict-and-list'),
+    pytest.param({_DeepCopyKey('k'): 1}, id='dict-with-deepcopy-key'),
+    pytest.param({_TS: 'v'}, id='dict-with-datetime-key'),
+    pytest.param({(_TS, 1): 'v'}, id='dict-with-tuple-key'),
+    pytest.param({'plain': 1}, id='plain-dict'),
+    pytest.param([1, 'x', None], id='plain-list'),
+    pytest.param({1, 2, 3}, id='set'),
+    pytest.param(bytearray(b'abc'), id='bytearray'),
+    pytest.param(b'abc', id='bytes'),
+    pytest.param(_MutableLeaf(1), id='custom-object'),
+]
+
+
+class TestLegacyCompatibility:
+    """Values the fast paths do not cover must behave exactly as before.
+
+    The optimization only walks a value in place when doing so is provably
+    identical to what ``dataclasses.asdict`` produced, which is true for
+    the exact built-in types and for dataclass instances. Everything else
+    -- container *subclasses*, tuples, namedtuples, custom objects and
+    exotic mapping keys -- carries semantics that lived inside ``asdict``
+    itself: constructor round-trips, key recursion and deep-copied leaves.
+    Those values are handed back to the real ``asdict``, so this suite
+    pins that routing.
+
+    The oracle here is ``asdict`` applied to the whole event, not to an
+    individual value, so it never re-enters the implementation being
+    tested.
+    """
+
+    @pytest.mark.parametrize('payload', _EXOTIC_PAYLOADS)
+    def test_exotic_payload_matches_legacy_two_pass_output(
+        self, payload: Any,
+    ) -> None:
+        event = _state_event(payload)
+
+        actual = event.to_dict()
+        expected = _legacy_to_dict(event)
+
+        assert actual == expected
+        # ``==`` alone would let a namedtuple compare equal to a plain
+        # tuple, so pin the exact repr as well.
+        assert repr(actual) == repr(expected)
+
+    @pytest.mark.parametrize('payload', _EXOTIC_PAYLOADS)
+    def test_exotic_payload_raises_the_same_way_as_legacy(
+        self, payload: Any,
+    ) -> None:
+        """Inputs that used to fail must still fail identically."""
+        event = _state_event(payload)
+
+        try:
+            expected: Any = _legacy_to_dict(event)
+        except Exception as exc:  # noqa: BLE001 - mirroring legacy behavior
+            with pytest.raises(type(exc)):
+                event.to_dict()
+        else:
+            assert event.to_dict() == expected
+
+    def test_dict_key_that_cannot_be_rebuilt_still_raises(self) -> None:
+        """``asdict`` turned dataclass keys into unhashable dicts; keep that."""
+        event = _state_event({_FrozenKey('z'): 1})
+
+        with pytest.raises(TypeError):
+            _legacy_to_dict(event)
+        with pytest.raises(TypeError):
+            event.to_dict()
+
+    def test_datetime_subclass_conversion_runs_on_a_copy(self) -> None:
+        """``asdict`` deep-copied before the walker called ``isoformat``."""
+        event = _state_event(_OddIsoDatetime(2024, 1, 2, 3, 4, 5))
+
         exported = event.to_dict()['orchestration_state']['value']
-        assert exported == (_TS.isoformat(),)
+
+        assert exported == 'CUSTOM:2024-01-02T03:04:05'
+
+    def test_datetime_subclass_deepcopy_substitution_is_honored(self) -> None:
+        """A subclass whose copy differs must be converted via that copy."""
+        event = _state_event(_OddCopyDatetime(2024, 1, 2, 3, 4, 5))
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert exported == '1999-09-09T09:09:09'
+
+    def test_list_subclass_constructor_still_runs(self) -> None:
+        """The second marker only appears if the constructor re-ran.
+
+        The instance already carries one marker from being built. The
+        legacy pipeline rebuilt it through its own constructor, adding a
+        second. Walking the original in place would emit only the first.
+        """
+        event = _state_event(_DedupeList([1, 2, 2, 3]))
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert exported == [1, 2, 3, 'ctor-ran', 'ctor-ran']
+
+    def test_dict_subclass_constructor_still_runs(self) -> None:
+        """``CTOR-RAN`` is the first marker, re-keyed by the second run."""
+        event = _state_event(_UpperDict({'a': 1, 'b': 2}))
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert exported == {
+            'A': 1, 'B': 2, 'CTOR-RAN': True, 'ctor-ran': True,
+        }
+
+    def test_tuple_subclass_is_rebuilt_from_an_iterator(self) -> None:
+        """Handing the constructor a pre-built list instead would raise."""
+        event = _state_event(_IterOnlyTuple(iter([1, 2])))
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert tuple(exported) == (1, 2)
+
+    def test_namedtuple_type_is_preserved(self) -> None:
+        event = _state_event(_Point(1, 2))
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert isinstance(exported, _Point)
+        assert repr(exported) == repr(_Point(1, 2))
+
+    def test_mapping_key_is_deep_copied_like_asdict(self) -> None:
+        event = _state_event({_DeepCopyKey('k'): 1})
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert exported == {'deepcopied:k': 1}
+
+    def test_mapping_key_is_not_converted_by_the_value_walker(self) -> None:
+        """``asdict`` recursed into keys, but the walker after it did not.
+
+        A datetime key therefore stayed a datetime rather than becoming an
+        ISO string, unlike a datetime *value*.
+        """
+        event = _state_event({_TS: 'v'})
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert list(exported) == [_TS]
+
+
+class TestTupleHandling:
+    """Tuples keep their original ``asdict`` semantics.
+
+    An earlier revision of this change added a dedicated tuple branch that
+    normalized datetimes inside tuples. That was a behavior change rather
+    than a performance change, so it was removed: tuples now route to the
+    compatibility path and come back exactly as they did before. The
+    quirk that a datetime nested in a tuple is left unconverted is
+    therefore preserved, quirk and all.
+    """
 
     def test_tuple_type_is_preserved(self) -> None:
         event = _state_event((1, 'x'))
         exported = event.to_dict()['orchestration_state']['value']
         assert isinstance(exported, tuple)
 
-    def test_namedtuple_type_is_preserved(self) -> None:
-        """Rebuilding a tuple must not flatten a namedtuple into a plain one."""
-        event = _state_event(_Point(1, 2))
-        exported = event.to_dict()['orchestration_state']['value']
-        assert isinstance(exported, _Point)
-        assert exported == _Point(1, 2)
-
-    def test_namedtuple_contents_are_converted(self) -> None:
-        event = _state_event(_Point(_TS, _Inner('b', _TS)))
-        exported = event.to_dict()['orchestration_state']['value']
-        assert exported == _Point(
-            _TS.isoformat(), {'label': 'b', 'when': _TS.isoformat()},
-        )
-
-    def test_tuple_nested_in_dict_and_list_is_converted(self) -> None:
-        event = _state_event({'k': [(_Inner('c', _TS),)]})
-        exported = event.to_dict()['orchestration_state']['value']
-        assert exported == {'k': [({'label': 'c', 'when': _TS.isoformat()},)]}
-
     def test_empty_tuple_round_trips(self) -> None:
         event = _state_event(())
         assert event.to_dict()['orchestration_state']['value'] == ()
 
-    @pytest.mark.parametrize(
-        'payload',
-        [
-            pytest.param((_Inner('a', _TS),), id='tuple-of-dataclass'),
-            pytest.param((_TS,), id='tuple-of-datetime'),
-            pytest.param(_Point(_TS, 2), id='namedtuple-of-datetime'),
-            pytest.param({'k': [(_TS,)]}, id='tuple-nested-in-dict-and-list'),
-        ],
-    )
-    def test_tuple_payloads_are_json_serializable(self, payload: Any) -> None:
-        """The old two-pass form produced tuples json.dumps could not encode."""
-        event = _state_event(payload)
-        json.dumps(event.to_dict())
+    def test_dataclass_inside_tuple_becomes_a_dict(self) -> None:
+        """``asdict`` recursed into tuples, so this part always worked."""
+        event = _state_event((_Inner('a', _TS),))
+        exported = event.to_dict()['orchestration_state']['value']
+        assert exported == ({'label': 'a', 'when': _TS},)
+
+    def test_datetime_inside_tuple_is_left_unconverted(self) -> None:
+        """Pins the pre-existing quirk this change must not silently fix."""
+        event = _state_event((_TS,))
+        exported = event.to_dict()['orchestration_state']['value']
+        assert exported == (_TS,)
 
     @pytest.mark.parametrize(
         'payload',
         [
-            pytest.param((_Inner('a', _TS),), id='tuple-of-dataclass'),
             pytest.param((_TS,), id='tuple-of-datetime'),
+            pytest.param((_Inner('a', _TS),), id='tuple-of-dataclass'),
         ],
     )
-    def test_tuple_output_deliberately_diverges_from_legacy(
+    def test_tuple_datetimes_remain_unencodable_like_legacy(
         self, payload: Any,
     ) -> None:
-        """Pin the divergence so it stays intentional rather than accidental.
+        """The quirk makes these payloads unencodable; legacy did the same.
 
-        The legacy output is not JSON encodable for these payloads; the
-        new output is. This test fails loudly if anyone ever "restores"
-        bug-for-bug parity with the old two-pass form.
+        Fixing that is a genuine bug fix, but a user-visible one, so it
+        belongs in its own change rather than riding along with a
+        performance optimization.
         """
         event = _state_event(payload)
 
-        legacy = _legacy_to_dict(event)
         with pytest.raises(TypeError):
-            json.dumps(legacy)
-
-        actual = event.to_dict()
-        assert actual != legacy
-        json.dumps(actual)
+            json.dumps(_legacy_to_dict(event))
+        with pytest.raises(TypeError):
+            json.dumps(event.to_dict())

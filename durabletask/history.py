@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import copy
+import functools
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -332,22 +332,60 @@ def _message_to_dict(msg: Message) -> dict[str, Any]:
 
 # Field names are looked up once per dataclass type. History export walks
 # many events of the same handful of types, so caching avoids repeatedly
-# rebuilding the tuple returned by ``dataclasses.fields``.
-_FIELD_NAMES: dict[type[Any], tuple[str, ...]] = {}
+# rebuilding the tuple returned by ``dataclasses.fields``. The cache is
+# bounded so that dynamically created dataclass types cannot pin an
+# unbounded number of entries (and the classes they reference) in memory.
+_FIELD_NAMES_CACHE_SIZE = 256
 
 # Values of these exact types are already JSON-native and need no
 # conversion. Checking ``type(value)`` against a set is a single hash
 # lookup, which short-circuits the common case (most event fields are
-# strings, ints, or ``None``) before the ``isinstance`` chain below.
+# strings, ints, or ``None``) before the type checks below.
 _JSON_NATIVE_TYPES: frozenset[type[Any]] = frozenset({bool, float, int, str, type(None)})
 
 
+@functools.lru_cache(maxsize=_FIELD_NAMES_CACHE_SIZE)
 def _field_names(cls: type[Any]) -> tuple[str, ...]:
-    names = _FIELD_NAMES.get(cls)
-    if names is None:
-        names = tuple(field.name for field in fields(cast(Any, cls)))
-        _FIELD_NAMES[cls] = names
-    return names
+    return tuple(field.name for field in fields(cast(Any, cls)))
+
+
+@dataclass
+class _LegacyBox:
+    """Carrier used to re-enter ``dataclasses.asdict`` for one value."""
+
+    value: Any
+
+
+def _asdict_only(value: Any) -> Any:
+    """Apply ``dataclasses.asdict`` recursion to *value* and nothing else.
+
+    Boxing the value in a throwaway dataclass lets the interpreter's own
+    ``asdict`` implementation handle it, so container subclasses,
+    namedtuples, ``defaultdict`` and the deep-copy of leaf values all behave
+    exactly as they did before this module walked events itself. Delegating
+    rather than reimplementing matters because those details have changed
+    between Python releases and this package supports several of them.
+    """
+    return asdict(_LegacyBox(value))['value']
+
+
+def _legacy_walk(value: Any) -> Any:
+    """The pre-optimization conversion pass, applied to an ``asdict`` result."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_legacy_walk(item) for item in cast(list[Any], value)]
+    if isinstance(value, dict):
+        return {
+            key: _legacy_walk(item)
+            for key, item in cast(dict[Any, Any], value).items()
+        }
+    return value
+
+
+def _legacy_compat(value: Any) -> Any:
+    """Reproduce the original ``asdict`` + walk pipeline for one value."""
+    return _legacy_walk(_asdict_only(value))
 
 
 def _to_serializable(value: Any) -> Any:
@@ -356,10 +394,15 @@ def _to_serializable(value: Any) -> Any:
     This walks dataclass instances directly instead of going through
     ``dataclasses.asdict``, which would deep-copy the whole event graph
     into a throwaway intermediate structure that then has to be walked a
-    second time. Nested dataclasses become dicts in field order,
-    datetimes become ISO 8601 strings, lists, tuples and dicts are
-    rebuilt, and anything else is deep-copied so the result never shares
-    mutable state with the event it came from.
+    second time.
+
+    The type checks below are deliberately exact rather than
+    ``isinstance``. Only the built-in types are handled inline, because
+    only for those is walking in place provably identical to what
+    ``asdict`` produced. Subclasses, tuples and every other value are
+    routed to :func:`_legacy_compat`, which re-enters the real ``asdict``
+    so their original semantics -- constructor round-trips, key
+    recursion and deep-copied leaves -- are preserved exactly.
     """
     value_type = cast('type[Any]', type(value))
     if value_type in _JSON_NATIVE_TYPES:
@@ -371,26 +414,20 @@ def _to_serializable(value: Any) -> Any:
             name: _to_serializable(getattr(value, name))
             for name in _field_names(value_type)
         }
-    if isinstance(value, datetime):
+    if value_type is datetime:
         return value.isoformat()
-    if isinstance(value, list):
+    if value_type is list:
         return [_to_serializable(item) for item in cast(list[Any], value)]
-    if isinstance(value, tuple):
-        items = [_to_serializable(item) for item in cast(tuple[Any, ...], value)]
-        # Namedtuples take their fields as positional arguments rather than
-        # a single iterable, so rebuilding them needs the unpacked form.
-        if hasattr(value_type, '_fields'):
-            return value_type(*items)
-        return value_type(items)
-    if isinstance(value, dict):
+    if value_type is dict:
+        # ``asdict`` recursed into keys but the conversion pass that followed
+        # it did not, so keys get ``asdict`` semantics only. Native keys are
+        # returned as-is because ``asdict`` leaves those untouched too.
         return {
-            key: _to_serializable(item)
+            (key if type(key) in _JSON_NATIVE_TYPES else _asdict_only(key)):
+                _to_serializable(item)
             for key, item in cast(dict[Any, Any], value).items()
         }
-    # ``asdict`` ended its recursion with ``copy.deepcopy``. Keeping that
-    # behavior means callers can freely mutate the exported structure
-    # without reaching back into the live event.
-    return copy.deepcopy(value)
+    return _legacy_compat(value)
 
 
 _EVENT_CONVERTERS: dict[str, Callable[[pb.HistoryEvent], HistoryEvent]] = {
