@@ -122,6 +122,25 @@ def new_sub_orchestration_failed_event(event_id: int, ex: Exception) -> pb.Histo
     )
 
 
+def get_qualified_name(t: type) -> str:
+    """Return the fully-qualified ``module.qualname`` name of a type.
+
+    This mirrors the fully-qualified error-type names produced by the other
+    Durable Task SDKs (.NET ``Type.ToString()`` and Java ``Class.getName()``),
+    so that :attr:`FailureDetails.error_type` values are consistent across SDKs
+    and can be matched unambiguously by :meth:`FailureDetails.is_caused_by`.
+
+    Builtin exception types keep their ``builtins.`` prefix (e.g.
+    ``builtins.ValueError``), matching how .NET keeps ``System.`` and Java keeps
+    ``java.lang.``.
+    """
+    module = getattr(t, "__module__", None)
+    qualname = getattr(t, "__qualname__", None) or getattr(t, "__name__", None) or str(t)
+    if not module:
+        return qualname
+    return f"{module}.{qualname}"
+
+
 def new_failure_details(ex: Exception, _visited: set[int] | None = None) -> pb.TaskFailureDetails:
     if _visited is None:
         _visited = set()
@@ -130,7 +149,7 @@ def new_failure_details(ex: Exception, _visited: set[int] | None = None) -> pb.T
     if len(_visited) > 10 or (inner and id(inner) in _visited) or not isinstance(inner, Exception):
         inner = None
     return pb.TaskFailureDetails(
-        errorType=type(ex).__name__,
+        errorType=get_qualified_name(type(ex)),
         errorMessage=str(ex),
         stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__))),
         innerFailure=new_failure_details(inner, _visited) if inner else None
