@@ -2,9 +2,13 @@
 # Licensed under the MIT License.
 
 import inspect
+import random
+import subprocess
+import sys
 import threading
 
 import grpc
+import pytest
 from azure.core.credentials import AccessToken
 
 import durabletask.azuremanaged.preview.sandboxes as sandbox
@@ -20,6 +24,7 @@ from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
     SandboxWorkerProfileImageOptions,
 )
 from durabletask.azuremanaged.preview.sandboxes.profile_builder import (
+    _ActivityOwnerIndex,
     _build_sandbox_worker_profile,
     build_sandbox_worker_profiles,
 )
@@ -28,6 +33,7 @@ from durabletask.azuremanaged.preview.sandboxes.worker_messages import (
     build_sandbox_worker_start,
 )
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
+from durabletask.azuremanaged.preview.sandboxes.helpers import activities_overlap
 from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
 from durabletask.azuremanaged.internal import sandbox_service_pb2_grpc as stubs
@@ -64,6 +70,113 @@ def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
     assert not hasattr(sandbox.SandboxActivitiesClient, f"remove_{legacy_prefix}_activity_worker_profile")
     assert not hasattr(sandbox.SandboxActivitiesClient, f"connect_{legacy_prefix}_activity_worker")
     assert not hasattr(SandboxWorker, f"_configure_{legacy_prefix}_activity_filters")
+
+
+# Runs in a subprocess because this test module imports the sandbox worker at
+# module scope, which would otherwise hide the lazy-import behavior.
+_LAZY_EXPORT_PROBE = """
+import sys
+
+import durabletask.azuremanaged.preview.sandboxes as sandbox
+
+eager = [
+    name
+    for name in (
+        "durabletask.azuremanaged.preview.sandboxes.client",
+        "durabletask.azuremanaged.preview.sandboxes.transport",
+        "durabletask.azuremanaged.preview.sandboxes.worker",
+        "azure.identity",
+    )
+    if name in sys.modules
+]
+assert not eager, f"sandbox package eagerly imported: {eager}"
+
+expected = [
+    "SandboxWorker",
+    "SandboxActivity",
+    "SandboxWorkerProfile",
+    "SandboxWorkerProfileOptions",
+    "SandboxActivitiesClient",
+    "sandbox_worker_profile",
+]
+assert sandbox.__all__ == expected, sandbox.__all__
+
+listing = dir(sandbox)
+assert not [name for name in expected if name not in listing], listing
+assert not [name for name in ("client", "helpers", "worker", "worker_profiles") if name not in listing], listing
+
+from durabletask.azuremanaged.preview.sandboxes.client import SandboxActivitiesClient
+from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
+from durabletask.azuremanaged.preview.sandboxes.worker import SandboxWorker
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import SandboxWorkerProfile
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import SandboxWorkerProfileOptions
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import sandbox_worker_profile
+
+assert sandbox.SandboxWorker is SandboxWorker
+assert sandbox.SandboxActivity is SandboxActivity
+assert sandbox.SandboxWorkerProfile is SandboxWorkerProfile
+assert sandbox.SandboxWorkerProfileOptions is SandboxWorkerProfileOptions
+assert sandbox.SandboxActivitiesClient is SandboxActivitiesClient
+assert sandbox.sandbox_worker_profile is sandbox_worker_profile
+
+# Submodules stay reachable as package attributes, as they were while the
+# package imported them eagerly.
+assert sandbox.worker is sys.modules["durabletask.azuremanaged.preview.sandboxes.worker"]
+assert sandbox.helpers is sys.modules["durabletask.azuremanaged.preview.sandboxes.helpers"]
+"""
+
+
+_STAR_IMPORT_PROBE = """
+from durabletask.azuremanaged.preview.sandboxes import *  # noqa: F403
+
+import durabletask.azuremanaged.preview.sandboxes as sandbox
+
+star_names = {name: value for name, value in globals().items() if not name.startswith("_")}
+for name in sandbox.__all__:
+    assert name in star_names, f"missing star export: {name}"
+    assert star_names[name] is getattr(sandbox, name), name
+
+# __all__ still gates the star import, so lazy-import plumbing stays private.
+assert "import_module" not in star_names
+assert "_LAZY_EXPORTS" not in globals()
+"""
+
+
+_ISOLATED_PROBE_TIMEOUT_SECONDS = 60
+
+
+def _run_isolated(source: str) -> None:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", source],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_ISOLATED_PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"isolated import probe did not complete within "
+            f"{_ISOLATED_PROBE_TIMEOUT_SECONDS}s and was terminated. "
+            f"This usually means the import deadlocked.\n"
+            f"stdout: {exc.stdout or ''}\n"
+            f"stderr: {exc.stderr or ''}")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_sandbox_package_defers_worker_runtime_imports() -> None:
+    _run_isolated(_LAZY_EXPORT_PROBE)
+
+
+def test_sandbox_package_star_import_matches_all() -> None:
+    _run_isolated(_STAR_IMPORT_PROBE)
+
+
+def test_sandbox_package_raises_attribute_error_for_unknown_attributes() -> None:
+    with pytest.raises(AttributeError, match="has no attribute 'NotARealSandboxExport'"):
+        getattr(sandbox, "NotARealSandboxExport")
+
+    assert not hasattr(sandbox, "NotARealSandboxExport")
+    assert all(hasattr(sandbox, name) for name in sandbox.__all__)
 
 
 def _sandbox_image(
@@ -206,6 +319,9 @@ def test_build_sandbox_worker_profiles_rejects_activity_overlap() -> None:
         try:
             build_sandbox_worker_profiles()
         except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestoverlapremotehello' is assigned to both worker profile "
+                "'pytest-overlap-profile-a' and 'pytest-overlap-profile-b'.")
             assert "pytestoverlapremotehello" in str(ex)
             assert "pytest-overlap-profile-a" in str(ex)
             assert "pytest-overlap-profile-b" in str(ex)
@@ -250,6 +366,128 @@ def test_build_sandbox_worker_profiles_allows_same_activity_name_different_versi
     finally:
         sandbox_worker_profiles._worker_profiles.pop("pytest-version-profile-a", None)
         sandbox_worker_profiles._worker_profiles.pop("pytest-version-profile-b", None)
+
+
+def test_build_sandbox_worker_profiles_rejects_versioned_activity_overlapping_unversioned_owner() -> None:
+    @sandbox_worker_profile("pytest-unversioned-owner-profile-a")
+    class PytestUnversionedOwnerProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestUnversionedOwner", version=None)
+
+    @sandbox_worker_profile("pytest-unversioned-owner-profile-b")
+    class PytestUnversionedOwnerProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("pytestunversionedowner", version="v9")
+
+    try:
+        try:
+            build_sandbox_worker_profiles()
+        except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestunversionedowner@v9' is assigned to both worker profile "
+                "'pytest-unversioned-owner-profile-a' and 'pytest-unversioned-owner-profile-b'.")
+        else:
+            raise AssertionError(
+                "Expected an unversioned sandbox activity to overlap every version of the same name.")
+    finally:
+        sandbox_worker_profiles._worker_profiles.pop("pytest-unversioned-owner-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-unversioned-owner-profile-b", None)
+
+
+def test_build_sandbox_worker_profiles_rejects_unversioned_activity_overlapping_versioned_owner() -> None:
+    @sandbox_worker_profile("pytest-versioned-owner-profile-a")
+    class PytestVersionedOwnerProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestVersionedOwner", version="v9")
+
+    @sandbox_worker_profile("pytest-versioned-owner-profile-b")
+    class PytestVersionedOwnerProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("pytestversionedowner", version=None)
+
+    try:
+        try:
+            build_sandbox_worker_profiles()
+        except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestversionedowner' is assigned to both worker profile "
+                "'pytest-versioned-owner-profile-a' and 'pytest-versioned-owner-profile-b'.")
+        else:
+            raise AssertionError(
+                "Expected an unversioned sandbox activity to overlap an existing versioned owner.")
+    finally:
+        sandbox_worker_profiles._worker_profiles.pop("pytest-versioned-owner-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-versioned-owner-profile-b", None)
+
+
+def test_build_sandbox_worker_profiles_rejects_identical_activity_versions() -> None:
+    @sandbox_worker_profile("pytest-same-version-profile-a")
+    class PytestSameVersionProfileA(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-a:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("PytestSameVersionActivity", version="v3")
+
+    @sandbox_worker_profile("pytest-same-version-profile-b")
+    class PytestSameVersionProfileB(SandboxWorkerProfile):
+        def configure(self, options: SandboxWorkerProfileOptions) -> None:
+            options.image.image_ref = "example.azurecr.io/python-worker-b:v1"
+            options.image.managed_identity_client_id = "image-pull-client-id"
+            options.scheduler_managed_identity_client_id = "scheduler-client-id"
+            options.add_activity("pytestsameversionactivity", version="v3")
+
+    try:
+        try:
+            build_sandbox_worker_profiles()
+        except ValueError as ex:
+            assert str(ex) == (
+                "Sandbox activity 'pytestsameversionactivity@v3' is assigned to both worker profile "
+                "'pytest-same-version-profile-a' and 'pytest-same-version-profile-b'.")
+        else:
+            raise AssertionError("Expected identical sandbox activity versions to overlap.")
+    finally:
+        sandbox_worker_profiles._worker_profiles.pop("pytest-same-version-profile-a", None)
+        sandbox_worker_profiles._worker_profiles.pop("pytest-same-version-profile-b", None)
+
+
+def test_activity_owner_index_matches_linear_overlap_scan() -> None:
+    registrations = [
+        (SandboxActivity(name, version), worker_profile_id)
+        for name in ("Alpha", "alpha", "BETA", "Gamma")
+        for version in (None, "v1", "v2", "V1")
+        for worker_profile_id in ("profile-a", "profile-b", "profile-c")
+    ]
+
+    for seed in range(25):
+        shuffled = list(registrations)
+        random.Random(seed).shuffle(shuffled)
+
+        index = _ActivityOwnerIndex()
+        owners: list[tuple[SandboxActivity, str]] = []
+        for activity, worker_profile_id in shuffled:
+            expected = next(
+                (owner_profile for owner_activity, owner_profile in owners
+                 if activities_overlap(owner_activity, activity)
+                 and owner_profile != worker_profile_id),
+                None)
+
+            assert index.find_conflicting_profile(activity, worker_profile_id) == expected
+
+            owners.append((activity, worker_profile_id))
+            index.add(activity, worker_profile_id)
 
 
 def test_profile_options_add_activity_accepts_callable() -> None:
