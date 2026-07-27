@@ -86,8 +86,10 @@ class AsyncAccessTokenManager:
             if lock is None:
                 # Discard locks belonging to loops that are no longer usable so the
                 # mapping does not grow without bound.
-                for stale_loop in [
-                        existing for existing in self._refresh_locks if existing.is_closed()]:
+                stale_loops = [
+                    existing for existing in self._refresh_locks if existing.is_closed()
+                ]
+                for stale_loop in stale_loops:
                     del self._refresh_locks[stale_loop]
                 lock = asyncio.Lock()
                 self._refresh_locks[loop] = lock

@@ -266,10 +266,15 @@ class _FlakyAsyncTokenCredential:
 
 
 class TestAsyncAccessTokenManagerSingleFlight(unittest.IsolatedAsyncioTestCase):
-    async def test_concurrent_cold_start_performs_single_acquisition(self):
+    async def test_deferred_first_acquisition_performs_single_acquisition(self):
         credential = _TestAsyncTokenCredential()
         manager = AsyncAccessTokenManager(credential)
 
+        self.assertEqual(0, credential.calls, "Constructing the manager must not acquire a token")
+
+        # The async manager has always deferred the first acquisition (a constructor
+        # cannot await), so the cold-start burst goes through the same refresh guard
+        # as a later refresh and must likewise be single-flight.
         tokens = await asyncio.gather(*(manager.get_access_token() for _ in range(16)))
 
         self.assertEqual(1, credential.calls)
