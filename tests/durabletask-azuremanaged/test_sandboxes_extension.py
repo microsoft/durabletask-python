@@ -3,9 +3,12 @@
 
 import inspect
 import random
+import subprocess
+import sys
 import threading
 
 import grpc
+import pytest
 from azure.core.credentials import AccessToken
 
 import durabletask.azuremanaged.preview.sandboxes as sandbox
@@ -67,6 +70,113 @@ def test_public_sandbox_package_exports_customer_entrypoints_only() -> None:
     assert not hasattr(sandbox.SandboxActivitiesClient, f"remove_{legacy_prefix}_activity_worker_profile")
     assert not hasattr(sandbox.SandboxActivitiesClient, f"connect_{legacy_prefix}_activity_worker")
     assert not hasattr(SandboxWorker, f"_configure_{legacy_prefix}_activity_filters")
+
+
+# Runs in a subprocess because this test module imports the sandbox worker at
+# module scope, which would otherwise hide the lazy-import behavior.
+_LAZY_EXPORT_PROBE = """
+import sys
+
+import durabletask.azuremanaged.preview.sandboxes as sandbox
+
+eager = [
+    name
+    for name in (
+        "durabletask.azuremanaged.preview.sandboxes.client",
+        "durabletask.azuremanaged.preview.sandboxes.transport",
+        "durabletask.azuremanaged.preview.sandboxes.worker",
+        "azure.identity",
+    )
+    if name in sys.modules
+]
+assert not eager, f"sandbox package eagerly imported: {eager}"
+
+expected = [
+    "SandboxWorker",
+    "SandboxActivity",
+    "SandboxWorkerProfile",
+    "SandboxWorkerProfileOptions",
+    "SandboxActivitiesClient",
+    "sandbox_worker_profile",
+]
+assert sandbox.__all__ == expected, sandbox.__all__
+
+listing = dir(sandbox)
+assert not [name for name in expected if name not in listing], listing
+assert not [name for name in ("client", "helpers", "worker", "worker_profiles") if name not in listing], listing
+
+from durabletask.azuremanaged.preview.sandboxes.client import SandboxActivitiesClient
+from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
+from durabletask.azuremanaged.preview.sandboxes.worker import SandboxWorker
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import SandboxWorkerProfile
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import SandboxWorkerProfileOptions
+from durabletask.azuremanaged.preview.sandboxes.worker_profiles import sandbox_worker_profile
+
+assert sandbox.SandboxWorker is SandboxWorker
+assert sandbox.SandboxActivity is SandboxActivity
+assert sandbox.SandboxWorkerProfile is SandboxWorkerProfile
+assert sandbox.SandboxWorkerProfileOptions is SandboxWorkerProfileOptions
+assert sandbox.SandboxActivitiesClient is SandboxActivitiesClient
+assert sandbox.sandbox_worker_profile is sandbox_worker_profile
+
+# Submodules stay reachable as package attributes, as they were while the
+# package imported them eagerly.
+assert sandbox.worker is sys.modules["durabletask.azuremanaged.preview.sandboxes.worker"]
+assert sandbox.helpers is sys.modules["durabletask.azuremanaged.preview.sandboxes.helpers"]
+"""
+
+
+_STAR_IMPORT_PROBE = """
+from durabletask.azuremanaged.preview.sandboxes import *  # noqa: F403
+
+import durabletask.azuremanaged.preview.sandboxes as sandbox
+
+star_names = {name: value for name, value in globals().items() if not name.startswith("_")}
+for name in sandbox.__all__:
+    assert name in star_names, f"missing star export: {name}"
+    assert star_names[name] is getattr(sandbox, name), name
+
+# __all__ still gates the star import, so lazy-import plumbing stays private.
+assert "import_module" not in star_names
+assert "_LAZY_EXPORTS" not in globals()
+"""
+
+
+_ISOLATED_PROBE_TIMEOUT_SECONDS = 60
+
+
+def _run_isolated(source: str) -> None:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", source],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_ISOLATED_PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"isolated import probe did not complete within "
+            f"{_ISOLATED_PROBE_TIMEOUT_SECONDS}s and was terminated. "
+            f"This usually means the import deadlocked.\n"
+            f"stdout: {exc.stdout or ''}\n"
+            f"stderr: {exc.stderr or ''}")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_sandbox_package_defers_worker_runtime_imports() -> None:
+    _run_isolated(_LAZY_EXPORT_PROBE)
+
+
+def test_sandbox_package_star_import_matches_all() -> None:
+    _run_isolated(_STAR_IMPORT_PROBE)
+
+
+def test_sandbox_package_raises_attribute_error_for_unknown_attributes() -> None:
+    with pytest.raises(AttributeError, match="has no attribute 'NotARealSandboxExport'"):
+        getattr(sandbox, "NotARealSandboxExport")
+
+    assert not hasattr(sandbox, "NotARealSandboxExport")
+    assert all(hasattr(sandbox, name) for name in sandbox.__all__)
 
 
 def _sandbox_image(
