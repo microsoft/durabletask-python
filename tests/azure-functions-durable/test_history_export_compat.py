@@ -36,59 +36,64 @@ def _state(instance_id: str, completed_at: datetime = _COMPLETED) -> SimpleNames
     return SimpleNamespace(instance_id=instance_id, last_updated_at=completed_at)
 
 
-def _bind_states(monkeypatch, states) -> MagicMock:
+def _context_with_states(states) -> SimpleNamespace:
+    """Build an explicit history-export context whose client returns *states*.
+
+    The Functions ``list_terminal_instances`` body takes the resolved context
+    per invocation and only reads ``context.client``, so a lightweight
+    namespace suffices.
+    """
     client = MagicMock()
     client.get_all_orchestration_states.return_value = states
-    monkeypatch.setattr(hec, "_require_context", lambda: SimpleNamespace(client=client))
-    return client
+    return SimpleNamespace(client=client)
 
 
-def test_single_page_when_all_fit(monkeypatch):
-    _bind_states(monkeypatch, [_state("id-1"), _state("id-0")])
+def test_single_page_when_all_fit():
+    ctx = _context_with_states([_state("id-1"), _state("id-0")])
     page = hec.list_terminal_instances(
-        None, {"completed_time_from": _FROM, "page_size": 10})
+        ctx, {"completed_time_from": _FROM, "page_size": 10})
     # Sorted deterministically, single page, no further pages.
     assert page["instance_ids"] == ["id-0", "id-1"]
     assert page["continuation_token"] is None
 
 
-def test_pages_by_page_size_with_keyset_cursor(monkeypatch):
+def test_pages_by_page_size_with_keyset_cursor():
     states = [_state(f"id-{i}") for i in (3, 1, 4, 0, 2)]
-    _bind_states(monkeypatch, states)
+    ctx = _context_with_states(states)
     base = {"completed_time_from": _FROM, "page_size": 2}
 
-    p1 = hec.list_terminal_instances(None, dict(base))
+    p1 = hec.list_terminal_instances(ctx, dict(base))
     assert p1["instance_ids"] == ["id-0", "id-1"]
     assert p1["continuation_token"] == "id-1"
 
     p2 = hec.list_terminal_instances(
-        None, {**base, "continuation_token": p1["continuation_token"]})
+        ctx, {**base, "continuation_token": p1["continuation_token"]})
     assert p2["instance_ids"] == ["id-2", "id-3"]
     assert p2["continuation_token"] == "id-3"
 
     # Final page has fewer than page_size items -> no continuation token.
     p3 = hec.list_terminal_instances(
-        None, {**base, "continuation_token": p2["continuation_token"]})
+        ctx, {**base, "continuation_token": p2["continuation_token"]})
     assert p3["instance_ids"] == ["id-4"]
     assert p3["continuation_token"] is None
 
 
-def test_exact_multiple_of_page_size_terminates(monkeypatch):
-    _bind_states(monkeypatch, [_state("id-0"), _state("id-1")])
+def test_exact_multiple_of_page_size_terminates():
+    ctx = _context_with_states([_state("id-0"), _state("id-1")])
     base = {"completed_time_from": _FROM, "page_size": 2}
 
-    p1 = hec.list_terminal_instances(None, dict(base))
+    p1 = hec.list_terminal_instances(ctx, dict(base))
     assert p1["instance_ids"] == ["id-0", "id-1"]
     # Exactly page_size items remained, so this is the last page.
     assert p1["continuation_token"] is None
 
 
-def test_completed_time_window_is_applied(monkeypatch):
+def test_completed_time_window_is_applied():
     early = datetime(2020, 1, 1, tzinfo=timezone.utc)
     late = datetime(2030, 1, 1, tzinfo=timezone.utc)
-    _bind_states(monkeypatch, [
+    ctx = _context_with_states([
         _state("early", early), _state("in-window", _COMPLETED), _state("late", late)])
-    page = hec.list_terminal_instances(None, {
+    page = hec.list_terminal_instances(ctx, {
         "completed_time_from": _FROM,
         "completed_time_to": "2027-01-01T00:00:00+00:00",
         "page_size": 10,
@@ -97,16 +102,16 @@ def test_completed_time_window_is_applied(monkeypatch):
     assert page["continuation_token"] is None
 
 
-def test_requires_completed_time_from(monkeypatch):
-    _bind_states(monkeypatch, [])
+def test_requires_completed_time_from():
+    ctx = _context_with_states([])
     with pytest.raises(ValueError, match="completed_time_from"):
-        hec.list_terminal_instances(None, {"page_size": 10})
+        hec.list_terminal_instances(ctx, {"page_size": 10})
 
 
-def test_empty_result(monkeypatch):
-    _bind_states(monkeypatch, [])
+def test_empty_result():
+    ctx = _context_with_states([])
     page = hec.list_terminal_instances(
-        None, {"completed_time_from": _FROM, "page_size": 10})
+        ctx, {"completed_time_from": _FROM, "page_size": 10})
     assert page["instance_ids"] == []
     assert page["continuation_token"] is None
 
@@ -180,47 +185,57 @@ def test_continuous_create_on_fresh_entity_is_marked_failed():
 
 
 # ---------------------------------------------------------------------------
-# Sync export client lifecycle -- the process-wide client bound into the export
-# context is closed at interpreter exit.
+# Sync export client lifecycle -- the per-process context (and its sync client)
+# is built once from the injected client and closed at interpreter exit.
 # ---------------------------------------------------------------------------
 
-def test_ensure_context_bound_registers_and_closes_sync_client(monkeypatch):
+def test_context_for_builds_caches_and_closes_sync_client(monkeypatch):
     fake_client = MagicMock()
     monkeypatch.setattr(hec, "_build_sync_client", lambda _c: fake_client)
-    monkeypatch.setattr(hec, "_export_writer", MagicMock())
-    monkeypatch.setattr(hec, "_context_bound", False)
-    monkeypatch.setattr(hec, "_sync_export_client", None)
+    writer = MagicMock()
+    monkeypatch.setattr(hec, "_export_writer", writer)
+    monkeypatch.setattr(hec, "_export_context", None)
 
-    bind_calls = []
-    monkeypatch.setattr(hec, "bind_context", lambda ctx: bind_calls.append(ctx))
     registered = []
     monkeypatch.setattr(hec.atexit, "register", lambda fn: registered.append(fn))
 
-    hec._ensure_context_bound(object())
+    context = hec._context_for(object())
 
-    assert hec._sync_export_client is fake_client
-    assert hec._context_bound is True
-    assert len(bind_calls) == 1
+    # The context pairs the built sync client with the configured writer and is
+    # cached for the process.
+    assert context.client is fake_client
+    assert context.writer is writer
+    assert hec._export_context is context
     assert hec._close_sync_export_client in registered
 
-    # A second bind is a no-op: no new client, no duplicate registration.
-    hec._ensure_context_bound(object())
-    assert len(bind_calls) == 1
+    # A second resolution is a no-op: same cached context, no duplicate
+    # registration and no new client build.
+    assert hec._context_for(object()) is context
     assert registered.count(hec._close_sync_export_client) == 1
 
     # Closing releases the client, resets state, and is idempotent + safe.
     hec._close_sync_export_client()
     fake_client.close.assert_called_once()
-    assert hec._sync_export_client is None
+    assert hec._export_context is None
     hec._close_sync_export_client()
     fake_client.close.assert_called_once()
+
+
+def test_context_for_requires_configured_writer(monkeypatch):
+    monkeypatch.setattr(hec, "_build_sync_client", lambda _c: MagicMock())
+    monkeypatch.setattr(hec, "_export_writer", None)
+    monkeypatch.setattr(hec, "_export_context", None)
+
+    with pytest.raises(RuntimeError, match="writer is not configured"):
+        hec._context_for(object())
 
 
 def test_close_sync_export_client_swallows_errors(monkeypatch):
     fake_client = MagicMock()
     fake_client.close.side_effect = RuntimeError("boom")
-    monkeypatch.setattr(hec, "_sync_export_client", fake_client)
+    context = hec.HistoryExportContext(client=fake_client, writer=MagicMock())
+    monkeypatch.setattr(hec, "_export_context", context)
 
     # Cleanup at shutdown must never raise.
     hec._close_sync_export_client()
-    assert hec._sync_export_client is None
+    assert hec._export_context is None

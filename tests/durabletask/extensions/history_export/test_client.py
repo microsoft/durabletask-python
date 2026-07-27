@@ -31,7 +31,6 @@ from durabletask.extensions.history_export import (
     ExportMode,
     orchestrator_instance_id_for,
 )
-from durabletask.extensions.history_export.activities import clear_context
 from durabletask.testing import create_test_backend
 
 from ._test_helpers import wait_until
@@ -66,7 +65,6 @@ def backend():
     yield b
     b.stop()
     b.reset()
-    clear_context()
 
 
 @pytest.fixture(scope="module")
