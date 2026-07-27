@@ -296,7 +296,7 @@ def _requires_new_registration_transport(ex: Exception) -> bool:
     if not isinstance(ex, grpc.RpcError):
         return True
 
-    if ex.code() is not grpc.StatusCode.CANCELLED:
+    if ex.code() != grpc.StatusCode.CANCELLED:
         return False
 
     details = getattr(ex, "details", None)
