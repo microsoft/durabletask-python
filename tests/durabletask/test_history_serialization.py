@@ -634,8 +634,17 @@ class TestLegacyCompatibility:
     ) -> None:
         event = _state_event(payload)
 
+        try:
+            expected = _legacy_to_dict(event)
+        except Exception:  # noqa: BLE001 - see the sibling parity test
+            # A few payloads cannot be serialized by ``asdict`` at all on
+            # some interpreters -- ``defaultdict`` before 3.12, say. There
+            # is no legacy value to compare against, so parity for those is
+            # asserted by ``test_exotic_payload_raises_the_same_way_as_legacy``
+            # instead of being silently weakened here.
+            pytest.skip('legacy raises for this payload on this interpreter')
+
         actual = event.to_dict()
-        expected = _legacy_to_dict(event)
 
         assert actual == expected
         # ``==`` alone would let a namedtuple compare equal to a plain
@@ -653,6 +662,27 @@ class TestLegacyCompatibility:
             expected: Any = _legacy_to_dict(event)
         except Exception as exc:  # noqa: BLE001 - mirroring legacy behavior
             with pytest.raises(type(exc)):
+                event.to_dict()
+        else:
+            assert event.to_dict() == expected
+
+    def test_defaultdict_follows_the_running_interpreter(self) -> None:
+        """``asdict`` changed how it rebuilds ``defaultdict`` in 3.12.
+
+        Earlier versions rebuilt every ``dict`` subclass with
+        ``type(obj)(<generator>)``, which ``defaultdict`` rejects with a
+        ``TypeError``; 3.12 added a branch that forwards ``default_factory``.
+        Delegating to the running interpreter's ``asdict`` inherits whichever
+        applies, so this asserts the two agree rather than pinning one
+        version's answer -- hand-rolling ``_asdict_inner``'s branches would
+        succeed on 3.10 and 3.11 where the legacy pipeline raises.
+        """
+        event = _state_event(defaultdict(int, {'a': 1}))
+
+        try:
+            expected: Any = _legacy_to_dict(event)
+        except TypeError:
+            with pytest.raises(TypeError):
                 event.to_dict()
         else:
             assert event.to_dict() == expected
