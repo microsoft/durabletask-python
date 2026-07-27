@@ -16,7 +16,32 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Optional, TypeVar
 
+from durabletask.extensions.history_export.activities import HistoryExportContext
+
 T = TypeVar("T")
+
+
+class MutableContextHolder:
+    """A per-invocation context resolver whose context tests can swap.
+
+    History-export activities resolve their :class:`HistoryExportContext`
+    per invocation via a resolver captured at registration time.  A
+    module worker is registered once with :meth:`resolve` as that
+    resolver, and each test assigns :attr:`context` (or ``None`` to make
+    the resolver raise) so a single registration can exercise many
+    different client/writer pairs.
+    """
+
+    def __init__(self) -> None:
+        self.context: HistoryExportContext | None = None
+
+    def resolve(self) -> HistoryExportContext:
+        if self.context is None:
+            raise RuntimeError(
+                "history-export test context not set; assign .context before "
+                "scheduling the orchestration"
+            )
+        return self.context
 
 
 def wait_until(
