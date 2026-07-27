@@ -13,9 +13,9 @@ original two-pass form so the optimization stays behavior-preserving.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import pytest
 
@@ -47,6 +47,41 @@ def _legacy_to_dict(event: history.HistoryEvent) -> dict[str, Any]:
 
 def _failure(message: str = 'boom') -> task.FailureDetails:
     return task.FailureDetails(message, 'RuntimeError', 'Traceback...')
+
+
+@dataclass
+class _Inner:
+    """A dataclass the walker should convert wherever it is nested."""
+
+    label: str
+    when: datetime
+
+
+class _Point(NamedTuple):
+    """A namedtuple, which rebuilds differently from a plain tuple."""
+
+    x: Any
+    y: Any
+
+
+class _MutableLeaf:
+    """A value the walker cannot convert, so it must be copied out."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _MutableLeaf) and other.n == self.n
+
+    def __repr__(self) -> str:
+        return f'_MutableLeaf({self.n})'
+
+
+def _state_event(value: Any) -> history.HistoryStateEvent:
+    """Wrap ``value`` in the only ``dict[str, Any]`` field on any event."""
+    return history.HistoryStateEvent(
+        event_id=-1, timestamp=_TS, orchestration_state={'value': value},
+    )
 
 
 def _trace_context() -> history.TraceContext:
@@ -270,7 +305,12 @@ _SAMPLE_EVENTS = _sample_events()
 
 
 class TestToDictEquivalence:
-    """``to_dict`` must produce exactly what the old two-pass form produced."""
+    """``to_dict`` must produce exactly what the old two-pass form produced.
+
+    Tuple-bearing payloads are deliberately excluded from this suite and
+    covered by :class:`TestTupleHandling` instead: the old two-pass form
+    mishandled tuples, so matching it there would mean reproducing a bug.
+    """
 
     @pytest.mark.parametrize(
         'event', _SAMPLE_EVENTS, ids=_event_ids(_SAMPLE_EVENTS),
@@ -392,3 +432,145 @@ class TestToDictIsolation:
         payload = event.to_dict()
         assert payload['lock_set'] == lock_set
         assert payload['lock_set'] is not lock_set
+
+    @pytest.mark.parametrize(
+        'leaf',
+        [
+            pytest.param(_MutableLeaf(1), id='custom-object'),
+            pytest.param(bytearray(b'abc'), id='bytearray'),
+            pytest.param({1, 2, 3}, id='set'),
+            pytest.param((1, 'x'), id='tuple'),
+            pytest.param(_Point(1, 2), id='namedtuple'),
+        ],
+    )
+    def test_mutable_leaf_is_not_aliased(self, leaf: Any) -> None:
+        """Values the walker does not recognize must still be copied out.
+
+        ``dataclasses.asdict`` ended its recursion with ``copy.deepcopy``,
+        so the dict it produced never shared mutable state with the event.
+        The single-pass walker has to preserve that isolation, otherwise a
+        caller mutating the exported dict would corrupt the live event.
+        """
+        event = _state_event(leaf)
+        exported = event.to_dict()['orchestration_state']['value']
+        assert exported == leaf
+        assert exported is not leaf
+
+    def test_mutating_exported_leaf_does_not_affect_event(self) -> None:
+        leaf = _MutableLeaf(1)
+        event = _state_event(leaf)
+
+        exported = event.to_dict()['orchestration_state']['value']
+        exported.n = 999
+
+        assert leaf.n == 1
+        assert event.orchestration_state['value'].n == 1
+
+    def test_mutating_exported_bytearray_does_not_affect_event(self) -> None:
+        leaf = bytearray(b'abc')
+        event = _state_event(leaf)
+
+        exported = event.to_dict()['orchestration_state']['value']
+        exported.extend(b'def')
+
+        assert leaf == bytearray(b'abc')
+
+    def test_nested_mutable_leaf_is_not_aliased(self) -> None:
+        """Isolation must hold for leaves buried inside lists and dicts."""
+        leaf = _MutableLeaf(7)
+        event = _state_event({'deep': [leaf]})
+
+        exported = event.to_dict()['orchestration_state']['value']['deep'][0]
+        assert exported == leaf
+        assert exported is not leaf
+
+
+class TestTupleHandling:
+    """Tuples must recurse the same way lists do.
+
+    The old two-pass form got this wrong in a way worth spelling out.
+    ``dataclasses.asdict`` *did* rebuild tuples, converting any nested
+    dataclass into a dict, but the ``_to_serializable`` pass that ran
+    afterwards had no tuple branch, so datetimes sitting inside a tuple
+    were never converted. The result was a value that could not be JSON
+    encoded. The single-pass walker handles tuples exactly like lists,
+    which diverges from the old output on purpose.
+    """
+
+    def test_tuple_containing_dataclass_is_converted(self) -> None:
+        event = _state_event((_Inner('a', _TS),))
+        exported = event.to_dict()['orchestration_state']['value']
+        assert exported == ({'label': 'a', 'when': _TS.isoformat()},)
+
+    def test_datetime_inside_tuple_is_converted(self) -> None:
+        event = _state_event((_TS,))
+        exported = event.to_dict()['orchestration_state']['value']
+        assert exported == (_TS.isoformat(),)
+
+    def test_tuple_type_is_preserved(self) -> None:
+        event = _state_event((1, 'x'))
+        exported = event.to_dict()['orchestration_state']['value']
+        assert isinstance(exported, tuple)
+
+    def test_namedtuple_type_is_preserved(self) -> None:
+        """Rebuilding a tuple must not flatten a namedtuple into a plain one."""
+        event = _state_event(_Point(1, 2))
+        exported = event.to_dict()['orchestration_state']['value']
+        assert isinstance(exported, _Point)
+        assert exported == _Point(1, 2)
+
+    def test_namedtuple_contents_are_converted(self) -> None:
+        event = _state_event(_Point(_TS, _Inner('b', _TS)))
+        exported = event.to_dict()['orchestration_state']['value']
+        assert exported == _Point(
+            _TS.isoformat(), {'label': 'b', 'when': _TS.isoformat()},
+        )
+
+    def test_tuple_nested_in_dict_and_list_is_converted(self) -> None:
+        event = _state_event({'k': [(_Inner('c', _TS),)]})
+        exported = event.to_dict()['orchestration_state']['value']
+        assert exported == {'k': [({'label': 'c', 'when': _TS.isoformat()},)]}
+
+    def test_empty_tuple_round_trips(self) -> None:
+        event = _state_event(())
+        assert event.to_dict()['orchestration_state']['value'] == ()
+
+    @pytest.mark.parametrize(
+        'payload',
+        [
+            pytest.param((_Inner('a', _TS),), id='tuple-of-dataclass'),
+            pytest.param((_TS,), id='tuple-of-datetime'),
+            pytest.param(_Point(_TS, 2), id='namedtuple-of-datetime'),
+            pytest.param({'k': [(_TS,)]}, id='tuple-nested-in-dict-and-list'),
+        ],
+    )
+    def test_tuple_payloads_are_json_serializable(self, payload: Any) -> None:
+        """The old two-pass form produced tuples json.dumps could not encode."""
+        event = _state_event(payload)
+        json.dumps(event.to_dict())
+
+    @pytest.mark.parametrize(
+        'payload',
+        [
+            pytest.param((_Inner('a', _TS),), id='tuple-of-dataclass'),
+            pytest.param((_TS,), id='tuple-of-datetime'),
+        ],
+    )
+    def test_tuple_output_deliberately_diverges_from_legacy(
+        self, payload: Any,
+    ) -> None:
+        """Pin the divergence so it stays intentional rather than accidental.
+
+        The legacy output is not JSON encodable for these payloads; the
+        new output is. This test fails loudly if anyone ever "restores"
+        bug-for-bug parity with the old two-pass form.
+        """
+        event = _state_event(payload)
+
+        legacy = _legacy_to_dict(event)
+        with pytest.raises(TypeError):
+            json.dumps(legacy)
+
+        actual = event.to_dict()
+        assert actual != legacy
+        json.dumps(actual)

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
@@ -355,10 +356,10 @@ def _to_serializable(value: Any) -> Any:
     This walks dataclass instances directly instead of going through
     ``dataclasses.asdict``, which would deep-copy the whole event graph
     into a throwaway intermediate structure that then has to be walked a
-    second time. The output is identical to that two-pass form: nested
-    dataclasses become dicts in field order, datetimes become ISO 8601
-    strings, lists and dicts are rebuilt, and every other value is
-    passed through unchanged.
+    second time. Nested dataclasses become dicts in field order,
+    datetimes become ISO 8601 strings, lists, tuples and dicts are
+    rebuilt, and anything else is deep-copied so the result never shares
+    mutable state with the event it came from.
     """
     value_type = cast('type[Any]', type(value))
     if value_type in _JSON_NATIVE_TYPES:
@@ -374,12 +375,22 @@ def _to_serializable(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, list):
         return [_to_serializable(item) for item in cast(list[Any], value)]
+    if isinstance(value, tuple):
+        items = [_to_serializable(item) for item in cast(tuple[Any, ...], value)]
+        # Namedtuples take their fields as positional arguments rather than
+        # a single iterable, so rebuilding them needs the unpacked form.
+        if hasattr(value_type, '_fields'):
+            return value_type(*items)
+        return value_type(items)
     if isinstance(value, dict):
         return {
             key: _to_serializable(item)
             for key, item in cast(dict[Any, Any], value).items()
         }
-    return value
+    # ``asdict`` ended its recursion with ``copy.deepcopy``. Keeping that
+    # behavior means callers can freely mutate the exported structure
+    # without reaching back into the live event.
+    return copy.deepcopy(value)
 
 
 _EVENT_CONVERTERS: dict[str, Callable[[pb.HistoryEvent], HistoryEvent]] = {
