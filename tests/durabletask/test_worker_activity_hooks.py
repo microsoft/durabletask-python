@@ -56,7 +56,7 @@ def test_activity_execution_completed_hook_runs_after_failed_activity() -> None:
 
     assert worker.events == [("started", "fails"), ("completed", "fails")]
     assert len(stub.completed) == 1
-    assert stub.completed[0].failureDetails.errorType == "ValueError"
+    assert stub.completed[0].failureDetails.errorType == "builtins.ValueError"
 
 
 def _activity_request(name: str, value: str) -> pb.ActivityRequest:

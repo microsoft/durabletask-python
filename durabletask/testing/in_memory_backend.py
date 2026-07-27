@@ -799,7 +799,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 if not self._is_terminal_status(instance.status):
                     instance.status = pb.ORCHESTRATION_STATUS_FAILED
                     instance.failure_details = pb.TaskFailureDetails(
-                        errorType=type(e).__name__,
+                        errorType=helpers.get_qualified_name(type(e)),
                         errorMessage=str(e),
                         isNonRetriable=True,
                     )

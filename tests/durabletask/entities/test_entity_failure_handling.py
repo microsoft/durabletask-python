@@ -50,7 +50,7 @@ def test_class_entity_unhandled_failure_fails():
     assert state.name == task.get_name(test_orchestrator)
     assert state.instance_id == id
     assert state.failure_details is not None
-    assert state.failure_details.error_type == "TaskFailedError"
+    assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
     assert "Something went wrong!" in state.failure_details.message
     assert state.runtime_status == client.OrchestrationStatus.FAILED
 
@@ -77,7 +77,7 @@ def test_function_entity_unhandled_failure_fails():
     assert state.name == task.get_name(test_orchestrator)
     assert state.instance_id == id
     assert state.failure_details is not None
-    assert state.failure_details.error_type == "TaskFailedError"
+    assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
     assert "Something went wrong!" in state.failure_details.message
     assert state.runtime_status == client.OrchestrationStatus.FAILED
 

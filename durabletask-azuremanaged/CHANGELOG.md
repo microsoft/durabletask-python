@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+- `FailureDetails.error_type` now carries the fully-qualified type name (e.g. `durabletask.task.TaskFailedError`) instead of the bare class name, and the new `FailureDetails.is_caused_by()` helper is available (both inherited from durabletask). See the core `durabletask` changelog for details, including the breaking-change notes.
+
 ## v1.8.0
 
 - Updates base dependency to durabletask v1.8.0.
