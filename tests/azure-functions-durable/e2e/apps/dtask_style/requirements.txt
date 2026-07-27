@@ -1,0 +1,6 @@
+# The E2E harness installs azure-functions-durable (and its durabletask
+# dependency) from the local source tree into the same interpreter the
+# Functions host worker uses, so these are listed for documentation/parity with
+# a real app rather than being pip-installed by the host at start time.
+azure-functions
+azure-functions-durable
