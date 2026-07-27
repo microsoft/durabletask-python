@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from functools import lru_cache
 from importlib.metadata import version
 
 import grpc
@@ -17,6 +18,22 @@ from durabletask.internal.grpc_interceptor import (
 )
 
 
+@lru_cache(maxsize=1)
+def _get_sdk_version() -> str:
+    """Return the installed version of the azuremanaged package.
+
+    Resolving the version walks distribution metadata on disk, so the result is
+    cached and shared by every interceptor instance instead of being recomputed
+    on each client or worker construction. Falls back to ``"unknown"`` when the
+    version cannot be determined.
+    """
+    try:
+        return version('durabletask-azuremanaged')
+    except Exception:
+        # Fallback if version cannot be determined
+        return "unknown"
+
+
 class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
     """The class implements a UnaryUnaryClientInterceptor, UnaryStreamClientInterceptor,
     StreamUnaryClientInterceptor and StreamStreamClientInterceptor from grpc to add an
@@ -27,13 +44,7 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
             token_credential: TokenCredential | None,
             taskhub_name: str,
             worker_id: str | None = None):
-        try:
-            # Get the version of the azuremanaged package
-            sdk_version = version('durabletask-azuremanaged')
-        except Exception:
-            # Fallback if version cannot be determined
-            sdk_version = "unknown"
-        user_agent = f"durabletask-python/{sdk_version}"
+        user_agent = f"durabletask-python/{_get_sdk_version()}"
         self._metadata = [
             ("taskhub", taskhub_name),
             ("x-user-agent", user_agent)]  # 'user-agent' is a reserved header; use 'x-user-agent'
@@ -81,13 +92,7 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
     (task hub name, user agent, and authentication token) to all async calls."""
 
     def __init__(self, token_credential: AsyncTokenCredential | None, taskhub_name: str):
-        try:
-            # Get the version of the azuremanaged package
-            sdk_version = version('durabletask-azuremanaged')
-        except Exception:
-            # Fallback if version cannot be determined
-            sdk_version = "unknown"
-        user_agent = f"durabletask-python/{sdk_version}"
+        user_agent = f"durabletask-python/{_get_sdk_version()}"
         self._metadata = [
             ("taskhub", taskhub_name),
             ("x-user-agent", user_agent)]
