@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -42,7 +43,10 @@ class HistoryEvent:
     timestamp: datetime
 
     def to_dict(self) -> dict[str, Any]:
-        return _to_serializable(asdict(self))
+        return {
+            name: _to_serializable(getattr(self, name))
+            for name in _field_names(type(self))
+        }
 
 
 @dataclass(slots=True)
@@ -326,17 +330,124 @@ def _message_to_dict(msg: Message) -> dict[str, Any]:
     return json_format.MessageToDict(msg, preserving_proto_field_name=True)
 
 
-def _to_serializable(value: Any) -> Any:
+# Field names are looked up once per dataclass type. History export walks
+# many events of the same handful of types, so caching avoids repeatedly
+# rebuilding the tuple returned by ``dataclasses.fields``. The cache is
+# bounded so that dynamically created dataclass types cannot pin an
+# unbounded number of entries (and the classes they reference) in memory.
+_FIELD_NAMES_CACHE_SIZE = 256
+
+# Values of these exact types are already JSON-native and need no
+# conversion. Checking ``type(value)`` against a set is a single hash
+# lookup, which short-circuits the common case (most event fields are
+# strings, ints, or ``None``) before the type checks below.
+_JSON_NATIVE_TYPES: frozenset[type[Any]] = frozenset({bool, float, int, str, type(None)})
+
+
+@functools.lru_cache(maxsize=_FIELD_NAMES_CACHE_SIZE)
+def _field_names(cls: type[Any]) -> tuple[str, ...]:
+    return tuple(field.name for field in fields(cast(Any, cls)))
+
+
+@dataclass
+class _LegacyBox:
+    """Carrier used to re-enter ``dataclasses.asdict`` for one value."""
+
+    value: Any
+
+
+def _asdict_only(value: Any) -> Any:
+    """Apply ``dataclasses.asdict`` recursion to *value* and nothing else.
+
+    Boxing the value in a throwaway dataclass lets the interpreter's own
+    ``asdict`` implementation handle it, so container subclasses,
+    namedtuples, ``defaultdict`` and the deep-copy of leaf values all behave
+    exactly as they did before this module walked events itself. Delegating
+    rather than reimplementing matters because those details have changed
+    between Python releases and this package supports several of them.
+    """
+    return asdict(_LegacyBox(value))['value']
+
+
+def _legacy_walk(value: Any) -> Any:
+    """The pre-optimization conversion pass, applied to an ``asdict`` result."""
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, list):
-        return [_to_serializable(item) for item in cast(list[Any], value)]
+        return [_legacy_walk(item) for item in cast(list[Any], value)]
     if isinstance(value, dict):
         return {
-            key: _to_serializable(item)
+            key: _legacy_walk(item)
             for key, item in cast(dict[Any, Any], value).items()
         }
     return value
+
+
+def _legacy_compat(value: Any) -> Any:
+    """Reproduce the original ``asdict`` + walk pipeline for one value."""
+    return _legacy_walk(_asdict_only(value))
+
+
+def _to_serializable(value: Any) -> Any:
+    """Recursively convert *value* into the form history export writes.
+
+    Values the SDK itself produces convert to JSON-native types. Arbitrary
+    values can also arrive through ``dict[str, Any]`` fields, and those keep
+    whatever the original pipeline did with them -- which for a few shapes,
+    such as a tuple holding a ``datetime``, is not JSON-encodable. That is
+    preserved on purpose rather than fixed here; see :func:`_legacy_compat`.
+
+    This walks dataclass instances directly instead of going through
+    ``dataclasses.asdict``, which would deep-copy the whole event graph
+    into a throwaway intermediate structure that then has to be walked a
+    second time.
+
+    The type checks below are deliberately exact rather than
+    ``isinstance``. Only the built-in types are handled inline, because
+    only for those is walking in place provably identical to what
+    ``asdict`` produced. Subclasses, tuples and every other value are
+    routed to :func:`_legacy_compat`, which re-enters the real ``asdict``
+    so their original semantics -- constructor round-trips, key
+    recursion and deep-copied leaves -- are preserved exactly.
+    """
+    # ``type(value)`` is ``type[Unknown]`` to a type checker because *value*
+    # is ``Any``, so the cast is what keeps this module clean under strict
+    # checking. Two details are deliberate: the annotation is quoted, since
+    # an unquoted ``type[Any]`` is evaluated on every call and builds a
+    # throwaway ``types.GenericAlias``; and the lookup is ``type(value)``
+    # rather than the cheaper ``value.__class__``, because ``asdict`` used
+    # ``type(obj)`` and an object overriding ``__class__`` would otherwise
+    # be dispatched differently than it was before.
+    value_type = cast('type[Any]', type(value))
+    if value_type in _JSON_NATIVE_TYPES:
+        return value
+    # Mirrors the private ``dataclasses._is_dataclass_instance`` check that
+    # ``asdict`` used: dataclass *types* are leaves, only instances recurse.
+    if hasattr(value_type, '__dataclass_fields__'):
+        return {
+            name: _to_serializable(getattr(value, name))
+            for name in _field_names(value_type)
+        }
+    if value_type is datetime:
+        return value.isoformat()
+    if value_type is list:
+        return [_to_serializable(item) for item in value]
+    if value_type is dict:
+        # ``asdict`` rebuilt keys and collapsed any that compared equal
+        # afterwards, and only then did the conversion pass run, so a value
+        # whose entry lost a collision was never converted. Converting
+        # inline would visit those dropped entries, which is observable if
+        # conversion raises or has side effects. Only a key that ``asdict``
+        # would rebuild can collide -- native keys pass through untouched
+        # and a mapping's keys are already distinct -- so the presence of
+        # one is the signal to hand the whole mapping to the legacy path.
+        # This is checked before any value is converted, because bailing
+        # out partway would already have visited earlier entries.
+        for key in value:
+            if type(key) not in _JSON_NATIVE_TYPES:
+                return _legacy_compat(value)
+        return {key: _to_serializable(item) for key, item in value.items()}
+    return _legacy_compat(value)
 
 
 _EVENT_CONVERTERS: dict[str, Callable[[pb.HistoryEvent], HistoryEvent]] = {
