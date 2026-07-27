@@ -20,7 +20,6 @@ instead -- a method the extension does implement.
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
@@ -48,10 +47,6 @@ from durabletask.extensions.history_export.models import (
 from durabletask.extensions.history_export.transitions import assert_valid_transition
 from durabletask.extensions.history_export.writer import HistoryWriter
 
-from .azurefunctions_grpc_interceptor import (
-    AzureFunctionsDefaultClientInterceptorImpl,
-)
-from .serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 
 # The activity registers under the same name the export orchestrator calls, so
 # it transparently replaces the core activity.
@@ -156,11 +151,6 @@ def list_terminal_instances(
 # ---------------------------------------------------------------------------
 
 _export_writer: Optional[HistoryWriter] = None
-# The per-process export context (sync client + writer), built lazily from the
-# first injected durable client and reused across every export activity. Guarded
-# by ``_context_lock`` for the first-build race; its client is closed at exit.
-_export_context: Optional[HistoryExportContext] = None
-_context_lock = threading.Lock()
 
 
 def set_export_writer(writer: HistoryWriter) -> None:
@@ -172,48 +162,6 @@ def set_export_writer(writer: HistoryWriter) -> None:
     """
     global _export_writer
     _export_writer = writer
-
-
-def _build_sync_client(client: Any) -> TaskHubGrpcClient:
-    """Build a synchronous ``TaskHubGrpcClient`` from an injected durable client.
-
-    The ``durable_client_input`` binding yields an async ``DurableFunctionsClient``
-    carrying the host's RPC endpoint and auth; the export activities use the
-    synchronous client, so this bridges to one aimed at the same endpoint.
-
-    > [!NOTE]
-    > This async->sync adapter is temporary. Once a first-class synchronous
-    > durable-client binding exists
-    > (https://github.com/microsoft/durabletask-python/issues/181), the export
-    > activities can be injected with a sync client directly and this bridge --
-    > along with the separate channel it opens -- can be removed.
-    """
-    interceptors = [AzureFunctionsDefaultClientInterceptorImpl(
-        client.taskHubName, client.requiredQueryStringParameters)]
-    return TaskHubGrpcClient(
-        host_address=client.rpcBaseUrl,
-        secure_channel=False,
-        interceptors=interceptors,
-        data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
-
-
-def _close_sync_export_client() -> None:
-    """Close the process-wide sync export client (registered via ``atexit``).
-
-    The client is built once per worker process and reused across every export
-    activity, so it lives for the app's lifetime; closing it at interpreter
-    exit releases its gRPC channel on graceful shutdown. Idempotent and
-    exception-safe -- shutdown must never surface an error from cleanup.
-    """
-    global _export_context
-    with _context_lock:
-        context = _export_context
-        _export_context = None
-    if context is not None:
-        try:
-            context.client.close()
-        except Exception:
-            pass
 
 
 def _context_for(client: TaskHubGrpcClient) -> HistoryExportContext:

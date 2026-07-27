@@ -203,20 +203,7 @@ def test_context_for_uses_invocation_sync_client(monkeypatch):
 
 
 def test_context_for_requires_configured_writer(monkeypatch):
-    monkeypatch.setattr(hec, "_build_sync_client", lambda _c: MagicMock())
     monkeypatch.setattr(hec, "_export_writer", None)
-    monkeypatch.setattr(hec, "_export_context", None)
 
     with pytest.raises(RuntimeError, match="writer is not configured"):
         hec._context_for(object())
-
-
-def test_close_sync_export_client_swallows_errors(monkeypatch):
-    fake_client = MagicMock()
-    fake_client.close.side_effect = RuntimeError("boom")
-    context = hec.HistoryExportContext(client=fake_client, writer=MagicMock())
-    monkeypatch.setattr(hec, "_export_context", context)
-
-    # Cleanup at shutdown must never raise.
-    hec._close_sync_export_client()
-    assert hec._export_context is None

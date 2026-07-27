@@ -499,6 +499,17 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
 class SyncDurableFunctionsClient(TaskHubGrpcClient):
     """Synchronous durable client supplied by a Functions durable-client binding."""
 
+    taskHubName: str
+    connectionName: str
+    creationUrls: dict[str, str]
+    managementUrls: dict[str, str]
+    baseUrl: str
+    requiredQueryStringParameters: str
+    rpcBaseUrl: str
+    httpBaseUrl: str
+    maxGrpcMessageSizeInBytes: int
+    grpcHttpClientTimeout: timedelta | str
+
     def __init__(self, client_as_string: str):
         self._parse_client_configuration(client_as_string)
         interceptors = [AzureFunctionsDefaultClientInterceptorImpl(
@@ -516,8 +527,61 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
 
-    _parse_client_configuration = DurableFunctionsClient._parse_client_configuration
-    create_check_status_response = DurableFunctionsClient.create_check_status_response
-    create_http_management_payload = DurableFunctionsClient.create_http_management_payload
-    _get_client_response_links = DurableFunctionsClient._get_client_response_links
-    _get_instance_status_url = DurableFunctionsClient._get_instance_status_url
+    def _parse_client_configuration(self, client_as_string: str) -> None:
+        client = json.loads(client_as_string)
+        self.taskHubName = client.get("taskHubName") or ""
+        self.connectionName = client.get("connectionName") or ""
+        self.creationUrls = client.get("creationUrls") or {}
+        self.managementUrls = client.get("managementUrls") or {}
+        self.baseUrl = client.get("baseUrl") or ""
+        self.requiredQueryStringParameters = client.get(
+            "requiredQueryStringParameters") or ""
+        self.rpcBaseUrl = client.get("rpcBaseUrl") or ""
+        self.httpBaseUrl = client.get("httpBaseUrl") or ""
+        self.maxGrpcMessageSizeInBytes = client.get(
+            "maxGrpcMessageSizeInBytes") or 0
+        self.grpcHttpClientTimeout = client.get(
+            "grpcHttpClientTimeout") or timedelta(seconds=30)
+
+    def create_check_status_response(
+            self, request: func.HttpRequest, instance_id: str) -> func.HttpResponse:
+        payload = self._get_client_response_links(request, instance_id)
+        return func.HttpResponse(
+            body=str(payload),
+            status_code=202,
+            headers={
+                "content-type": "application/json",
+                "Location": payload["statusQueryGetUri"],
+            },
+        )
+
+    def create_http_management_payload(
+            self,
+            request: func.HttpRequest | str | None = None,
+            instance_id: str | None = None) -> HttpManagementPayload:
+        if instance_id is None and isinstance(request, str):
+            instance_id = request
+            request = None
+        if instance_id is None:
+            raise TypeError("instance_id is required")
+        resolved_request = request if isinstance(request, func.HttpRequest) else None
+        return self._get_client_response_links(resolved_request, instance_id)
+
+    def _get_client_response_links(
+            self, request: func.HttpRequest | None,
+            instance_id: str) -> HttpManagementPayload:
+        return HttpManagementPayload(
+            instance_id,
+            self._get_instance_status_url(request, instance_id),
+            self.requiredQueryStringParameters)
+
+    def _get_instance_status_url(
+            self, request: func.HttpRequest | None, instance_id: str) -> str:
+        encoded_instance_id = quote(instance_id)
+        if request is not None:
+            request_url = urlparse(request.url)
+            return (
+                f"{request_url.scheme}://{request_url.netloc}"
+                f"/runtime/webhooks/durabletask/instances/{encoded_instance_id}")
+        base_url = self.baseUrl.rstrip("/") if self.baseUrl else ""
+        return f"{base_url}/instances/{encoded_instance_id}"

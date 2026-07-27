@@ -409,8 +409,8 @@ class Blueprint(TriggerApi, BindingApi):
             # ``FunctionBuilder`` (e.g. history export), which is left untouched.
             from ..client import DurableFunctionsClient, SyncDurableFunctionsClient
 
-            function = (user_fn._function._func if isinstance(user_fn, FunctionBuilder)
-                        else user_fn)
+            function = (user_fn._function._func  # pyright: ignore[reportPrivateUsage]
+                        if isinstance(user_fn, FunctionBuilder) else user_fn)
             signature = inspect.signature(function)
 
             @wraps(function)
@@ -427,15 +427,15 @@ class Blueprint(TriggerApi, BindingApi):
                     result = function(*bound.args, **bound.kwargs)
                     return await result if inspect.isawaitable(result) else result
                 finally:
-                    if sync:
-                        client.close()
-                    else:
+                    if isinstance(client, DurableFunctionsClient):
                         client.schedule_close()
+                    else:
+                        client.close()
 
             client_bound.__annotations__[client_name] = str
-            client_bound.client_function = function  # pyright: ignore[reportFunctionMemberAccess]
+            setattr(client_bound, "client_function", function)
             if isinstance(user_fn, FunctionBuilder):
-                user_fn._function._func = client_bound
+                user_fn._function._func = client_bound  # pyright: ignore[reportPrivateUsage]
                 return wrap(user_fn)
             return wrap(client_bound)
 
