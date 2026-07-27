@@ -72,7 +72,6 @@ from durabletask.extensions.history_export._constants import (
 from durabletask.extensions.history_export._logging import logger
 from durabletask.extensions.history_export.activities import (
     HistoryExportContext,
-    bind_context,
     register as _register_activities,
 )
 from durabletask.extensions.history_export.writer import HistoryWriter
@@ -141,14 +140,16 @@ class ExportHistoryClient:
     def register_worker(self, worker_instance: worker_module.TaskHubGrpcWorker) -> None:
         """Register the entity, activities, and orchestrator on *worker*.
 
-        Also binds the activity execution context so the activities
-        can find the underlying client and writer at runtime.  Call
-        this once per worker before :meth:`start`.
+        The activities resolve their runtime dependencies (this
+        client and the writer) from a :class:`HistoryExportContext`
+        supplied per invocation by a resolver captured in the activity
+        closures — no process-global is installed.  Call this once per
+        worker before :meth:`start`.
         """
         worker_instance.add_entity(ExportJobEntity, name=ENTITY_NAME)
-        _register_activities(worker_instance)
+        context = HistoryExportContext(client=self._client, writer=self._writer)
+        _register_activities(worker_instance, lambda: context)
         worker_instance.add_orchestrator(export_job_orchestrator)
-        bind_context(HistoryExportContext(client=self._client, writer=self._writer))
 
     # ------------------------------------------------------------------
     # Job lifecycle

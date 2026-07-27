@@ -4,11 +4,11 @@
 """E2E tests for history-export activities against the in-memory backend.
 
 Tests share a single backend + worker per module to avoid paying the
-worker start/shutdown cost on every test.  The bound activity context
-is module-global, so individual tests swap their own
-:class:`HistoryExportContext` (writer + client) in via ``bind_context``
-at the top of the test, and restore a clean slate via ``clear_context``
-on teardown.
+worker start/shutdown cost on every test.  The activities are
+registered once with a resolver that reads from a module-level holder;
+individual tests swap their own :class:`HistoryExportContext` (writer +
+client) into the holder, and the autouse fixture clears it between
+tests.
 """
 
 from __future__ import annotations
@@ -30,16 +30,18 @@ from durabletask.extensions.history_export.activities import (
     EXPORT_INSTANCE_HISTORY_ACTIVITY,
     LIST_TERMINAL_INSTANCES_ACTIVITY,
     HistoryExportContext,
-    bind_context,
-    clear_context,
     register as register_activities,
 )
 from durabletask.testing import create_test_backend
 
+from ._test_helpers import MutableContextHolder
 from tests.durabletask._port_utils import find_free_port
 
 PORT = find_free_port()
 HOST = f"localhost:{PORT}"
+
+
+_holder = MutableContextHolder()
 
 
 class _InMemoryWriter:
@@ -90,7 +92,7 @@ def w(backend):
     w_ = worker.TaskHubGrpcWorker(host_address=HOST)
     w_.add_orchestrator(_echo_orchestrator)
     w_.add_orchestrator(_list_then_export)
-    register_activities(w_)
+    register_activities(w_, _holder.resolve)
     w_.start()
     yield w_
     w_.stop()
@@ -103,10 +105,10 @@ def c(w):
 
 @pytest.fixture(autouse=True)
 def _isolate_context():
-    """Each test must explicitly bind its own context."""
-    clear_context()
+    """Each test must explicitly set its own context in the holder."""
+    _holder.context = None
     yield
-    clear_context()
+    _holder.context = None
 
 
 @pytest.fixture(scope="module")
@@ -129,7 +131,7 @@ def seeded_ids(c, w):
 
 def test_activities_list_and_export_to_in_memory_writer(c, seeded_ids):
     writer = _InMemoryWriter()
-    bind_context(HistoryExportContext(client=c, writer=writer))
+    _holder.context = HistoryExportContext(client=c, writer=writer)
 
     now = datetime.now(timezone.utc)
     fmt = ExportFormat(kind=ExportFormatKind.JSONL_GZIP)
@@ -182,7 +184,7 @@ def test_export_activity_reports_failure_when_writer_raises(c, seeded_ids):
         def write(self, **_):
             raise RuntimeError("disk full")
 
-    bind_context(HistoryExportContext(client=c, writer=FailingWriter()))
+    _holder.context = HistoryExportContext(client=c, writer=FailingWriter())
 
     now = datetime.now(timezone.utc)
     fmt = ExportFormat(kind=ExportFormatKind.JSON)
@@ -211,8 +213,9 @@ def test_export_activity_reports_failure_when_writer_raises(c, seeded_ids):
     assert all("disk full" in r["error"] for r in failures)
 
 
-def test_activities_require_bound_context(c):
-    # Do NOT bind a context.  The activities should raise.
+def test_activities_fail_when_context_resolution_raises(c):
+    # Do NOT set a context in the holder.  The resolver should raise,
+    # and the activity failure must surface on the orchestration.
     now = datetime.now(timezone.utc)
     fmt = ExportFormat(kind=ExportFormatKind.JSON)
     dest = ExportDestination(container="exports")
@@ -235,7 +238,7 @@ def test_activities_require_bound_context(c):
     assert state is not None
     assert state.runtime_status == client.OrchestrationStatus.FAILED
     assert state.failure_details is not None
-    assert "without a bound context" in (state.failure_details.message or "")
+    assert "test context not set" in (state.failure_details.message or "")
 
 
 # ---------------------------------------------------------------------
@@ -286,14 +289,14 @@ def _basic_activity_input() -> dict:
 def test_export_activity_skips_when_instance_no_longer_exists():
     """N-2: instance purged between list and export -> failure without write."""
     from durabletask.extensions.history_export.activities import (
-        export_instance_history,
+        run_export_instance_history,
     )
 
     stub_client = _StubGetStateClient(state=None)
     writer = _CountingWriter()
-    bind_context(HistoryExportContext(client=stub_client, writer=writer))
+    context = HistoryExportContext(client=stub_client, writer=writer)
 
-    result = export_instance_history(None, _basic_activity_input())
+    result = run_export_instance_history(context, _basic_activity_input())
 
     assert result["success"] is False
     assert "no longer exists" in result["error"]
@@ -304,7 +307,7 @@ def test_export_activity_skips_when_instance_no_longer_exists():
 def test_export_activity_skips_when_instance_is_not_terminal():
     """N-2: instance has re-entered a running state -> failure without write."""
     from durabletask.extensions.history_export.activities import (
-        export_instance_history,
+        run_export_instance_history,
     )
 
     class _State:
@@ -312,9 +315,9 @@ def test_export_activity_skips_when_instance_is_not_terminal():
 
     stub_client = _StubGetStateClient(state=_State())
     writer = _CountingWriter()
-    bind_context(HistoryExportContext(client=stub_client, writer=writer))
+    context = HistoryExportContext(client=stub_client, writer=writer)
 
-    result = export_instance_history(None, _basic_activity_input())
+    result = run_export_instance_history(context, _basic_activity_input())
 
     assert result["success"] is False
     assert "no longer terminal" in result["error"]
