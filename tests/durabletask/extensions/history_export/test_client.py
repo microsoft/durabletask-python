@@ -21,6 +21,7 @@ import pytest
 from durabletask import client, task, worker
 from durabletask.extensions.history_export import (
     AsyncExportHistoryClient,
+    AsyncExportHistoryJobClient,
     ExportDestination,
     ExportFormat,
     ExportFormatKind,
@@ -164,16 +165,21 @@ async def test_async_client_create_list_wait_and_delete(
             format=ExportFormat(kind=ExportFormatKind.JSON),
         ))
 
-        final = await export_client.wait_for_job(
-            desc.job_id, timeout=30, poll_interval=0.1)
+        job_client = export_client.get_job_client(desc.job_id)
+        assert isinstance(job_client, AsyncExportHistoryJobClient)
+        assert job_client.job_id == desc.job_id
+        assert job_client.orchestrator_instance_id == orchestrator_instance_id_for(
+            desc.job_id)
+
+        final = await job_client.wait(timeout=30, poll_interval=0.1)
         assert final.status == ExportJobStatus.COMPLETED
-        assert (await export_client.get_job(desc.job_id)) is not None
+        assert (await job_client.describe()) is not None
         assert desc.job_id in {
             job.job_id async for job in export_client.list_jobs()
         }
 
-        await export_client.delete_job(desc.job_id)
-        assert await export_client.get_job(desc.job_id) is None
+        await job_client.delete()
+        assert await job_client.describe() is None
 
 
 async def test_async_client_get_job_returns_none_for_empty_state(writer):
