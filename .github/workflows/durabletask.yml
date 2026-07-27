@@ -25,17 +25,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install setuptools wheel tox
-        pip install flake8
-    - name: Run flake8 Linter
-      working-directory: durabletask
-      run: flake8 .
-    - name: "Run flake8 linter: tests"
-      working-directory: tests/durabletask
-      run: flake8 .
-    - name: "Run flake8 linter: examples"
-      working-directory: examples
-      run: flake8 .
+        pip install nox
+    - name: Run lint checks
+      run: nox -s lint
 
   run-tests:
     strategy:
@@ -67,21 +59,10 @@ jobs:
       - name: Install Azurite
         run: npm install -g azurite
 
-      - name: Start Azurite
-        shell: bash
-        run: |
-          azurite-blob --silent --blobPort 10000 &
-          sleep 2
-
-      - name: Install durabletask dependencies and the library itself
+      - name: Install Nox
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 pytest
-          pip install -r requirements.txt
-          pip install ".[azure-blob-payloads]"
-          pip install aiohttp
+          pip install nox
 
       - name: Pytest unit tests
-        working-directory: tests/durabletask
-        run: |
-          pytest -m "not dts" --verbose
+        run: nox -s core_tests-${{ matrix.python-version }}
