@@ -3,9 +3,10 @@
 
 """Nox sessions that mirror the repository's GitHub Actions validation.
 
-Run ``nox -s ci`` to run every CI-equivalent check. Use a focused session while
-developing (for example, ``nox -s lint`` or ``nox -s core_tests-3.10``).
-The test sessions provision their required emulators when possible.
+Run ``nox -s ci`` for a representative local validation sweep. Use a focused
+session while developing (for example, ``nox -s lint`` or
+``nox -s core_tests-3.10``). The test sessions provision their required
+emulators when possible.
 
 Usage:
 
@@ -121,7 +122,7 @@ def _start_azurite(
     session: nox.Session,
     ports: Sequence[int],
     arguments: Sequence[str],
-) -> subprocess.Popen[str] | None:
+) -> subprocess.Popen[bytes] | None:
     """Start Azurite unless another local instance already owns its ports."""
     open_ports = [port for port in ports if _is_port_open(port)]
     if len(open_ports) == len(ports):
@@ -161,13 +162,14 @@ def _start_azurite(
         session.log("Started Azurite for this session.")
         return process
 
-    process.terminate()
+    if process.poll() is None:
+        process.terminate()
     process.wait()
     session.error("Azurite did not become ready within 30 seconds.")
     return None
 
 
-def _stop_process(process: subprocess.Popen[str] | None) -> None:
+def _stop_process(process: subprocess.Popen[bytes] | None) -> None:
     """Stop a service process that this Nox session started."""
     if process is not None and process.poll() is None:
         process.terminate()
