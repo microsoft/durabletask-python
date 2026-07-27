@@ -5,18 +5,24 @@ import asyncio
 import unittest
 from concurrent import futures
 from datetime import datetime, timedelta, timezone
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 import threading
 import time
 from typing import Any
+from unittest import mock
 
 import grpc
 from azure.core.credentials import AccessToken
 
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+from durabletask.azuremanaged.internal import durabletask_grpc_interceptor
 from durabletask.azuremanaged.internal.access_token_manager import (
     AccessTokenManager,
     AsyncAccessTokenManager,
+)
+from durabletask.azuremanaged.internal.durabletask_grpc_interceptor import (
+    DTSAsyncDefaultClientInterceptorImpl,
+    DTSDefaultClientInterceptorImpl,
 )
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
@@ -195,6 +201,58 @@ class TestDurableTaskGrpcInterceptor(unittest.TestCase):
         )
 
         self.assertEqual(0, credential.calls, "Constructing a worker must not acquire a token")
+
+
+class TestSdkVersionCaching(unittest.TestCase):
+    """Tests that the azuremanaged SDK version is resolved once and reused."""
+
+    def setUp(self):
+        durabletask_grpc_interceptor._get_sdk_version.cache_clear()
+
+    def tearDown(self):
+        # Drop any patched value so later tests observe the real package version.
+        durabletask_grpc_interceptor._get_sdk_version.cache_clear()
+
+    def test_version_resolved_once_across_interceptor_constructions(self):
+        """The distribution metadata lookup happens once, not per interceptor."""
+        with mock.patch.object(
+                durabletask_grpc_interceptor, "version", return_value="1.2.3") as mock_version:
+            client_interceptor = DTSDefaultClientInterceptorImpl(None, "test-taskhub")
+            worker_interceptor = DTSDefaultClientInterceptorImpl(
+                None, "test-taskhub", worker_id="test-worker-id")
+            async_interceptor = DTSAsyncDefaultClientInterceptorImpl(None, "test-taskhub")
+
+        mock_version.assert_called_once_with('durabletask-azuremanaged')
+
+        # The cached value is reused verbatim, and the metadata keys and their
+        # order are unchanged.
+        self.assertEqual(
+            [("taskhub", "test-taskhub"), ("x-user-agent", "durabletask-python/1.2.3")],
+            client_interceptor._metadata)
+        self.assertEqual(
+            [("taskhub", "test-taskhub"),
+             ("x-user-agent", "durabletask-python/1.2.3"),
+             ("workerid", "test-worker-id")],
+            worker_interceptor._metadata)
+        self.assertEqual(
+            [("taskhub", "test-taskhub"), ("x-user-agent", "durabletask-python/1.2.3")],
+            async_interceptor._metadata)
+
+    def test_unknown_fallback_when_version_cannot_be_determined(self):
+        """A missing distribution still yields the 'unknown' user agent fallback."""
+        with mock.patch.object(
+                durabletask_grpc_interceptor,
+                "version",
+                side_effect=PackageNotFoundError('durabletask-azuremanaged')) as mock_version:
+            client_interceptor = DTSDefaultClientInterceptorImpl(None, "test-taskhub")
+            async_interceptor = DTSAsyncDefaultClientInterceptorImpl(None, "test-taskhub")
+
+        # The failed lookup is cached too, so it is not retried per interceptor.
+        mock_version.assert_called_once_with('durabletask-azuremanaged')
+        self.assertEqual(
+            "durabletask-python/unknown", dict(client_interceptor._metadata)["x-user-agent"])
+        self.assertEqual(
+            "durabletask-python/unknown", dict(async_interceptor._metadata)["x-user-agent"])
 
 
 class TestAccessTokenManagerThreadSafety(unittest.TestCase):

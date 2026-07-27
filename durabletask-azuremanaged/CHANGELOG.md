@@ -13,6 +13,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   result, credential failures (for example an unavailable managed identity or a misconfigured
   `DefaultAzureCredential`) now surface from the first request rather than from the constructor.
   The exception type and message are unchanged; only the timing differs.
+- Importing `durabletask.azuremanaged.preview.sandboxes` no longer loads the sandbox worker
+  runtime or `azure-identity` up front. The package's public names are now resolved on first
+  use, which roughly halves import cost for callers that only declare sandbox worker profiles
+  or use the sandbox client. Exported names, `__all__`, and import paths are unchanged.
 - `FailureDetails.error_type` now carries the fully-qualified type name (e.g. `durabletask.task.TaskFailedError`) instead of the bare class name, and the new `FailureDetails.is_caused_by()` helper is available (both inherited from durabletask). See the core `durabletask` changelog for details, including the breaking-change notes.
 - Improved async access token refresh concurrency handling to avoid duplicate
   refresh operations under concurrent access, matching the existing sync
