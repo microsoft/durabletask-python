@@ -294,8 +294,15 @@ def core_tests(session: nox.Session) -> None:
     )
     try:
         session.install("-r", "requirements.txt")
-        session.install(f"{REPO_ROOT}[azure-blob-payloads]", "aiohttp")
-        session.run("pytest", "tests/durabletask", "-m", "not dts", "--verbose")
+        session.install("-e", f"{REPO_ROOT}[azure-blob-payloads]", "aiohttp")
+        targets = session.posargs or ("tests/durabletask",)
+        session.run(
+            "pytest",
+            *targets,
+            "-m",
+            "not dts",
+            "--verbose",
+        )
     finally:
         _stop_process(azurite)
 
@@ -315,7 +322,8 @@ def azuremanaged_tests(session: nox.Session) -> None:
             "-e",
             str(AZUREMANAGED),
         )
-        session.run("pytest", "tests/durabletask-azuremanaged", "-m", "dts", "--verbose")
+        targets = session.posargs or ("tests/durabletask-azuremanaged",)
+        session.run("pytest", *targets, "-m", "dts", "--verbose")
     finally:
         _stop_dts_emulator(container_name)
 
@@ -324,12 +332,13 @@ def azuremanaged_tests(session: nox.Session) -> None:
 def functions_unit(session: nox.Session) -> None:
     """Run the azure-functions-durable unit tests (no func/azurite required)."""
     session.install("-r", "requirements.txt")
-    _install_packages(session)
+    _install_packages(session, editable=True)
     session.install("pytest")
+    targets = session.posargs or ("tests/azure-functions-durable",)
     session.run(
-        "pytest", "tests/azure-functions-durable",
+        "pytest", *targets,
         "-m", "not dts and not azurite and not functions_e2e",
-        *session.posargs)
+    )
 
 
 @nox.session(python=["3.13"])
@@ -373,10 +382,11 @@ def functions_e2e(session: nox.Session) -> None:
         session.install("pytest")
         for app in E2E_APPS:
             _link_app_venv(session, E2E_APPS_DIR / app)
+        targets = session.posargs or ("tests/azure-functions-durable/e2e",)
         session.run(
-            "pytest", "tests/azure-functions-durable/e2e",
+            "pytest", *targets,
             "-m", "functions_e2e",
-            *session.posargs)
+        )
     finally:
         session.log(
             "Functions host logs are available at "

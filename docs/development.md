@@ -42,7 +42,7 @@ For a focused change, run just the relevant session:
 nox -R -s lint -- durabletask/client.py tests/durabletask/test_client.py
 nox -R -s typecheck_core -- durabletask/client.py examples/history_export
 nox -R -s typecheck_functions -- azure-functions-durable/azure
-nox -R -s core_tests-3.10 -- tests/durabletask/test_client.py -k "schedule"
+nox -R -s core_tests-3.10 -- tests/durabletask/test_client.py::test_get_grpc_channel_insecure
 nox -R -s azuremanaged_tests-3.10 -- tests/durabletask-azuremanaged/test_dts_orchestration_e2e.py
 nox -R -s functions_unit-3.13 -- tests/azure-functions-durable/test_client_compat.py
 nox -R -s functions_e2e -- -k "dtask_client"
