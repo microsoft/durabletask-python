@@ -14,14 +14,14 @@ nox -s ci
 ```
 
 The `ci` session runs linting, strict type checks, core SDK and Azure Managed
-tests on Python 3.14, Azure Functions unit tests on Python 3.14, and Azure
+tests on Python 3.10, Azure Functions unit tests on Python 3.13, and Azure
 Functions end-to-end tests on Python 3.13. It intentionally runs one
 representative version rather than the complete CI matrix, keeping routine
 local validation fast. To use another supported version (3.10--3.14) for the
 core SDK and Azure Managed tests, pass it after `--`:
 
 ```sh
-nox -s ci -- 3.10
+nox -s ci -- 3.14
 ```
 
 Run the versioned test sessions directly when a change needs complete matrix
