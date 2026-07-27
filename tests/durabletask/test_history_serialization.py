@@ -582,6 +582,34 @@ class _DeepCopyKey:
         return isinstance(other, _DeepCopyKey) and other.name == self.name
 
 
+class _ClassSpoofer:
+    """Reports a JSON-native ``__class__`` while being no such thing.
+
+    ``asdict`` dispatched on ``type(obj)``, which cannot be overridden, so
+    this reached the deep-copy fallback. Anything that dispatches on
+    ``__class__`` instead would mistake it for a ``str`` and hand back the
+    original object untouched.
+    """
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    @property
+    def __class__(self) -> Any:  # type: ignore[override]
+        return str
+
+    def __eq__(self, other: object) -> bool:
+        # Compares on ``type`` rather than ``isinstance`` because the
+        # spoofed ``__class__`` makes ``isinstance`` checks ambiguous here.
+        return type(other) is _ClassSpoofer and other.tag == self.tag
+
+    def __hash__(self) -> int:
+        return hash(self.tag)
+
+    def __repr__(self) -> str:
+        return f'_ClassSpoofer({self.tag!r})'
+
+
 _EXOTIC_PAYLOADS = [
     pytest.param(_OddIsoDatetime(2024, 1, 2, 3, 4, 5), id='datetime-subclass'),
     pytest.param(
@@ -608,6 +636,7 @@ _EXOTIC_PAYLOADS = [
     pytest.param(bytearray(b'abc'), id='bytearray'),
     pytest.param(b'abc', id='bytes'),
     pytest.param(_MutableLeaf(1), id='custom-object'),
+    pytest.param(_ClassSpoofer('t'), id='class-spoofing-object'),
 ]
 
 
@@ -769,6 +798,26 @@ class TestLegacyCompatibility:
         exported = event.to_dict()['orchestration_state']['value']
 
         assert list(exported) == [_TS]
+
+    def test_dispatch_uses_type_not_the_overridable_class_attribute(self) -> None:
+        """Guards a tempting micro-optimization that would change behavior.
+
+        ``value.__class__`` is measurably cheaper than ``type(value)`` and
+        satisfies a type checker without a cast, so it is an easy swap to
+        make. It is also wrong here: ``__class__`` can be overridden, and a
+        value claiming to be a ``str`` would take the JSON-native fast path
+        and be returned by reference. ``asdict`` dispatched on
+        ``type(obj)``, so it deep-copied this instead.
+        """
+        spoofer = _ClassSpoofer('t')
+        event = _state_event(spoofer)
+
+        exported = event.to_dict()['orchestration_state']['value']
+
+        assert exported is not spoofer, 'fast path taken on a spoofed __class__'
+        assert type(exported) is _ClassSpoofer
+        assert exported.tag == 't'
+        assert _legacy_to_dict(event)['orchestration_state']['value'] is not spoofer
 
 
 class TestTupleHandling:

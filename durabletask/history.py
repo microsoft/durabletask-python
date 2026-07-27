@@ -389,7 +389,13 @@ def _legacy_compat(value: Any) -> Any:
 
 
 def _to_serializable(value: Any) -> Any:
-    """Recursively convert *value* into a JSON-safe structure.
+    """Recursively convert *value* into the form history export writes.
+
+    Values the SDK itself produces convert to JSON-native types. Arbitrary
+    values can also arrive through ``dict[str, Any]`` fields, and those keep
+    whatever the original pipeline did with them -- which for a few shapes,
+    such as a tuple holding a ``datetime``, is not JSON-encodable. That is
+    preserved on purpose rather than fixed here; see :func:`_legacy_compat`.
 
     This walks dataclass instances directly instead of going through
     ``dataclasses.asdict``, which would deep-copy the whole event graph
@@ -404,6 +410,14 @@ def _to_serializable(value: Any) -> Any:
     so their original semantics -- constructor round-trips, key
     recursion and deep-copied leaves -- are preserved exactly.
     """
+    # ``type(value)`` is ``type[Unknown]`` to a type checker because *value*
+    # is ``Any``, so the cast is what keeps this module clean under strict
+    # checking. Two details are deliberate: the annotation is quoted, since
+    # an unquoted ``type[Any]`` is evaluated on every call and builds a
+    # throwaway ``types.GenericAlias``; and the lookup is ``type(value)``
+    # rather than the cheaper ``value.__class__``, because ``asdict`` used
+    # ``type(obj)`` and an object overriding ``__class__`` would otherwise
+    # be dispatched differently than it was before.
     value_type = cast('type[Any]', type(value))
     if value_type in _JSON_NATIVE_TYPES:
         return value
@@ -417,7 +431,7 @@ def _to_serializable(value: Any) -> Any:
     if value_type is datetime:
         return value.isoformat()
     if value_type is list:
-        return [_to_serializable(item) for item in cast(list[Any], value)]
+        return [_to_serializable(item) for item in value]
     if value_type is dict:
         # ``asdict`` recursed into keys but the conversion pass that followed
         # it did not, so keys get ``asdict`` semantics only. Native keys are
@@ -425,7 +439,7 @@ def _to_serializable(value: Any) -> Any:
         return {
             (key if type(key) in _JSON_NATIVE_TYPES else _asdict_only(key)):
                 _to_serializable(item)
-            for key, item in cast(dict[Any, Any], value).items()
+            for key, item in value.items()
         }
     return _legacy_compat(value)
 
