@@ -1,3 +1,4 @@
 grpcio-tools
+nox
 pymarkdownlnt
 pyright
