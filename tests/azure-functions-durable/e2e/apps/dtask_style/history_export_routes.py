@@ -8,12 +8,13 @@ Functions host: the export-job entity, driving orchestrator, and the two
 activities (registered via ``app.configure_history_export()``), plus the
 public ``ExportHistoryClient`` surface (create / get job).
 
-The export activities need a durabletask client and a ``HistoryWriter`` bound
-into the worker process via ``bind_context``. The client is only available at
-request time (from the durable-client binding), so the context is bound here on
-each request -- the route handler shares the worker process with the activities,
-so the binding is visible to them. A local-filesystem writer sends exported
-history to ``<app>/_export_output`` where the test can read it back.
+The export activities need a durabletask client and a ``HistoryWriter``. They
+resolve their client per invocation from a durable-client binding (host-supplied
+in whatever worker runs them) and use the writer registered at
+``configure_history_export`` time, so this route no longer binds a process-wide
+context. The route only builds an ``ExportHistoryClient`` for the job-management
+surface (create / get job). A local-filesystem writer sends exported history to
+``<app>/_export_output`` where the test can read it back.
 """
 
 import json

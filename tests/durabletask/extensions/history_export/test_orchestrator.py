@@ -28,15 +28,28 @@ from durabletask.extensions.history_export import (
     ExportJobStatus,
     ExportMode,
 )
-from durabletask.extensions.history_export.activities import clear_context
+from durabletask.extensions.history_export._constants import ENTITY_NAME
+from durabletask.extensions.history_export.activities import (
+    HistoryExportContext,
+    register as register_activities,
+)
+from durabletask.extensions.history_export.entity import ExportJobEntity
+from durabletask.extensions.history_export.orchestrator import (
+    export_job_orchestrator,
+)
 from durabletask.extensions.history_export import orchestrator as orch_mod
 from durabletask.testing import create_test_backend
 
-from ._test_helpers import wait_until
+from ._test_helpers import MutableContextHolder, wait_until
 from tests.durabletask._port_utils import find_free_port
 
 PORT = find_free_port()
 HOST = f"localhost:{PORT}"
+
+# The module worker registers the export activities once with this holder as
+# their per-invocation context resolver; tests swap ``_holder.context`` to
+# exercise different writers (or ``None`` to force a resolution failure).
+_holder = MutableContextHolder()
 
 
 class _InMemoryWriter:
@@ -94,13 +107,33 @@ def export_client(dt_client, writer):
 
 
 @pytest.fixture(scope="module")
-def w(backend, export_client):
+def w(backend, dt_client, writer):
     w_ = worker.TaskHubGrpcWorker(host_address=HOST)
     w_.add_orchestrator(_echo)
-    export_client.register_worker(w_)
+    # Register the export built-ins manually (rather than via
+    # ``export_client.register_worker``) so the activities resolve their
+    # context from ``_holder`` — this lets individual tests swap the writer
+    # (or force a resolution failure) without a process-global.
+    w_.add_entity(ExportJobEntity, name=ENTITY_NAME)
+    register_activities(w_, _holder.resolve)
+    w_.add_orchestrator(export_job_orchestrator)
     w_.start()
     yield w_
     w_.stop()
+
+
+@pytest.fixture(autouse=True)
+def _default_context(w, dt_client, writer):
+    """Arm the holder with the good client + module writer for each test.
+
+    Depends on ``w`` so the shared worker is always running for a test.
+    Tests that need a different context (a failing writer, or none at all)
+    overwrite ``_holder.context`` in their body; this fixture restores the
+    default before and after every test so they stay isolated.
+    """
+    _holder.context = HistoryExportContext(client=dt_client, writer=writer)
+    yield
+    _holder.context = HistoryExportContext(client=dt_client, writer=writer)
 
 
 @pytest.fixture(scope="module")
@@ -215,40 +248,28 @@ def test_orchestrator_exits_when_entity_is_deleted_mid_run(
     )
 
 
-def test_orchestrator_records_failure_when_no_context_bound(
-    dt_client, export_client,
+def test_orchestrator_records_failure_when_context_resolution_fails(
+    export_client,
 ):
-    """An orchestrator that cannot reach its activity context fails the job."""
-    # The shared module worker has a bound context.  Clear it so the
-    # next orchestrator's activities raise, then restore it afterwards
-    # so subsequent tests are unaffected.
-    from durabletask.extensions.history_export.activities import (
-        HistoryExportContext,
-        bind_context,
+    """An orchestrator that cannot resolve its activity context fails the job."""
+    # Clear the holder so the resolver raises when the next
+    # orchestrator's activities run; the autouse ``_default_context``
+    # fixture restores the good context afterwards.
+    _holder.context = None
+    now = datetime.now(timezone.utc)
+    desc = export_client.create_job(
+        ExportJobCreationOptions(
+            mode=ExportMode.BATCH,
+            completed_time_from=now - timedelta(hours=1),
+            completed_time_to=now + timedelta(hours=1),
+            destination=ExportDestination(container="exports"),
+            format=ExportFormat(kind=ExportFormatKind.JSON),
+            max_instances_per_batch=10,
+        )
     )
-    clear_context()
-    try:
-        now = datetime.now(timezone.utc)
-        desc = export_client.create_job(
-            ExportJobCreationOptions(
-                mode=ExportMode.BATCH,
-                completed_time_from=now - timedelta(hours=1),
-                completed_time_to=now + timedelta(hours=1),
-                destination=ExportDestination(container="exports"),
-                format=ExportFormat(kind=ExportFormatKind.JSON),
-                max_instances_per_batch=10,
-            )
-        )
-        final = export_client.wait_for_job(desc.job_id, timeout=15, poll_interval=0.1)
-        assert final.status == ExportJobStatus.FAILED
-        assert final.last_error is not None
-    finally:
-        # Re-arm the context for any subsequent tests.
-        bind_context(
-            HistoryExportContext(
-                client=dt_client, writer=export_client.writer,
-            )
-        )
+    final = export_client.wait_for_job(desc.job_id, timeout=15, poll_interval=0.1)
+    assert final.status == ExportJobStatus.FAILED
+    assert final.last_error is not None
 
 
 class _AlwaysFailingWriter:
@@ -268,62 +289,54 @@ def test_batch_failure_marks_job_failed_without_invalid_transition(
     already driven the entity to FAILED, which the transitions matrix
     would reject and log as an invalid-transition error.
     """
-    from durabletask.extensions.history_export.activities import (
-        HistoryExportContext,
-        bind_context,
+    # Swap in a permanently-failing writer for this test only via the
+    # holder; the autouse ``_default_context`` fixture restores the good
+    # context afterwards so the shared module worker stays consistent.
+    _holder.context = HistoryExportContext(
+        client=dt_client, writer=_AlwaysFailingWriter(),
     )
-    # Swap in a permanently-failing writer for this test only; restore
-    # the original writer in the finally block so the shared module
-    # fixtures stay consistent.
-    original_writer = export_client.writer
-    bind_context(HistoryExportContext(client=dt_client, writer=_AlwaysFailingWriter()))
-    try:
-        with caplog.at_level("WARNING", logger="durabletask.extensions.history_export"):
-            now = datetime.now(timezone.utc)
-            desc = export_client.create_job(
-                ExportJobCreationOptions(
-                    mode=ExportMode.BATCH,
-                    completed_time_from=now - timedelta(hours=1),
-                    completed_time_to=now + timedelta(hours=1),
-                    destination=ExportDestination(
-                        container="exports", prefix="batch-fail-test",
-                    ),
-                    format=ExportFormat(kind=ExportFormatKind.JSON),
-                    max_instances_per_batch=10,
-                )
+    with caplog.at_level("WARNING", logger="durabletask.extensions.history_export"):
+        now = datetime.now(timezone.utc)
+        desc = export_client.create_job(
+            ExportJobCreationOptions(
+                mode=ExportMode.BATCH,
+                completed_time_from=now - timedelta(hours=1),
+                completed_time_to=now + timedelta(hours=1),
+                destination=ExportDestination(
+                    container="exports", prefix="batch-fail-test",
+                ),
+                format=ExportFormat(kind=ExportFormatKind.JSON),
+                max_instances_per_batch=10,
             )
-            # Generous timeout because the orchestrator does 3 batch x
-            # 3 activity retries against the (overridden, fast) backoff.
-            final = export_client.wait_for_job(desc.job_id, timeout=60, poll_interval=0.1)
-
-        assert final.status == ExportJobStatus.FAILED
-        assert final.last_error is not None
-        # last_error summary mentions the writer's failure reason.
-        assert "simulated permanent write failure" in (final.last_error or "")
-        # The failures list is populated and at least one entry
-        # carries the reason text propagated up from the writer.
-        # (Each failure's ``instance_id`` is whatever terminal
-        # orchestration was in the export window — which may include
-        # prior tests' export orchestrators, not just the seeded
-        # sample workload.  Reasons can also vary if prior writers
-        # left blobs behind, etc.)
-        assert len(final.failures) >= 1
-        assert any(
-            "simulated permanent write failure" in f.reason
-            for f in final.failures
         )
+        # Generous timeout because the orchestrator does 3 batch x
+        # 3 activity retries against the (overridden, fast) backoff.
+        final = export_client.wait_for_job(desc.job_id, timeout=60, poll_interval=0.1)
 
-        # Critical regression check: the orchestrator must not have
-        # issued a second ``mark_failed`` signal after
-        # ``commit_checkpoint`` already transitioned the entity to
-        # FAILED.  If it had, the entity would have raised
-        # ExportJobInvalidTransitionError; the SDK logs that into
-        # caplog at WARNING/ERROR severity.
-        for record in caplog.records:
-            assert "ExportJobInvalidTransitionError" not in record.getMessage(), (
-                f"Found invalid-transition log: {record.getMessage()!r}"
-            )
-    finally:
-        bind_context(
-            HistoryExportContext(client=dt_client, writer=original_writer)
+    assert final.status == ExportJobStatus.FAILED
+    assert final.last_error is not None
+    # last_error summary mentions the writer's failure reason.
+    assert "simulated permanent write failure" in (final.last_error or "")
+    # The failures list is populated and at least one entry
+    # carries the reason text propagated up from the writer.
+    # (Each failure's ``instance_id`` is whatever terminal
+    # orchestration was in the export window — which may include
+    # prior tests' export orchestrators, not just the seeded
+    # sample workload.  Reasons can also vary if prior writers
+    # left blobs behind, etc.)
+    assert len(final.failures) >= 1
+    assert any(
+        "simulated permanent write failure" in f.reason
+        for f in final.failures
+    )
+
+    # Critical regression check: the orchestrator must not have
+    # issued a second ``mark_failed`` signal after
+    # ``commit_checkpoint`` already transitioned the entity to
+    # FAILED.  If it had, the entity would have raised
+    # ExportJobInvalidTransitionError; the SDK logs that into
+    # caplog at WARNING/ERROR severity.
+    for record in caplog.records:
+        assert "ExportJobInvalidTransitionError" not in record.getMessage(), (
+            f"Found invalid-transition log: {record.getMessage()!r}"
         )
