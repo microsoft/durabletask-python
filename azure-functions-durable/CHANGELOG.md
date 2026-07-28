@@ -14,6 +14,13 @@ the synchronous client into synchronous functions and the asynchronous client
 into coroutine functions. Both clients support scheduled-task and history-export
 APIs without an async-to-sync bridge.
 
+FIXED
+
+- Prevented Durable HTTP calls from forwarding managed identity tokens,
+authorization headers, cookies, or function keys to cross-origin redirect and
+polling targets. Direct client invocation of the internal HTTP polling
+orchestrator is now rejected.
+
 ## 2.0.0b1
 
 First preview (beta) release of `azure-functions-durable` 2.x — a ground-up

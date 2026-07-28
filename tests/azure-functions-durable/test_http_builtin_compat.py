@@ -4,12 +4,15 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+import urllib.error
+import urllib.request
 
 import pytest
 
 from azure.durable_functions.http.builtin import (
     BUILTIN_HTTP_ACTIVITY_NAME,
     BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
+    _SecureRedirectHandler,
     _retry_after_seconds,
     builtin_http_activity,
     builtin_http_poll_orchestrator,
@@ -97,7 +100,7 @@ def _fake_urlopen_response(status, headers, body):
 
 def test_activity_executes_request():
     fake_resp = _fake_urlopen_response(200, {"Content-Type": "application/json"}, "ok")
-    with patch("azure.durable_functions.http.builtin.urllib.request.urlopen",
+    with patch("azure.durable_functions.http.builtin._open_http_request",
                return_value=fake_resp):
         result = builtin_http_activity({"method": "GET", "uri": "http://example.com"})
     assert result["status_code"] == 200
@@ -129,7 +132,7 @@ def test_activity_adds_bearer_token_for_token_source():
     fake_credential = MagicMock()
     fake_credential.get_token.return_value = SimpleNamespace(token="THE_TOKEN")
     with patch("azure.durable_functions.http.builtin._cached_credential", None), \
-            patch("azure.durable_functions.http.builtin.urllib.request.urlopen",
+            patch("azure.durable_functions.http.builtin._open_http_request",
                   side_effect=_capture), \
             patch("azure.identity.DefaultAzureCredential",
                   return_value=fake_credential):
@@ -155,7 +158,7 @@ def test_credential_is_reused_across_activity_calls():
         return _fake_urlopen_response(200, {}, "ok")
 
     with patch("azure.durable_functions.http.builtin._cached_credential", None), \
-            patch("azure.durable_functions.http.builtin.urllib.request.urlopen",
+            patch("azure.durable_functions.http.builtin._open_http_request",
                   side_effect=_ok), \
             patch("azure.identity.DefaultAzureCredential",
                   return_value=fake_credential) as credential_ctor:
@@ -172,11 +175,69 @@ def test_credential_is_reused_across_activity_calls():
     assert fake_credential.get_token.call_count == 2
 
 
+@pytest.mark.parametrize("target", [
+    "https://other.example/next",
+    "http://example.com/next",
+])
+def test_redirect_strips_credentials_when_origin_changes(target):
+    request = urllib.request.Request(
+        "https://example.com/start",
+        headers={
+            "Authorization": "******",
+            "Cookie": "session=secret",
+            "x-functions-key": "function-secret",
+            "X-Custom": "preserved",
+        })
+
+    redirected = _SecureRedirectHandler().redirect_request(
+        request, None, 302, "Found", {}, target)
+
+    assert redirected is not None
+    redirected_headers = {
+        name.lower(): value
+        for name, value in redirected.headers.items()
+    }
+    assert "authorization" not in redirected_headers
+    assert "cookie" not in redirected_headers
+    assert "x-functions-key" not in redirected_headers
+    assert redirected_headers["x-custom"] == "preserved"
+
+
+def test_redirect_preserves_credentials_for_same_origin():
+    request = urllib.request.Request(
+        "https://example.com:443/start",
+        headers={
+            "Authorization": "******",
+            "Cookie": "session=secret",
+            "x-functions-key": "function-secret",
+        })
+
+    redirected = _SecureRedirectHandler().redirect_request(
+        request, None, 302, "Found", {}, "https://example.com/next")
+
+    assert redirected is not None
+    redirected_headers = {
+        name.lower(): value
+        for name, value in redirected.headers.items()
+    }
+    assert redirected_headers["authorization"] == "******"
+    assert redirected_headers["cookie"] == "session=secret"
+    assert redirected_headers["x-functions-key"] == "function-secret"
+
+
+def test_redirect_rejects_non_http_scheme():
+    request = urllib.request.Request("https://example.com/start")
+
+    with pytest.raises(urllib.error.URLError, match="non-HTTP"):
+        _SecureRedirectHandler().redirect_request(
+            request, None, 302, "Found", {}, "ftp://example.com/next")
+
+
 # ---------------------------------------------------------------------------
 # Built-in poll orchestrator
 # ---------------------------------------------------------------------------
 
-def _fake_orchestration_context(request):
+def _fake_orchestration_context(request, parent_instance_id="parent"):
     activity_calls = []
 
     def call_activity(name, inp):
@@ -191,6 +252,7 @@ def _fake_orchestration_context(request):
         call_activity=call_activity,
         create_timer=create_timer,
         current_utc_datetime=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        parent_instance_id=parent_instance_id,
         _activity_calls=activity_calls,
     )
     return ctx
@@ -208,8 +270,12 @@ def test_poll_orchestrator_returns_non_202_immediately():
 
 
 def test_poll_orchestrator_polls_until_complete():
-    request = {"method": "GET", "uri": "http://x",
-               "headers": {"h": "v"}, "tokenSource": {"resource": "r"}}
+    request = {
+        "method": "GET",
+        "uri": "http://x/start",
+        "headers": {"h": "v", "x-functions-key": "secret"},
+        "tokenSource": {"resource": "r"},
+    }
     ctx = _fake_orchestration_context(request)
     gen = builtin_http_poll_orchestrator(ctx)
 
@@ -219,7 +285,7 @@ def test_poll_orchestrator_polls_until_complete():
     # A 202 with a Location + Retry-After schedules a durable timer.
     timer = gen.send({
         "status_code": 202,
-        "headers": {"Location": "http://poll", "Retry-After": "5"},
+        "headers": {"Location": "/poll", "Retry-After": "5"},
         "content": None,
     })
     assert timer[0] == "timer"
@@ -231,7 +297,7 @@ def test_poll_orchestrator_polls_until_complete():
     assert poll_name == BUILTIN_HTTP_ACTIVITY_NAME
     assert poll_input == {
         "method": "GET",
-        "uri": "http://poll",
+        "uri": "http://x/poll",
         "headers": {"h": "v"},
         "tokenSource": {"resource": "r"},
     }
@@ -241,6 +307,60 @@ def test_poll_orchestrator_polls_until_complete():
         gen.send({"status_code": 200, "headers": {}, "content": "done"})
     assert isinstance(stop.value.value, DurableHttpResponse)
     assert stop.value.value.content == "done"
+
+
+def test_poll_orchestrator_does_not_forward_cross_origin_credentials():
+    request = {
+        "method": "GET",
+        "uri": "https://example.com/start",
+        "headers": {
+            "Authorization": "******",
+            "Cookie": "session=secret",
+            "x-functions-key": "function-secret",
+            "X-Custom": "preserved",
+        },
+        "tokenSource": {"resource": "https://management.azure.com"},
+    }
+    ctx = _fake_orchestration_context(request)
+    gen = builtin_http_poll_orchestrator(ctx)
+
+    assert next(gen) == ("activity_task", 1)
+    gen.send({
+        "status_code": 202,
+        "headers": {"Location": "https://other.example/operations/1"},
+        "content": None,
+    })
+    assert gen.send(None) == ("activity_task", 2)
+    assert ctx._activity_calls[1][1] == {
+        "method": "GET",
+        "uri": "https://other.example/operations/1",
+        "headers": {"X-Custom": "preserved"},
+    }
+
+    # Credentials removed at the trust boundary must not reappear on a later
+    # same-origin poll.
+    gen.send({
+        "status_code": 202,
+        "headers": {"Location": "/operations/2"},
+        "content": None,
+    })
+    assert gen.send(None) == ("activity_task", 3)
+    assert ctx._activity_calls[2][1] == {
+        "method": "GET",
+        "uri": "https://other.example/operations/2",
+        "headers": {"X-Custom": "preserved"},
+    }
+
+
+def test_poll_orchestrator_rejects_top_level_invocation():
+    ctx = _fake_orchestration_context(
+        {"method": "GET", "uri": "https://example.com"},
+        parent_instance_id=None)
+    gen = builtin_http_poll_orchestrator(ctx)
+
+    with pytest.raises(PermissionError, match="sub-orchestration"):
+        next(gen)
+    assert ctx._activity_calls == []
 
 
 def test_poll_orchestrator_stops_when_202_has_no_location():

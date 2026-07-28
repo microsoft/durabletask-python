@@ -46,6 +46,14 @@ BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME = "BuiltIn__HttpPollOrchestrator"
 # usable ``Retry-After`` header.
 _DEFAULT_POLL_INTERVAL_SECONDS = 1
 
+_HTTP_SCHEMES = frozenset(("http", "https"))
+_CROSS_ORIGIN_SENSITIVE_HEADERS = frozenset((
+    "authorization",
+    "cookie",
+    "x-functions-key",
+))
+_POLL_SENSITIVE_HEADERS = frozenset(("x-functions-key",))
+
 # Process-wide credential cache. ``DefaultAzureCredential`` is safe to reuse and
 # caches tokens internally, so a single worker-local instance avoids repeating
 # credential-chain discovery and token acquisition on every durable HTTP
@@ -79,6 +87,72 @@ def _acquire_bearer_token(resource: str) -> str:
     return _get_credential().get_token(scope).token
 
 
+def _http_origin(uri: str) -> Optional[tuple[str, str, int]]:
+    """Return a normalized HTTP origin, or ``None`` for an invalid URL."""
+    parsed = urlparse(uri)
+    scheme = parsed.scheme.lower()
+    if scheme not in _HTTP_SCHEMES or parsed.hostname is None:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return scheme, parsed.hostname.lower(), port
+
+
+def _is_same_origin(first_uri: str, second_uri: str) -> bool:
+    """Return whether two absolute HTTP URLs have the same origin."""
+    first_origin = _http_origin(first_uri)
+    return first_origin is not None and first_origin == _http_origin(second_uri)
+
+
+def _without_headers(
+        headers: dict[str, str],
+        excluded_names: frozenset[str]) -> dict[str, str]:
+    """Copy headers except for case-insensitively excluded names."""
+    return {
+        name: value
+        for name, value in headers.items()
+        if name.lower() not in excluded_names
+    }
+
+
+class _SecureRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow only HTTP(S) redirects without leaking cross-origin secrets."""
+
+    def redirect_request(
+            self,
+            req: urllib.request.Request,
+            fp: Any,
+            code: int,
+            msg: str,
+            headers: Any,
+            newurl: str) -> Optional[urllib.request.Request]:
+        if _http_origin(newurl) is None:
+            raise urllib.error.URLError(
+                f"Refusing redirect to non-HTTP(S) URL {newurl!r}.")
+
+        redirected = super().redirect_request(
+            req, fp, code, msg, headers, newurl)
+        if redirected is None or _is_same_origin(req.full_url, newurl):
+            return redirected
+
+        for header_map in (
+                redirected.headers,
+                redirected.unredirected_hdrs):
+            for name in list(header_map):
+                if name.lower() in _CROSS_ORIGIN_SENSITIVE_HEADERS:
+                    del header_map[name]
+        return redirected
+
+
+def _open_http_request(req: urllib.request.Request) -> Any:
+    """Open a request using the credential-safe redirect policy."""
+    return urllib.request.build_opener(_SecureRedirectHandler()).open(req)
+
+
 def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:
     """Execute a single HTTP request and return the response payload.
 
@@ -105,9 +179,9 @@ def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:
     # Durable HTTP only ever means http(s); reject other schemes (file://,
     # ftp://, ...) that urlopen would otherwise honor, closing off local-file
     # reads / SSRF to non-HTTP endpoints from orchestration-supplied URLs.
-    if urlparse(str(uri)).scheme.lower() not in ("http", "https"):
+    if _http_origin(str(uri)) is None:
         raise ValueError(
-            "call_http only supports http/https URLs; "
+            "call_http requires an absolute http/https URL; "
             f"got {uri!r}.")
     content = request.get("content")
     headers: dict[str, str] = dict(request.get("headers") or {})
@@ -125,7 +199,7 @@ def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:
     req = urllib.request.Request(url=uri, data=data, method=method, headers=headers)
 
     try:
-        with urllib.request.urlopen(req) as resp:  # noqa: S310 - user-supplied URL is the feature
+        with _open_http_request(req) as resp:
             status = int(resp.status)
             resp_headers = {k: v for k, v in resp.headers.items()}
             body = resp.read().decode("utf-8", errors="replace")
@@ -202,6 +276,11 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, DurableH
     is reconstructed type-safely (required under strict typing, which will not
     build a custom type from a bare JSON object).
     """
+    if context.parent_instance_id is None:
+        raise PermissionError(
+            f"{BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME} can only run as a "
+            "sub-orchestration.")
+
     request: dict[str, Any] = context.get_input() or {}
     response: dict[str, Any] = yield context.call_activity(
         BUILTIN_HTTP_ACTIVITY_NAME, request)
@@ -221,20 +300,29 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, DurableH
         # against the current request URI so the next poll targets an absolute
         # http(s) URL (the built-in activity rejects non-absolute URIs).
         location = urljoin(current_uri, location)
+        if _http_origin(location) is None:
+            raise ValueError(
+                "Durable HTTP polling requires an absolute http/https "
+                f"Location URL; got {location!r}.")
 
         now = context.current_utc_datetime
         delay = _retry_after_seconds(headers, now)
         fire_at = now + timedelta(seconds=delay)
         yield context.create_timer(fire_at)
 
+        same_origin = _is_same_origin(current_uri, location)
         poll_request: dict[str, Any] = {"method": "GET", "uri": location}
-        # Preserve auth for the polling requests.
         if request.get("headers") is not None:
-            poll_request["headers"] = request["headers"]
-        if request.get("tokenSource") is not None:
+            excluded_headers = _POLL_SENSITIVE_HEADERS
+            if not same_origin:
+                excluded_headers = _CROSS_ORIGIN_SENSITIVE_HEADERS
+            poll_request["headers"] = _without_headers(
+                dict(request["headers"]), excluded_headers)
+        if same_origin and request.get("tokenSource") is not None:
             poll_request["tokenSource"] = request["tokenSource"]
 
         current_uri = location
+        request = poll_request
         response = yield context.call_activity(BUILTIN_HTTP_ACTIVITY_NAME, poll_request)
 
     return DurableHttpResponse.from_json(response)
