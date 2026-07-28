@@ -362,6 +362,7 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    @abstractmethod
     def send_event(self, instance_id: str, event_name: str, *,
                    data: Any | None = None) -> None:
         """Send an event to another orchestration instance.
@@ -380,7 +381,7 @@ class OrchestrationContext(ABC):
         data : Any | None
             The optional serializable event payload.
         """
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def continue_as_new(self, new_input: Any, *, save_events: bool = False) -> None:
