@@ -115,6 +115,10 @@ class OtelCollector:
             raise RuntimeError("Docker is required for the tracing E2E test.")
 
         self.work_dir.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            # The collector image runs as UID/GID 10001, while pytest creates
+            # temporary directories as owner-only on Linux.
+            self.work_dir.chmod(0o777)
         self.config_path.write_text(
             "receivers:\n"
             "  otlp:\n"
@@ -195,6 +199,19 @@ class OtelCollector:
                     for span in scope_spans.get("spans", []):
                         spans.append({**span, "scopeName": scope_name})
         return spans
+
+    def get_logs(self) -> str:
+        """Return collector container logs for assertion diagnostics."""
+        docker = shutil.which("docker")
+        if docker is None:
+            return "Docker is not available."
+        result = subprocess.run(
+            [docker, "logs", self.container_name],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        return result.stdout + result.stderr
 
 
 @dataclass

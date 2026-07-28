@@ -49,7 +49,7 @@ def test_user_span_correlates_to_host_without_worker_lifecycle_duplicates(
                 break
         time.sleep(0.5)
 
-    assert len(user_spans) == 1
+    assert len(user_spans) == 1, collector.get_logs()
     user_span = user_spans[0]
     summary = [
         (
