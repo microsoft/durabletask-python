@@ -42,7 +42,7 @@ AZUREMANAGED = REPO_ROOT / "durabletask-azuremanaged"
 AZURE_FUNCTIONS_DURABLE = REPO_ROOT / "azure-functions-durable"
 E2E_APPS_DIR = REPO_ROOT / "tests" / "azure-functions-durable" / "e2e" / "apps"
 # Sample apps that need an in-app virtual environment for the E2E suite.
-E2E_APPS = ("v1_style", "dtask_style")
+E2E_APPS = ("v1_style", "dtask_style", "tracing")
 PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14")
 DEFAULT_CI_PYTHON = "3.10"
 
@@ -422,7 +422,7 @@ def functions_e2e(session: nox.Session) -> None:
         ] = _new_test_namespace("nox")
         session.install("-r", "requirements.txt")
         _install_packages(session, editable=True)
-        session.install("pytest")
+        session.install("pytest", "opentelemetry-exporter-otlp-proto-grpc")
         for app in E2E_APPS:
             _link_app_venv(session, E2E_APPS_DIR / app)
         arguments = _pytest_arguments(

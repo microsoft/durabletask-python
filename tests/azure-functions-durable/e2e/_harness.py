@@ -22,7 +22,9 @@ import socket
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -49,6 +51,17 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
+def _wait_for_port(port: int, timeout: float) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.25)
+    return False
+
+
 def func_executable() -> Optional[str]:
     """Return the path to the Azure Functions Core Tools (``func``), if installed."""
     return shutil.which("func")
@@ -61,6 +74,127 @@ def azurite_is_running() -> bool:
             return True
     except OSError:
         return False
+
+
+class OtelCollector:
+    """Run an OpenTelemetry Collector that writes received spans to JSON."""
+
+    _IMAGE = "otel/opentelemetry-collector-contrib:0.131.1"
+
+    def __init__(self, work_dir: Path):
+        self.work_dir = work_dir
+        self.config_path = work_dir / "collector.yaml"
+        self.output_path = work_dir / "traces.json"
+        self.port = find_free_port()
+        self.endpoint = f"http://127.0.0.1:{self.port}"
+        self.container_name = f"durabletask-tracing-{uuid.uuid4().hex[:12]}"
+
+    @staticmethod
+    def is_available() -> bool:
+        docker = shutil.which("docker")
+        if docker is None:
+            return False
+        result = subprocess.run(
+            [docker, "info"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def __enter__(self) -> "OtelCollector":
+        self.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.stop()
+
+    def start(self) -> None:
+        docker = shutil.which("docker")
+        if docker is None:
+            raise RuntimeError("Docker is required for the tracing E2E test.")
+
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            "receivers:\n"
+            "  otlp:\n"
+            "    protocols:\n"
+            "      grpc:\n"
+            "        endpoint: 0.0.0.0:4317\n"
+            "exporters:\n"
+            "  file:\n"
+            "    path: /output/traces.json\n"
+            "    format: json\n"
+            "service:\n"
+            "  pipelines:\n"
+            "    traces:\n"
+            "      receivers: [otlp]\n"
+            "      exporters: [file]\n",
+            encoding="utf-8",
+        )
+
+        command = [
+            docker,
+            "run",
+            "--detach",
+            "--rm",
+            "--name",
+            self.container_name,
+            "--publish",
+            f"127.0.0.1:{self.port}:4317",
+            "--volume",
+            f"{self.config_path.resolve()}:/etc/otelcol-contrib/config.yaml:ro",
+            "--volume",
+            f"{self.work_dir.resolve()}:/output",
+            self._IMAGE,
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to start OpenTelemetry Collector: {result.stderr}")
+        if not _wait_for_port(self.port, timeout=60):
+            logs = subprocess.run(
+                [docker, "logs", self.container_name],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            self.stop()
+            raise RuntimeError(
+                f"OpenTelemetry Collector did not start:\n{logs.stdout}\n{logs.stderr}")
+
+    def stop(self) -> None:
+        docker = shutil.which("docker")
+        if docker is None:
+            return
+        subprocess.run(
+            [docker, "stop", "--time", "10", self.container_name],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+    def get_spans(self) -> list[dict[str, Any]]:
+        """Read and flatten all OTLP spans exported by the collector."""
+        if not self.output_path.exists():
+            return []
+
+        spans: list[dict[str, Any]] = []
+        for line in self.output_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            for resource_spans in payload.get("resourceSpans", []):
+                for scope_spans in resource_spans.get("scopeSpans", []):
+                    scope_name = scope_spans.get("scope", {}).get("name", "")
+                    for span in scope_spans.get("spans", []):
+                        spans.append({**span, "scopeName": scope_name})
+        return spans
 
 
 @dataclass

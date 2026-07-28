@@ -178,6 +178,25 @@ class TestStartSpan:
         assert child_span.context is not None
         assert child_span.context.trace_id == int("0af7651916cd43dd8448eb211c80319c", 16)
 
+    def test_suppressed_span_activates_parent_for_user_span(
+            self, otel_setup: InMemorySpanExporter):
+        """Suppression should preserve propagation without an SDK span."""
+        tracer = trace.get_tracer("user-code")
+
+        with tracing.suppress_span_emission():
+            with tracing.start_span(
+                    "activity:sdk", trace_context=_make_parent_trace_ctx()) as span:
+                assert span is None
+                with tracer.start_as_current_span("user-activity"):
+                    pass
+
+        spans = otel_setup.get_finished_spans()
+        assert [span.name for span in spans] == ["user-activity"]
+        assert spans[0].context is not None
+        assert spans[0].context.trace_id == int(_SAMPLE_TRACE_ID, 16)
+        assert spans[0].parent is not None
+        assert spans[0].parent.span_id == int(_SAMPLE_PARENT_SPAN_ID, 16)
+
 
 class TestSetSpanError:
     """Tests for tracing.set_span_error()."""
@@ -1171,6 +1190,51 @@ class TestOrchestrationSpanLifecycle:
         orch_spans = self._get_orch_server_spans(otel_setup)
         assert len(orch_spans) == 1
         assert orch_spans[0].status.status_code == StatusCode.ERROR
+
+    def test_propagate_only_exports_user_span_under_inbound_parent(
+            self, otel_setup):
+        """Propagate-only mode should export user spans, not SDK lifecycle spans."""
+        from unittest.mock import MagicMock
+
+        tracer = trace.get_tracer("user-code")
+
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            with tracer.start_as_current_span("user-orchestrator"):
+                return "done"
+
+        registry = worker._Registry()
+        name = registry.add_orchestrator(orchestrator)
+        w = worker.TaskHubGrpcWorker(
+            host_address="localhost:4001",
+            emit_trace_spans=False,
+        )
+        w._registry = registry
+        stub = MagicMock()
+        req = pb.OrchestratorRequest(
+            instanceId=TEST_INSTANCE_ID,
+            newEvents=[
+                helpers.new_orchestrator_started_event(),
+                helpers.new_execution_started_event(
+                    name,
+                    TEST_INSTANCE_ID,
+                    encoded_input=None,
+                    parent_trace_context=_make_parent_trace_ctx(),
+                ),
+            ],
+        )
+
+        w._execute_orchestrator(req, stub, "token1")
+
+        spans = otel_setup.get_finished_spans()
+        assert [span.name for span in spans] == ["user-orchestrator"]
+        user_span = spans[0]
+        assert user_span.context is not None
+        assert user_span.context.trace_id == int(_SAMPLE_TRACE_ID, 16)
+        assert user_span.parent is not None
+        assert user_span.parent.span_id == int(_SAMPLE_PARENT_SPAN_ID, 16)
+        response = stub.CompleteOrchestratorTask.call_args.args[0]
+        assert response.orchestrationTraceContext.ListFields() == []
+        assert tracing.get_current_trace_context() is None
 
     def test_separate_instances_get_separate_spans(self, otel_setup):
         """Two different orchestration instances should produce independent
