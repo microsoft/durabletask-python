@@ -151,6 +151,21 @@ def test_execute_orchestration_request_supports_concurrent_reinvocation():
     )
 
 
+def test_execute_orchestration_request_rejects_different_function_with_same_name():
+    def first_orchestrator(context):
+        return "first"
+
+    def second_orchestrator(context):
+        return "second"
+
+    worker = DurableFunctionsWorker()
+    encoded = _encode_orchestrator_request("same-name")
+    worker.execute_orchestration_request(first_orchestrator, encoded)
+
+    with pytest.raises(ValueError, match="A 'same-name' orchestrator already exists"):
+        worker.execute_orchestration_request(second_orchestrator, encoded)
+
+
 # ---------------------------------------------------------------------------
 # execute_entity_batch_request
 # ---------------------------------------------------------------------------
@@ -237,3 +252,20 @@ def test_execute_entity_batch_request_supports_concurrent_reinvocation():
             result).results[0].success.result.value) == "handled"
         for result in results
     )
+
+
+def test_execute_entity_batch_request_rejects_different_function_with_same_name():
+    def first_entity(context):
+        context.set_result("first")
+
+    def second_entity(context):
+        context.set_result("second")
+
+    first_entity.__durable_entity_name__ = "Counter"
+    second_entity.__durable_entity_name__ = "Counter"
+    worker = DurableFunctionsWorker()
+    encoded = _encode_entity_batch_request("@counter@key1", "op")
+    worker.execute_entity_batch_request(first_entity, encoded)
+
+    with pytest.raises(ValueError, match="A 'counter' entity already exists"):
+        worker.execute_entity_batch_request(second_entity, encoded)

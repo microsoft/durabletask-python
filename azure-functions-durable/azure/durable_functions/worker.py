@@ -43,6 +43,12 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         # the wire format the Durable Functions host extension expects.
         super().__init__(data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
         self._registration_lock = Lock()
+        self._registered_orchestrator_functions: dict[
+            str, task.Orchestrator[Any, Any]
+        ] = {}
+        self._registered_entity_functions: dict[
+            str, task.Entity[Any, Any]
+        ] = {}
 
     def add_named_orchestrator(self, name: str, func: task.Orchestrator[Any, Any]) -> None:
         self._registry.add_named_orchestrator(name, func)
@@ -53,14 +59,22 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             func: task.Orchestrator[Any, Any],
     ) -> None:
         with self._registration_lock:
-            if self._registry.get_orchestrator(name) is None:
-                self.add_named_orchestrator(name, wrap_orchestrator(func))
+            if self._registered_orchestrator_functions.get(name) is func:
+                return
+            if self._registry.get_orchestrator(name) is not None:
+                raise ValueError(f"A '{name}' orchestrator already exists.")
+            self.add_named_orchestrator(name, wrap_orchestrator(func))
+            self._registered_orchestrator_functions[name] = func
 
     def _register_entity_once(self, func: task.Entity[Any, Any]) -> None:
         name = task.get_entity_name(func).lower()
         with self._registration_lock:
-            if self._registry.get_entity(name) is None:
-                self.add_entity(wrap_entity(func), name=name)
+            if self._registered_entity_functions.get(name) is func:
+                return
+            if self._registry.get_entity(name) is not None:
+                raise ValueError(f"A '{name}' entity already exists.")
+            self.add_entity(wrap_entity(func), name=name)
+            self._registered_entity_functions[name] = func
 
     def execute_orchestration_request(self, func: task.Orchestrator[Any, Any], context: Any) -> str:
         context_body = getattr(context, "body", None)
