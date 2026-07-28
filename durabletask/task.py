@@ -362,6 +362,26 @@ class OrchestrationContext(ABC):
         """
         pass
 
+    def send_event(self, instance_id: str, event_name: str, *,
+                   data: Any | None = None) -> None:
+        """Send an event to another orchestration instance.
+
+        The target orchestration can receive the event using
+        :meth:`wait_for_external_event`. This is a one-way operation and does
+        not wait for the target orchestration to process the event. If the
+        target orchestration does not exist, the event is silently dropped.
+
+        Parameters
+        ----------
+        instance_id : str
+            The ID of the orchestration instance to send the event to.
+        event_name : str
+            The name of the event to send. Event names are case-insensitive.
+        data : Any | None
+            The optional serializable event payload.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def continue_as_new(self, new_input: Any, *, save_events: bool = False) -> None:
         """Continue the orchestration execution as a new instance.

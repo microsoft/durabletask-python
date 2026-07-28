@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added `OrchestrationContext.send_event()` for replay-safe, one-way event
+delivery from an orchestration to another orchestration instance.
 - Added asynchronous `AsyncScheduledTaskClient` / `AsyncScheduleClient` and
 `AsyncExportHistoryClient` / `AsyncExportHistoryJobClient` APIs. Applications
 using `AsyncTaskHubGrpcClient` can now manage scheduled tasks and history

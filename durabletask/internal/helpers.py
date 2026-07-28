@@ -209,12 +209,17 @@ def is_entity_error_response(response: dict[str, Any]) -> bool:
     return "exceptionType" in response or isinstance(response.get("failureDetails"), dict)
 
 
-def new_event_sent_event(event_id: int, instance_id: str, input: str):
+def new_event_sent_event(
+        event_id: int,
+        instance_id: str,
+        input: str | None,
+        *,
+        name: str = "") -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=event_id,
         timestamp=timestamp_pb2.Timestamp(),
         eventSent=pb.EventSentEvent(
-            name="",
+            name=name,
             input=get_string_value(input),
             instanceId=instance_id
         )
@@ -320,6 +325,21 @@ def new_schedule_task_action(id: int, name: str, encoded_input: str | None,
         tags=tags,
         parentTraceContext=parent_trace_context,
     ))
+
+
+def new_send_event_action(
+        id: int,
+        instance_id: str,
+        event_name: str,
+        encoded_data: str | None) -> pb.OrchestratorAction:
+    return pb.OrchestratorAction(
+        id=id,
+        sendEvent=pb.SendEventAction(
+            instance=pb.OrchestrationInstance(instanceId=instance_id),
+            name=event_name,
+            data=get_string_value(encoded_data),
+        ),
+    )
 
 
 def new_call_entity_action(id: int,
