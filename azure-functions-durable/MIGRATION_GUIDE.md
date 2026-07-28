@@ -149,10 +149,9 @@ def hello(ctx: task.OrchestrationContext, name: Any):
 @app.route(route="start", methods=["POST"])
 @app.durable_client_input(client_name="client")
 async def start(
-        req: func.HttpRequest,
-        client: df.DurableFunctionsClient) -> func.HttpResponse:
-    instance_id = await client.schedule_new_orchestration(
-            "hello", input="Tokyo")
+            req: func.HttpRequest,
+            client: df.DurableFunctionsClient) -> func.HttpResponse:
+    instance_id = await client.schedule_new_orchestration("hello", input="Tokyo")
     return client.create_check_status_response(req, instance_id)
 ```
 
@@ -172,7 +171,7 @@ def say_hello(name: str) -> str:
 | `context.call_activity(name, input_)` | `ctx.call_activity(name, input=input_)` |
 | `context.call_activity_with_retry(...)` | `ctx.call_activity(..., retry_policy=policy)` |
 | `context.call_sub_orchestrator(name, input_)` | `ctx.call_sub_orchestrator(name, input=input_)` |
-| `context.call_sub_orchestrator_with_retry(...)` | `ctx.call_sub_orchestrator(...)` |
+| `call_sub_orchestrator_with_retry` | `ctx.call_sub_orchestrator(..., retry_policy=...)` |
 | `context.task_all(tasks)` | `task.when_all(tasks)` |
 | `context.task_any(tasks)` | `task.when_any(tasks)` |
 | `context.new_guid()` | `ctx.new_uuid()` |

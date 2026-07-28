@@ -12,13 +12,12 @@ from durabletask import task
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 
-@app.route(route="orchestrators/{function_name}", methods=["POST"])
+@app.route(route="orchestrators/hello_cities", methods=["POST"])
 @app.durable_client_input(client_name="client")
 async def start_orchestration(
         req: func.HttpRequest,
         client: df.DurableFunctionsClient) -> func.HttpResponse:
-    instance_id = await client.schedule_new_orchestration(
-        req.route_params["function_name"])
+    instance_id = await client.schedule_new_orchestration("hello_cities")
     return client.create_check_status_response(req, instance_id)
 
 
