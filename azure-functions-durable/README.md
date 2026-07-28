@@ -33,6 +33,41 @@ Key capabilities include durable orchestrations and sub-orchestrations, durable
 timers, external events, durable entities, retries, versioning, durable HTTP
 calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 
+## Unit testing entities
+
+Use `execute_entity()` to run one entity operation in-process without a
+Functions host or Durable Task backend. It supports v1-style entity functions,
+durabletask-native entity functions, and `DurableEntity` subclasses:
+
+```python
+from azure.durable_functions.testing import execute_entity
+from durabletask.entities import DurableEntity
+
+
+class Counter(DurableEntity):
+    def add(self, amount: int) -> int:
+        value = self.get_state(int, 0) + amount
+        self.set_state(value)
+        return value
+
+
+outcome = execute_entity(Counter, "add", input=2, state=3)
+
+assert outcome.result == 5
+assert outcome.state == 5
+assert outcome.actions == ()
+```
+
+For an `entity_trigger`-decorated function, pass the exposed entity function:
+
+```python
+entity_function = counter.build().get_user_function().entity_function
+outcome = execute_entity(entity_function, "add", input=2, state=3)
+```
+
+The returned `EntityTestResult` includes the operation result, resulting state,
+and typed signal or orchestration-start actions scheduled by the operation.
+
 ## Links
 
 - [Changelog](CHANGELOG.md)
