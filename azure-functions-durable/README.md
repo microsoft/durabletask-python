@@ -61,8 +61,26 @@ assert outcome.actions == ()
 For an `entity_trigger`-decorated function, pass the exposed entity function:
 
 ```python
+import azure.durable_functions as df
+from azure.durable_functions.testing import execute_entity
+
+
+app = df.DFApp()
+
+
+@app.entity_trigger(context_name="context")
+def counter(context: df.DurableEntityContext) -> None:
+    value = context.get_state(initializer=lambda: 0)
+    value += context.get_input()
+    context.set_state(value)
+    context.set_result(value)
+
+
 entity_function = counter.build().get_user_function().entity_function
 outcome = execute_entity(entity_function, "add", input=2, state=3)
+
+assert outcome.result == 5
+assert outcome.state == 5
 ```
 
 The returned `EntityTestResult` includes the operation result, resulting state,
