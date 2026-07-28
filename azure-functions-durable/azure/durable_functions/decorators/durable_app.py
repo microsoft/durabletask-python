@@ -233,6 +233,7 @@ class Blueprint(TriggerApi, BindingApi):
             if entity_name is not None:
                 entity_func.__durable_entity_name__ = entity_name  # type: ignore[union-attr]
             # Construct an orchestrator based on the end-user code
+            worker = DurableFunctionsWorker()
 
             # TODO: Because this handle method is the one actually exposed to the Functions SDK decorator,
             #       the parameter name will always be "context" here, even if the user specified a different name.
@@ -243,7 +244,7 @@ class Blueprint(TriggerApi, BindingApi):
             # binding converter to accept it; at runtime the host passes that
             # transport context (exposing ``.body``).
             def handle(context: func.EntityContext) -> str:
-                return DurableFunctionsWorker().execute_entity_batch_request(entity_func, context)
+                return worker.execute_entity_batch_request(entity_func, context)
 
             handle.entity_function = entity_func  # pyright: ignore[reportFunctionMemberAccess]
 

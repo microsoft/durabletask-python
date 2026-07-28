@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import base64
+from threading import Lock
 from typing import Any, Optional
 
 from durabletask import task
@@ -41,9 +42,25 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         # azure-functions codec (df_dumps/df_loads) so user types round-trip in
         # the wire format the Durable Functions host extension expects.
         super().__init__(data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+        self._registration_lock = Lock()
 
     def add_named_orchestrator(self, name: str, func: task.Orchestrator[Any, Any]) -> None:
         self._registry.add_named_orchestrator(name, func)
+
+    def _register_orchestrator_once(
+            self,
+            name: str,
+            func: task.Orchestrator[Any, Any],
+    ) -> None:
+        with self._registration_lock:
+            if self._registry.get_orchestrator(name) is None:
+                self.add_named_orchestrator(name, wrap_orchestrator(func))
+
+    def _register_entity_once(self, func: task.Entity[Any, Any]) -> None:
+        name = task.get_entity_name(func).lower()
+        with self._registration_lock:
+            if self._registry.get_entity(name) is None:
+                self.add_entity(wrap_entity(func), name=name)
 
     def execute_orchestration_request(self, func: task.Orchestrator[Any, Any], context: Any) -> str:
         context_body = getattr(context, "body", None)
@@ -70,7 +87,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             raise ValueError("No ExecutionStarted event found in orchestration request.")
 
         function_name = execution_started_events[-1].executionStarted.name
-        self.add_named_orchestrator(function_name, wrap_orchestrator(func))
+        self._register_orchestrator_once(function_name, func)
         super()._execute_orchestrator(request, stub, None)
 
         if response is None:
@@ -94,7 +111,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             response = stub_response
         stub.CompleteEntityTask = stub_complete
 
-        self.add_entity(wrap_entity(func))
+        self._register_entity_once(func)
         super()._execute_entity_batch(request, stub, None)
 
         if response is None:

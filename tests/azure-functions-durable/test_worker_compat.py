@@ -12,6 +12,7 @@ that path end-to-end without a sidecar or gRPC channel.
 
 import base64
 import json
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -131,6 +132,25 @@ def test_execute_orchestration_request_captures_failure():
     assert "boom" in completion.failureDetails.errorMessage
 
 
+def test_execute_orchestration_request_supports_concurrent_reinvocation():
+    def orchestrator(context):
+        return context.instance_id
+
+    worker = DurableFunctionsWorker()
+    encoded = _encode_orchestrator_request("concurrent-orch")
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(
+            lambda _: worker.execute_orchestration_request(orchestrator, encoded),
+            range(8),
+        ))
+
+    assert all(
+        json.loads(_get_completion_action(
+            _decode_orchestrator_response(result)).result.value) == TEST_INSTANCE_ID
+        for result in results
+    )
+
+
 # ---------------------------------------------------------------------------
 # execute_entity_batch_request
 # ---------------------------------------------------------------------------
@@ -197,3 +217,23 @@ def test_execute_entity_batch_request_captures_operation_failure():
     response = _decode_entity_response(result)
     assert response.results[0].HasField("failure")
     assert "entity failed" in response.results[0].failure.failureDetails.errorMessage
+
+
+def test_execute_entity_batch_request_supports_concurrent_reinvocation():
+    def entity(context):
+        context.set_result("handled")
+
+    entity.__durable_entity_name__ = "Counter"
+    worker = DurableFunctionsWorker()
+    encoded = _encode_entity_batch_request("@counter@key1", "op")
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(
+            lambda _: worker.execute_entity_batch_request(entity, encoded),
+            range(8),
+        ))
+
+    assert all(
+        json.loads(_decode_entity_response(
+            result).results[0].success.result.value) == "handled"
+        for result in results
+    )
