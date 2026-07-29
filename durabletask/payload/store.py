@@ -41,7 +41,7 @@ class PayloadStore(abc.ABC):
     @abc.abstractmethod
     def options(self) -> LargePayloadStorageOptions:
         """Return the storage options for this payload store."""
-        ...
+        pass
 
     @abc.abstractmethod
     def upload(self, data: bytes, *, instance_id: str | None = None) -> str:
@@ -59,12 +59,12 @@ class PayloadStore(abc.ABC):
         Returns:
             A token string that can be used to retrieve the payload.
         """
-        ...
+        pass
 
     @abc.abstractmethod
     async def upload_async(self, data: bytes, *, instance_id: str | None = None) -> str:
         """Async version of :meth:`upload`."""
-        ...
+        pass
 
     @abc.abstractmethod
     def download(self, token: str) -> bytes:
@@ -77,14 +77,14 @@ class PayloadStore(abc.ABC):
         Returns:
             The original payload bytes.
         """
-        ...
+        pass
 
     @abc.abstractmethod
     async def download_async(self, token: str) -> bytes:
         """Async version of :meth:`download`."""
-        ...
+        pass
 
     @abc.abstractmethod
     def is_known_token(self, value: str) -> bool:
         """Return ``True`` if *value* looks like a token produced by this store."""
-        ...
+        pass

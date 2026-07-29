@@ -35,6 +35,8 @@ FIXED
 - HTTP management payloads now preserve the host-provided management URL
 templates and configured HTTP base paths, include `rewindPostUri`, encode
 instance IDs, and use forwarded request origins when enabled by the host.
+- Fixed deprecated v1 status-query methods omitting orchestration output,
+custom status, and failure details when input display was disabled.
 - Fixed asynchronous durable-client construction failing after an application
 event loop had been closed or cleared.
 - Prevented Durable HTTP calls from forwarding managed identity tokens,

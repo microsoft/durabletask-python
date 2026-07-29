@@ -107,7 +107,7 @@ class TestCustomConverterReconstructable:
                 return super().can_reconstruct(target_type)
 
         def act(ctx, w: Widget):
-            ...
+            pass
 
         # The default converter does not recognize Widget...
         assert type_discovery.activity_input_type(act) is None
@@ -118,48 +118,48 @@ class TestCustomConverterReconstructable:
 class TestInputTypeDiscovery:
     def test_orchestrator_input_type_dataclass(self):
         def orch(ctx, order: Order):
-            ...
+            pass
         assert type_discovery.orchestrator_input_type(orch) is Order
 
     def test_activity_input_type_dataclass(self):
         def act(ctx, order: Order):
-            ...
+            pass
         assert type_discovery.activity_input_type(act) is Order
 
     def test_input_type_builtin_returns_none(self):
         def act(ctx, value: int):
-            ...
+            pass
         assert type_discovery.activity_input_type(act) is None
 
     def test_input_type_unannotated_returns_none(self):
         def act(ctx, value):
-            ...
+            pass
         assert type_discovery.activity_input_type(act) is None
 
     def test_input_type_no_input_param_returns_none(self):
         def orch(ctx):
-            ...
+            pass
         assert type_discovery.orchestrator_input_type(orch) is None
 
     def test_postponed_annotation_resolves(self):
         # Annotation provided as a string (PEP 563 style) still resolves because
         # Order is importable in this module's globals.
         def act(ctx, order: "Order"):
-            ...
+            pass
         assert type_discovery.activity_input_type(act) is Order
 
     def test_function_entity_input_type(self):
         def counter(ctx, order: Order):
-            ...
+            pass
         assert type_discovery.entity_input_type(counter, "any_op") is Order
 
     def test_class_entity_input_type_per_operation(self):
         class Store(entities.DurableEntity):
             def add(self, order: Order):
-                ...
+                pass
 
             def clear(self):
-                ...
+                pass
 
         assert type_discovery.entity_input_type(Store, "add") is Order
         # Operation with no input parameter.
@@ -171,32 +171,32 @@ class TestInputTypeDiscovery:
 class TestActivityOutputTypeDiscovery:
     def test_dataclass_return_annotation(self):
         def act(ctx, _) -> Order:
-            ...
+            pass
         assert type_discovery.activity_output_type(act) is Order
 
     def test_from_json_return_annotation(self):
         def act(ctx, _) -> Money:
-            ...
+            pass
         assert type_discovery.activity_output_type(act) is Money
 
     def test_builtin_return_annotation_returns_none(self):
         def act(ctx, _) -> int:
-            ...
+            pass
         assert type_discovery.activity_output_type(act) is None
 
     def test_unannotated_return_returns_none(self):
         def act(ctx, _):
-            ...
+            pass
         assert type_discovery.activity_output_type(act) is None
 
     def test_optional_dataclass_return(self):
         def act(ctx, _) -> Optional[Order]:
-            ...
+            pass
         assert type_discovery.activity_output_type(act) is Optional[Order]
 
     def test_postponed_return_annotation_resolves(self):
         def act(ctx, _) -> "Order":
-            ...
+            pass
         assert type_discovery.activity_output_type(act) is Order
 
     def test_string_name_returns_none(self):
@@ -223,7 +223,7 @@ class TestSignatureCaching:
 
     def test_signature_inspected_once_per_function(self):
         def act(ctx, order: Order) -> Money:
-            ...
+            pass
 
         real_signature = inspect.signature
         calls: list[Any] = []
@@ -248,7 +248,7 @@ class TestSignatureCaching:
     def test_entity_operation_signature_inspected_once(self):
         class Store(entities.DurableEntity):
             def add(self, order: Order):
-                ...
+                pass
 
         real_signature = inspect.signature
         calls: list[Any] = []
@@ -277,7 +277,7 @@ class TestSignatureCaching:
                 return super().can_reconstruct(target_type)
 
         def act(ctx, w: Widget) -> Widget:
-            ...
+            pass
 
         # Prime the cache with the converter that *does* recognize Widget, then
         # switch back: the cached structure must not bake in the first answer.
@@ -303,7 +303,7 @@ class TestSignatureCaching:
                 return super().can_reconstruct(target_type)
 
         def act(ctx, w: Widget):
-            ...
+            pass
 
         converter = ToggleConverter()
         assert type_discovery.activity_input_type(act, converter) is None
@@ -314,7 +314,7 @@ class TestSignatureCaching:
 
     def test_converter_is_consulted_on_every_call(self):
         def act(ctx, order: Order) -> Order:
-            ...
+            pass
 
         converter = _CountingConverter()
         for _ in range(3):
@@ -328,7 +328,7 @@ class TestSignatureCaching:
 
     def test_unannotated_parameters_are_not_offered_to_the_converter(self):
         def act(ctx, value, *args, keyword_only: Order = None, **kwargs):
-            ...
+            pass
 
         converter = _CountingConverter()
         assert type_discovery.activity_input_type(act, converter) is None
@@ -344,7 +344,7 @@ class TestSignatureCaching:
                 return self is other
 
             def __call__(self, ctx, order: Order) -> Order:
-                ...
+                pass
 
         act = Callable_()
         assert type_discovery.activity_input_type(act) is Order
@@ -361,7 +361,7 @@ class TestSignatureCaching:
             retries: int = 3
 
             def __call__(self, ctx, order: Order) -> Order:
-                ...
+                pass
 
         handler = ConfiguredActivity()
         with pytest.raises(TypeError):

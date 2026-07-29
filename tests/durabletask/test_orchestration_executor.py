@@ -586,7 +586,7 @@ def test_activity_return_type_discovered_from_annotation():
         message: str
 
     def annotated_activity(ctx, _) -> Result:
-        ...
+        pass
 
     captured: dict = {}
 
@@ -626,7 +626,7 @@ def test_explicit_return_type_overrides_discovered_annotation():
         value: str
 
     def annotated_activity(ctx, _) -> Annotated:
-        ...
+        pass
 
     captured: dict = {}
 
