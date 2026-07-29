@@ -68,7 +68,7 @@ class DataConverter(ABC):
     @abstractmethod
     def serialize(self, value: Any) -> str | None:
         """Serialize ``value`` to a string, or ``None`` when ``value`` is ``None``."""
-        ...
+        pass
 
     @abstractmethod
     def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
@@ -85,7 +85,7 @@ class DataConverter(ABC):
         :class:`JsonDataConverter` is best-effort and falls back; a validating
         converter may instead raise.
         """
-        ...
+        pass
 
     @abstractmethod
     def coerce(self, value: Any, target_type: type | None = None) -> Any:
@@ -99,7 +99,7 @@ class DataConverter(ABC):
         (strict vs. best-effort) that an implementation applies in
         :meth:`deserialize` should apply here.
         """
-        ...
+        pass
 
     def can_reconstruct(self, target_type: Any) -> bool:
         """Return True if this converter can rebuild ``target_type`` from a payload.

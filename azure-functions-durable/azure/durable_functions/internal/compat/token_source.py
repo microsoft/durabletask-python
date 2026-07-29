@@ -18,7 +18,7 @@ class TokenSource(ABC):
     @abstractmethod
     def to_json(self) -> dict[str, str]:
         """Convert this token source into a JSON-serializable dictionary."""
-        ...
+        pass
 
 
 class ManagedIdentityTokenSource(TokenSource):
