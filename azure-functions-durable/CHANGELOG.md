@@ -32,6 +32,9 @@ avoiding repeated allocation of unused worker resources.
 
 FIXED
 
+- The v1-compatible `get_status()` API now supports `show_history` and
+  `show_history_output`, including compacted `historyEvents` output without an
+  additional history request when history is not requested.
 - HTTP management payloads now preserve the host-provided management URL
 templates and configured HTTP base paths, include `rewindPostUri`, encode
 instance IDs, and use forwarded request origins when enabled by the host.
@@ -206,7 +209,3 @@ code:
 - Orchestration history is not exposed on the context;
   `DurableOrchestrationContext.histories` raises `NotImplementedError`. Use the
   client's `get_orchestration_history(...)` instead.
-- The client status methods accept the v1 `show_history` /
-  `show_history_output` flags for signature compatibility but ignore them, so
-  the returned status has no `historyEvents`. Use
-  `get_orchestration_history(...)` to retrieve history.

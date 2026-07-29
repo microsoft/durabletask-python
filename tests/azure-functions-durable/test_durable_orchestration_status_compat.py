@@ -88,9 +88,26 @@ def test_empty_status_is_falsy_with_none_attributes():
     assert status.to_json() == {}
 
 
-def test_history_is_always_none():
-    status = DurableOrchestrationStatus.from_json(_sample_json())
-    assert status.history is None
+def test_history_events_round_trip():
+    source = _sample_json()
+    source["historyEvents"] = [
+        {
+            "EventType": "ExecutionCompleted",
+            "Result": {"done": True},
+        },
+    ]
+    status = DurableOrchestrationStatus.from_json(source)
+    assert status.history == source["historyEvents"]
+    assert status.to_json() == source
+
+
+def test_legacy_history_field_is_accepted():
+    status = DurableOrchestrationStatus.from_json({
+        **_sample_json(),
+        "history": [{"EventType": "ExecutionStarted"}],
+    })
+    assert status.history == [{"EventType": "ExecutionStarted"}]
+    assert status.to_json()["historyEvents"] == status.history
 
 
 # ---------------------------------------------------------------------------

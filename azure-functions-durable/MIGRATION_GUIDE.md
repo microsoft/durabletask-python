@@ -269,8 +269,6 @@ instead of calling `context.set_result`.
 
 - `DurableOrchestrationContext.histories` is unavailable. Retrieve history with
   `client.get_orchestration_history(instance_id)`.
-- The compatibility `show_history` and `show_history_output` status flags are
-  accepted but ignored.
 - Distributed tracing is not yet wired through the Python provider.
 - Continuous history export is not supported by Azure Functions.
 - Unusual callable signatures can be misclassified by the compatibility layer.
