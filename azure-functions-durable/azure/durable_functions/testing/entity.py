@@ -8,7 +8,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, TypeAlias, cast
 
 from durabletask.entities import DurableEntity, EntityContext, EntityInstanceId
 from durabletask.internal import type_discovery
@@ -247,8 +247,8 @@ def _restore_snapshot(
 ) -> Any:
     if value is None:
         return None
-        value_type: type[Any] = type(value)
-        return converter.deserialize(encoded_value, value_type)
+    value_type = cast(type[Any], type(value))
+    return converter.deserialize(encoded_value, value_type)
 
 
 def _invoke_entity(
