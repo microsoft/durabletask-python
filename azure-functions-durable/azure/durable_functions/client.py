@@ -7,7 +7,7 @@ import json
 import threading
 
 from datetime import datetime, timedelta
-from typing import Any, Optional, Union
+from typing import Any, Mapping, Optional, Union, cast
 from warnings import deprecated
 import azure.functions as func
 from urllib.parse import urlparse, quote
@@ -34,6 +34,68 @@ from .internal.compat.purge_history_result import PurgeHistoryResult
 
 _sync_client_cache: dict[str, "SyncDurableFunctionsClient"] = {}
 _sync_client_cache_lock = threading.Lock()
+
+
+def _first_forwarded_value(value: str) -> str:
+    return value.split(",", 1)[0].strip().strip('"')
+
+
+def _get_request_origin(request: func.HttpRequest) -> str:
+    request_url = urlparse(request.url)
+    proto = request_url.scheme
+    host = request_url.netloc
+    request_headers = cast(Mapping[str, str], request.headers)
+    headers = {
+        name.lower(): value for name, value in request_headers.items()
+    }
+
+    forwarded = headers.get("forwarded")
+    if forwarded:
+        forwarded_values: dict[str, str] = {}
+        for pair in forwarded.split(",", 1)[0].split(";"):
+            name, separator, value = pair.partition("=")
+            if separator:
+                forwarded_values[name.strip().lower()] = value.strip().strip('"')
+
+        proto = forwarded_values.get("proto", proto)
+        forwarded_host = forwarded_values.get("host")
+        if forwarded_host:
+            return f"{proto}://{forwarded_host}"
+
+    forwarded_proto = headers.get("x-forwarded-proto")
+    if forwarded_proto:
+        proto = _first_forwarded_value(forwarded_proto)
+
+    forwarded_host = headers.get("x-forwarded-host")
+    if forwarded_host:
+        host = _first_forwarded_value(forwarded_host)
+
+    return f"{proto}://{host}"
+
+
+def _build_http_management_payload(
+        instance_id: str,
+        management_urls: dict[str, str],
+        base_url: str,
+        required_query_string_parameters: str,
+        request: func.HttpRequest | None) -> HttpManagementPayload:
+    encoded_instance_id = quote(instance_id, safe="")
+    request_origin: str | None = None
+    if request is not None:
+        request_origin = _get_request_origin(request)
+        instance_status_url = (
+            f"{request_origin}/runtime/webhooks/durabletask/instances/"
+            f"{encoded_instance_id}")
+    else:
+        instance_status_url = (
+            f"{base_url.rstrip('/')}/instances/{encoded_instance_id}")
+
+    return HttpManagementPayload(
+        instance_id,
+        instance_status_url,
+        required_query_string_parameters,
+        management_urls=management_urls,
+        request_origin=request_origin)
 
 
 # Client class used for Durable Functions
@@ -215,21 +277,12 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         return self._get_client_response_links(resolved_request, instance_id)
 
     def _get_client_response_links(self, request: func.HttpRequest | None, instance_id: str) -> HttpManagementPayload:
-        instance_status_url = self._get_instance_status_url(request, instance_id)
-        return HttpManagementPayload(instance_id, instance_status_url, self.requiredQueryStringParameters)
-
-    def _get_instance_status_url(self, request: func.HttpRequest | None, instance_id: str) -> str:
-        encoded_instance_id = quote(instance_id)
-        if request is not None:
-            request_url = urlparse(request.url)
-            location_url = f"{request_url.scheme}://{request_url.netloc}"
-            location_url = location_url + "/runtime/webhooks/durabletask/instances/" + encoded_instance_id
-        else:
-            # No request available (v1-style call): fall back to the base URL
-            # supplied in the client binding configuration.
-            base_url = self.baseUrl.rstrip("/") if self.baseUrl else ""
-            location_url = base_url + "/instances/" + encoded_instance_id
-        return location_url
+        return _build_http_management_payload(
+            instance_id,
+            self.managementUrls,
+            self.baseUrl,
+            self.requiredQueryStringParameters,
+            request)
 
     # ------------------------------------------------------------------
     # Backwards-compatibility shims for the v1 azure-functions-durable
@@ -593,21 +646,12 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
     def _get_client_response_links(
             self, request: func.HttpRequest | None,
             instance_id: str) -> HttpManagementPayload:
-        return HttpManagementPayload(
+        return _build_http_management_payload(
             instance_id,
-            self._get_instance_status_url(request, instance_id),
-            self.requiredQueryStringParameters)
-
-    def _get_instance_status_url(
-            self, request: func.HttpRequest | None, instance_id: str) -> str:
-        encoded_instance_id = quote(instance_id)
-        if request is not None:
-            request_url = urlparse(request.url)
-            return (
-                f"{request_url.scheme}://{request_url.netloc}"
-                f"/runtime/webhooks/durabletask/instances/{encoded_instance_id}")
-        base_url = self.baseUrl.rstrip("/") if self.baseUrl else ""
-        return f"{base_url}/instances/{encoded_instance_id}"
+            self.managementUrls,
+            self.baseUrl,
+            self.requiredQueryStringParameters,
+            request)
 
 
 def _close_cached_sync_clients() -> None:
