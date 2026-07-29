@@ -34,8 +34,10 @@ def ping(req: func.HttpRequest) -> func.HttpResponse:
 async def start_orchestration(
         req: func.HttpRequest,
         client: df.DurableFunctionsClient) -> func.HttpResponse:
-    instance_id = await client.schedule_new_orchestration(
-        req.route_params["name"])
+    with tracer.start_as_current_span("user-starter") as span:
+        instance_id = await client.schedule_new_orchestration(
+            req.route_params["name"])
+        span.set_attribute("test.instance_id", instance_id)
     return func.HttpResponse(
         json.dumps({"id": instance_id}),
         status_code=202,

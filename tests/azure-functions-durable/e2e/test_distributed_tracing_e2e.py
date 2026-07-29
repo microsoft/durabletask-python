@@ -30,12 +30,18 @@ def test_user_span_correlates_to_host_without_worker_lifecycle_duplicates(
     deadline = time.time() + 30
     spans: list[dict[str, Any]] = []
     user_spans: list[dict[str, Any]] = []
+    starter_spans: list[dict[str, Any]] = []
     parent_spans: list[dict[str, Any]] = []
     while time.time() < deadline:
         spans = collector.get_spans()
         user_spans = [
             span for span in spans
             if span.get("name") == "user-orchestrator"
+            and _attribute_value(span, "test.instance_id") == instance_id
+        ]
+        starter_spans = [
+            span for span in spans
+            if span.get("name") == "user-starter"
             and _attribute_value(span, "test.instance_id") == instance_id
         ]
         if user_spans:
@@ -45,7 +51,7 @@ def test_user_span_correlates_to_host_without_worker_lifecycle_duplicates(
                 if span.get("traceId") == user_span.get("traceId")
                 and span.get("spanId") == user_span.get("parentSpanId")
             ]
-            if parent_spans:
+            if starter_spans and parent_spans:
                 break
         time.sleep(0.5)
 
@@ -61,8 +67,11 @@ def test_user_span_correlates_to_host_without_worker_lifecycle_duplicates(
         )
         for span in spans
     ]
+    assert len(starter_spans) == 1, summary
+    assert starter_spans[0].get("traceId") == user_span.get("traceId"), summary
     assert len(parent_spans) == 1, summary
     assert parent_spans[0].get("scopeName") != "durabletask"
+    assert parent_spans[0].get("spanId") != starter_spans[0].get("spanId"), summary
 
     python_lifecycle_spans = [
         span for span in spans
