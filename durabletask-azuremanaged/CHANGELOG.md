@@ -21,6 +21,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Improved async access token refresh concurrency handling to avoid duplicate
   refresh operations under concurrent access, matching the existing sync
   behavior.
+- Fixed `AsyncDurableTaskSchedulerClient` failing during construction when no
+  current event loop was set. Its async gRPC channel is now created on first
+  use and bound to the event loop performing the request.
 
 ## v1.8.0
 

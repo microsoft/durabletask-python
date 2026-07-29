@@ -24,6 +24,8 @@ avoiding repeated allocation of unused worker resources.
 
 FIXED
 
+- Fixed asynchronous durable-client construction failing after an application
+event loop had been closed or cleared.
 - Prevented Durable HTTP calls from forwarding managed identity tokens,
 authorization headers, cookies, proxy credentials, or function keys to
 cross-origin redirect and polling targets. Function keys are now removed from
