@@ -205,13 +205,15 @@ def test_activity_retry_then_fan_out_uses_distinct_task_ids():
     for task_id in range(3, 16):
         fan_out_events.append(helpers.new_task_scheduled_event(task_id, "square"))
         fan_out_events.append(
-            helpers.new_task_completed_event(task_id, json.dumps(task_id - 3)))
+            helpers.new_task_completed_event(
+                task_id, json.dumps((task_id - 3) ** 2)))
 
     past_events += retry_completed_events
     response = execute(past_events, fan_out_events)
     completion = _get_completion_action(response)
     assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
-    assert json.loads(completion.result.value) == list(range(13))
+    assert json.loads(completion.result.value) == [
+        value ** 2 for value in range(13)]
 
 
 def test_execute_orchestration_request_supports_concurrent_reinvocation():
