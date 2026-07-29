@@ -14,6 +14,8 @@ import time
 
 import pytest
 
+from ._markers import azurite_delayed_visibility
+
 pytestmark = pytest.mark.functions_e2e
 
 
@@ -80,6 +82,7 @@ def test_call_failing_entity_handled(dtask_app):
     assert status["output"]["caught"] is True
 
 
+@azurite_delayed_visibility
 def test_client_delayed_signal_is_deferred(dtask_app):
     key = f"client-delay-{int(time.time() * 1000)}"
     dtask_app.signal_entity("counter", key, "add", input=9, delay_seconds=3.0)
@@ -96,6 +99,7 @@ def test_client_delayed_signal_is_deferred(dtask_app):
     assert payload["state"] == 9
 
 
+@azurite_delayed_visibility
 def test_orchestration_delayed_signal_is_deferred(dtask_app):
     key = f"orch-delay-{int(time.time() * 1000)}"
     instance_id = dtask_app.start_orchestration("signal_counter_delayed", body=key)
