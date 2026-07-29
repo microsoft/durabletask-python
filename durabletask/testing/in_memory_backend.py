@@ -823,6 +823,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                             instance.failure_details,
                         )
                     )
+                    # Events that arrive during the final in-flight dispatch
+                    # cannot be processed after the instance becomes terminal.
+                    instance.pending_events.clear()
+                    self._orchestration_queue_set.discard(request.instanceId)
 
             # Remove from in-flight before notifying or re-enqueuing
             self._orchestration_in_flight.discard(request.instanceId)

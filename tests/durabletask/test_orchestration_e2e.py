@@ -706,6 +706,7 @@ def test_orchestration_sends_event_to_another_orchestration():
 
 def test_orchestration_send_event_drops_undeliverable_events():
     receiver_invocations = 0
+    sender_invocations = 0
 
     def receiver(ctx: task.OrchestrationContext, _):
         nonlocal receiver_invocations
@@ -713,8 +714,11 @@ def test_orchestration_send_event_drops_undeliverable_events():
         return "completed"
 
     def sender(ctx: task.OrchestrationContext, target_instance_id: str):
+        nonlocal sender_invocations
+        sender_invocations += 1
         ctx.send_event(target_instance_id, "Ignored")
         ctx.send_event("missing-instance", "Ignored")
+        ctx.send_event(ctx.instance_id, "Ignored")
 
     with worker.TaskHubGrpcWorker(host_address=HOST) as w:
         w.add_orchestrator(receiver)
@@ -735,6 +739,7 @@ def test_orchestration_send_event_drops_undeliverable_events():
     assert sender_state is not None
     assert sender_state.runtime_status == client.OrchestrationStatus.COMPLETED
     assert receiver_invocations == 1
+    assert sender_invocations == 1
 
 
 @pytest.mark.parametrize("winning_event", ["Approve", "Reject"])
