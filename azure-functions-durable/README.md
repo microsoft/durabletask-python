@@ -52,8 +52,8 @@ class Counter(DurableEntity):
 
 outcome = execute_entity(Counter, "add", input=2, state=3)
 
-assert outcome.result == 5
-assert outcome.state == 5
+assert outcome.get_result() == 5
+assert outcome.get_state() == 5
 assert outcome.actions == ()
 ```
 
@@ -78,12 +78,17 @@ def counter(context: df.DurableEntityContext) -> None:
 entity_function = counter.build().get_user_function().entity_function
 outcome = execute_entity(entity_function, "add", input=2, state=3)
 
-assert outcome.result == 5
-assert outcome.state == 5
+assert outcome.get_result() == 5
+assert outcome.get_state() == 5
 ```
 
-The returned `EntityTestResult` includes the operation result, resulting state,
-and typed signal or orchestration-start actions scheduled by the operation.
+The returned `EntityTestResult` provides `get_result()` and `get_state()`
+methods plus typed signal or orchestration-start actions scheduled by the
+operation. Pass `expected_type` when reconstructing a custom payload:
+
+```python
+assert outcome.get_state(expected_type=CounterState) == CounterState(value=5)
+```
 
 ## Links
 

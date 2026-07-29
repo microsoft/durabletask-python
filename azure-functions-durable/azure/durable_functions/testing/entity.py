@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, TypeAlias, cast
+from typing import Any, Callable, TypeAlias, TypeVar, overload
 
 from durabletask.entities import DurableEntity, EntityContext, EntityInstanceId
 from durabletask.internal import type_discovery
@@ -19,6 +19,8 @@ from durabletask.serialization import DataConverter
 from ..internal.compat.entity_context import wrap_entity
 from ..internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 
+TValue = TypeVar("TValue")
+
 
 @dataclass(frozen=True)
 class EntitySignalAction:
@@ -26,8 +28,27 @@ class EntitySignalAction:
 
     entity_id: EntityInstanceId
     operation: str
-    input: Any = None
+    serialized_input: str | None = field(repr=False)
     scheduled_time: datetime | None = None
+    _data_converter: DataConverter = field(
+        repr=False, compare=False,
+        default=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+
+    @overload
+    def get_input(self, expected_type: type[TValue]) -> TValue | None:
+        ...
+
+    @overload
+    def get_input(self, expected_type: None = None) -> Any:
+        ...
+
+    def get_input(
+            self,
+            expected_type: type[TValue] | None = None,
+    ) -> TValue | Any | None:
+        """Deserialize the signal input, optionally as ``expected_type``."""
+        return self._data_converter.deserialize(
+            self.serialized_input, expected_type)
 
 
 @dataclass(frozen=True)
@@ -36,7 +57,26 @@ class OrchestrationStartAction:
 
     name: str
     instance_id: str
-    input: Any = None
+    serialized_input: str | None = field(repr=False)
+    _data_converter: DataConverter = field(
+        repr=False, compare=False,
+        default=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+
+    @overload
+    def get_input(self, expected_type: type[TValue]) -> TValue | None:
+        ...
+
+    @overload
+    def get_input(self, expected_type: None = None) -> Any:
+        ...
+
+    def get_input(
+            self,
+            expected_type: type[TValue] | None = None,
+    ) -> TValue | Any | None:
+        """Deserialize the orchestration input, optionally as ``expected_type``."""
+        return self._data_converter.deserialize(
+            self.serialized_input, expected_type)
 
 
 EntityAction: TypeAlias = EntitySignalAction | OrchestrationStartAction
@@ -46,9 +86,44 @@ EntityAction: TypeAlias = EntitySignalAction | OrchestrationStartAction
 class EntityTestResult:
     """The observable outcome of executing one entity operation."""
 
-    result: Any
-    state: Any
+    serialized_result: str | None = field(repr=False)
+    serialized_state: str | None = field(repr=False)
     actions: tuple[EntityAction, ...]
+    _data_converter: DataConverter = field(
+        repr=False, compare=False,
+        default=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+
+    @overload
+    def get_result(self, expected_type: type[TValue]) -> TValue | None:
+        ...
+
+    @overload
+    def get_result(self, expected_type: None = None) -> Any:
+        ...
+
+    def get_result(
+            self,
+            expected_type: type[TValue] | None = None,
+    ) -> TValue | Any | None:
+        """Deserialize the operation result, optionally as ``expected_type``."""
+        return self._data_converter.deserialize(
+            self.serialized_result, expected_type)
+
+    @overload
+    def get_state(self, expected_type: type[TValue]) -> TValue | None:
+        ...
+
+    @overload
+    def get_state(self, expected_type: None = None) -> Any:
+        ...
+
+    def get_state(
+            self,
+            expected_type: type[TValue] | None = None,
+    ) -> TValue | Any | None:
+        """Deserialize the persisted state, optionally as ``expected_type``."""
+        return self._data_converter.deserialize(
+            self.serialized_state, expected_type)
 
 
 def execute_entity(
@@ -112,9 +187,9 @@ def execute_entity(
 
     converter = DEFAULT_FUNCTIONS_DATA_CONVERTER
     entity_id = EntityInstanceId(resolved_name, entity_key)
-    state_shim = _TestingStateShim(state, converter)
-    context = _TestingEntityContext(
-        str(entity_id), operation, state_shim, entity_id, converter, state)
+    state_shim = StateShim(state, converter)
+    context = EntityContext(
+        str(entity_id), operation, state_shim, entity_id, converter)
 
     encoded_input = converter.serialize(input)
     input_type = (
@@ -129,126 +204,54 @@ def execute_entity(
         result = _invoke_entity(
             entity_callable, operation, context, operation_input)
         encoded_result = converter.serialize(result)
-        result = _restore_snapshot(encoded_result, result, converter)
         state_shim.commit()
     except Exception:
         state_shim.rollback()
         raise
 
+    actions = tuple(
+        _decode_action(action, converter)
+        for action in state_shim.get_operation_actions()
+    )
     return EntityTestResult(
-        result=result,
-        state=context.current_state,
-        actions=tuple(context.actions),
+        serialized_result=encoded_result,
+        serialized_state=state_shim.encode_state(),
+        actions=actions,
+        _data_converter=converter,
     )
 
 
-class _TestingStateShim(StateShim):
-    """State shim that exposes the exact action payload just serialized."""
-
-    def __init__(
-            self,
-            start_state: Any,
-            data_converter: DataConverter,
-    ):
-        super().__init__(start_state, data_converter)
-        self.latest_action: pb.OperationAction | None = None
-
-    def add_operation_action(self, action: pb.OperationAction) -> None:
-        super().add_operation_action(action)
-        self.latest_action = action
-
-
-class _TestingEntityContext(EntityContext):
-    """Entity context that captures runtime-equivalent serialized snapshots."""
-
-    def __init__(
-            self,
-            orchestration_id: str,
-            operation: str,
-            state: StateShim,
-            entity_id: EntityInstanceId,
-            data_converter: DataConverter,
-            initial_state: Any,
-    ):
-        super().__init__(
-            orchestration_id, operation, state, entity_id, data_converter)
-        if not isinstance(state, _TestingStateShim):
-            raise TypeError("state must be a _TestingStateShim")
-        self._testing_state = state
-        self._testing_converter = data_converter
-        self.current_state = _restore_snapshot(
-            state.encode_state(), initial_state, data_converter)
-        self.actions: list[EntityAction] = []
-
-    def set_state(self, new_state: Any) -> None:
-        super().set_state(new_state)
-        self.current_state = _restore_snapshot(
-            self._testing_state.encode_state(),
-            new_state,
-            self._testing_converter,
-        )
-
-    def signal_entity(
-            self,
-            entity_instance_id: EntityInstanceId,
-            operation: str,
-            input: Any | None = None,
-            signal_time: datetime | None = None,
-    ) -> None:
-        super().signal_entity(
-            entity_instance_id, operation, input, signal_time)
-        action = self._require_latest_action()
+def _decode_action(
+        action: pb.OperationAction,
+        converter: DataConverter,
+) -> EntityAction:
+    if action.HasField("sendSignal"):
         signal = action.sendSignal
-        encoded_input = (
-            signal.input.value if signal.HasField("input") else None)
         scheduled_time = (
             signal.scheduledTime.ToDatetime(tzinfo=timezone.utc)
             if signal.HasField("scheduledTime")
             else None
         )
-        self.actions.append(EntitySignalAction(
+        return EntitySignalAction(
             entity_id=EntityInstanceId.parse(signal.instanceId),
             operation=signal.name,
-            input=_restore_snapshot(
-                encoded_input, input, self._testing_converter),
+            serialized_input=(
+                signal.input.value if signal.HasField("input") else None),
             scheduled_time=scheduled_time,
-        ))
+            _data_converter=converter,
+        )
 
-    def schedule_new_orchestration(
-            self,
-            orchestration_name: str,
-            input: Any | None = None,
-            instance_id: str | None = None,
-    ) -> str:
-        resolved_instance_id = super().schedule_new_orchestration(
-            orchestration_name, input, instance_id)
-        action = self._require_latest_action()
+    if action.HasField("startNewOrchestration"):
         start = action.startNewOrchestration
-        encoded_input = start.input.value if start.HasField("input") else None
-        self.actions.append(OrchestrationStartAction(
+        return OrchestrationStartAction(
             name=start.name,
             instance_id=start.instanceId,
-            input=_restore_snapshot(
-                encoded_input, input, self._testing_converter),
-        ))
-        return resolved_instance_id
+            serialized_input=(
+                start.input.value if start.HasField("input") else None),
+            _data_converter=converter,
+        )
 
-    def _require_latest_action(self) -> pb.OperationAction:
-        action = self._testing_state.latest_action
-        if action is None:
-            raise RuntimeError("Entity action was not recorded")
-        return action
-
-
-def _restore_snapshot(
-        encoded_value: str | None,
-        value: Any,
-        converter: DataConverter,
-) -> Any:
-    if value is None:
-        return None
-    value_type = cast(type[Any], type(value))
-    return converter.deserialize(encoded_value, value_type)
+    raise ValueError("Unsupported entity action")
 
 
 def _invoke_entity(

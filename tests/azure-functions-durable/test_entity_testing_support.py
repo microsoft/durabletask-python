@@ -45,8 +45,8 @@ def test_execute_v1_entity_returns_result_and_state():
     outcome = execute_entity(
         counter, "add", input=5, state=10, entity_key="counter-1")
 
-    assert outcome.result == 15
-    assert outcome.state == 15
+    assert outcome.get_result() == 15
+    assert outcome.get_state() == 15
     assert outcome.actions == ()
 
 
@@ -67,13 +67,13 @@ def test_execute_native_function_exposes_identity():
         entity_key="probe-1",
     )
 
-    assert outcome.result == {
+    assert outcome.get_result() == {
         "entity": "customprobe",
         "key": "probe-1",
         "operation": "describe",
         "input": "value",
     }
-    assert outcome.state is None
+    assert outcome.get_state() is None
 
 
 def test_execute_class_entity_supports_state_and_inherited_delete():
@@ -84,12 +84,12 @@ def test_execute_class_entity_supports_state_and_inherited_delete():
             return value
 
     added = execute_entity(Counter, "add", input=3, state=4)
-    deleted = execute_entity(Counter, "delete", state=added.state)
+    deleted = execute_entity(Counter, "delete", state=added.get_state())
 
-    assert added.result == 7
-    assert added.state == 7
-    assert deleted.result is None
-    assert deleted.state is None
+    assert added.get_result() == 7
+    assert added.get_state() == 7
+    assert deleted.get_result() is None
+    assert deleted.get_state() is None
 
 
 def test_execute_class_entity_calls_optional_input_method_without_argument():
@@ -100,8 +100,8 @@ def test_execute_class_entity_calls_optional_input_method_without_argument():
 
     outcome = execute_entity(Counter, "reset", state=5)
 
-    assert outcome.result == "reset"
-    assert outcome.state == 0
+    assert outcome.get_result() == "reset"
+    assert outcome.get_state() == 0
 
 
 def test_execute_entity_returns_typed_actions():
@@ -124,20 +124,19 @@ def test_execute_entity_returns_typed_actions():
     outcome = execute_entity(
         Relay, "dispatch", input={"key": "target", "amount": 2})
 
-    assert outcome.result == "orchestration-1"
-    assert outcome.actions == (
-        EntitySignalAction(
-            entity_id=EntityInstanceId("counter", "target"),
-            operation="add",
-            input=2,
-            scheduled_time=signal_time,
-        ),
-        OrchestrationStartAction(
-            name="process",
-            instance_id="orchestration-1",
-            input={"source": "target"},
-        ),
-    )
+    assert outcome.get_result() == "orchestration-1"
+    signal = outcome.actions[0]
+    assert isinstance(signal, EntitySignalAction)
+    assert signal.entity_id == EntityInstanceId("counter", "target")
+    assert signal.operation == "add"
+    assert signal.get_input() == 2
+    assert signal.scheduled_time == signal_time
+
+    start = outcome.actions[1]
+    assert isinstance(start, OrchestrationStartAction)
+    assert start.name == "process"
+    assert start.instance_id == "orchestration-1"
+    assert start.get_input() == {"source": "target"}
 
 
 def test_execute_entity_preserves_custom_payloads_in_strict_mode(
@@ -163,20 +162,12 @@ def test_execute_entity_preserves_custom_payloads_in_strict_mode(
     outcome = execute_entity(
         PayloadEntity, "process", input=CustomPayload(1))
 
-    assert outcome.result == CustomPayload(5)
-    assert outcome.state == CustomPayload(2)
-    assert outcome.actions == (
-        EntitySignalAction(
-            entity_id=EntityInstanceId("target", "one"),
-            operation="accept",
-            input=CustomPayload(3),
-        ),
-        OrchestrationStartAction(
-            name="process-payload",
-            instance_id="orchestration-1",
-            input=CustomPayload(4),
-        ),
-    )
+    assert outcome.get_result(expected_type=CustomPayload) == CustomPayload(5)
+    assert outcome.get_state(expected_type=CustomPayload) == CustomPayload(2)
+    assert outcome.actions[0].get_input(
+        expected_type=CustomPayload) == CustomPayload(3)
+    assert outcome.actions[1].get_input(
+        expected_type=CustomPayload) == CustomPayload(4)
 
 
 def test_execute_entity_snapshots_mutable_state_and_actions_in_strict_mode(
@@ -208,20 +199,36 @@ def test_execute_entity_snapshots_mutable_state_and_actions_in_strict_mode(
 
     outcome = execute_entity(MutatingEntity, "mutate")
 
-    assert outcome.result == CustomPayload(10)
-    assert outcome.state == CustomPayload(1)
-    assert outcome.actions == (
-        EntitySignalAction(
-            entity_id=EntityInstanceId("target", "one"),
-            operation="accept",
-            input=CustomPayload(2),
-        ),
-        OrchestrationStartAction(
-            name="process-payload",
-            instance_id="orchestration-1",
-            input=CustomPayload(3),
-        ),
-    )
+    assert outcome.get_result(
+        expected_type=CustomPayload) == CustomPayload(10)
+    assert outcome.get_state(
+        expected_type=CustomPayload) == CustomPayload(1)
+    assert outcome.actions[0].get_input(
+        expected_type=CustomPayload) == CustomPayload(2)
+    assert outcome.actions[1].get_input(
+        expected_type=CustomPayload) == CustomPayload(3)
+
+
+def test_execute_entity_returns_wire_shape_without_expected_type_in_strict_mode(
+        monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AZURE_FUNCTIONS_DURABLE_STRICT_TYPING", "1")
+
+    class TupleEntity(DurableEntity):
+        def process(self) -> tuple[int, int]:
+            value = (1, 2)
+            self.set_state(value)
+            self.signal_entity(
+                EntityInstanceId("target", "one"), "accept", value)
+            self.schedule_new_orchestration(
+                "process-tuple", input=value, instance_id="orchestration-1")
+            return value
+
+    outcome = execute_entity(TupleEntity, "process")
+
+    assert outcome.get_result() == [1, 2]
+    assert outcome.get_state() == [1, 2]
+    assert outcome.actions[0].get_input() == [1, 2]
+    assert outcome.actions[1].get_input() == [1, 2]
 
 
 def test_execute_entity_supports_decorated_function_handle():
@@ -237,8 +244,8 @@ def test_execute_entity_supports_decorated_function_handle():
     entity_function = accumulator.build().get_user_function().entity_function  # pyright: ignore[reportFunctionMemberAccess]
     outcome = execute_entity(entity_function, "add", input=4, state=6)
 
-    assert outcome.result == 10
-    assert outcome.state == 10
+    assert outcome.get_result() == 10
+    assert outcome.get_state() == 10
 
 
 def test_execute_entity_propagates_operation_failure():
