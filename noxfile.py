@@ -345,6 +345,15 @@ def typecheck_functions(session: nox.Session) -> None:
 
     session.install(str(wheel))
     session.run(
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "--force-reinstall",
+        "--no-deps",
+        str(wheel),
+    )
+    session.run(
         "pyright",
         "-p",
         "azure-functions-durable/pyrightconfig.json",
