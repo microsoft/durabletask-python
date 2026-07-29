@@ -17,6 +17,24 @@ from azure.durable_functions.testing import (
 from durabletask.entities import DurableEntity, EntityContext, EntityInstanceId
 
 
+class CustomPayload:
+    def __init__(self, value: int):
+        self.value = value
+
+    def to_json(self) -> dict[str, int]:
+        return {"value": self.value}
+
+    @classmethod
+    def from_json(cls, value: dict[str, int]) -> "CustomPayload":
+        return cls(value["value"])
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, CustomPayload)
+            and self.value == other.value
+        )
+
+
 def test_execute_v1_entity_returns_result_and_state():
     def counter(context: df.DurableEntityContext) -> None:
         current = context.get_state(initializer=lambda: 0)
@@ -118,6 +136,45 @@ def test_execute_entity_returns_typed_actions():
             name="process",
             instance_id="orchestration-1",
             input={"source": "target"},
+        ),
+    )
+
+
+def test_execute_entity_preserves_custom_payloads_in_strict_mode(
+        monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AZURE_FUNCTIONS_DURABLE_STRICT_TYPING", "1")
+
+    class PayloadEntity(DurableEntity):
+        def process(self, input: CustomPayload) -> CustomPayload:
+            state = CustomPayload(input.value + 1)
+            self.set_state(state)
+            self.signal_entity(
+                EntityInstanceId("target", "one"),
+                "accept",
+                CustomPayload(input.value + 2),
+            )
+            self.schedule_new_orchestration(
+                "process-payload",
+                input=CustomPayload(input.value + 3),
+                instance_id="orchestration-1",
+            )
+            return CustomPayload(input.value + 4)
+
+    outcome = execute_entity(
+        PayloadEntity, "process", input=CustomPayload(1))
+
+    assert outcome.result == CustomPayload(5)
+    assert outcome.state == CustomPayload(2)
+    assert outcome.actions == (
+        EntitySignalAction(
+            entity_id=EntityInstanceId("target", "one"),
+            operation="accept",
+            input=CustomPayload(3),
+        ),
+        OrchestrationStartAction(
+            name="process-payload",
+            instance_id="orchestration-1",
+            input=CustomPayload(4),
         ),
     )
 

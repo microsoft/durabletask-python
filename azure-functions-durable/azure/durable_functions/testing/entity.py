@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, TypeAlias
 
 from durabletask.entities import DurableEntity, EntityContext, EntityInstanceId
 from durabletask.internal import type_discovery
 from durabletask.internal.entity_state_shim import StateShim
-import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask.serialization import DataConverter
 
 from ..internal.compat.entity_context import wrap_entity
 from ..internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
@@ -112,8 +112,8 @@ def execute_entity(
     converter = DEFAULT_FUNCTIONS_DATA_CONVERTER
     entity_id = EntityInstanceId(resolved_name, entity_key)
     state_shim = StateShim(state, converter)
-    context = EntityContext(
-        str(entity_id), operation, state_shim, entity_id, converter)
+    context = _TestingEntityContext(
+        str(entity_id), operation, state_shim, entity_id, converter, state)
 
     encoded_input = converter.serialize(input)
     input_type = (
@@ -127,20 +127,70 @@ def execute_entity(
     try:
         result = _invoke_entity(
             entity_callable, operation, context, operation_input)
-        encoded_result = converter.serialize(result)
-        result = converter.deserialize(encoded_result)
+        converter.serialize(result)
         state_shim.commit()
     except Exception:
         state_shim.rollback()
         raise
 
-    actions = tuple(
-        _decode_action(action) for action in state_shim.get_operation_actions())
     return EntityTestResult(
         result=result,
-        state=state_shim.get_state(),
-        actions=actions,
+        state=context.current_state,
+        actions=tuple(context.actions),
     )
+
+
+class _TestingEntityContext(EntityContext):
+    """Entity context that preserves live values for test assertions."""
+
+    def __init__(
+            self,
+            orchestration_id: str,
+            operation: str,
+            state: StateShim,
+            entity_id: EntityInstanceId,
+            data_converter: DataConverter,
+            current_state: Any,
+    ):
+        super().__init__(
+            orchestration_id, operation, state, entity_id, data_converter)
+        self.current_state = current_state
+        self.actions: list[EntityAction] = []
+
+    def set_state(self, new_state: Any) -> None:
+        super().set_state(new_state)
+        self.current_state = new_state
+
+    def signal_entity(
+            self,
+            entity_instance_id: EntityInstanceId,
+            operation: str,
+            input: Any | None = None,
+            signal_time: datetime | None = None,
+    ) -> None:
+        super().signal_entity(
+            entity_instance_id, operation, input, signal_time)
+        self.actions.append(EntitySignalAction(
+            entity_id=entity_instance_id,
+            operation=operation,
+            input=input,
+            scheduled_time=signal_time,
+        ))
+
+    def schedule_new_orchestration(
+            self,
+            orchestration_name: str,
+            input: Any | None = None,
+            instance_id: str | None = None,
+    ) -> str:
+        resolved_instance_id = super().schedule_new_orchestration(
+            orchestration_name, input, instance_id)
+        self.actions.append(OrchestrationStartAction(
+            name=orchestration_name,
+            instance_id=resolved_instance_id,
+            input=input,
+        ))
+        return resolved_instance_id
 
 
 def _invoke_entity(
@@ -176,33 +226,3 @@ def _invoke_entity(
         return method()
 
     return entity(context, operation_input)
-
-
-def _decode_action(action: pb.OperationAction) -> EntityAction:
-    converter = DEFAULT_FUNCTIONS_DATA_CONVERTER
-    if action.HasField("sendSignal"):
-        signal = action.sendSignal
-        scheduled_time = (
-            signal.scheduledTime.ToDatetime(tzinfo=timezone.utc)
-            if signal.HasField("scheduledTime")
-            else None
-        )
-        encoded_input = (
-            signal.input.value if signal.HasField("input") else None)
-        return EntitySignalAction(
-            entity_id=EntityInstanceId.parse(signal.instanceId),
-            operation=signal.name,
-            input=converter.deserialize(encoded_input),
-            scheduled_time=scheduled_time,
-        )
-
-    if action.HasField("startNewOrchestration"):
-        start = action.startNewOrchestration
-        encoded_input = start.input.value if start.HasField("input") else None
-        return OrchestrationStartAction(
-            name=start.name,
-            instance_id=start.instanceId,
-            input=converter.deserialize(encoded_input),
-        )
-
-    raise ValueError("Unsupported entity action")
