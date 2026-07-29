@@ -198,6 +198,7 @@ async def test_get_status_all_delegates():
                           new=AsyncMock(return_value=[])) as mock:
             with pytest.warns(DeprecationWarning):
                 await client.get_status_all()
+        mock.assert_awaited_once()
         query = mock.await_args.args[0]
         assert query.fetch_inputs_and_outputs is True
     finally:
@@ -316,6 +317,7 @@ async def test_get_status_by_maps_statuses():
             with pytest.warns(DeprecationWarning):
                 await client.get_status_by(
                     runtime_status=[df.OrchestrationRuntimeStatus.Running])
+        mock.assert_awaited_once()
         query = mock.await_args.args[0]
         assert query.runtime_status == [OrchestrationStatus.RUNNING]
         assert query.fetch_inputs_and_outputs is True
@@ -582,6 +584,7 @@ async def test_get_status_failed_preserves_failure_output():
                           new=AsyncMock(return_value=state)):
             with pytest.warns(DeprecationWarning):
                 status = await client.get_status("abc")
+        assert status.output == "boom"
         status_json = status.to_json()
         assert status_json["runtimeStatus"] == "Failed"
         assert status_json["output"] == "boom"

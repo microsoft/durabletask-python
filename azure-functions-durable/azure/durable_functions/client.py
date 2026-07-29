@@ -266,8 +266,9 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
 
         The ``show_history`` and ``show_history_output`` flags have no
         equivalent in durabletask and are ignored. Payloads are fetched to
-        preserve the v1 output and custom-status fields; ``show_input`` controls
-        whether the compatibility wrapper exposes the input.
+        preserve the v1 output, custom-status, and failure-detail fields;
+        ``show_input`` controls whether the compatibility wrapper exposes the
+        input.
         """
         state = await self.get_orchestration_state(instance_id, fetch_payloads=True)
         return DurableOrchestrationStatus.from_orchestration_state(

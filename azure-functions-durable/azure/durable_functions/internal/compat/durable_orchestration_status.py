@@ -116,10 +116,14 @@ class DurableOrchestrationStatus:
 
     @property
     def output(self) -> Any:
-        """Get the (deserialized) output of the orchestration instance."""
+        """Get the output or failure message of the orchestration instance."""
         if self._state is None:
             return None
-        return self._raw_payload(self._state.serialized_output)
+        output = self._raw_payload(self._state.serialized_output)
+        if output is not None:
+            return output
+        failure = self._state.failure_details
+        return failure.message if failure is not None else None
 
     @property
     def runtime_status(self) -> Optional[OrchestrationRuntimeStatus]:
@@ -163,19 +167,9 @@ class DurableOrchestrationStatus:
             result["createdTime"] = self._format_datetime(self.created_time)
         if self.last_updated_time is not None:
             result["lastUpdatedTime"] = self._format_datetime(self.last_updated_time)
-        output = self._raw_payload(
-            self._state.serialized_output if self._state is not None else None)
+        output = self.output
         if output is not None:
             result["output"] = output
-        elif self._state is not None:
-            # A failed orchestration carries its error in ``failure_details``
-            # rather than ``serialized_output``; surface it under ``output``
-            # (matching v1, where the failure message was returned through the
-            # status output) so the error is not dropped from the payload.
-            failure = getattr(self._state, "failure_details", None)
-            failure_message = getattr(failure, "message", None) if failure is not None else None
-            if failure_message:
-                result["output"] = failure_message
         input_ = self.input_
         if input_ is not None:
             result["input"] = input_
