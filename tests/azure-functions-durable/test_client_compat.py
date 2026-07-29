@@ -49,15 +49,18 @@ def test_client_handles_null_max_grpc_message_size():
     assert client.maxGrpcMessageSizeInBytes == 0
 
 
-async def test_durable_clients_use_propagate_only_tracing():
-    async_client = _make_client()
+def test_durable_clients_use_propagate_only_tracing():
     sync_client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
     try:
-        assert async_client.emit_trace_spans is False
         assert sync_client.emit_trace_spans is False
     finally:
-        await async_client.close()
         sync_client.close()
+
+    with patch.object(AsyncTaskHubGrpcClient, "__init__", return_value=None) as init:
+        df.DurableFunctionsClient(_CLIENT_CONFIG)
+
+    assert init.call_args is not None
+    assert init.call_args.kwargs["emit_trace_spans"] is False
 
 
 def test_client_handles_all_config_fields_sent_as_null():
