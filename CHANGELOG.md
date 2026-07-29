@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added `emit_trace_spans=False` to `TaskHubGrpcWorker`,
+`TaskHubGrpcClient`, and `AsyncTaskHubGrpcClient` for hosts that own Durable
+Task lifecycle spans. In this propagate-only mode, W3C trace context remains
+active and is propagated without emitting duplicate SDK lifecycle spans.
 - Added asynchronous `AsyncScheduledTaskClient` / `AsyncScheduleClient` and
 `AsyncExportHistoryClient` / `AsyncExportHistoryJobClient` APIs. Applications
 using `AsyncTaskHubGrpcClient` can now manage scheduled tasks and history

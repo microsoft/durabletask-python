@@ -6,7 +6,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from google.protobuf import timestamp_pb2, wrappers_pb2
@@ -21,7 +21,7 @@ from durabletask.serialization import JsonDataConverter
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.tracing as tracing
-from durabletask import task, worker
+from durabletask import client, task, worker
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
@@ -177,6 +177,25 @@ class TestStartSpan:
         # The child span's trace ID should match the parent's
         assert child_span.context is not None
         assert child_span.context.trace_id == int("0af7651916cd43dd8448eb211c80319c", 16)
+
+    def test_suppressed_span_activates_parent_for_user_span(
+            self, otel_setup: InMemorySpanExporter):
+        """Suppression should preserve propagation without an SDK span."""
+        tracer = trace.get_tracer("user-code")
+
+        with tracing.suppress_span_emission():
+            with tracing.start_span(
+                    "activity:sdk", trace_context=_make_parent_trace_ctx()) as span:
+                assert span is None
+                with tracer.start_as_current_span("user-activity"):
+                    pass
+
+        spans = otel_setup.get_finished_spans()
+        assert [span.name for span in spans] == ["user-activity"]
+        assert spans[0].context is not None
+        assert spans[0].context.trace_id == int(_SAMPLE_TRACE_ID, 16)
+        assert spans[0].parent is not None
+        assert spans[0].parent.span_id == int(_SAMPLE_PARENT_SPAN_ID, 16)
 
 
 class TestSetSpanError:
@@ -535,6 +554,67 @@ class TestRaiseEventSpan:
         assert s.attributes[tracing.ATTR_TASK_TYPE] == "event"
         assert s.attributes[tracing.ATTR_TASK_NAME] == "MyEvent"
         assert s.attributes[tracing.ATTR_EVENT_TARGET_INSTANCE_ID] == "inst-456"
+
+
+class TestClientSpanEmission:
+    """Tests for client propagate-only tracing."""
+
+    def test_clients_emit_trace_spans_by_default(self):
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=MagicMock()):
+            sync_client = client.TaskHubGrpcClient(channel=MagicMock())
+            async_client = client.AsyncTaskHubGrpcClient(channel=MagicMock())
+
+        assert sync_client.emit_trace_spans is True
+        assert async_client.emit_trace_spans is True
+
+    def test_sync_client_propagates_ambient_context_without_lifecycle_spans(
+            self, otel_setup: InMemorySpanExporter):
+        stub = MagicMock()
+        stub.StartInstance.return_value = pb.CreateInstanceResponse(instanceId="inst-1")
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=stub):
+            grpc_client = client.TaskHubGrpcClient(
+                channel=MagicMock(), emit_trace_spans=False)
+
+        tracer = trace.get_tracer("host")
+        with tracer.start_as_current_span("host-request") as host_span:
+            host_span_id = f"{host_span.get_span_context().span_id:016x}"
+            grpc_client.schedule_new_orchestration(
+                "orchestrator", instance_id="inst-1")
+            grpc_client.raise_orchestration_event("inst-1", "event")
+
+        start_request = stub.StartInstance.call_args.args[0]
+        assert start_request.parentTraceContext.spanID == host_span_id
+        assert [span.name for span in otel_setup.get_finished_spans()] == [
+            "host-request"]
+
+    @pytest.mark.asyncio
+    async def test_async_client_propagates_ambient_context_without_lifecycle_spans(
+            self, otel_setup: InMemorySpanExporter):
+        stub = MagicMock()
+        stub.StartInstance = AsyncMock(
+            return_value=pb.CreateInstanceResponse(instanceId="inst-1"))
+        stub.RaiseEvent = AsyncMock(return_value=pb.RaiseEventResponse())
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=stub):
+            grpc_client = client.AsyncTaskHubGrpcClient(
+                channel=MagicMock(), emit_trace_spans=False)
+
+        tracer = trace.get_tracer("host")
+        with tracer.start_as_current_span("host-request") as host_span:
+            host_span_id = f"{host_span.get_span_context().span_id:016x}"
+            await grpc_client.schedule_new_orchestration(
+                "orchestrator", instance_id="inst-1")
+            await grpc_client.raise_orchestration_event("inst-1", "event")
+
+        start_request = stub.StartInstance.call_args.args[0]
+        assert start_request.parentTraceContext.spanID == host_span_id
+        assert [span.name for span in otel_setup.get_finished_spans()] == [
+            "host-request"]
 
 
 class TestOrchestrationServerSpan:
@@ -1171,6 +1251,51 @@ class TestOrchestrationSpanLifecycle:
         orch_spans = self._get_orch_server_spans(otel_setup)
         assert len(orch_spans) == 1
         assert orch_spans[0].status.status_code == StatusCode.ERROR
+
+    def test_propagate_only_exports_user_span_under_inbound_parent(
+            self, otel_setup):
+        """Propagate-only mode should export user spans, not SDK lifecycle spans."""
+        from unittest.mock import MagicMock
+
+        tracer = trace.get_tracer("user-code")
+
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            with tracer.start_as_current_span("user-orchestrator"):
+                return "done"
+
+        registry = worker._Registry()
+        name = registry.add_orchestrator(orchestrator)
+        w = worker.TaskHubGrpcWorker(
+            host_address="localhost:4001",
+            emit_trace_spans=False,
+        )
+        w._registry = registry
+        stub = MagicMock()
+        req = pb.OrchestratorRequest(
+            instanceId=TEST_INSTANCE_ID,
+            newEvents=[
+                helpers.new_orchestrator_started_event(),
+                helpers.new_execution_started_event(
+                    name,
+                    TEST_INSTANCE_ID,
+                    encoded_input=None,
+                    parent_trace_context=_make_parent_trace_ctx(),
+                ),
+            ],
+        )
+
+        w._execute_orchestrator(req, stub, "token1")
+
+        spans = otel_setup.get_finished_spans()
+        assert [span.name for span in spans] == ["user-orchestrator"]
+        user_span = spans[0]
+        assert user_span.context is not None
+        assert user_span.context.trace_id == int(_SAMPLE_TRACE_ID, 16)
+        assert user_span.parent is not None
+        assert user_span.parent.span_id == int(_SAMPLE_PARENT_SPAN_ID, 16)
+        response = stub.CompleteOrchestratorTask.call_args.args[0]
+        assert response.orchestrationTraceContext.ListFields() == []
+        assert tracing.get_current_trace_context() is None
 
     def test_separate_instances_get_separate_spans(self, otel_setup):
         """Two different orchestration instances should produce independent

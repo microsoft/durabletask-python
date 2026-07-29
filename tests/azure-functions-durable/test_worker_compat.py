@@ -27,6 +27,12 @@ from azure.durable_functions.worker import DurableFunctionsWorker
 TEST_INSTANCE_ID = "inst-123"
 
 
+def test_worker_uses_propagate_only_tracing():
+    worker = DurableFunctionsWorker()
+
+    assert worker.emit_trace_spans is False
+
+
 def _encode_orchestrator_request(name, encoded_input=None, instance_id=TEST_INSTANCE_ID):
     """Build a base64-encoded ``OrchestratorRequest`` for a single new dispatch."""
     request = pb.OrchestratorRequest(instanceId=instance_id)

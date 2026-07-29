@@ -41,7 +41,10 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         # The Functions converter routes payload serialization through the
         # azure-functions codec (df_dumps/df_loads) so user types round-trip in
         # the wire format the Durable Functions host extension expects.
-        super().__init__(data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+        super().__init__(
+            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
+            emit_trace_spans=False,
+        )
         self._registration_lock = Lock()
         self._registered_orchestrator_functions: dict[
             str, task.Orchestrator[Any, Any]
