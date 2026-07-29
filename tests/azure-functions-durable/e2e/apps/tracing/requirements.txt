@@ -1,0 +1,5 @@
+# The E2E harness installs local SDK packages and the OTLP exporter into the
+# linked app virtual environment before starting the Functions host.
+azure-functions
+azure-functions-durable
+opentelemetry-exporter-otlp-proto-grpc

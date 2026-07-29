@@ -18,6 +18,7 @@ import logging
 import random
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -85,6 +86,10 @@ OTEL_AVAILABLE = _OTEL_AVAILABLE
 
 # The instrumentation scope name used when creating spans.
 _TRACER_NAME = "durabletask"
+_SPAN_EMISSION_SUPPRESSED: ContextVar[bool] = ContextVar(
+    "durabletask_span_emission_suppressed",
+    default=False,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +232,35 @@ def extract_trace_context(proto_ctx: pb.TraceContext | None) -> Any | None:
 
 
 @contextmanager
+def use_trace_context(trace_context: pb.TraceContext | None):
+    """Make a protobuf trace context current without creating a span."""
+    parent_ctx = extract_trace_context(trace_context)
+    if parent_ctx is None:
+        yield
+        return
+
+    token = otel_context.attach(parent_ctx)
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
+
+
+@contextmanager
+def suppress_span_emission(suppress: bool = True):
+    """Temporarily suppress spans emitted by this module."""
+    if not suppress:
+        yield
+        return
+
+    token = _SPAN_EMISSION_SUPPRESSED.set(True)
+    try:
+        yield
+    finally:
+        _SPAN_EMISSION_SUPPRESSED.reset(token)
+
+
+@contextmanager
 def start_span(
     name: str,
     trace_context: pb.TraceContext | None = None,
@@ -252,6 +286,11 @@ def start_span(
     """
     if not _OTEL_AVAILABLE:
         yield None
+        return
+
+    if _SPAN_EMISSION_SUPPRESSED.get():
+        with use_trace_context(trace_context):
+            yield None
         return
 
     parent_ctx = extract_trace_context(trace_context)
@@ -313,7 +352,7 @@ def emit_orchestration_span(
     Falls back to ``tracer.start_span()`` (which generates its own
     span ID) when *orchestration_trace_context* is ``None``.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         return
 
     span_name = create_span_name(TASK_TYPE_ORCHESTRATION, name, version)
@@ -529,7 +568,7 @@ def generate_client_trace_context(
     returned the caller should fall back to the orchestration's own
     trace context as the parent for downstream spans.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         return None
     if parent_trace_context is None:
         return None
@@ -588,7 +627,7 @@ def emit_client_span(
     SERVER span remains connected to the orchestration span via the
     fallback parenting established in :func:`generate_client_trace_context`.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         return
 
     # SDK-internal imports — see _is_deferred_span_capable() for details.
@@ -698,7 +737,7 @@ def emit_timer_span(
     When *parent_trace_context* is provided the span is created as a
     child of that context; otherwise it inherits the ambient context.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         return
 
     span_name = create_timer_span_name(orchestration_name)
@@ -741,7 +780,7 @@ def emit_event_raised_span(
     When *parent_trace_context* is provided the span is created as a
     child of that context; otherwise it inherits the ambient context.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         return
 
     span_name = create_span_name(SPAN_TYPE_ORCHESTRATION_EVENT, event_name)
@@ -787,7 +826,7 @@ def start_create_orchestration_span(
     Yields the span; caller should capture the trace context after entering
     the span context so it can be injected into the gRPC request.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         yield None
         return
 
@@ -815,7 +854,7 @@ def start_raise_event_span(
     target_instance_id: str,
 ):
     """Context manager for a Producer span when raising an event from the client."""
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         yield None
         return
 
@@ -845,7 +884,7 @@ def reconstruct_trace_context(
     the span ID with *span_id*.  This is used to reuse a pre-determined
     orchestration span ID across replays.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _SPAN_EMISSION_SUPPRESSED.get():
         return None
 
     parsed = _parse_traceparent(parent_trace_context.traceParent)
@@ -869,7 +908,7 @@ def build_orchestration_trace_context(
     replays so that all dispatches produce a consistent orchestration
     SERVER span.
     """
-    if start_time_ns is None:
+    if start_time_ns is None or _SPAN_EMISSION_SUPPRESSED.get():
         return None
 
     ctx = pb.OrchestrationTraceContext()

@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added `emit_trace_spans=False` to `TaskHubGrpcWorker`,
+`TaskHubGrpcClient`, and `AsyncTaskHubGrpcClient` for hosts that own Durable
+Task lifecycle spans. In this propagate-only mode, W3C trace context remains
+active and is propagated without emitting duplicate SDK lifecycle spans.
 - Added asynchronous `AsyncScheduledTaskClient` / `AsyncScheduleClient` and
 `AsyncExportHistoryClient` / `AsyncExportHistoryJobClient` APIs. Applications
 using `AsyncTaskHubGrpcClient` can now manage scheduled tasks and history
@@ -33,6 +37,9 @@ import paths, `__all__`, `dir()`, and star-imports behave exactly as before.
 
 FIXED
 
+- Fixed `AsyncTaskHubGrpcClient` failing during construction when no current
+event loop was set. SDK-owned async gRPC channels are now created on first use,
+binding them to the event loop that performs the RPC.
 - Fixed the worker allocating one `asyncio` task per queued work item before applying the concurrency limit, which made memory use and event-loop scheduling overhead grow with the queue backlog during bursts. In-flight work item tasks are now bounded by the configured `ConcurrencyOptions` limits.
 - Fixed input/output type discovery raising `TypeError: unhashable type` for handlers that are unhashable callables. A callable object registered through `add_named_activity()`, `add_named_orchestrator()`, or `add_named_entity()` is unhashable whenever its class defines `__eq__` without `__hash__` — most commonly a `@dataclass` with a `__call__` method, since dataclasses default to `eq=True`. Annotations on such handlers are now discovered normally instead of failing.
 

@@ -7,8 +7,7 @@ built on top of the [`durabletask`](https://pypi.org/project/durabletask/) SDK.
 > [!NOTE]
 > 2.x is a ground-up rewrite of the Durable Functions Python SDK on top of the
 > `durabletask` runtime. It is currently a preview (beta) release; APIs may
-> change before the stable 2.0.0. See [CHANGELOG.md](CHANGELOG.md) for the
-> migration summary from 1.x, including breaking changes.
+> change before the stable 2.0.0.
 
 ## Requirements
 
@@ -88,6 +87,8 @@ and typed signal or orchestration-start actions scheduled by the operation.
 
 ## Links
 
+- [2.x samples](samples/)
+- [Migration guide from 1.x](MIGRATION_GUIDE.md)
 - [Changelog](CHANGELOG.md)
 - [Durable Functions documentation](https://learn.microsoft.com/azure/azure-functions/durable/)
 - [`durabletask` on PyPI](https://pypi.org/project/durabletask/)

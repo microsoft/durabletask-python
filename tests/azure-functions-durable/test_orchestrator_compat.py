@@ -5,7 +5,7 @@
 
 ``Orchestrator`` is the thin adapter registered with the Azure Functions host:
 its generated ``handle`` receives the host's transport context and delegates to
-a fresh :class:`DurableFunctionsWorker` per invocation.
+a shared :class:`DurableFunctionsWorker`.
 """
 
 from unittest.mock import MagicMock, patch
@@ -21,11 +21,12 @@ def test_handle_delegates_to_worker():
     with patch(
         "azure.durable_functions.orchestrator.DurableFunctionsWorker"
     ) as worker_cls:
-        worker_cls.return_value.execute_orchestration_request.return_value = "encoded"
+        worker = worker_cls.return_value
+        worker.execute_orchestration_request.return_value = "encoded"
         result = Orchestrator(user_orchestrator).handle(context)
 
     assert result == "encoded"
-    worker_cls.return_value.execute_orchestration_request.assert_called_once_with(
+    worker.execute_orchestration_request.assert_called_once_with(
         user_orchestrator, context)
 
 
@@ -34,8 +35,8 @@ def test_handle_stores_durable_context():
         return None
 
     context = MagicMock()
-    orchestrator = Orchestrator(user_orchestrator)
     with patch("azure.durable_functions.orchestrator.DurableFunctionsWorker"):
+        orchestrator = Orchestrator(user_orchestrator)
         orchestrator.handle(context)
     assert orchestrator.durable_context is context
 
@@ -53,14 +54,20 @@ def test_created_handle_delegates_to_worker():
     def user_orchestrator(context):
         return None
 
-    handle = Orchestrator.create(user_orchestrator)
-    context = MagicMock()
     with patch(
         "azure.durable_functions.orchestrator.DurableFunctionsWorker"
     ) as worker_cls:
-        worker_cls.return_value.execute_orchestration_request.return_value = "encoded"
-        result = handle(context)
+        worker = worker_cls.return_value
+        worker.execute_orchestration_request.return_value = "encoded"
+        handle = Orchestrator.create(user_orchestrator)
+        first_context = MagicMock()
+        second_context = MagicMock()
+        first_result = handle(first_context)
+        second_result = handle(second_context)
 
-    assert result == "encoded"
-    worker_cls.return_value.execute_orchestration_request.assert_called_once_with(
-        user_orchestrator, context)
+    assert first_result == second_result == "encoded"
+    worker_cls.assert_called_once_with()
+    assert worker.execute_orchestration_request.call_args_list == [
+        ((user_orchestrator, first_context),),
+        ((user_orchestrator, second_context),),
+    ]
