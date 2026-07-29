@@ -13,9 +13,12 @@ from uuid import UUID
 
 import pytest
 
+from ._markers import azurite_delayed_visibility
+
 pytestmark = pytest.mark.functions_e2e
 
 
+@azurite_delayed_visibility
 def test_timer(dtask_app):
     instance_id = dtask_app.start_orchestration("timer_wait")
     status = dtask_app.wait_for_completion(instance_id)

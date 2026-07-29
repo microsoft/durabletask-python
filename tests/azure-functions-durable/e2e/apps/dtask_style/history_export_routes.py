@@ -14,10 +14,11 @@ in whatever worker runs them) and use the writer registered at
 ``configure_history_export`` time, so this route no longer binds a process-wide
 context. The route only builds an ``ExportHistoryClient`` for the job-management
 surface (create / get job). A local-filesystem writer sends exported history to
-``<app>/_export_output`` where the test can read it back.
+a temporary directory outside the function app where the test can read it back.
 """
 
 import json
+import tempfile
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,9 +45,11 @@ from azure.durable_functions.internal.serialization import (
 
 bp = df.Blueprint()
 
-# Exported history is written under the app directory so the E2E test (running
-# on the same machine) can read it back and assert on the contents.
-EXPORT_ROOT = Path(__file__).parent / "_export_output"
+# Keep generated files outside the function app. Writing beneath the app root
+# triggers the Functions host's file watcher and restarts the host mid-suite.
+EXPORT_ROOT = (
+    Path(tempfile.gettempdir()) / "durabletask-python-e2e" / "history-export"
+)
 
 
 class _FileSystemHistoryWriter:
