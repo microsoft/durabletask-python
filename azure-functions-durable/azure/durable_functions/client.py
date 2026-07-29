@@ -272,7 +272,7 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             body=str(payload),
             status_code=202,
             headers={
-                'content-type': 'application/json',
+                'Content-Type': 'application/json',
                 # Match v1: Location points at statusQueryGetUri, which includes
                 # the required query string (webhook key / task hub / connection)
                 # so a client that follows the header is authorized.
@@ -704,7 +704,7 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             body=str(payload),
             status_code=202,
             headers={
-                "content-type": "application/json",
+                "Content-Type": "application/json",
                 "Location": payload["statusQueryGetUri"],
                 "Retry-After": "10",
             },
