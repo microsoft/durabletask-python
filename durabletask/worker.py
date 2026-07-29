@@ -3018,6 +3018,19 @@ class _OrchestrationExecutor:
                         action,
                     )
                 elif (
+                        action.sendEvent.instance.instanceId
+                        != event.eventSent.instanceId
+                ):
+                    # Python intentionally validates the target during replay,
+                    # unlike DurableTask.Core, to avoid silently suppressing
+                    # delivery when orchestration code changes the target.
+                    raise _get_wrong_action_target_error(
+                        event.eventId,
+                        method_name=task.get_name(ctx.send_event),
+                        expected_instance_id=event.eventSent.instanceId,
+                        actual_instance_id=action.sendEvent.instance.instanceId,
+                    )
+                elif (
                         action.sendEvent.name.casefold()
                         != event.eventSent.name.casefold()
                 ):
@@ -3337,6 +3350,21 @@ def _get_wrong_action_name_error(
         f"execution is instead trying to call {actual_task_name} as part of rebuilding it's history. "
         f"This kind of mismatch can happen if an orchestration has non-deterministic logic or if the code "
         f"was changed after an instance of this orchestration already started running."
+    )
+
+
+def _get_wrong_action_target_error(
+        task_id: int,
+        method_name: str,
+        expected_instance_id: str,
+        actual_instance_id: str,
+) -> task.NonDeterminismError:
+    return task.NonDeterminismError(
+        f"Failed to restore orchestration state due to a history mismatch: A previous execution called "
+        f"{method_name} with target instance ID='{expected_instance_id}' and sequence number {task_id}, but the "
+        f"current execution is instead targeting instance ID='{actual_instance_id}' as part of rebuilding its "
+        f"history. This kind of mismatch can happen if an orchestration has non-deterministic logic or if the "
+        f"code was changed after an instance of this orchestration already started running."
     )
 
 

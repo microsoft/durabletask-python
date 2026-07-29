@@ -1558,7 +1558,10 @@ def test_send_event_replay_is_case_insensitive():
     assert result.actions == []
 
 
-@pytest.mark.parametrize("mismatch", ["name", "type", "missing", "entity"])
+@pytest.mark.parametrize(
+    "mismatch",
+    ["name", "target", "type", "missing", "entity"],
+)
 def test_send_event_replay_detects_nondeterminism(mismatch: str):
     if mismatch == "type":
         def orchestrator(ctx: task.OrchestrationContext, _):
@@ -1573,6 +1576,10 @@ def test_send_event_replay_detects_nondeterminism(mismatch: str):
                 entities.EntityInstanceId("Counter", "counter"),
                 "increment",
             )
+            yield ctx.wait_for_external_event("Done")
+    elif mismatch == "target":
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            ctx.send_event("changed-target", "OriginalName")
             yield ctx.wait_for_external_event("Done")
     else:
         def orchestrator(ctx: task.OrchestrationContext, _):
@@ -1605,6 +1612,9 @@ def test_send_event_replay_detects_nondeterminism(mismatch: str):
     if mismatch == "name":
         assert "OriginalName" in complete_action.failureDetails.errorMessage
         assert "ChangedName" in complete_action.failureDetails.errorMessage
+    elif mismatch == "target":
+        assert "target-instance" in complete_action.failureDetails.errorMessage
+        assert "changed-target" in complete_action.failureDetails.errorMessage
     elif mismatch == "type":
         assert "create_timer" in complete_action.failureDetails.errorMessage
     elif mismatch == "entity":

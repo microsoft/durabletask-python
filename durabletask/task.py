@@ -370,6 +370,9 @@ class OrchestrationContext(ABC):
         :meth:`wait_for_external_event`. This is a one-way operation and does
         not wait for the target orchestration to process the event. If the
         target orchestration does not exist, the event is silently dropped.
+        During replay, the Python SDK validates both the event name and target
+        instance ID. This is intentionally stricter than DurableTask.Core,
+        which does not validate the target instance ID.
 
         Parameters
         ----------
