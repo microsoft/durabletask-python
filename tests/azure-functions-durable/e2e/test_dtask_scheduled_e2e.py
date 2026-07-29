@@ -13,7 +13,12 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.functions_e2e
+from ._markers import azurite_delayed_visibility
+
+pytestmark = [
+    pytest.mark.functions_e2e,
+    azurite_delayed_visibility,
+]
 
 
 def test_scheduled_orchestration_fires_repeatedly(dtask_app):
