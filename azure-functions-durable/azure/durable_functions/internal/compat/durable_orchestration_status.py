@@ -29,12 +29,18 @@ class DurableOrchestrationStatus:
 
     def __init__(self, state: Optional[OrchestrationState] = None):
         self._state = state
+        self._include_input = True
 
     @classmethod
     def from_orchestration_state(
-            cls, state: Optional[OrchestrationState]) -> "DurableOrchestrationStatus":
+            cls,
+            state: Optional[OrchestrationState],
+            *,
+            include_input: bool = True) -> "DurableOrchestrationStatus":
         """Wrap a durabletask ``OrchestrationState`` (or ``None``)."""
-        return cls(state)
+        status = cls(state)
+        status._include_input = include_input
+        return status
 
     @classmethod
     def from_json(cls, json_obj: Any) -> "DurableOrchestrationStatus":
@@ -104,7 +110,7 @@ class DurableOrchestrationStatus:
     @property
     def input_(self) -> Any:
         """Get the (deserialized) input of the orchestration instance."""
-        if self._state is None:
+        if self._state is None or not self._include_input:
             return None
         return self._raw_payload(self._state.serialized_input)
 
@@ -170,8 +176,7 @@ class DurableOrchestrationStatus:
             failure_message = getattr(failure, "message", None) if failure is not None else None
             if failure_message:
                 result["output"] = failure_message
-        input_ = self._raw_payload(
-            self._state.serialized_input if self._state is not None else None)
+        input_ = self.input_
         if input_ is not None:
             result["input"] = input_
         if self.runtime_status is not None:

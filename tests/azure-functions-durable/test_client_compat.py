@@ -179,13 +179,13 @@ async def test_start_new_delegates_to_schedule_new_orchestration():
         await client.close()
 
 
-async def test_get_status_delegates_to_get_orchestration_state():
+async def test_get_status_always_fetches_payloads():
     client = _make_client()
     try:
         with patch.object(client, "get_orchestration_state",
                           new=AsyncMock(return_value=None)) as mock:
             with pytest.warns(DeprecationWarning):
-                await client.get_status("abc", show_input=True)
+                await client.get_status("abc")
         mock.assert_awaited_once_with("abc", fetch_payloads=True)
     finally:
         await client.close()
@@ -198,7 +198,8 @@ async def test_get_status_all_delegates():
                           new=AsyncMock(return_value=[])) as mock:
             with pytest.warns(DeprecationWarning):
                 await client.get_status_all()
-        mock.assert_awaited_once_with()
+        query = mock.await_args.args[0]
+        assert query.fetch_inputs_and_outputs is True
     finally:
         await client.close()
 
@@ -317,6 +318,7 @@ async def test_get_status_by_maps_statuses():
                     runtime_status=[df.OrchestrationRuntimeStatus.Running])
         query = mock.await_args.args[0]
         assert query.runtime_status == [OrchestrationStatus.RUNNING]
+        assert query.fetch_inputs_and_outputs is True
     finally:
         await client.close()
 
@@ -505,16 +507,20 @@ def test_entity_class_raises_not_implemented():
 # Return-type shims: DurableOrchestrationStatus
 # ---------------------------------------------------------------------------
 
-def _fake_state():
+def _fake_state(
+        runtime_status=OrchestrationStatus.RUNNING,
+        serialized_output='{"out": 2}',
+        failure_details=None):
     return SimpleNamespace(
         name="orch",
         instance_id="abc",
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         last_updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
-        runtime_status=OrchestrationStatus.RUNNING,
+        runtime_status=runtime_status,
         serialized_input='{"in": 1}',
-        serialized_output='{"out": 2}',
+        serialized_output=serialized_output,
         serialized_custom_status='"cs"',
+        failure_details=failure_details,
         get_input=lambda: {"in": 1},
         get_output=lambda: {"out": 2},
         get_custom_status=lambda: "cs",
@@ -527,21 +533,60 @@ def test_from_durabletask_status_reverse_mapping():
         OrchestrationStatus.CONTINUED_AS_NEW) == df.OrchestrationRuntimeStatus.ContinuedAsNew
 
 
-async def test_get_status_returns_wrapped_status():
+async def test_get_status_suppresses_only_input_by_default():
     client = _make_client()
     try:
+        state = _fake_state(runtime_status=OrchestrationStatus.COMPLETED)
         with patch.object(client, "get_orchestration_state",
-                          new=AsyncMock(return_value=_fake_state())):
+                          new=AsyncMock(return_value=state)):
             with pytest.warns(DeprecationWarning):
                 status = await client.get_status("abc")
         assert bool(status) is True
         assert status.name == "orch"
         assert status.instance_id == "abc"
-        assert status.runtime_status == df.OrchestrationRuntimeStatus.Running
-        assert status.input_ == {"in": 1}
+        assert status.runtime_status == df.OrchestrationRuntimeStatus.Completed
+        assert status.input_ is None
         assert status.output == {"out": 2}
         assert status.custom_status == "cs"
-        assert status.to_json()["runtimeStatus"] == "Running"
+        status_json = status.to_json()
+        assert status_json["runtimeStatus"] == "Completed"
+        assert "input" not in status_json
+        assert status_json["output"] == {"out": 2}
+        assert status_json["customStatus"] == "cs"
+    finally:
+        await client.close()
+
+
+async def test_get_status_show_input_includes_running_input():
+    client = _make_client()
+    try:
+        with patch.object(client, "get_orchestration_state",
+                          new=AsyncMock(return_value=_fake_state())):
+            with pytest.warns(DeprecationWarning):
+                status = await client.get_status("abc", show_input=True)
+        assert status.runtime_status == df.OrchestrationRuntimeStatus.Running
+        assert status.input_ == {"in": 1}
+        assert status.to_json()["input"] == {"in": 1}
+    finally:
+        await client.close()
+
+
+async def test_get_status_failed_preserves_failure_output():
+    client = _make_client()
+    try:
+        state = _fake_state(
+            runtime_status=OrchestrationStatus.FAILED,
+            serialized_output=None,
+            failure_details=SimpleNamespace(message="boom"))
+        with patch.object(client, "get_orchestration_state",
+                          new=AsyncMock(return_value=state)):
+            with pytest.warns(DeprecationWarning):
+                status = await client.get_status("abc")
+        status_json = status.to_json()
+        assert status_json["runtimeStatus"] == "Failed"
+        assert status_json["output"] == "boom"
+        assert status_json["customStatus"] == "cs"
+        assert "input" not in status_json
     finally:
         await client.close()
 
@@ -569,6 +614,9 @@ async def test_get_status_all_returns_wrapped_list():
                 statuses = await client.get_status_all()
         assert len(statuses) == 1
         assert statuses[0].runtime_status == df.OrchestrationRuntimeStatus.Running
+        assert statuses[0].input_ == {"in": 1}
+        assert statuses[0].output == {"out": 2}
+        assert statuses[0].custom_status == "cs"
     finally:
         await client.close()
 
@@ -582,6 +630,9 @@ async def test_get_status_by_returns_wrapped_list():
                 statuses = await client.get_status_by(
                     runtime_status=[df.OrchestrationRuntimeStatus.Running])
         assert statuses[0].instance_id == "abc"
+        assert statuses[0].input_ == {"in": 1}
+        assert statuses[0].output == {"out": 2}
+        assert statuses[0].custom_status == "cs"
     finally:
         await client.close()
 
