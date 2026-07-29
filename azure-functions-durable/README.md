@@ -32,6 +32,64 @@ Key capabilities include durable orchestrations and sub-orchestrations, durable
 timers, external events, durable entities, retries, versioning, durable HTTP
 calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 
+## Unit testing entities
+
+Use `execute_entity()` to run one entity operation in-process without a
+Functions host or Durable Task backend. It supports v1-style entity functions,
+durabletask-native entity functions, and `DurableEntity` subclasses:
+
+```python
+from azure.durable_functions.testing import execute_entity
+from durabletask.entities import DurableEntity
+
+
+class Counter(DurableEntity):
+    def add(self, amount: int) -> int:
+        value = self.get_state(int, 0) + amount
+        self.set_state(value)
+        return value
+
+
+outcome = execute_entity(Counter, "add", input=2, state=3)
+
+assert outcome.get_result() == 5
+assert outcome.get_state() == 5
+assert outcome.actions == ()
+```
+
+For an `entity_trigger`-decorated function, pass the exposed entity function:
+
+```python
+import azure.durable_functions as df
+from azure.durable_functions.testing import execute_entity
+
+
+app = df.DFApp()
+
+
+@app.entity_trigger(context_name="context")
+def counter(context: df.DurableEntityContext) -> None:
+    value = context.get_state(initializer=lambda: 0)
+    value += context.get_input()
+    context.set_state(value)
+    context.set_result(value)
+
+
+entity_function = counter.build().get_user_function().entity_function
+outcome = execute_entity(entity_function, "add", input=2, state=3)
+
+assert outcome.get_result() == 5
+assert outcome.get_state() == 5
+```
+
+The returned `EntityTestResult` provides `get_result()` and `get_state()`
+methods plus typed signal or orchestration-start actions scheduled by the
+operation. Pass `expected_type` when reconstructing a custom payload:
+
+```python
+assert outcome.get_state(expected_type=CounterState) == CounterState(value=5)
+```
+
 ## Links
 
 - [2.x samples](samples/)

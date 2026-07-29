@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- Added `azure.durable_functions.testing.execute_entity()` for unit testing
+function-style and class-based entities without a Functions host or Durable Task
+backend. The helper returns the operation result, resulting state, and typed
+signal/orchestration actions.
 - Distributed tracing now correlates OpenTelemetry spans created by orchestrator
 user code with the Durable Functions host trace while avoiding duplicate
 orchestration, activity, entity, client-start, and client-event lifecycle spans
