@@ -48,6 +48,17 @@ Examples:
 - Follow PEP 8 conventions.
 - Use `autopep8` for Python formatting.
 
+## Public API Compatibility
+
+- Treat adding an abstract method or property to a public ABC as a breaking
+  change because existing third-party subclasses will fail at instantiation.
+- Do not add new abstract members outside a major release. For additive APIs in
+  non-major releases, provide a concrete default implementation that preserves
+  existing subclass instantiation and raises `NotImplementedError` only when
+  the new API is invoked.
+- Add a regression test that confirms a new concrete API is absent from the
+  public ABC's `__abstractmethods__`.
+
 ## Copyright Headers
 
 Every new Python (`.py`) source file MUST begin with the following copyright

@@ -2103,6 +2103,38 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             external_event_task.set_cancel_handler(_cancel_wait)
         return external_event_task
 
+    def send_event(self, instance_id: str, event_name: str, *,
+                   data: Any | None = None) -> None:
+        if not instance_id or not instance_id.strip():
+            raise ValueError("instance_id cannot be empty")
+        if instance_id.startswith("@"):
+            raise ValueError(
+                "Instance IDs starting with '@' are reserved for entities; "
+                "use signal_entity() to send an entity operation."
+            )
+        if not event_name or not event_name.strip():
+            raise ValueError("event_name cannot be empty")
+
+        id = self.next_sequence_number()
+        action = ph.new_send_event_action(
+            id,
+            instance_id,
+            event_name,
+            self._data_converter.serialize(data),
+        )
+        self._pending_actions[id] = action
+
+        if not self._is_replaying:
+            tracing.emit_event_raised_span(
+                event_name,
+                self.instance_id,
+                target_instance_id=instance_id,
+                parent_trace_context=(
+                    self._orchestration_trace_context
+                    or self._parent_trace_context
+                ),
+            )
+
     def continue_as_new(self, new_input: Any, *, save_events: bool = False) -> None:
         if self._is_complete:
             return
@@ -2966,17 +2998,70 @@ class _OrchestrationExecutor:
                 # matching the .NET worker.
                 pass
             elif event.HasField("eventSent"):
-                # Check if this eventSent corresponds to an entity operation call after being translated to the old
-                # entity protocol by the Durable WebJobs extension. If so, treat this message similarly to
-                # entityOperationCalled and remove the pending action. Also store the entity id and event id for later
                 action = ctx._pending_actions.pop(event.eventId, None)  # pyright: ignore[reportPrivateUsage]
-                if action and action.HasField("sendEntityMessage"):
-                    if action.sendEntityMessage.HasField("entityOperationCalled"):
+                if not action:
+                    raise _get_non_determinism_error(
+                        event.eventId, task.get_name(ctx.send_event)
+                    )
+                if action.HasField("sendEntityMessage"):
+                    # Durable Functions translates entity messages to the
+                    # legacy EventSent shape. Preserve the entity bookkeeping
+                    # that reconstructs calls and lock requests on replay.
+                    entity_message = action.sendEntityMessage
+                    entity_target = None
+                    if entity_message.HasField("entityOperationCalled"):
+                        entity_target = entity_message.entityOperationCalled.targetInstanceId.value
+                    elif entity_message.HasField("entityOperationSignaled"):
+                        entity_target = entity_message.entityOperationSignaled.targetInstanceId.value
+                    elif entity_message.HasField("entityLockRequested"):
+                        lock_request = entity_message.entityLockRequested
+                        if 0 <= lock_request.position < len(lock_request.lockSet):
+                            entity_target = lock_request.lockSet[lock_request.position]
+                    elif entity_message.HasField("entityUnlockSent"):
+                        entity_target = entity_message.entityUnlockSent.targetInstanceId.value
+
+                    if entity_target != event.eventSent.instanceId:
+                        raise _get_wrong_action_type_error(
+                            event.eventId,
+                            task.get_name(ctx.send_event),
+                            action,
+                        )
+
+                    if entity_message.HasField("entityOperationCalled"):
                         entity_id, event_id = self._parse_entity_event_sent_input(event)
-                        ctx._entity_task_id_map[event_id] = (entity_id, action.sendEntityMessage.entityOperationCalled.operation, event.eventId)  # pyright: ignore[reportPrivateUsage]
-                    elif action.sendEntityMessage.HasField("entityLockRequested"):
+                        ctx._entity_task_id_map[event_id] = (entity_id, entity_message.entityOperationCalled.operation, event.eventId)  # pyright: ignore[reportPrivateUsage]
+                    elif entity_message.HasField("entityLockRequested"):
                         entity_id, event_id = self._parse_entity_event_sent_input(event)
                         ctx._entity_lock_task_id_map[event_id] = (entity_id, event.eventId)  # pyright: ignore[reportPrivateUsage]
+                elif not action.HasField("sendEvent"):
+                    raise _get_wrong_action_type_error(
+                        event.eventId,
+                        task.get_name(ctx.send_event),
+                        action,
+                    )
+                elif (
+                        action.sendEvent.instance.instanceId
+                        != event.eventSent.instanceId
+                ):
+                    # Python intentionally validates the target during replay,
+                    # unlike DurableTask.Core, to avoid silently suppressing
+                    # delivery when orchestration code changes the target.
+                    raise _get_wrong_action_target_error(
+                        event.eventId,
+                        method_name=task.get_name(ctx.send_event),
+                        expected_instance_id=event.eventSent.instanceId,
+                        actual_instance_id=action.sendEvent.instance.instanceId,
+                    )
+                elif (
+                        action.sendEvent.name.casefold()
+                        != event.eventSent.name.casefold()
+                ):
+                    raise _get_wrong_action_name_error(
+                        event.eventId,
+                        method_name=task.get_name(ctx.send_event),
+                        expected_task_name=event.eventSent.name,
+                        actual_task_name=action.sendEvent.name,
+                    )
             else:
                 eventType = event.WhichOneof("eventType")
                 raise task.OrchestrationStateError(
@@ -3290,6 +3375,21 @@ def _get_wrong_action_name_error(
     )
 
 
+def _get_wrong_action_target_error(
+        task_id: int,
+        method_name: str,
+        expected_instance_id: str,
+        actual_instance_id: str,
+) -> task.NonDeterminismError:
+    return task.NonDeterminismError(
+        f"Failed to restore orchestration state due to a history mismatch: A previous execution called "
+        f"{method_name} with target instance ID='{expected_instance_id}' and sequence number {task_id}, but the "
+        f"current execution is instead targeting instance ID='{actual_instance_id}' as part of rebuilding its "
+        f"history. This kind of mismatch can happen if an orchestration has non-deterministic logic or if the "
+        f"code was changed after an instance of this orchestration already started running."
+    )
+
+
 def _get_method_name_for_action(action: pb.OrchestratorAction) -> str:
     action_type = action.WhichOneof("orchestratorActionType")
     match action_type:
@@ -3299,8 +3399,21 @@ def _get_method_name_for_action(action: pb.OrchestratorAction) -> str:
             return task.get_name(task.OrchestrationContext.create_timer)
         case "createSubOrchestration":
             return task.get_name(task.OrchestrationContext.call_sub_orchestrator)
-        # case "sendEvent":
-        #    return task.get_name(task.OrchestrationContext.send_event)
+        case "sendEvent":
+            return task.get_name(task.OrchestrationContext.send_event)
+        case "sendEntityMessage":
+            entity_message = action.sendEntityMessage
+            if entity_message.HasField("entityOperationCalled"):
+                return task.get_name(task.OrchestrationContext.call_entity)
+            if entity_message.HasField("entityOperationSignaled"):
+                return task.get_name(task.OrchestrationContext.signal_entity)
+            if (
+                    entity_message.HasField("entityLockRequested")
+                    or entity_message.HasField("entityUnlockSent")
+            ):
+                return task.get_name(task.OrchestrationContext.lock_entities)
+            raise NotImplementedError(
+                "SendEntityMessage action type not supported!")
         case _:
             raise NotImplementedError(f"Action type '{action_type}' not supported!")
 

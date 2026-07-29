@@ -823,6 +823,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                             instance.failure_details,
                         )
                     )
+                    # Events that arrive during the final in-flight dispatch
+                    # cannot be processed after the instance becomes terminal.
+                    instance.pending_events.clear()
+                    self._orchestration_queue_set.discard(request.instanceId)
 
             # Remove from in-flight before notifying or re-enqueuing
             self._orchestration_in_flight.discard(request.instanceId)
@@ -1342,6 +1346,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance = self._instances.get(instance_id)
         if not instance:
             raise ValueError(f"Orchestration instance '{instance_id}' not found")
+        if self._is_terminal_status(instance.status):
+            return
 
         event = helpers.new_event_raised_event(event_name, event_data)
         instance.pending_events.append(event)
@@ -1454,7 +1460,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         elif action.HasField("createSubOrchestration"):
             self._process_create_sub_orchestration_action(instance, action)
         elif action.HasField("sendEvent"):
-            self._process_send_event_action(action.sendEvent)
+            self._process_send_event_action(instance, action)
         elif action.HasField("sendEntityMessage"):
             self._process_send_entity_message_action(instance, action)
         elif action.HasField("rewindOrchestration"):
@@ -1651,16 +1657,35 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         watcher_thread = threading.Thread(target=watch, daemon=True)
         watcher_thread.start()
 
-    def _process_send_event_action(self, send_event: pb.SendEventAction):
+    def _process_send_event_action(
+            self,
+            source_instance: OrchestrationInstance,
+            action: pb.OrchestratorAction):
         """Processes a send event action."""
-        target_instance_id = send_event.instance.instanceId if send_event.instance else None
+        send_event = action.sendEvent
+        target_instance_id = (
+            send_event.instance.instanceId
+            if send_event.HasField("instance")
+            else None
+        )
         event_name = send_event.name
-        event_data = send_event.data.value if send_event.data else None
+        event_data = (
+            send_event.data.value
+            if send_event.HasField("data")
+            else None
+        )
+
+        source_instance.history.append(helpers.new_event_sent_event(
+            action.id,
+            target_instance_id or "",
+            event_data,
+            name=event_name,
+        ))
 
         if target_instance_id:
             try:
                 self._raise_event_internal(target_instance_id, event_name, event_data)
-            except Exception:
+            except ValueError:
                 # Target instance may not exist - ignore
                 pass
 

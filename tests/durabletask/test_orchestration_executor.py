@@ -4,13 +4,14 @@
 import json
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 import pytest
 
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask import task, worker, entities
-from durabletask.serialization import JsonDataConverter
+from durabletask.serialization import DataConverter, JsonDataConverter
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
@@ -1421,6 +1422,203 @@ def test_raise_event():
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert complete_action.result.value == "42"
+
+
+def test_send_event_action():
+    """An orchestration can emit a one-way event action."""
+    assert "send_event" not in task.OrchestrationContext.__abstractmethods__
+
+    payload = {"approved": True, "approver": "Ada"}
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        result = ctx.send_event("target-instance", "Approval", data=payload)
+        assert result is None
+        return "sent"
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(
+            orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+
+    executor = worker._OrchestrationExecutor(
+        registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+
+    assert len(result.actions) == 2
+    action = result.actions[0]
+    assert action.id == 1
+    assert action.HasField("sendEvent")
+    assert action.sendEvent.instance.instanceId == "target-instance"
+    assert action.sendEvent.name == "Approval"
+    assert action.sendEvent.data.value == json.dumps(payload)
+    complete_action = result.actions[1].completeOrchestration
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == json.dumps("sent")
+
+
+def test_send_event_uses_configured_data_converter():
+    """Event payloads use the worker's configured data converter."""
+    class UpperConverter(DataConverter):
+        def serialize(self, value: Any) -> str | None:
+            return None if value is None else json.dumps(str(value).upper())
+
+        def deserialize(
+                self,
+                data: str | None,
+                target_type: type | None = None) -> Any:
+            return None if data is None else json.loads(data)
+
+        def coerce(self, value: Any, target_type: type | None = None) -> Any:
+            return value
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        ctx.send_event("target-instance", "Message", data="hello")
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(
+            orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+
+    executor = worker._OrchestrationExecutor(
+        registry, TEST_LOGGER, UpperConverter())
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+
+    assert result.actions[0].sendEvent.data.value == '"HELLO"'
+
+
+@pytest.mark.parametrize(
+    ("instance_id", "event_name", "expected_message"),
+    [
+        ("", "Approval", "instance_id"),
+        ("   ", "Approval", "instance_id"),
+        ("@counter@1", "Approval", "reserved for entities"),
+        ("target-instance", "", "event_name"),
+        ("target-instance", "   ", "event_name"),
+    ],
+)
+def test_send_event_validates_target_and_name(
+        instance_id: str,
+        event_name: str,
+        expected_message: str):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        ctx.send_event(instance_id, event_name)
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+    new_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(
+            orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+
+    executor = worker._OrchestrationExecutor(
+        registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, [], new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(
+        1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert expected_message in complete_action.failureDetails.errorMessage
+
+
+def test_send_event_replay_is_case_insensitive():
+    """EventSent history removes the matching action during replay."""
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        ctx.send_event("target-instance", "Approval", data=True)
+        yield ctx.wait_for_external_event("Done")
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(
+            orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_event_sent_event(
+            1,
+            "target-instance",
+            json.dumps(True),
+            name="approval",
+        ),
+    ]
+
+    executor = worker._OrchestrationExecutor(
+        registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(
+        TEST_INSTANCE_ID,
+        old_events,
+        [helpers.new_orchestrator_started_event()],
+    )
+
+    assert result.actions == []
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["name", "target", "type", "missing", "entity"],
+)
+def test_send_event_replay_detects_nondeterminism(mismatch: str):
+    if mismatch == "type":
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            yield ctx.create_timer(
+                ctx.current_utc_datetime + timedelta(seconds=1))
+    elif mismatch == "missing":
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            yield ctx.wait_for_external_event("Done")
+    elif mismatch == "entity":
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            ctx.signal_entity(
+                entities.EntityInstanceId("Counter", "counter"),
+                "increment",
+            )
+            yield ctx.wait_for_external_event("Done")
+    elif mismatch == "target":
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            ctx.send_event("changed-target", "OriginalName")
+            yield ctx.wait_for_external_event("Done")
+    else:
+        def orchestrator(ctx: task.OrchestrationContext, _):
+            ctx.send_event("target-instance", "ChangedName")
+            yield ctx.wait_for_external_event("Done")
+
+    registry = worker._Registry()
+    orchestrator_name = registry.add_orchestrator(orchestrator)
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(
+            orchestrator_name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_event_sent_event(
+            1, "target-instance", None, name="OriginalName"),
+    ]
+
+    executor = worker._OrchestrationExecutor(
+        registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(
+        TEST_INSTANCE_ID,
+        old_events,
+        [helpers.new_orchestrator_started_event()],
+    )
+
+    complete_action = result.actions[-1].completeOrchestration
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete_action.failureDetails.errorType == (
+        "durabletask.task.NonDeterminismError")
+    assert "send_event" in complete_action.failureDetails.errorMessage
+    if mismatch == "name":
+        assert "OriginalName" in complete_action.failureDetails.errorMessage
+        assert "ChangedName" in complete_action.failureDetails.errorMessage
+    elif mismatch == "target":
+        assert "target-instance" in complete_action.failureDetails.errorMessage
+        assert "changed-target" in complete_action.failureDetails.errorMessage
+    elif mismatch == "type":
+        assert "create_timer" in complete_action.failureDetails.errorMessage
+    elif mismatch == "entity":
+        assert "signal_entity" in complete_action.failureDetails.errorMessage
 
 
 def test_raise_event_buffered():

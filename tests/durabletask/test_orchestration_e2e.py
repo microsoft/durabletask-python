@@ -653,6 +653,95 @@ def test_when_any_cancels_timer_when_event_wins(raise_event: bool):
         assert state.serialized_output == json.dumps("timed out")
 
 
+def test_orchestration_sends_event_to_another_orchestration():
+    event_payload = {
+        "approved": True,
+        "approver": "Ada",
+    }
+
+    def receiver(ctx: task.OrchestrationContext, _):
+        first = yield ctx.wait_for_external_event("Approval")
+        second = yield ctx.wait_for_external_event("Approval")
+        return [first, second]
+
+    def sender(ctx: task.OrchestrationContext, target_instance_id: str):
+        ctx.send_event(
+            target_instance_id,
+            "Approval",
+            data=event_payload,
+        )
+        # Force a replay after the event is persisted. The EventSent history
+        # must remove the action so the target does not receive a duplicate.
+        yield ctx.create_timer(timedelta(milliseconds=50))
+        return "sent"
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(receiver)
+        w.add_orchestrator(sender)
+        w.start()
+
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            receiver_id = task_hub_client.schedule_new_orchestration(receiver)
+            receiver_state = task_hub_client.wait_for_orchestration_start(
+                receiver_id, timeout=30)
+            assert receiver_state is not None
+
+            sender_id = task_hub_client.schedule_new_orchestration(
+                sender, input=receiver_id)
+            sender_state = task_hub_client.wait_for_orchestration_completion(
+                sender_id, timeout=30)
+            task_hub_client.raise_orchestration_event(
+                receiver_id, "Approval", data="client")
+            receiver_state = task_hub_client.wait_for_orchestration_completion(
+                receiver_id, timeout=30)
+
+    assert sender_state is not None
+    assert sender_state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert sender_state.serialized_output == json.dumps("sent")
+    assert receiver_state is not None
+    assert receiver_state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert receiver_state.serialized_output == json.dumps(
+        [event_payload, "client"])
+
+
+def test_orchestration_send_event_drops_undeliverable_events():
+    receiver_invocations = 0
+    sender_invocations = 0
+
+    def receiver(ctx: task.OrchestrationContext, _):
+        nonlocal receiver_invocations
+        receiver_invocations += 1
+        return "completed"
+
+    def sender(ctx: task.OrchestrationContext, target_instance_id: str):
+        nonlocal sender_invocations
+        sender_invocations += 1
+        ctx.send_event(target_instance_id, "Ignored")
+        ctx.send_event("missing-instance", "Ignored")
+        ctx.send_event(ctx.instance_id, "Ignored")
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(receiver)
+        w.add_orchestrator(sender)
+        w.start()
+
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            receiver_id = task_hub_client.schedule_new_orchestration(receiver)
+            receiver_state = task_hub_client.wait_for_orchestration_completion(
+                receiver_id, timeout=30)
+            sender_id = task_hub_client.schedule_new_orchestration(
+                sender, input=receiver_id)
+            sender_state = task_hub_client.wait_for_orchestration_completion(
+                sender_id, timeout=30)
+
+    assert receiver_state is not None
+    assert receiver_state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert sender_state is not None
+    assert sender_state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert receiver_invocations == 1
+    assert sender_invocations == 1
+
+
 @pytest.mark.parametrize("winning_event", ["Approve", "Reject"])
 def test_when_any_cancels_competing_external_event(winning_event: str):
     """Verify that the losing external-event task in a when_any race is

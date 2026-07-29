@@ -197,6 +197,28 @@ class TestExternalizePayloads:
         actual = res.actions[0].completeOrchestration.result.value
         assert actual.startswith(FakePayloadStore.TOKEN_PREFIX)
 
+    def test_send_event_action_data_externalized(self):
+        """Large orchestration-sent event payloads should be externalized."""
+        store = FakePayloadStore(threshold_bytes=10)
+        large_data = "e" * 200
+
+        action = pb.OrchestratorAction(
+            id=1,
+            sendEvent=pb.SendEventAction(
+                instance=pb.OrchestrationInstance(instanceId="target"),
+                name="Approval",
+                data=sv(large_data),
+            ),
+        )
+        res = pb.OrchestratorResponse(
+            instanceId="source",
+            actions=[action],
+        )
+        externalize_payloads(res, store, instance_id="source")
+
+        actual = res.actions[0].sendEvent.data.value
+        assert actual.startswith(FakePayloadStore.TOKEN_PREFIX)
+
     def test_activity_response_externalized(self):
         """ActivityResponse.result should be externalized if large."""
         store = FakePayloadStore(threshold_bytes=10)
