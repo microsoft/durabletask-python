@@ -10,6 +10,7 @@ unique job ID to avoid cross-test interference.
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import threading
@@ -180,7 +181,12 @@ async def test_async_client_create_list_wait_and_delete(
         }
 
         await job_client.delete()
-        assert await job_client.describe() is None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        while await job_client.describe() is not None:
+            if loop.time() >= deadline:
+                pytest.fail("Timed out waiting for job to disappear after delete")
+            await asyncio.sleep(0.05)
 
 
 async def test_async_client_get_job_returns_none_for_empty_state(writer):

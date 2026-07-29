@@ -419,7 +419,8 @@ class TaskHubGrpcClient:
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
                  payload_store: PayloadStore | None = None,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter | None = None,
+                 emit_trace_spans: bool = True):
 
         self._owns_channel = channel is None
         self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
@@ -484,6 +485,12 @@ class TaskHubGrpcClient:
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
+        self._emit_trace_spans = emit_trace_spans
+
+    @property
+    def emit_trace_spans(self) -> bool:
+        """Return whether this client emits Durable Task lifecycle spans."""
+        return self._emit_trace_spans
 
     def _compose_interceptors(
             self,
@@ -619,30 +626,30 @@ class TaskHubGrpcClient:
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
 
-        with tracing.start_create_orchestration_span(
-            name, resolved_instance_id, version=resolved_version,
-        ):
-            req = build_schedule_new_orchestration_req(
-                orchestrator, input=input, instance_id=instance_id, start_at=start_at,
-                reuse_id_policy=reuse_id_policy, tags=tags,
-                version=version if version else self.default_version,
-                data_converter=self._data_converter)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_create_orchestration_span(
+                name, resolved_instance_id, version=resolved_version,
+            ):
+                req = build_schedule_new_orchestration_req(
+                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    reuse_id_policy=reuse_id_policy, tags=tags,
+                    version=version if version else self.default_version,
+                    data_converter=self._data_converter)
 
-            # Inject the active PRODUCER span context into the request so the sidecar
-            # stores it in the executionStarted event and the worker can parent all
-            # orchestration/activity/timer spans under this trace.
-            parent_trace_ctx = tracing.get_current_trace_context()
-            if parent_trace_ctx is not None:
-                req.parentTraceContext.CopyFrom(parent_trace_ctx)
+                # Inject the active PRODUCER span context, or the ambient context
+                # when lifecycle span emission is disabled.
+                parent_trace_ctx = tracing.get_current_trace_context()
+                if parent_trace_ctx is not None:
+                    req.parentTraceContext.CopyFrom(parent_trace_ctx)
 
-            self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
-            # Externalize any large payloads in the request
-            if self._payload_store is not None:
-                payload_helpers.externalize_payloads(
-                    req, self._payload_store, instance_id=req.instanceId,
-                )
-            res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
-            return res.instanceId
+                self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
+                # Externalize any large payloads in the request
+                if self._payload_store is not None:
+                    payload_helpers.externalize_payloads(
+                        req, self._payload_store, instance_id=req.instanceId,
+                    )
+                res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
+                return res.instanceId
 
     def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
@@ -757,14 +764,15 @@ class TaskHubGrpcClient:
 
     def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                   data: Any | None = None) -> None:
-        with tracing.start_raise_event_span(event_name, instance_id):
-            req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
-            self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
-            if self._payload_store is not None:
-                payload_helpers.externalize_payloads(
-                    req, self._payload_store, instance_id=instance_id,
-                )
-            self._stub.RaiseEvent(req)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_raise_event_span(event_name, instance_id):
+                req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
+                self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+                if self._payload_store is not None:
+                    payload_helpers.externalize_payloads(
+                        req, self._payload_store, instance_id=instance_id,
+                    )
+                self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self, instance_id: str, *,
                                 output: Any | None = None,
@@ -940,7 +948,8 @@ class AsyncTaskHubGrpcClient:
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
                  payload_store: PayloadStore | None = None,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter | None = None,
+                 emit_trace_spans: bool = True):
 
         self._owns_channel = channel is None
         self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
@@ -988,23 +997,26 @@ class AsyncTaskHubGrpcClient:
             else None
         )
         self._interceptors = self._compose_interceptors(user_interceptors)
-        if channel is None:
-            channel = shared.get_async_grpc_channel(
-                host_address=self._host_address,
-                secure_channel=secure_channel,
-                interceptors=self._interceptors,
-                channel_options=channel_options,
-            )
         # Caller-owned channels cannot be retroactively wrapped with our
         # interceptor (``grpc.aio`` exposes no public equivalent of
         # ``grpc.intercept_channel``). We document this in :meth:`__init__` and
         # leave the failure-tracking opt-out implicit: callers wanting full
         # resiliency should let us create the channel.
         self._channel = channel
-        self._stub = cast(_AsyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(channel))
+        self._stub = (
+            cast(_AsyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(channel))
+            if channel is not None
+            else None
+        )
         self._logger = shared.get_logger("async_client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
+        self._emit_trace_spans = emit_trace_spans
+
+    @property
+    def emit_trace_spans(self) -> bool:
+        """Return whether this client emits Durable Task lifecycle spans."""
+        return self._emit_trace_spans
 
     def _compose_interceptors(
             self,
@@ -1015,6 +1027,25 @@ class AsyncTaskHubGrpcClient:
         if user_interceptors:
             composed.extend(user_interceptors)
         return composed
+
+    def _get_stub(self) -> _AsyncTaskHubSidecarServiceStub:
+        """Create the SDK-owned channel on the event loop that first uses it."""
+        if self._closing:
+            raise RuntimeError("The client is closed")
+        if self._stub is None:
+            channel = shared.get_async_grpc_channel(
+                host_address=self._host_address,
+                secure_channel=self._secure_channel,
+                interceptors=self._interceptors,
+                channel_options=self._channel_options,
+            )
+            stub = cast(
+                _AsyncTaskHubSidecarServiceStub,
+                stubs.TaskHubSidecarServiceStub(channel),
+            )
+            self._channel = channel
+            self._stub = stub
+        return self._stub
 
     async def close(self) -> None:
         """Closes the underlying gRPC channel.
@@ -1047,7 +1078,9 @@ class AsyncTaskHubGrpcClient:
                 await asyncio.gather(*close_tasks, return_exceptions=True)
             for retired_channel in retired_channels:
                 await retired_channel.close()
-            await self._channel.close()
+            channel = self._channel
+            if channel is not None:
+                await channel.close()
 
     async def __aenter__(self) -> "AsyncTaskHubGrpcClient":
         return self
@@ -1093,6 +1126,8 @@ class AsyncTaskHubGrpcClient:
             if now - self._last_recreate_time < self._resiliency_options.min_recreate_interval_seconds:
                 return
             old_channel = self._channel
+            if old_channel is None:
+                return
             self._channel = shared.get_async_grpc_channel(
                 host_address=self._host_address,
                 secure_channel=self._secure_channel,
@@ -1128,32 +1163,33 @@ class AsyncTaskHubGrpcClient:
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
 
-        with tracing.start_create_orchestration_span(
-            name, resolved_instance_id, version=resolved_version,
-        ):
-            req = build_schedule_new_orchestration_req(
-                orchestrator, input=input, instance_id=instance_id, start_at=start_at,
-                reuse_id_policy=reuse_id_policy, tags=tags,
-                version=version if version else self.default_version,
-                data_converter=self._data_converter)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_create_orchestration_span(
+                name, resolved_instance_id, version=resolved_version,
+            ):
+                req = build_schedule_new_orchestration_req(
+                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    reuse_id_policy=reuse_id_policy, tags=tags,
+                    version=version if version else self.default_version,
+                    data_converter=self._data_converter)
 
-            parent_trace_ctx = tracing.get_current_trace_context()
-            if parent_trace_ctx is not None:
-                req.parentTraceContext.CopyFrom(parent_trace_ctx)
+                parent_trace_ctx = tracing.get_current_trace_context()
+                if parent_trace_ctx is not None:
+                    req.parentTraceContext.CopyFrom(parent_trace_ctx)
 
-            self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
-            # Externalize any large payloads in the request
-            if self._payload_store is not None:
-                await payload_helpers.externalize_payloads_async(
-                    req, self._payload_store, instance_id=req.instanceId,
-                )
-            res: pb.CreateInstanceResponse = await self._stub.StartInstance(req)
-            return res.instanceId
+                self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
+                # Externalize any large payloads in the request
+                if self._payload_store is not None:
+                    await payload_helpers.externalize_payloads_async(
+                        req, self._payload_store, instance_id=req.instanceId,
+                    )
+                res: pb.CreateInstanceResponse = await self._get_stub().StartInstance(req)
+                return res.instanceId
 
     async def get_orchestration_state(self, instance_id: str, *,
                                       fetch_payloads: bool = True) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
-        res: pb.GetInstanceResponse = await self._stub.GetInstance(req)
+        res: pb.GetInstanceResponse = await self._get_stub().GetInstance(req)
         if self._payload_store is not None and res.exists:
             await payload_helpers.deexternalize_payloads_async(res, self._payload_store)
         return new_orchestration_state(req.instanceId, res, self._data_converter)
@@ -1168,7 +1204,7 @@ class AsyncTaskHubGrpcClient:
             forWorkItemProcessing=for_work_item_processing,
         )
         self._logger.info(f"Retrieving history for instance '{instance_id}'.")
-        stream = self._stub.StreamInstanceHistory(req)
+        stream = self._get_stub().StreamInstanceHistory(req)
         return await history_helpers.collect_history_events_async(stream, self._payload_store)
 
     async def list_instance_ids(self,
@@ -1192,7 +1228,7 @@ class AsyncTaskHubGrpcClient:
             f"page_size={page_size}, "
             f"continuation_token={continuation_token}"
         )
-        resp: pb.ListInstanceIdsResponse = await self._stub.ListInstanceIds(req)
+        resp: pb.ListInstanceIdsResponse = await self._get_stub().ListInstanceIds(req)
         next_token = resp.lastInstanceKey.value if resp.HasField("lastInstanceKey") else None
         return Page(items=list(resp.instanceIds), continuation_token=next_token)
 
@@ -1209,7 +1245,7 @@ class AsyncTaskHubGrpcClient:
 
         while True:
             req = build_query_instances_req(orchestration_query, _continuation_token)
-            resp: pb.QueryInstancesResponse = await self._stub.QueryInstances(req)
+            resp: pb.QueryInstancesResponse = await self._get_stub().QueryInstances(req)
             if self._payload_store is not None:
                 await payload_helpers.deexternalize_payloads_async(resp, self._payload_store)
             states += [parse_orchestration_state(res, self._data_converter) for res in resp.orchestrationState]
@@ -1226,7 +1262,7 @@ class AsyncTaskHubGrpcClient:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
-            res: pb.GetInstanceResponse = await self._stub.WaitForInstanceStart(
+            res: pb.GetInstanceResponse = await self._get_stub().WaitForInstanceStart(
                 req,
                 timeout=timeout,
             )
@@ -1245,7 +1281,7 @@ class AsyncTaskHubGrpcClient:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
             self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
-            res: pb.GetInstanceResponse = await self._stub.WaitForInstanceCompletion(
+            res: pb.GetInstanceResponse = await self._get_stub().WaitForInstanceCompletion(
                 req,
                 timeout=timeout,
             )
@@ -1262,14 +1298,15 @@ class AsyncTaskHubGrpcClient:
 
     async def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                         data: Any | None = None) -> None:
-        with tracing.start_raise_event_span(event_name, instance_id):
-            req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
-            self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
-            if self._payload_store is not None:
-                await payload_helpers.externalize_payloads_async(
-                    req, self._payload_store, instance_id=instance_id,
-                )
-            await self._stub.RaiseEvent(req)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_raise_event_span(event_name, instance_id):
+                req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
+                self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+                if self._payload_store is not None:
+                    await payload_helpers.externalize_payloads_async(
+                        req, self._payload_store, instance_id=instance_id,
+                    )
+                await self._get_stub().RaiseEvent(req)
 
     async def terminate_orchestration(self, instance_id: str, *,
                                       output: Any | None = None,
@@ -1281,17 +1318,17 @@ class AsyncTaskHubGrpcClient:
             await payload_helpers.externalize_payloads_async(
                 req, self._payload_store, instance_id=instance_id,
             )
-        await self._stub.TerminateInstance(req)
+        await self._get_stub().TerminateInstance(req)
 
     async def suspend_orchestration(self, instance_id: str) -> None:
         req = pb.SuspendRequest(instanceId=instance_id)
         self._logger.info(f"Suspending instance '{instance_id}'.")
-        await self._stub.SuspendInstance(req)
+        await self._get_stub().SuspendInstance(req)
 
     async def resume_orchestration(self, instance_id: str) -> None:
         req = pb.ResumeRequest(instanceId=instance_id)
         self._logger.info(f"Resuming instance '{instance_id}'.")
-        await self._stub.ResumeInstance(req)
+        await self._get_stub().ResumeInstance(req)
 
     async def rewind_orchestration(self, instance_id: str, *,
                                    reason: str | None = None) -> None:
@@ -1311,7 +1348,7 @@ class AsyncTaskHubGrpcClient:
             reason=helpers.get_string_value(reason))
 
         self._logger.info(f"Rewinding instance '{instance_id}'.")
-        await self._stub.RewindInstance(req)
+        await self._get_stub().RewindInstance(req)
 
     async def restart_orchestration(self, instance_id: str, *,
                                     restart_with_new_instance_id: bool = False) -> str:
@@ -1330,13 +1367,13 @@ class AsyncTaskHubGrpcClient:
             restartWithNewInstanceId=restart_with_new_instance_id)
 
         self._logger.info(f"Restarting instance '{instance_id}'.")
-        res: pb.RestartInstanceResponse = await self._stub.RestartInstance(req)
+        res: pb.RestartInstanceResponse = await self._get_stub().RestartInstance(req)
         return res.instanceId
 
     async def purge_orchestration(self, instance_id: str, recursive: bool = True) -> PurgeInstancesResult:
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
-        resp: pb.PurgeInstancesResponse = await self._stub.PurgeInstances(req)
+        resp: pb.PurgeInstancesResponse = await self._get_stub().PurgeInstances(req)
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
     async def purge_orchestrations_by(self,
@@ -1350,7 +1387,7 @@ class AsyncTaskHubGrpcClient:
                           f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
                           f"recursive={recursive}")
         req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive)
-        resp: pb.PurgeInstancesResponse = await self._stub.PurgeInstances(req)
+        resp: pb.PurgeInstancesResponse = await self._get_stub().PurgeInstances(req)
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
     async def signal_entity(self,
@@ -1365,7 +1402,7 @@ class AsyncTaskHubGrpcClient:
             await payload_helpers.externalize_payloads_async(
                 req, self._payload_store, instance_id=str(entity_instance_id),
             )
-        await self._stub.SignalEntity(req)
+        await self._get_stub().SignalEntity(req)
 
     async def get_entity(self,
                          entity_instance_id: EntityInstanceId,
@@ -1373,7 +1410,7 @@ class AsyncTaskHubGrpcClient:
                          ) -> EntityMetadata | None:
         req = pb.GetEntityRequest(instanceId=str(entity_instance_id), includeState=include_state)
         self._logger.info(f"Getting entity '{entity_instance_id}'.")
-        res: pb.GetEntityResponse = await self._stub.GetEntity(req)
+        res: pb.GetEntityResponse = await self._get_stub().GetEntity(req)
         if not res.exists:
             return None
         if self._payload_store is not None:
@@ -1392,7 +1429,7 @@ class AsyncTaskHubGrpcClient:
 
         while True:
             query_request = build_query_entities_req(entity_query, _continuation_token)
-            resp: pb.QueryEntitiesResponse = await self._stub.QueryEntities(query_request)
+            resp: pb.QueryEntitiesResponse = await self._get_stub().QueryEntities(query_request)
             if self._payload_store is not None:
                 await payload_helpers.deexternalize_payloads_async(resp, self._payload_store)
             entities += [EntityMetadata.from_entity_metadata(entity, query_request.query.includeState, self._data_converter) for entity in resp.entities]
@@ -1418,7 +1455,7 @@ class AsyncTaskHubGrpcClient:
                 releaseOrphanedLocks=release_orphaned_locks,
                 continuationToken=_continuation_token
             )
-            resp: pb.CleanEntityStorageResponse = await self._stub.CleanEntityStorage(req)
+            resp: pb.CleanEntityStorageResponse = await self._get_stub().CleanEntityStorage(req)
             empty_entities_removed += resp.emptyEntitiesRemoved
             orphaned_locks_released += resp.orphanedLocksReleased
 

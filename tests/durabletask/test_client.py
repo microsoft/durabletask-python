@@ -223,6 +223,8 @@ def install_resilient_test_stubs(client):
     wrapper_cls = _ResilientAsyncTestStub if is_async else _ResilientSyncTestStub
 
     def wrap_if_needed():
+        if is_async:
+            client._get_stub()
         if not isinstance(client._stub, wrapper_cls):
             client._stub = wrapper_cls(client._stub, client._resiliency_interceptor)
 
@@ -490,20 +492,24 @@ def test_async_grpc_channel_protocol_stripping():
 # ==== Async client construction tests ====
 
 
-def test_async_client_creates_with_defaults():
+@pytest.mark.asyncio
+async def test_async_client_creates_with_defaults():
     with patch('grpc.aio.insecure_channel') as mock_channel:
         mock_channel.return_value = MagicMock()
         client = AsyncTaskHubGrpcClient()
+        client._get_stub()
         mock_channel.assert_called_once_with(
             get_default_host_address(),
             interceptors=[client._resiliency_interceptor])
 
 
-def test_async_client_creates_with_metadata():
+@pytest.mark.asyncio
+async def test_async_client_creates_with_metadata():
     with patch('grpc.aio.insecure_channel') as mock_channel:
         mock_channel.return_value = MagicMock()
         client = AsyncTaskHubGrpcClient(
             host_address=HOST_ADDRESS, metadata=METADATA)
+        client._get_stub()
         mock_channel.assert_called_once()
         args, kwargs = mock_channel.call_args
         assert args[0] == HOST_ADDRESS
@@ -513,6 +519,33 @@ def test_async_client_creates_with_metadata():
         assert len(interceptors) == 2
         assert interceptors[0] is client._resiliency_interceptor
         assert isinstance(interceptors[1], DefaultAsyncClientInterceptorImpl)
+
+
+def test_async_client_defers_channel_until_async_use():
+    asyncio.run(asyncio.sleep(0))
+    channel = MagicMock()
+    channel.close = AsyncMock()
+    stub = MagicMock()
+    stub.GetInstance = AsyncMock(return_value=MagicMock(exists=False))
+
+    with patch(
+            'durabletask.client.shared.get_async_grpc_channel',
+            return_value=channel,
+    ) as mock_get_channel, patch(
+            'durabletask.client.stubs.TaskHubSidecarServiceStub',
+            return_value=stub,
+    ):
+        client = AsyncTaskHubGrpcClient()
+        mock_get_channel.assert_not_called()
+
+        async def use_client() -> None:
+            assert await client.get_orchestration_state("abc") is None
+            await client.close()
+
+        asyncio.run(use_client())
+
+    mock_get_channel.assert_called_once()
+    channel.close.assert_awaited_once()
 
 
 def test_client_uses_provided_channel_directly():

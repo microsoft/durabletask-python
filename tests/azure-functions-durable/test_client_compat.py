@@ -49,6 +49,20 @@ def test_client_handles_null_max_grpc_message_size():
     assert client.maxGrpcMessageSizeInBytes == 0
 
 
+def test_durable_clients_use_propagate_only_tracing():
+    sync_client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
+    try:
+        assert sync_client.emit_trace_spans is False
+    finally:
+        sync_client.close()
+
+    with patch.object(AsyncTaskHubGrpcClient, "__init__", return_value=None) as init:
+        df.DurableFunctionsClient(_CLIENT_CONFIG)
+
+    assert init.call_args is not None
+    assert init.call_args.kwargs["emit_trace_spans"] is False
+
+
 def test_client_handles_all_config_fields_sent_as_null():
     # Newer host extension bundles serialize the full client configuration and
     # can send any field explicitly as ``null``. Every field must collapse to

@@ -463,6 +463,10 @@ class TaskHubGrpcWorker:
             gRPC resiliency settings retained for reconnect handling.
         concurrency_options (ConcurrencyOptions | None, optional): Configuration for
             controlling worker concurrency limits. If None, default settings are used.
+        emit_trace_spans (bool, optional): Whether the worker emits Durable Task
+            lifecycle spans. Set to ``False`` when the host owns those spans; the
+            worker will still make inbound trace context current during user-code
+            execution. Defaults to ``True``.
 
     Attributes:
         concurrency_options (ConcurrencyOptions): The current concurrency configuration.
@@ -533,6 +537,7 @@ class TaskHubGrpcWorker:
             maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
             payload_store: PayloadStore | None = None,
             data_converter: DataConverter | None = None,
+            emit_trace_spans: bool = True,
     ):
         self._registry = _Registry()
         # Shared by every entity batch this worker processes so that reflected
@@ -552,6 +557,7 @@ class TaskHubGrpcWorker:
         self._owns_channel = channel is None
         self._secure_channel = secure_channel
         self._payload_store = payload_store
+        self._emit_trace_spans = emit_trace_spans
         self._channel_options = channel_options
         self._resiliency_options = (
             resiliency_options
@@ -596,6 +602,11 @@ class TaskHubGrpcWorker:
     def maximum_timer_interval(self) -> timedelta | None:
         """Get the configured maximum timer interval for long timer chunking."""
         return self._maximum_timer_interval
+
+    @property
+    def emit_trace_spans(self) -> bool:
+        """Return whether this worker emits Durable Task lifecycle spans."""
+        return self._emit_trace_spans
 
     def __enter__(self) -> "TaskHubGrpcWorker":
         return self
@@ -1166,7 +1177,11 @@ class TaskHubGrpcWorker:
                 persisted_orch_span_id=persisted_orch_span_id,
                 maximum_timer_interval=self.maximum_timer_interval,
                 data_converter=self._data_converter)
-            result = executor.execute(instance_id, req.pastEvents, req.newEvents)
+            with tracing.suppress_span_emission(not self._emit_trace_spans):
+                with tracing.use_trace_context(
+                        parent_trace_ctx if not self._emit_trace_spans else None):
+                    result = executor.execute(
+                        instance_id, req.pastEvents, req.newEvents)
 
             # Determine completion status for span
             is_complete = False
@@ -1180,7 +1195,7 @@ class TaskHubGrpcWorker:
                         is_failed = True
                         failure_details = action.completeOrchestration.failureDetails
 
-            if is_complete:
+            if is_complete and self._emit_trace_spans:
                 # Orchestration finished — emit a single span covering its lifetime
                 tracing.emit_orchestration_span(
                     orchestration_name,
@@ -1197,8 +1212,12 @@ class TaskHubGrpcWorker:
             orch_span_id = None
             if result._orchestration_trace_context:  # pyright: ignore[reportPrivateUsage]
                 orch_span_id = result._orchestration_trace_context.spanID  # pyright: ignore[reportPrivateUsage]
-            orch_trace_ctx = tracing.build_orchestration_trace_context(
-                start_time_ns, span_id=orch_span_id)
+            orch_trace_ctx = (
+                tracing.build_orchestration_trace_context(
+                    start_time_ns, span_id=orch_span_id)
+                if self._emit_trace_spans
+                else None
+            )
 
             res = pb.OrchestratorResponse(
                 instanceId=instance_id,
@@ -1223,14 +1242,15 @@ class TaskHubGrpcWorker:
             return
         except Exception as ex:
             # Unhandled error — emit a failed span
-            tracing.emit_orchestration_span(
-                orchestration_name,
-                instance_id,
-                start_time_ns,
-                is_failed=True,
-                failure_details=ex,
-                parent_trace_context=parent_trace_ctx,
-            )
+            if self._emit_trace_spans:
+                tracing.emit_orchestration_span(
+                    orchestration_name,
+                    instance_id,
+                    start_time_ns,
+                    is_failed=True,
+                    failure_details=ex,
+                    parent_trace_context=parent_trace_ctx,
+                )
             self._logger.exception(
                 f"An error occurred while trying to execute instance '{instance_id}': {ex}"
             )
@@ -1291,24 +1311,25 @@ class TaskHubGrpcWorker:
                 payload_helpers.deexternalize_payloads(req, self._payload_store)
             try:
                 executor = _ActivityExecutor(self._registry, self._logger, self._data_converter)
-                with tracing.start_span(
-                    tracing.create_span_name("activity", req.name),
-                    trace_context=req.parentTraceContext,
-                    kind=tracing.SpanKind.SERVER,
-                    attributes={
-                        tracing.ATTR_TASK_TYPE: "activity",
-                        tracing.ATTR_TASK_INSTANCE_ID: instance_id,
-                        tracing.ATTR_TASK_NAME: req.name,
-                        tracing.ATTR_TASK_TASK_ID: str(req.taskId),
-                    },
-                ) as span:
-                    try:
-                        result = executor.execute(
-                            instance_id, req.name, req.taskId, req.input.value
-                        )
-                    except Exception as ex:
-                        tracing.set_span_error(span, ex)
-                        raise
+                with tracing.suppress_span_emission(not self._emit_trace_spans):
+                    with tracing.start_span(
+                        tracing.create_span_name("activity", req.name),
+                        trace_context=req.parentTraceContext,
+                        kind=tracing.SpanKind.SERVER,
+                        attributes={
+                            tracing.ATTR_TASK_TYPE: "activity",
+                            tracing.ATTR_TASK_INSTANCE_ID: instance_id,
+                            tracing.ATTR_TASK_NAME: req.name,
+                            tracing.ATTR_TASK_TASK_ID: str(req.taskId),
+                        },
+                    ) as span:
+                        try:
+                            result = executor.execute(
+                                instance_id, req.name, req.taskId, req.input.value
+                            )
+                        except Exception as ex:
+                            tracing.set_span_error(span, ex)
+                            raise
                 res = pb.ActivityResponse(
                     instanceId=instance_id,
                     taskId=req.taskId,
@@ -1393,42 +1414,43 @@ class TaskHubGrpcWorker:
             # Get the trace context for this operation, if available
             op_trace_ctx = operation.traceContext if operation.HasField("traceContext") else None
 
-            with tracing.start_span(
-                tracing.create_span_name("entity", f"{entity_instance_id.entity}:{operation.operation}"),
-                trace_context=op_trace_ctx,
-                kind=tracing.SpanKind.SERVER,
-                attributes={
-                    tracing.ATTR_TASK_TYPE: "entity",
-                    tracing.ATTR_TASK_INSTANCE_ID: instance_id,
-                    tracing.ATTR_TASK_NAME: entity_instance_id.entity,
-                    "durabletask.entity.operation": operation.operation,
-                },
-            ) as span:
-                try:
-                    entity_result = executor.execute(
-                        instance_id, entity_instance_id, operation.operation, entity_state, operation.input.value
-                    )
+            with tracing.suppress_span_emission(not self._emit_trace_spans):
+                with tracing.start_span(
+                    tracing.create_span_name("entity", f"{entity_instance_id.entity}:{operation.operation}"),
+                    trace_context=op_trace_ctx,
+                    kind=tracing.SpanKind.SERVER,
+                    attributes={
+                        tracing.ATTR_TASK_TYPE: "entity",
+                        tracing.ATTR_TASK_INSTANCE_ID: instance_id,
+                        tracing.ATTR_TASK_NAME: entity_instance_id.entity,
+                        "durabletask.entity.operation": operation.operation,
+                    },
+                ) as span:
+                    try:
+                        entity_result = executor.execute(
+                            instance_id, entity_instance_id, operation.operation, entity_state, operation.input.value
+                        )
 
-                    entity_result = ph.get_string_value_or_empty(entity_result)
-                    operation_result = pb.OperationResult(success=pb.OperationResultSuccess(
-                        result=entity_result,
-                        startTimeUtc=new_timestamp(start_time),
-                        endTimeUtc=new_timestamp(datetime.now(timezone.utc))
-                    ))
-                    results.append(operation_result)
+                        entity_result = ph.get_string_value_or_empty(entity_result)
+                        operation_result = pb.OperationResult(success=pb.OperationResultSuccess(
+                            result=entity_result,
+                            startTimeUtc=new_timestamp(start_time),
+                            endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                        ))
+                        results.append(operation_result)
 
-                    entity_state.commit()
-                except Exception as ex:
-                    tracing.set_span_error(span, ex)
-                    self._logger.exception(ex)
-                    operation_result = pb.OperationResult(failure=pb.OperationResultFailure(
-                        failureDetails=ph.new_failure_details(ex),
-                        startTimeUtc=new_timestamp(start_time),
-                        endTimeUtc=new_timestamp(datetime.now(timezone.utc))
-                    ))
-                    results.append(operation_result)
+                        entity_state.commit()
+                    except Exception as ex:
+                        tracing.set_span_error(span, ex)
+                        self._logger.exception(ex)
+                        operation_result = pb.OperationResult(failure=pb.OperationResultFailure(
+                            failureDetails=ph.new_failure_details(ex),
+                            startTimeUtc=new_timestamp(start_time),
+                            endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                        ))
+                        results.append(operation_result)
 
-                    entity_state.rollback()
+                        entity_state.rollback()
 
         batch_result = pb.EntityBatchResult(
             results=results,

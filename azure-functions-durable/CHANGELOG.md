@@ -9,10 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- Distributed tracing now correlates OpenTelemetry spans created by orchestrator
+user code with the Durable Functions host trace while avoiding duplicate
+orchestration, activity, entity, client-start, and client-event lifecycle spans
+from the Python SDK.
 - Added `SyncDurableFunctionsClient`. `DFApp.durable_client_input()` now injects
 the synchronous client into synchronous functions and the asynchronous client
 into coroutine functions. Both clients support scheduled-task and history-export
 APIs without an async-to-sync bridge.
+- Added runnable 2.x samples for function chaining, fan-out/fan-in, human
+interaction, and durable entities, plus a migration guide for applications
+upgrading from 1.x.
+
+CHANGED
+
+- Reused host-driven orchestration and entity workers across invocations,
+avoiding repeated allocation of unused worker resources.
+
+FIXED
+
+- Fixed asynchronous durable-client construction failing after an application
+event loop had been closed or cleared.
+- Prevented Durable HTTP calls from forwarding managed identity tokens,
+authorization headers, cookies, proxy credentials, or function keys to
+cross-origin redirect and polling targets. Function keys are now removed from
+every `202 Accepted` poll, including same-origin polls, because the initial
+function-level key may not authorize the status endpoint. Direct client
+invocation of the internal HTTP polling orchestrator is now rejected.
 
 ## 2.0.0b1
 
@@ -178,8 +201,3 @@ code:
   `show_history_output` flags for signature compatibility but ignore them, so
   the returned status has no `historyEvents`. Use
   `get_orchestration_history(...)` to retrieve history.
-- Distributed tracing is not yet wired up. The Durable Functions host delivers
-  the parent trace context and emits the orchestration/activity spans itself,
-  so orchestrator user-code spans in the Python worker are not yet correlated
-  to it, and durabletask's own span emission is intentionally left disabled to
-  avoid duplicating the host's spans.

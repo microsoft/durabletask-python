@@ -90,7 +90,8 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             metadata=None,
             interceptors=interceptors,
             channel_options=channel_options,
-            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
+            emit_trace_spans=False)
 
         # The gRPC aio channel is bound to the event loop it is created on. A
         # ``durable_client_input`` decode runs on the worker's invocation loop,
@@ -531,7 +532,8 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             metadata=None,
             interceptors=interceptors,
             channel_options=channel_options,
-            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER)
+            data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
+            emit_trace_spans=False)
 
     @classmethod
     def get_cached(cls, client_as_string: str) -> "SyncDurableFunctionsClient":

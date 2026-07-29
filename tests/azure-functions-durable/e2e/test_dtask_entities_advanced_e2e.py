@@ -82,8 +82,7 @@ def test_call_failing_entity_handled(dtask_app):
 
 def test_client_delayed_signal_is_deferred(dtask_app):
     key = f"client-delay-{int(time.time() * 1000)}"
-    # Schedule the signal ~3s in the future.
-    dtask_app.signal_entity("counter", key, "add", input=9, delay_seconds=3)
+    dtask_app.signal_entity("counter", key, "add", input=9, delay_seconds=3.0)
 
     # It must not be delivered immediately.
     time.sleep(1)

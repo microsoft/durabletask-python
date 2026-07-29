@@ -17,9 +17,17 @@ fully isolated and their hosts start/stop once per test session (shared across
 all test modules that use the same app).
 """
 
+import os
+from collections.abc import Generator
+
 import pytest
 
-from ._harness import FunctionApp, azurite_is_running, func_executable
+from ._harness import (
+    FunctionApp,
+    OtelCollector,
+    azurite_is_running,
+    func_executable,
+)
 
 
 def _require_prerequisites(app_name: str) -> None:
@@ -46,3 +54,31 @@ def dtask_app():
     _require_prerequisites("dtask_style")
     with FunctionApp("dtask_style") as app:
         yield app
+
+
+@pytest.fixture(scope="session")
+def tracing_app(
+        tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[tuple[FunctionApp, OtelCollector], None, None]:
+    _require_prerequisites("tracing")
+    if not OtelCollector.is_available():
+        pytest.skip("Docker is required for the OpenTelemetry Collector.")
+
+    work_dir = tmp_path_factory.mktemp("otel-collector")
+    old_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    old_protocol = os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL")
+    with OtelCollector(work_dir) as collector:
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = collector.endpoint
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+        try:
+            with FunctionApp("tracing") as app:
+                yield app, collector
+        finally:
+            if old_endpoint is None:
+                os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
+            else:
+                os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = old_endpoint
+            if old_protocol is None:
+                os.environ.pop("OTEL_EXPORTER_OTLP_PROTOCOL", None)
+            else:
+                os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = old_protocol
