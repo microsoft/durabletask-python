@@ -193,7 +193,9 @@ def signal_counter_delayed(ctx: task.OrchestrationContext, key: Any):
     # Schedules a delayed (future) signal to the counter entity, then completes
     # immediately. The signal should only be delivered after the delay elapses.
     entity_id = entities.EntityInstanceId("counter", key)
-    signal_at = ctx.current_utc_datetime + timedelta(seconds=3)
+    # Azure Queue visibility delays have one-second precision. The fractional
+    # offset keeps normal dispatch within Core's 100 ms early-delivery window.
+    signal_at = ctx.current_utc_datetime + timedelta(seconds=3.1)
     ctx.signal_entity(entity_id, "add", 4, signal_time=signal_at)
     return key
 
