@@ -88,6 +88,9 @@ def replace_url_origin(url: str, request_origin: str | None) -> str:
 
     parsed_url = urlsplit(url)
     parsed_origin = urlsplit(request_origin)
+    if not parsed_origin.scheme or not parsed_origin.netloc:
+        raise ValueError(
+            "request_origin must include both a scheme and an authority")
     if not parsed_url.scheme or not parsed_url.netloc:
         return url
 

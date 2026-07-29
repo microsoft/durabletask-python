@@ -16,6 +16,9 @@ from azure.durable_functions.internal.compat.orchestration_runtime_status import
     to_durabletask_status,
     to_durabletask_statuses,
 )
+from azure.durable_functions.http.http_management_payload import (
+    replace_url_origin,
+)
 from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus
 from durabletask.entities import EntityInstanceId
 from durabletask.task import RetryPolicy
@@ -220,6 +223,10 @@ async def test_create_http_management_payload_requires_instance_id():
          "https://public.example:8443"),
         ({"X-Forwarded-Proto": "https", "X-Forwarded-Host": "proxy.example"},
          "https://proxy.example"),
+        ({"Forwarded": "proto=;host=public.example"},
+         "http://public.example"),
+        ({"X-Forwarded-Proto": ",https"},
+         "http://request-internal:7071"),
     ],
 )
 async def test_management_payload_uses_host_templates_and_external_origin(
@@ -289,6 +296,15 @@ async def test_management_payload_without_request_preserves_template_origin():
             f"http://internal-host/custom/manage/instance?{_MANAGEMENT_QUERY}")
     finally:
         await client.close()
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["", "//public.example", "https:"],
+)
+def test_replace_url_origin_rejects_invalid_origin(origin):
+    with pytest.raises(ValueError, match="scheme and an authority"):
+        replace_url_origin("http://internal.example/custom/path", origin)
 
 
 async def test_host_config_uses_http_base_url_and_ignores_untrusted_forwarding():

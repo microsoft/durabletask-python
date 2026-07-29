@@ -62,18 +62,24 @@ def _get_request_origin(
             if separator:
                 forwarded_values[name.strip().lower()] = value.strip().strip('"')
 
-        proto = forwarded_values.get("proto", proto)
+        forwarded_proto = forwarded_values.get("proto")
+        if forwarded_proto:
+            proto = forwarded_proto
         forwarded_host = forwarded_values.get("host")
         if forwarded_host:
             return f"{proto}://{forwarded_host}"
 
     forwarded_proto = headers.get("x-forwarded-proto")
     if forwarded_proto:
-        proto = _first_forwarded_value(forwarded_proto)
+        first_proto = _first_forwarded_value(forwarded_proto)
+        if first_proto:
+            proto = first_proto
 
     forwarded_host = headers.get("x-forwarded-host")
     if forwarded_host:
-        host = _first_forwarded_value(forwarded_host)
+        first_host = _first_forwarded_value(forwarded_host)
+        if first_host:
+            host = first_host
 
     return f"{proto}://{host}"
 
