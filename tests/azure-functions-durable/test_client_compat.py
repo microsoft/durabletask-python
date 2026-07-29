@@ -70,6 +70,17 @@ def _make_template_config() -> str:
         "baseUrl": "http://fallback/runtime/webhooks/durabletask",
         "rpcBaseUrl": "http://localhost:8080/",
         "managementUrls": _MANAGEMENT_URLS,
+        "useForwardedHost": True,
+    })
+
+
+def _make_host_config(*, use_forwarded_host: bool = False) -> str:
+    return json.dumps({
+        "taskHubName": "TestHub",
+        "requiredQueryStringParameters": "code=host-key",
+        "httpBaseUrl": "http://host-internal/custom/durable",
+        "rpcBaseUrl": "http://localhost:8080/",
+        "useForwardedHost": use_forwarded_host,
     })
 
 
@@ -116,6 +127,7 @@ def test_client_handles_all_config_fields_sent_as_null():
         "requiredQueryStringParameters": None,
         "rpcBaseUrl": None,
         "httpBaseUrl": None,
+        "useForwardedHost": None,
         "maxGrpcMessageSizeInBytes": None,
         "grpcHttpClientTimeout": None,
     })
@@ -128,6 +140,7 @@ def test_client_handles_all_config_fields_sent_as_null():
     assert client.requiredQueryStringParameters == ""
     assert client.rpcBaseUrl == ""
     assert client.httpBaseUrl == ""
+    assert client.useForwardedHost is False
     assert client.maxGrpcMessageSizeInBytes == 0
     assert client.grpcHttpClientTimeout == timedelta(seconds=30)
 
@@ -274,6 +287,58 @@ async def test_management_payload_without_request_preserves_template_origin():
         payload = client.create_http_management_payload("instance")
         assert payload["statusQueryGetUri"] == (
             f"http://internal-host/custom/manage/instance?{_MANAGEMENT_QUERY}")
+    finally:
+        await client.close()
+
+
+async def test_host_config_uses_http_base_url_and_ignores_untrusted_forwarding():
+    client = df.DurableFunctionsClient(_make_host_config())
+    request = func.HttpRequest(
+        method="POST",
+        url="http://request-internal:7071/api/start",
+        headers={
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "attacker.example",
+        },
+        body=b"")
+
+    try:
+        payload = client.create_http_management_payload(
+            request, "folder/instance")
+        assert payload["statusQueryGetUri"] == (
+            "http://request-internal:7071/custom/durable/instances/"
+            "folder%2Finstance?code=host-key")
+    finally:
+        await client.close()
+
+
+async def test_host_config_honors_forwarding_when_enabled():
+    client = df.DurableFunctionsClient(
+        _make_host_config(use_forwarded_host=True))
+    request = func.HttpRequest(
+        method="POST",
+        url="http://request-internal:7071/api/start",
+        headers={
+            "Forwarded": "proto=https;host=public.example",
+        },
+        body=b"")
+
+    try:
+        payload = client.create_http_management_payload(request, "instance")
+        assert payload["statusQueryGetUri"] == (
+            "https://public.example/custom/durable/instances/"
+            "instance?code=host-key")
+    finally:
+        await client.close()
+
+
+async def test_host_config_without_request_uses_http_base_url():
+    client = df.DurableFunctionsClient(_make_host_config())
+    try:
+        payload = client.create_http_management_payload("instance")
+        assert payload["statusQueryGetUri"] == (
+            "http://host-internal/custom/durable/instances/"
+            "instance?code=host-key")
     finally:
         await client.close()
 

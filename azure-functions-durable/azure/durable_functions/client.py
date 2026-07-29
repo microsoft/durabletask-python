@@ -25,7 +25,7 @@ from .internal.azurefunctions_grpc_interceptor import (
     AzureFunctionsDefaultClientInterceptorImpl,
 )
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
-from .http import HttpManagementPayload
+from .http.http_management_payload import HttpManagementPayload, replace_url_origin
 from .internal.compat.durable_orchestration_status import DurableOrchestrationStatus
 from .internal.compat.entity_state_response import EntityStateResponse
 from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus, to_durabletask_statuses
@@ -40,10 +40,15 @@ def _first_forwarded_value(value: str) -> str:
     return value.split(",", 1)[0].strip().strip('"')
 
 
-def _get_request_origin(request: func.HttpRequest) -> str:
+def _get_request_origin(
+        request: func.HttpRequest,
+        use_forwarded_host: bool) -> str:
     request_url = urlparse(request.url)
     proto = request_url.scheme
     host = request_url.netloc
+    if not use_forwarded_host:
+        return f"{proto}://{host}"
+
     request_headers = cast(Mapping[str, str], request.headers)
     headers = {
         name.lower(): value for name, value in request_headers.items()
@@ -77,18 +82,25 @@ def _build_http_management_payload(
         instance_id: str,
         management_urls: dict[str, str],
         base_url: str,
+        http_base_url: str,
         required_query_string_parameters: str,
+        use_forwarded_host: bool,
         request: func.HttpRequest | None) -> HttpManagementPayload:
     encoded_instance_id = quote(instance_id, safe="")
+    configured_base_url = http_base_url or base_url
     request_origin: str | None = None
     if request is not None:
-        request_origin = _get_request_origin(request)
-        instance_status_url = (
-            f"{request_origin}/runtime/webhooks/durabletask/instances/"
-            f"{encoded_instance_id}")
+        request_origin = _get_request_origin(request, use_forwarded_host)
+        if configured_base_url:
+            management_base_url = replace_url_origin(
+                configured_base_url.rstrip("/"), request_origin)
+        else:
+            management_base_url = (
+                f"{request_origin}/runtime/webhooks/durabletask")
     else:
-        instance_status_url = (
-            f"{base_url.rstrip('/')}/instances/{encoded_instance_id}")
+        management_base_url = configured_base_url.rstrip("/")
+    instance_status_url = (
+        f"{management_base_url}/instances/{encoded_instance_id}")
 
     return HttpManagementPayload(
         instance_id,
@@ -114,6 +126,7 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
     requiredQueryStringParameters: str
     rpcBaseUrl: str
     httpBaseUrl: str
+    useForwardedHost: bool
     maxGrpcMessageSizeInBytes: int
     # The host sends this as a .NET TimeSpan string; it is currently stored
     # as-received (see _parse_client_configuration) and is unused, so the raw
@@ -223,6 +236,7 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         self.requiredQueryStringParameters = client.get("requiredQueryStringParameters") or ""
         self.rpcBaseUrl = client.get("rpcBaseUrl") or ""
         self.httpBaseUrl = client.get("httpBaseUrl") or ""
+        self.useForwardedHost = client.get("useForwardedHost") or False
         self.maxGrpcMessageSizeInBytes = client.get("maxGrpcMessageSizeInBytes") or 0
         # TODO: convert the string value back to timedelta - annoying regex?
         self.grpcHttpClientTimeout = client.get("grpcHttpClientTimeout") or timedelta(seconds=30)
@@ -281,7 +295,9 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             instance_id,
             self.managementUrls,
             self.baseUrl,
+            self.httpBaseUrl,
             self.requiredQueryStringParameters,
+            self.useForwardedHost,
             request)
 
     # ------------------------------------------------------------------
@@ -567,6 +583,7 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
     requiredQueryStringParameters: str
     rpcBaseUrl: str
     httpBaseUrl: str
+    useForwardedHost: bool
     maxGrpcMessageSizeInBytes: int
     grpcHttpClientTimeout: timedelta | str
 
@@ -614,6 +631,7 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             "requiredQueryStringParameters") or ""
         self.rpcBaseUrl = client.get("rpcBaseUrl") or ""
         self.httpBaseUrl = client.get("httpBaseUrl") or ""
+        self.useForwardedHost = client.get("useForwardedHost") or False
         self.maxGrpcMessageSizeInBytes = client.get(
             "maxGrpcMessageSizeInBytes") or 0
         self.grpcHttpClientTimeout = client.get(
@@ -650,7 +668,9 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             instance_id,
             self.managementUrls,
             self.baseUrl,
+            self.httpBaseUrl,
             self.requiredQueryStringParameters,
+            self.useForwardedHost,
             request)
 
 

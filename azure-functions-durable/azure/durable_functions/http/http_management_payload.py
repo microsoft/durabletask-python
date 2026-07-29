@@ -65,7 +65,7 @@ class HttpManagementPayload(dict[str, str]):
             url = template.replace(placeholder, encoded_instance_id)
             if placeholder != _INSTANCE_ID_PLACEHOLDER:
                 url = url.replace(_INSTANCE_ID_PLACEHOLDER, encoded_instance_id)
-            urls[name] = _replace_origin(url, request_origin)
+            urls[name] = replace_url_origin(url, request_origin)
 
         super().__init__(urls)
 
@@ -82,7 +82,7 @@ class HttpManagementPayload(dict[str, str]):
         return dict(self)
 
 
-def _replace_origin(url: str, request_origin: str | None) -> str:
+def replace_url_origin(url: str, request_origin: str | None) -> str:
     if request_origin is None:
         return url
 

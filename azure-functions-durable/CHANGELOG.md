@@ -33,8 +33,8 @@ avoiding repeated allocation of unused worker resources.
 FIXED
 
 - HTTP management payloads now preserve the host-provided management URL
-templates, include `rewindPostUri`, encode instance IDs, and use forwarded
-request origins consistently in asynchronous and synchronous clients.
+templates and configured HTTP base paths, include `rewindPostUri`, encode
+instance IDs, and use forwarded request origins when enabled by the host.
 - Fixed asynchronous durable-client construction failing after an application
 event loop had been closed or cleared.
 - Prevented Durable HTTP calls from forwarding managed identity tokens,
