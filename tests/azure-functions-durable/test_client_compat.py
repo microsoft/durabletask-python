@@ -827,7 +827,11 @@ def _fake_history():
             name="orch",
             version="v1",
             input='{"root": true}',
-            scheduled_start_timestamp=started_at + timedelta(minutes=1)),
+            scheduled_start_timestamp=started_at + timedelta(minutes=1),
+            parent_trace_context=dt_history.TraceContext(
+                trace_parent="trace-parent",
+                span_id="span-id"),
+            orchestration_span_id="orchestration-span-id"),
         dt_history.TaskScheduledEvent(
             event_id=1,
             timestamp=started_at + timedelta(seconds=1),
@@ -882,6 +886,9 @@ async def test_get_status_projects_v1_history(show_history_output):
         assert status.history[0]["ScheduledStartTime"] == (
             "2026-01-01T00:01:00.000000Z")
         assert "ScheduledStartTimestamp" not in status.history[0]
+        assert status.history[0]["ParentTraceContext"]["SpanId"] == "span-id"
+        assert status.history[0]["OrchestrationSpanId"] == (
+            "orchestration-span-id")
         assert status.history[1]["FunctionName"] == "activity"
         assert status.history[1]["Input"] == '{"value": 1}'
         assert status.history[1]["ScheduledTime"] == (

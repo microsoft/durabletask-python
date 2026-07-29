@@ -173,8 +173,6 @@ def _serialize(value: Any) -> Any:
 def _field_name(name: str) -> str:
     if name == "scheduled_start_timestamp":
         return "ScheduledStartTime"
-    if name in {"orchestration_span_id", "span_id"}:
-        return "".join(part.title() for part in name.split("_"))[:-2] + "ID"
     return "".join(part.title() for part in name.split("_"))
 
 
