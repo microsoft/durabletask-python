@@ -50,6 +50,7 @@ _HTTP_SCHEMES = frozenset(("http", "https"))
 _CROSS_ORIGIN_SENSITIVE_HEADERS = frozenset((
     "authorization",
     "cookie",
+    "proxy-authorization",
     "x-functions-key",
 ))
 _POLL_SENSITIVE_HEADERS = frozenset(("x-functions-key",))
@@ -130,13 +131,17 @@ class _SecureRedirectHandler(urllib.request.HTTPRedirectHandler):
             msg: str,
             headers: Any,
             newurl: str) -> Optional[urllib.request.Request]:
-        if _http_origin(newurl) is None:
-            raise urllib.error.URLError(
-                f"Refusing redirect to non-HTTP(S) URL {newurl!r}.")
-
         redirected = super().redirect_request(
             req, fp, code, msg, headers, newurl)
-        if redirected is None or _is_same_origin(req.full_url, newurl):
+        if redirected is None:
+            return None
+
+        redirected_url = redirected.full_url
+        if _http_origin(redirected_url) is None:
+            raise urllib.error.URLError(
+                f"Refusing redirect to non-HTTP(S) URL {redirected_url!r}.")
+
+        if _is_same_origin(req.full_url, redirected_url):
             return redirected
 
         for header_map in (

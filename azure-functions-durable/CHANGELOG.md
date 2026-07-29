@@ -17,9 +17,11 @@ APIs without an async-to-sync bridge.
 FIXED
 
 - Prevented Durable HTTP calls from forwarding managed identity tokens,
-authorization headers, cookies, or function keys to cross-origin redirect and
-polling targets. Direct client invocation of the internal HTTP polling
-orchestrator is now rejected.
+authorization headers, cookies, proxy credentials, or function keys to
+cross-origin redirect and polling targets. Function keys are now removed from
+every `202 Accepted` poll, including same-origin polls, because the initial
+function-level key may not authorize the status endpoint. Direct client
+invocation of the internal HTTP polling orchestrator is now rejected.
 
 ## 2.0.0b1
 

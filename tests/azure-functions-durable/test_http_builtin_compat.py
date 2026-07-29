@@ -185,6 +185,7 @@ def test_redirect_strips_credentials_when_origin_changes(target):
         headers={
             "Authorization": "******",
             "Cookie": "session=secret",
+            "Proxy-Authorization": "Basic proxy-secret",
             "x-functions-key": "function-secret",
             "X-Custom": "preserved",
         })
@@ -199,6 +200,7 @@ def test_redirect_strips_credentials_when_origin_changes(target):
     }
     assert "authorization" not in redirected_headers
     assert "cookie" not in redirected_headers
+    assert "proxy-authorization" not in redirected_headers
     assert "x-functions-key" not in redirected_headers
     assert redirected_headers["x-custom"] == "preserved"
 
@@ -231,6 +233,17 @@ def test_redirect_rejects_non_http_scheme():
     with pytest.raises(urllib.error.URLError, match="non-HTTP"):
         _SecureRedirectHandler().redirect_request(
             request, None, 302, "Found", {}, "ftp://example.com/next")
+
+
+def test_non_redirectable_response_preserves_http_error():
+    request = urllib.request.Request(
+        "https://example.com/start", method="PUT")
+
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        _SecureRedirectHandler().redirect_request(
+            request, None, 302, "Found", {}, "ftp://example.com/next")
+
+    assert raised.value.code == 302
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +329,7 @@ def test_poll_orchestrator_does_not_forward_cross_origin_credentials():
         "headers": {
             "Authorization": "******",
             "Cookie": "session=secret",
+            "Proxy-Authorization": "Basic proxy-secret",
             "x-functions-key": "function-secret",
             "X-Custom": "preserved",
         },
