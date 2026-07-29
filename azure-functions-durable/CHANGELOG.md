@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- Added PEP 561 type information so strict type checkers recognize
+`azure.durable_functions` as a typed package.
 - Added `azure.durable_functions.testing.execute_entity()` for unit testing
 function-style and class-based entities without a Functions host or Durable Task
 backend. The helper returns the operation result, resulting state, and typed

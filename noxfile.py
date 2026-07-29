@@ -27,8 +27,10 @@ import os
 import shutil
 import socket
 import subprocess
+import tarfile
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Sequence
 
@@ -311,15 +313,55 @@ def typecheck_core(session: nox.Session) -> None:
 
 @nox.session(python=["3.13"])
 def typecheck_functions(session: nox.Session) -> None:
-    """Run strict pyright checks for azure-functions-durable."""
+    """Run strict pyright checks for azure-functions-durable and its wheel."""
     session.install("-r", "requirements.txt")
-    _install_packages(session, editable=True)
-    session.install("pyright")
+    session.install("-e", str(REPO_ROOT))
+    session.install("build", "pyright")
+    artifact_dir = Path(session.create_tmp()) / "dist"
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir)
+    session.run(
+        "python",
+        "-m",
+        "build",
+        "--outdir",
+        str(artifact_dir),
+        str(AZURE_FUNCTIONS_DURABLE),
+    )
+
+    wheels = list(artifact_dir.glob("azure_functions_durable-*.whl"))
+    sdists = list(artifact_dir.glob("azure_functions_durable-*.tar.gz"))
+    if len(wheels) != 1 or len(sdists) != 1:
+        session.error("Expected exactly one wheel and one source distribution")
+    wheel = wheels[0]
+    sdist = sdists[0]
+    marker = "azure/durable_functions/py.typed"
+    with zipfile.ZipFile(wheel) as archive:
+        if marker not in archive.namelist():
+            session.error(f"{marker} is missing from {wheel.name}")
+    with tarfile.open(sdist, "r:gz") as archive:
+        if not any(name.endswith(f"/{marker}") for name in archive.getnames()):
+            session.error(f"{marker} is missing from {sdist.name}")
+
+    session.install(str(wheel))
     session.run(
         "pyright",
         "-p",
         "azure-functions-durable/pyrightconfig.json",
         *session.posargs,
+    )
+    python_path = session.run(
+        "python",
+        "-c",
+        "import sys; print(sys.executable)",
+        silent=True,
+    ).strip()
+    session.run(
+        "pyright",
+        "--pythonpath",
+        python_path,
+        "-p",
+        "tests/azure-functions-durable/typing/pyrightconfig.json",
     )
 
 
