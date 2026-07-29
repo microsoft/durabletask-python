@@ -1426,6 +1426,8 @@ def test_raise_event():
 
 def test_send_event_action():
     """An orchestration can emit a one-way event action."""
+    assert "send_event" not in task.OrchestrationContext.__abstractmethods__
+
     payload = {"approved": True, "approver": "Ada"}
 
     def orchestrator(ctx: task.OrchestrationContext, _):
