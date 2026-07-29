@@ -22,6 +22,11 @@ CHANGED
 - Reused host-driven orchestration and entity workers across invocations,
 avoiding repeated allocation of unused worker resources.
 
+FIXED
+
+- Fixed asynchronous durable-client construction failing after an application
+event loop had been closed or cleared.
+
 ## 2.0.0b1
 
 First preview (beta) release of `azure-functions-durable` 2.x — a ground-up
