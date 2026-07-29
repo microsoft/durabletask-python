@@ -16,6 +16,9 @@ from azure.durable_functions.internal.compat.orchestration_runtime_status import
     to_durabletask_status,
     to_durabletask_statuses,
 )
+from azure.durable_functions.http.http_management_payload import (
+    replace_url_origin,
+)
 from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus
 from durabletask.entities import EntityInstanceId
 from durabletask.task import RetryPolicy
@@ -29,9 +32,59 @@ _CLIENT_CONFIG = json.dumps({
     "managementUrls": {"id": "INSTANCEID"},
 })
 
+_MANAGEMENT_QUERY = "taskHub=HostHub&connection=HostStorage&code=host-key"
+_MANAGEMENT_URLS = {
+    "id": "INSTANCEID",
+    "statusQueryGetUri": (
+        "http://internal-host/custom/manage/INSTANCEID?"
+        f"{_MANAGEMENT_QUERY}"),
+    "sendEventPostUri": (
+        "http://internal-host/custom/manage/INSTANCEID/raiseEvent/{eventName}?"
+        f"{_MANAGEMENT_QUERY}"),
+    "terminatePostUri": (
+        "http://internal-host/custom/manage/INSTANCEID/terminate?reason={text}&"
+        f"{_MANAGEMENT_QUERY}"),
+    "rewindPostUri": (
+        "http://internal-host/custom/manage/INSTANCEID/rewind?reason={text}&"
+        f"{_MANAGEMENT_QUERY}"),
+    "purgeHistoryDeleteUri": (
+        "http://internal-host/custom/manage/INSTANCEID?"
+        f"{_MANAGEMENT_QUERY}"),
+    "restartPostUri": (
+        "http://internal-host/custom/manage/INSTANCEID/restart?"
+        f"{_MANAGEMENT_QUERY}"),
+    "suspendPostUri": (
+        "http://internal-host/custom/manage/INSTANCEID/suspend?reason={text}&"
+        f"{_MANAGEMENT_QUERY}"),
+    "resumePostUri": (
+        "http://internal-host/custom/manage/INSTANCEID/resume?reason={text}&"
+        f"{_MANAGEMENT_QUERY}"),
+}
+
 
 def _make_client() -> df.DurableFunctionsClient:
     return df.DurableFunctionsClient(_CLIENT_CONFIG)
+
+
+def _make_template_config() -> str:
+    return json.dumps({
+        "taskHubName": "TestHub",
+        "requiredQueryStringParameters": "code=fallback-key",
+        "baseUrl": "http://fallback/runtime/webhooks/durabletask",
+        "rpcBaseUrl": "http://localhost:8080/",
+        "managementUrls": _MANAGEMENT_URLS,
+        "useForwardedHost": True,
+    })
+
+
+def _make_host_config(*, use_forwarded_host: bool = False) -> str:
+    return json.dumps({
+        "taskHubName": "TestHub",
+        "requiredQueryStringParameters": "code=host-key",
+        "httpBaseUrl": "http://host-internal/custom/durable",
+        "rpcBaseUrl": "http://localhost:8080/",
+        "useForwardedHost": use_forwarded_host,
+    })
 
 
 def test_client_handles_null_max_grpc_message_size():
@@ -77,6 +130,7 @@ def test_client_handles_all_config_fields_sent_as_null():
         "requiredQueryStringParameters": None,
         "rpcBaseUrl": None,
         "httpBaseUrl": None,
+        "useForwardedHost": None,
         "maxGrpcMessageSizeInBytes": None,
         "grpcHttpClientTimeout": None,
     })
@@ -89,6 +143,7 @@ def test_client_handles_all_config_fields_sent_as_null():
     assert client.requiredQueryStringParameters == ""
     assert client.rpcBaseUrl == ""
     assert client.httpBaseUrl == ""
+    assert client.useForwardedHost is False
     assert client.maxGrpcMessageSizeInBytes == 0
     assert client.grpcHttpClientTimeout == timedelta(seconds=30)
 
@@ -156,6 +211,150 @@ async def test_create_http_management_payload_requires_instance_id():
     try:
         with pytest.raises(TypeError):
             client.create_http_management_payload()
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_origin"),
+    [
+        ({}, "http://request-internal:7071"),
+        ({"Forwarded": 'for=10.0.0.1;proto=https;host="public.example:8443"'},
+         "https://public.example:8443"),
+        ({"X-Forwarded-Proto": "https", "X-Forwarded-Host": "proxy.example"},
+         "https://proxy.example"),
+        ({"Forwarded": "proto=;host=public.example"},
+         "http://public.example"),
+        ({"X-Forwarded-Proto": ",https"},
+         "http://request-internal:7071"),
+    ],
+)
+async def test_management_payload_uses_host_templates_and_external_origin(
+        headers, expected_origin):
+    config = _make_template_config()
+    async_client = df.DurableFunctionsClient(config)
+    sync_client = df.SyncDurableFunctionsClient(config)
+    request = func.HttpRequest(
+        method="POST",
+        url="http://request-internal:7071/api/start",
+        headers=headers,
+        body=b"")
+    instance_id = "folder/instance ?"
+    encoded_instance_id = "folder%2Finstance%20%3F"
+
+    try:
+        async_payload = async_client.create_http_management_payload(
+            request, instance_id)
+        sync_payload = sync_client.create_http_management_payload(
+            request, instance_id)
+
+        assert async_payload == sync_payload
+        assert async_payload["id"] == instance_id
+        assert async_payload["statusQueryGetUri"] == (
+            f"{expected_origin}/custom/manage/{encoded_instance_id}?"
+            f"{_MANAGEMENT_QUERY}")
+        assert async_payload["sendEventPostUri"] == (
+            f"{expected_origin}/custom/manage/{encoded_instance_id}/"
+            f"raiseEvent/{{eventName}}?{_MANAGEMENT_QUERY}")
+        assert async_payload["terminatePostUri"] == (
+            f"{expected_origin}/custom/manage/{encoded_instance_id}/"
+            f"terminate?reason={{text}}&{_MANAGEMENT_QUERY}")
+        assert async_payload["rewindPostUri"] == (
+            f"{expected_origin}/custom/manage/{encoded_instance_id}/"
+            f"rewind?reason={{text}}&{_MANAGEMENT_QUERY}")
+        assert async_payload["purgeHistoryDeleteUri"] == (
+            async_payload["statusQueryGetUri"])
+        assert async_payload["restartPostUri"] == (
+            f"{expected_origin}/custom/manage/{encoded_instance_id}/"
+            f"restart?{_MANAGEMENT_QUERY}")
+        assert async_payload["suspendPostUri"] == (
+            f"{expected_origin}/custom/manage/{encoded_instance_id}/"
+            f"suspend?reason={{text}}&{_MANAGEMENT_QUERY}")
+        assert async_payload["resumePostUri"] == (
+            f"{expected_origin}/custom/manage/{encoded_instance_id}/"
+            f"resume?reason={{text}}&{_MANAGEMENT_QUERY}")
+        assert async_payload.urls == async_payload.to_json()
+
+        async_response = async_client.create_check_status_response(
+            request, instance_id)
+        sync_response = sync_client.create_check_status_response(
+            request, instance_id)
+        assert json.loads(async_response.get_body()) == async_payload
+        assert json.loads(sync_response.get_body()) == sync_payload
+        assert json.loads(async_response.get_body())["rewindPostUri"] == (
+            async_payload["rewindPostUri"])
+    finally:
+        await async_client.close()
+        sync_client.close()
+
+
+async def test_management_payload_without_request_preserves_template_origin():
+    client = df.DurableFunctionsClient(_make_template_config())
+    try:
+        payload = client.create_http_management_payload("instance")
+        assert payload["statusQueryGetUri"] == (
+            f"http://internal-host/custom/manage/instance?{_MANAGEMENT_QUERY}")
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["", "//public.example", "https:"],
+)
+def test_replace_url_origin_rejects_invalid_origin(origin):
+    with pytest.raises(ValueError, match="scheme and an authority"):
+        replace_url_origin("http://internal.example/custom/path", origin)
+
+
+async def test_host_config_uses_http_base_url_and_ignores_untrusted_forwarding():
+    client = df.DurableFunctionsClient(_make_host_config())
+    request = func.HttpRequest(
+        method="POST",
+        url="http://request-internal:7071/api/start",
+        headers={
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "attacker.example",
+        },
+        body=b"")
+
+    try:
+        payload = client.create_http_management_payload(
+            request, "folder/instance")
+        assert payload["statusQueryGetUri"] == (
+            "http://request-internal:7071/custom/durable/instances/"
+            "folder%2Finstance?code=host-key")
+    finally:
+        await client.close()
+
+
+async def test_host_config_honors_forwarding_when_enabled():
+    client = df.DurableFunctionsClient(
+        _make_host_config(use_forwarded_host=True))
+    request = func.HttpRequest(
+        method="POST",
+        url="http://request-internal:7071/api/start",
+        headers={
+            "Forwarded": "proto=https;host=public.example",
+        },
+        body=b"")
+
+    try:
+        payload = client.create_http_management_payload(request, "instance")
+        assert payload["statusQueryGetUri"] == (
+            "https://public.example/custom/durable/instances/"
+            "instance?code=host-key")
+    finally:
+        await client.close()
+
+
+async def test_host_config_without_request_uses_http_base_url():
+    client = df.DurableFunctionsClient(_make_host_config())
+    try:
+        payload = client.create_http_management_payload("instance")
+        assert payload["statusQueryGetUri"] == (
+            "http://host-internal/custom/durable/instances/"
+            "instance?code=host-key")
     finally:
         await client.close()
 
@@ -713,6 +912,8 @@ async def test_http_management_payload_is_mapping_like():
         payload = client.create_http_management_payload("inst1")
         assert payload["id"] == "inst1"
         assert "statusQueryGetUri" in payload
+        assert "rewindPostUri" in payload
+        assert payload.urls["rewindPostUri"] == payload.to_json()["rewindPostUri"]
         assert "id" in list(payload.keys())
         assert dict(payload.items())["id"] == "inst1"
     finally:
