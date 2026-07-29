@@ -179,6 +179,51 @@ def test_execute_entity_preserves_custom_payloads_in_strict_mode(
     )
 
 
+def test_execute_entity_snapshots_mutable_state_and_actions_in_strict_mode(
+        monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AZURE_FUNCTIONS_DURABLE_STRICT_TYPING", "1")
+
+    class MutatingEntity(DurableEntity):
+        def mutate(self) -> CustomPayload:
+            state = CustomPayload(1)
+            signal_input = CustomPayload(2)
+            orchestration_input = CustomPayload(3)
+
+            self.set_state(state)
+            self.signal_entity(
+                EntityInstanceId("target", "one"),
+                "accept",
+                signal_input,
+            )
+            self.schedule_new_orchestration(
+                "process-payload",
+                input=orchestration_input,
+                instance_id="orchestration-1",
+            )
+
+            state.value = 10
+            signal_input.value = 20
+            orchestration_input.value = 30
+            return state
+
+    outcome = execute_entity(MutatingEntity, "mutate")
+
+    assert outcome.result == CustomPayload(10)
+    assert outcome.state == CustomPayload(1)
+    assert outcome.actions == (
+        EntitySignalAction(
+            entity_id=EntityInstanceId("target", "one"),
+            operation="accept",
+            input=CustomPayload(2),
+        ),
+        OrchestrationStartAction(
+            name="process-payload",
+            instance_id="orchestration-1",
+            input=CustomPayload(3),
+        ),
+    )
+
+
 def test_execute_entity_supports_decorated_function_handle():
     app = df.DFApp()
 
