@@ -66,8 +66,7 @@ def test_user_span_correlates_to_host_without_worker_lifecycle_duplicates(
 
     python_lifecycle_spans = [
         span for span in spans
+        if span.get("traceId") == user_span.get("traceId")
         if span.get("scopeName") == "durabletask"
-        and _attribute_value(
-            span, "durabletask.task.instance_id") == instance_id
     ]
     assert python_lifecycle_spans == []

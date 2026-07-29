@@ -49,6 +49,17 @@ def test_client_handles_null_max_grpc_message_size():
     assert client.maxGrpcMessageSizeInBytes == 0
 
 
+async def test_durable_clients_use_propagate_only_tracing():
+    async_client = _make_client()
+    sync_client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
+    try:
+        assert async_client.emit_trace_spans is False
+        assert sync_client.emit_trace_spans is False
+    finally:
+        await async_client.close()
+        sync_client.close()
+
+
 def test_client_handles_all_config_fields_sent_as_null():
     # Newer host extension bundles serialize the full client configuration and
     # can send any field explicitly as ``null``. Every field must collapse to

@@ -419,7 +419,8 @@ class TaskHubGrpcClient:
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
                  payload_store: PayloadStore | None = None,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter | None = None,
+                 emit_trace_spans: bool = True):
 
         self._owns_channel = channel is None
         self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
@@ -484,6 +485,12 @@ class TaskHubGrpcClient:
         self._logger = shared.get_logger("client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
+        self._emit_trace_spans = emit_trace_spans
+
+    @property
+    def emit_trace_spans(self) -> bool:
+        """Return whether this client emits Durable Task lifecycle spans."""
+        return self._emit_trace_spans
 
     def _compose_interceptors(
             self,
@@ -619,30 +626,30 @@ class TaskHubGrpcClient:
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
 
-        with tracing.start_create_orchestration_span(
-            name, resolved_instance_id, version=resolved_version,
-        ):
-            req = build_schedule_new_orchestration_req(
-                orchestrator, input=input, instance_id=instance_id, start_at=start_at,
-                reuse_id_policy=reuse_id_policy, tags=tags,
-                version=version if version else self.default_version,
-                data_converter=self._data_converter)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_create_orchestration_span(
+                name, resolved_instance_id, version=resolved_version,
+            ):
+                req = build_schedule_new_orchestration_req(
+                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    reuse_id_policy=reuse_id_policy, tags=tags,
+                    version=version if version else self.default_version,
+                    data_converter=self._data_converter)
 
-            # Inject the active PRODUCER span context into the request so the sidecar
-            # stores it in the executionStarted event and the worker can parent all
-            # orchestration/activity/timer spans under this trace.
-            parent_trace_ctx = tracing.get_current_trace_context()
-            if parent_trace_ctx is not None:
-                req.parentTraceContext.CopyFrom(parent_trace_ctx)
+                # Inject the active PRODUCER span context, or the ambient context
+                # when lifecycle span emission is disabled.
+                parent_trace_ctx = tracing.get_current_trace_context()
+                if parent_trace_ctx is not None:
+                    req.parentTraceContext.CopyFrom(parent_trace_ctx)
 
-            self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
-            # Externalize any large payloads in the request
-            if self._payload_store is not None:
-                payload_helpers.externalize_payloads(
-                    req, self._payload_store, instance_id=req.instanceId,
-                )
-            res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
-            return res.instanceId
+                self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
+                # Externalize any large payloads in the request
+                if self._payload_store is not None:
+                    payload_helpers.externalize_payloads(
+                        req, self._payload_store, instance_id=req.instanceId,
+                    )
+                res: pb.CreateInstanceResponse = self._stub.StartInstance(req)
+                return res.instanceId
 
     def get_orchestration_state(self, instance_id: str, *, fetch_payloads: bool = True) -> OrchestrationState | None:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
@@ -757,14 +764,15 @@ class TaskHubGrpcClient:
 
     def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                   data: Any | None = None) -> None:
-        with tracing.start_raise_event_span(event_name, instance_id):
-            req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
-            self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
-            if self._payload_store is not None:
-                payload_helpers.externalize_payloads(
-                    req, self._payload_store, instance_id=instance_id,
-                )
-            self._stub.RaiseEvent(req)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_raise_event_span(event_name, instance_id):
+                req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
+                self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+                if self._payload_store is not None:
+                    payload_helpers.externalize_payloads(
+                        req, self._payload_store, instance_id=instance_id,
+                    )
+                self._stub.RaiseEvent(req)
 
     def terminate_orchestration(self, instance_id: str, *,
                                 output: Any | None = None,
@@ -940,7 +948,8 @@ class AsyncTaskHubGrpcClient:
                  resiliency_options: GrpcClientResiliencyOptions | None = None,
                  default_version: str | None = None,
                  payload_store: PayloadStore | None = None,
-                 data_converter: DataConverter | None = None):
+                 data_converter: DataConverter | None = None,
+                 emit_trace_spans: bool = True):
 
         self._owns_channel = channel is None
         self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
@@ -1005,6 +1014,12 @@ class AsyncTaskHubGrpcClient:
         self._logger = shared.get_logger("async_client", log_handler, log_formatter)
         self.default_version = default_version
         self._payload_store = payload_store
+        self._emit_trace_spans = emit_trace_spans
+
+    @property
+    def emit_trace_spans(self) -> bool:
+        """Return whether this client emits Durable Task lifecycle spans."""
+        return self._emit_trace_spans
 
     def _compose_interceptors(
             self,
@@ -1128,27 +1143,28 @@ class AsyncTaskHubGrpcClient:
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
 
-        with tracing.start_create_orchestration_span(
-            name, resolved_instance_id, version=resolved_version,
-        ):
-            req = build_schedule_new_orchestration_req(
-                orchestrator, input=input, instance_id=instance_id, start_at=start_at,
-                reuse_id_policy=reuse_id_policy, tags=tags,
-                version=version if version else self.default_version,
-                data_converter=self._data_converter)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_create_orchestration_span(
+                name, resolved_instance_id, version=resolved_version,
+            ):
+                req = build_schedule_new_orchestration_req(
+                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    reuse_id_policy=reuse_id_policy, tags=tags,
+                    version=version if version else self.default_version,
+                    data_converter=self._data_converter)
 
-            parent_trace_ctx = tracing.get_current_trace_context()
-            if parent_trace_ctx is not None:
-                req.parentTraceContext.CopyFrom(parent_trace_ctx)
+                parent_trace_ctx = tracing.get_current_trace_context()
+                if parent_trace_ctx is not None:
+                    req.parentTraceContext.CopyFrom(parent_trace_ctx)
 
-            self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
-            # Externalize any large payloads in the request
-            if self._payload_store is not None:
-                await payload_helpers.externalize_payloads_async(
-                    req, self._payload_store, instance_id=req.instanceId,
-                )
-            res: pb.CreateInstanceResponse = await self._stub.StartInstance(req)
-            return res.instanceId
+                self._logger.info(f"Starting new '{req.name}' instance with ID = '{req.instanceId}'.")
+                # Externalize any large payloads in the request
+                if self._payload_store is not None:
+                    await payload_helpers.externalize_payloads_async(
+                        req, self._payload_store, instance_id=req.instanceId,
+                    )
+                res: pb.CreateInstanceResponse = await self._stub.StartInstance(req)
+                return res.instanceId
 
     async def get_orchestration_state(self, instance_id: str, *,
                                       fetch_payloads: bool = True) -> OrchestrationState | None:
@@ -1262,14 +1278,15 @@ class AsyncTaskHubGrpcClient:
 
     async def raise_orchestration_event(self, instance_id: str, event_name: str, *,
                                         data: Any | None = None) -> None:
-        with tracing.start_raise_event_span(event_name, instance_id):
-            req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
-            self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
-            if self._payload_store is not None:
-                await payload_helpers.externalize_payloads_async(
-                    req, self._payload_store, instance_id=instance_id,
-                )
-            await self._stub.RaiseEvent(req)
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_raise_event_span(event_name, instance_id):
+                req = build_raise_event_req(instance_id, event_name, data, self._data_converter)
+                self._logger.info(f"Raising event '{event_name}' for instance '{instance_id}'.")
+                if self._payload_store is not None:
+                    await payload_helpers.externalize_payloads_async(
+                        req, self._payload_store, instance_id=instance_id,
+                    )
+                await self._stub.RaiseEvent(req)
 
     async def terminate_orchestration(self, instance_id: str, *,
                                       output: Any | None = None,

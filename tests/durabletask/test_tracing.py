@@ -6,7 +6,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from google.protobuf import timestamp_pb2, wrappers_pb2
@@ -21,7 +21,7 @@ from durabletask.serialization import JsonDataConverter
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 import durabletask.internal.tracing as tracing
-from durabletask import task, worker
+from durabletask import client, task, worker
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s',
@@ -554,6 +554,67 @@ class TestRaiseEventSpan:
         assert s.attributes[tracing.ATTR_TASK_TYPE] == "event"
         assert s.attributes[tracing.ATTR_TASK_NAME] == "MyEvent"
         assert s.attributes[tracing.ATTR_EVENT_TARGET_INSTANCE_ID] == "inst-456"
+
+
+class TestClientSpanEmission:
+    """Tests for client propagate-only tracing."""
+
+    def test_clients_emit_trace_spans_by_default(self):
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=MagicMock()):
+            sync_client = client.TaskHubGrpcClient(channel=MagicMock())
+            async_client = client.AsyncTaskHubGrpcClient(channel=MagicMock())
+
+        assert sync_client.emit_trace_spans is True
+        assert async_client.emit_trace_spans is True
+
+    def test_sync_client_propagates_ambient_context_without_lifecycle_spans(
+            self, otel_setup: InMemorySpanExporter):
+        stub = MagicMock()
+        stub.StartInstance.return_value = pb.CreateInstanceResponse(instanceId="inst-1")
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=stub):
+            grpc_client = client.TaskHubGrpcClient(
+                channel=MagicMock(), emit_trace_spans=False)
+
+        tracer = trace.get_tracer("host")
+        with tracer.start_as_current_span("host-request") as host_span:
+            host_span_id = f"{host_span.get_span_context().span_id:016x}"
+            grpc_client.schedule_new_orchestration(
+                "orchestrator", instance_id="inst-1")
+            grpc_client.raise_orchestration_event("inst-1", "event")
+
+        start_request = stub.StartInstance.call_args.args[0]
+        assert start_request.parentTraceContext.spanID == host_span_id
+        assert [span.name for span in otel_setup.get_finished_spans()] == [
+            "host-request"]
+
+    @pytest.mark.asyncio
+    async def test_async_client_propagates_ambient_context_without_lifecycle_spans(
+            self, otel_setup: InMemorySpanExporter):
+        stub = MagicMock()
+        stub.StartInstance = AsyncMock(
+            return_value=pb.CreateInstanceResponse(instanceId="inst-1"))
+        stub.RaiseEvent = AsyncMock(return_value=pb.RaiseEventResponse())
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=stub):
+            grpc_client = client.AsyncTaskHubGrpcClient(
+                channel=MagicMock(), emit_trace_spans=False)
+
+        tracer = trace.get_tracer("host")
+        with tracer.start_as_current_span("host-request") as host_span:
+            host_span_id = f"{host_span.get_span_context().span_id:016x}"
+            await grpc_client.schedule_new_orchestration(
+                "orchestrator", instance_id="inst-1")
+            await grpc_client.raise_orchestration_event("inst-1", "event")
+
+        start_request = stub.StartInstance.call_args.args[0]
+        assert start_request.parentTraceContext.spanID == host_span_id
+        assert [span.name for span in otel_setup.get_finished_spans()] == [
+            "host-request"]
 
 
 class TestOrchestrationServerSpan:

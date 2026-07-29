@@ -11,7 +11,8 @@ ADDED
 
 - Distributed tracing now correlates OpenTelemetry spans created by orchestrator
 user code with the Durable Functions host trace while avoiding duplicate
-orchestration, activity, and entity lifecycle spans from the Python worker.
+orchestration, activity, entity, client-start, and client-event lifecycle spans
+from the Python SDK.
 - Added `SyncDurableFunctionsClient`. `DFApp.durable_client_input()` now injects
 the synchronous client into synchronous functions and the asynchronous client
 into coroutine functions. Both clients support scheduled-task and history-export
