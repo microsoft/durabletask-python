@@ -32,6 +32,10 @@ avoiding repeated allocation of unused worker resources.
 
 FIXED
 
+- Check-status responses now include the standard `Retry-After: 10` polling
+header. Failed orchestrations return HTTP 200 from the wait helper by default;
+callers can request HTTP 500 responses through
+`return_internal_server_error_on_failure`.
 - HTTP management payloads now preserve the host-provided management URL
 templates and configured HTTP base paths, include `rewindPostUri`, encode
 instance IDs, and use forwarded request origins when enabled by the host.
