@@ -13,6 +13,9 @@ ADDED
 the synchronous client into synchronous functions and the asynchronous client
 into coroutine functions. Both clients support scheduled-task and history-export
 APIs without an async-to-sync bridge.
+- Added runnable 2.x samples for function chaining, fan-out/fan-in, human
+interaction, and durable entities, plus a migration guide for applications
+upgrading from 1.x.
 
 CHANGED
 
