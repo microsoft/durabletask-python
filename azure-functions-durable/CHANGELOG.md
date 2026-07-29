@@ -14,6 +14,11 @@ the synchronous client into synchronous functions and the asynchronous client
 into coroutine functions. Both clients support scheduled-task and history-export
 APIs without an async-to-sync bridge.
 
+CHANGED
+
+- Reused host-driven orchestration and entity workers across invocations,
+avoiding repeated allocation of unused worker resources.
+
 ## 2.0.0b1
 
 First preview (beta) release of `azure-functions-durable` 2.x — a ground-up

@@ -20,7 +20,11 @@ class Orchestrator:
     function.
     """
 
-    def __init__(self, orchestrator_func: Callable[..., Any]):
+    def __init__(
+            self,
+            orchestrator_func: Callable[..., Any],
+            worker: DurableFunctionsWorker | None = None,
+    ):
         """Create a new orchestrator wrapper for a user orchestrator function.
 
         The wrapped function may be a durabletask-native two-argument
@@ -30,6 +34,7 @@ class Orchestrator:
         :param orchestrator_func: The user's orchestrator function to run.
         """
         self.fn: Callable[..., Any] = orchestrator_func
+        self._worker = worker if worker is not None else DurableFunctionsWorker()
 
     def handle(self, context: func.OrchestrationContext) -> str:
         """Handle the orchestration of the user defined generator function.
@@ -49,7 +54,7 @@ class Orchestrator:
             Durable Functions host wire format) produced by this invocation.
         """
         self.durable_context = context
-        return DurableFunctionsWorker().execute_orchestration_request(self.fn, context)
+        return self._worker.execute_orchestration_request(self.fn, context)
 
     @classmethod
     def create(cls, fn: Callable[..., Any]) -> Callable[[Any], str]:
@@ -67,13 +72,15 @@ class Orchestrator:
             Handle function of the newly created orchestration client
         """
 
+        worker = DurableFunctionsWorker()
+
         # The generated handle is the function registered with the Azure
         # Functions host. Its ``context`` parameter must be annotated with
         # ``azure.functions.OrchestrationContext`` so the host's
         # orchestrationTrigger binding converter accepts it; at runtime the
         # host passes that transport context (exposing ``.body``).
         def handle(context: func.OrchestrationContext) -> str:
-            return Orchestrator(fn).handle(context)
+            return Orchestrator(fn, worker).handle(context)
 
         handle.orchestrator_function = fn  # pyright: ignore[reportFunctionMemberAccess]
 
