@@ -29,7 +29,8 @@ class HttpManagementPayload(dict[str, str]):
             required_query_string_parameters: str,
             *,
             management_urls: Mapping[str, str] | None = None,
-            request_origin: str | None = None):
+            request_origin: str | None = None,
+            return_internal_server_error_on_failure: bool = False):
         """Initializes the HttpManagementPayload with the necessary URLs.
 
         Args:
@@ -40,6 +41,8 @@ class HttpManagementPayload(dict[str, str]):
                 provided by the Durable extension.
             request_origin (str | None): Externally visible request origin used
                 to replace the templates' internal origin.
+            return_internal_server_error_on_failure (bool): Whether the status
+                query should return HTTP 500 for failed orchestrations.
         """
         fallback_urls = {
             'purgeHistoryDeleteUri': instance_status_url + "?" + required_query_string_parameters,
@@ -66,6 +69,20 @@ class HttpManagementPayload(dict[str, str]):
             if placeholder != _INSTANCE_ID_PLACEHOLDER:
                 url = url.replace(_INSTANCE_ID_PLACEHOLDER, encoded_instance_id)
             urls[name] = replace_url_origin(url, request_origin)
+
+        if return_internal_server_error_on_failure:
+            status_url = urlsplit(urls["statusQueryGetUri"])
+            query = status_url.query
+            if query:
+                query += "&"
+            query += "returnInternalServerErrorOnFailure=true"
+            urls["statusQueryGetUri"] = urlunsplit((
+                status_url.scheme,
+                status_url.netloc,
+                status_url.path,
+                query,
+                status_url.fragment,
+            ))
 
         super().__init__(urls)
 
