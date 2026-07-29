@@ -13,6 +13,7 @@ that path end-to-end without a sidecar or gRPC channel.
 import base64
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,7 @@ import pytest
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 
+import azure.durable_functions as df
 from azure.durable_functions.worker import DurableFunctionsWorker
 
 TEST_INSTANCE_ID = "inst-123"
@@ -130,6 +132,88 @@ def test_execute_orchestration_request_captures_failure():
     completion = _get_completion_action(_decode_orchestrator_response(result))
     assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert "boom" in completion.failureDetails.errorMessage
+
+
+def test_activity_retry_then_fan_out_uses_distinct_task_ids():
+    """Regression test for Azure/azure-functions-durable-python#603."""
+    def orchestrator(context):
+        options = df.RetryOptions(
+            first_retry_interval_in_milliseconds=100,
+            max_number_of_attempts=3,
+        )
+        yield context.call_activity_with_retry("flaky", options)
+        tasks = [context.call_activity("square", value) for value in range(13)]
+        return (yield context.task_all(tasks))
+
+    worker = DurableFunctionsWorker()
+    name = "retry-then-fan-out"
+    started_at = datetime(2026, 1, 1)
+
+    def execute(past_events, new_events):
+        request = pb.OrchestratorRequest(instanceId=TEST_INSTANCE_ID)
+        request.pastEvents.extend(past_events)
+        request.newEvents.extend(new_events)
+        encoded = base64.b64encode(request.SerializeToString()).decode("utf-8")
+        return _decode_orchestrator_response(
+            worker.execute_orchestration_request(orchestrator, encoded))
+
+    initial_events = [
+        helpers.new_orchestrator_started_event(started_at),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+    ]
+    response = execute([], initial_events)
+    assert len(response.actions) == 1
+    assert response.actions[0].id == 1
+    assert response.actions[0].scheduleTask.name == "flaky"
+
+    past_events = initial_events + [
+        helpers.new_task_scheduled_event(1, "flaky"),
+    ]
+    failure_events = [
+        helpers.new_orchestrator_started_event(started_at),
+        helpers.new_task_failed_event(1, ValueError("transient failure")),
+    ]
+    response = execute(past_events, failure_events)
+    assert len(response.actions) == 1
+    retry_timer = response.actions[0]
+    assert retry_timer.id == 2
+    assert retry_timer.HasField("createTimer")
+
+    retry_at = retry_timer.createTimer.fireAt.ToDatetime()
+    timer_events = [
+        helpers.new_timer_created_event(2, retry_at),
+        helpers.new_orchestrator_started_event(retry_at),
+        helpers.new_timer_fired_event(2, retry_at),
+    ]
+    past_events += failure_events
+    response = execute(past_events, timer_events)
+    assert len(response.actions) == 1
+    assert response.actions[0].id == 1
+    assert response.actions[0].scheduleTask.name == "flaky"
+
+    retry_completed_events = [
+        helpers.new_orchestrator_started_event(retry_at),
+        helpers.new_task_scheduled_event(1, "flaky"),
+        helpers.new_task_completed_event(1, json.dumps("recovered")),
+    ]
+    past_events += timer_events
+    response = execute(past_events, retry_completed_events)
+    assert [action.id for action in response.actions] == list(range(3, 16))
+    assert all(action.scheduleTask.name == "square" for action in response.actions)
+
+    fan_out_events = [helpers.new_orchestrator_started_event(retry_at)]
+    for task_id in range(3, 16):
+        fan_out_events.append(helpers.new_task_scheduled_event(task_id, "square"))
+        fan_out_events.append(
+            helpers.new_task_completed_event(
+                task_id, json.dumps((task_id - 3) ** 2)))
+
+    past_events += retry_completed_events
+    response = execute(past_events, fan_out_events)
+    completion = _get_completion_action(response)
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert json.loads(completion.result.value) == [
+        value ** 2 for value in range(13)]
 
 
 def test_execute_orchestration_request_supports_concurrent_reinvocation():
