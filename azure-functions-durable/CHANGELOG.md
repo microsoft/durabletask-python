@@ -32,6 +32,8 @@ avoiding repeated allocation of unused worker resources.
 
 FIXED
 
+- Fixed deprecated v1 status-query methods omitting orchestration output,
+custom status, and failure details when input display was disabled.
 - Fixed asynchronous durable-client construction failing after an application
 event loop had been closed or cleared.
 - Prevented Durable HTTP calls from forwarding managed identity tokens,

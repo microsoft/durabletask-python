@@ -265,16 +265,20 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         exist, a falsy status is returned rather than ``None``.
 
         The ``show_history`` and ``show_history_output`` flags have no
-        equivalent in durabletask and are ignored; ``show_input`` maps to
-        ``fetch_payloads``.
+        equivalent in durabletask and are ignored. Payloads are fetched to
+        preserve the v1 output, custom-status, and failure-detail fields;
+        ``show_input`` controls whether the compatibility wrapper exposes the
+        input.
         """
-        state = await self.get_orchestration_state(instance_id, fetch_payloads=show_input)
-        return DurableOrchestrationStatus.from_orchestration_state(state)
+        state = await self.get_orchestration_state(instance_id, fetch_payloads=True)
+        return DurableOrchestrationStatus.from_orchestration_state(
+            state, include_input=show_input)
 
     @deprecated("get_status_all is deprecated; use get_all_orchestration_states instead.")
     async def get_status_all(self) -> list[DurableOrchestrationStatus]:
         """Deprecated alias for :meth:`get_all_orchestration_states`."""
-        states = await self.get_all_orchestration_states()
+        states = await self.get_all_orchestration_states(
+            OrchestrationQuery(fetch_inputs_and_outputs=True))
         return [DurableOrchestrationStatus.from_orchestration_state(state) for state in states]
 
     @deprecated("raise_event is deprecated; use raise_orchestration_event instead.")
@@ -376,7 +380,8 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         query = OrchestrationQuery(
             created_time_from=created_time_from,
             created_time_to=created_time_to,
-            runtime_status=to_durabletask_statuses(runtime_status))
+            runtime_status=to_durabletask_statuses(runtime_status),
+            fetch_inputs_and_outputs=True)
         states = await self.get_all_orchestration_states(query)
         return [DurableOrchestrationStatus.from_orchestration_state(state) for state in states]
 

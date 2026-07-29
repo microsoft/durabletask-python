@@ -29,12 +29,18 @@ class DurableOrchestrationStatus:
 
     def __init__(self, state: Optional[OrchestrationState] = None):
         self._state = state
+        self._include_input = True
 
     @classmethod
     def from_orchestration_state(
-            cls, state: Optional[OrchestrationState]) -> "DurableOrchestrationStatus":
+            cls,
+            state: Optional[OrchestrationState],
+            *,
+            include_input: bool = True) -> "DurableOrchestrationStatus":
         """Wrap a durabletask ``OrchestrationState`` (or ``None``)."""
-        return cls(state)
+        status = cls(state)
+        status._include_input = include_input
+        return status
 
     @classmethod
     def from_json(cls, json_obj: Any) -> "DurableOrchestrationStatus":
@@ -104,16 +110,20 @@ class DurableOrchestrationStatus:
     @property
     def input_(self) -> Any:
         """Get the (deserialized) input of the orchestration instance."""
-        if self._state is None:
+        if self._state is None or not self._include_input:
             return None
         return self._raw_payload(self._state.serialized_input)
 
     @property
     def output(self) -> Any:
-        """Get the (deserialized) output of the orchestration instance."""
+        """Get the output or failure message of the orchestration instance."""
         if self._state is None:
             return None
-        return self._raw_payload(self._state.serialized_output)
+        output = self._raw_payload(self._state.serialized_output)
+        if output is not None:
+            return output
+        failure = self._state.failure_details
+        return failure.message if failure is not None else None
 
     @property
     def runtime_status(self) -> Optional[OrchestrationRuntimeStatus]:
@@ -157,21 +167,10 @@ class DurableOrchestrationStatus:
             result["createdTime"] = self._format_datetime(self.created_time)
         if self.last_updated_time is not None:
             result["lastUpdatedTime"] = self._format_datetime(self.last_updated_time)
-        output = self._raw_payload(
-            self._state.serialized_output if self._state is not None else None)
+        output = self.output
         if output is not None:
             result["output"] = output
-        elif self._state is not None:
-            # A failed orchestration carries its error in ``failure_details``
-            # rather than ``serialized_output``; surface it under ``output``
-            # (matching v1, where the failure message was returned through the
-            # status output) so the error is not dropped from the payload.
-            failure = getattr(self._state, "failure_details", None)
-            failure_message = getattr(failure, "message", None) if failure is not None else None
-            if failure_message:
-                result["output"] = failure_message
-        input_ = self._raw_payload(
-            self._state.serialized_input if self._state is not None else None)
+        input_ = self.input_
         if input_ is not None:
             result["input"] = input_
         if self.runtime_status is not None:
