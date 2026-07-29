@@ -4,6 +4,7 @@
 import azure.durable_functions as df
 import inspect
 import pytest
+from unittest.mock import MagicMock, patch
 from azure.durable_functions.constants import (
     ACTIVITY_TRIGGER,
     DURABLE_CLIENT,
@@ -102,6 +103,32 @@ def test_entity_trigger_v1_signature():
     assert trigger.get_binding_name() == ENTITY_TRIGGER
     assert trigger.name == "context"
     assert trigger.entity_name == "MyEntity"
+
+
+def test_entity_trigger_reuses_worker_across_invocations():
+    app = df.DFApp()
+
+    def my_entity(context):
+        return None
+
+    with patch(
+        "azure.durable_functions.decorators.durable_app.DurableFunctionsWorker"
+    ) as worker_cls:
+        worker = worker_cls.return_value
+        worker.execute_entity_batch_request.return_value = "encoded"
+        fb = app.entity_trigger(context_name="context")(my_entity)
+        handle = fb._function._func
+        first_context = MagicMock()
+        second_context = MagicMock()
+        first_result = handle(first_context)
+        second_result = handle(second_context)
+
+    assert first_result == second_result == "encoded"
+    worker_cls.assert_called_once_with()
+    assert worker.execute_entity_batch_request.call_args_list == [
+        ((my_entity, first_context),),
+        ((my_entity, second_context),),
+    ]
 
 
 # ---------------------------------------------------------------------------
