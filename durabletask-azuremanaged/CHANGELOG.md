@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.9.0
+
+CHANGED
+
+- Updated the base dependency to `durabletask` v1.9.0.
 - `DurableTaskSchedulerClient` and `DurableTaskSchedulerWorker` no longer block on an Azure
   credential round trip while being constructed. The access token is now acquired on the first
   request instead, so constructing a client or worker that is never used costs nothing. As a
@@ -21,6 +26,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Improved async access token refresh concurrency handling to avoid duplicate
   refresh operations under concurrent access, matching the existing sync
   behavior.
+- Improved sandbox worker startup and recovery performance by indexing activity
+  overlap validation, caching SDK version metadata, and reusing the registration
+  transport across transient failures.
+
+FIXED
+
 - Fixed `AsyncDurableTaskSchedulerClient` failing during construction when no
   current event loop was set. Its async gRPC channel is now created on first
   use and bound to the event loop performing the request.

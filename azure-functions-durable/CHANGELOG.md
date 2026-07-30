@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v2.0.0b2
+
 ADDED
 
+- Durabletask-native orchestrations can now use
+`OrchestrationContext.send_event()` for replay-safe, one-way event delivery to
+another orchestration instance.
 - Added PEP 561 type information so strict type checkers recognize
 `azure.durable_functions` as a typed package.
 - Added `azure.durable_functions.testing.execute_entity()` for unit testing
@@ -29,6 +34,13 @@ upgrading from 1.x.
 
 CHANGED
 
+- Updated the minimum `durabletask` dependency to v1.9.0. Its reduced replay
+allocations, cached handler metadata, one-pass history serialization, and
+bounded async work-item task creation improve orchestration and entity
+throughput and memory efficiency for Durable Functions applications.
+- `FailureDetails.error_type` now uses fully-qualified type names, and
+`FailureDetails.is_caused_by()` provides base-type-aware matching. See the core
+`durabletask` changelog for compatibility details.
 - Reused host-driven orchestration and entity workers across invocations,
 avoiding repeated allocation of unused worker resources.
 

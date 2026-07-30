@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.9.0
+
 ADDED
 
 - Added `OrchestrationContext.send_event()` for replay-safe, one-way event
@@ -26,6 +28,11 @@ export jobs without a synchronous client bridge.
 
 CHANGED
 
+- Improved orchestration and entity execution performance by reducing replay
+allocations, caching handler and entity-method signature metadata, and
+serializing history-export events in a single pass. These changes reduce CPU
+and memory overhead for long histories and high-frequency handlers without
+changing serialized output or handler behavior.
 - Importing `durabletask` no longer eagerly imports the worker implementation and its
 dependencies (gRPC, protobuf, entities, serialization, OpenTelemetry). The public names
 re-exported from the package — `ActivityWorkItemFilter`, `ConcurrencyOptions`,
