@@ -92,7 +92,8 @@ def _build_http_management_payload(
         http_base_url: str,
         required_query_string_parameters: str,
         use_forwarded_host: bool,
-        request: func.HttpRequest | None) -> HttpManagementPayload:
+        request: func.HttpRequest | None,
+        return_internal_server_error_on_failure: bool = False) -> HttpManagementPayload:
     encoded_instance_id = quote(instance_id, safe="")
     configured_base_url = http_base_url or base_url
     request_origin: str | None = None
@@ -114,7 +115,9 @@ def _build_http_management_payload(
         instance_status_url,
         required_query_string_parameters,
         management_urls=management_urls,
-        request_origin=request_origin)
+        request_origin=request_origin,
+        return_internal_server_error_on_failure=(
+            return_internal_server_error_on_failure))
 
 
 # Client class used for Durable Functions
@@ -248,30 +251,43 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         # TODO: convert the string value back to timedelta - annoying regex?
         self.grpcHttpClientTimeout = client.get("grpcHttpClientTimeout") or timedelta(seconds=30)
 
-    def create_check_status_response(self, request: func.HttpRequest, instance_id: str) -> func.HttpResponse:
+    def create_check_status_response(
+            self,
+            request: func.HttpRequest,
+            instance_id: str,
+            return_internal_server_error_on_failure: bool = False
+    ) -> func.HttpResponse:
         """Creates an HTTP response for checking the status of a Durable Function instance.
 
         Args:
             request (func.HttpRequest): The incoming HTTP request.
             instance_id (str): The ID of the Durable Function instance.
+            return_internal_server_error_on_failure (bool): Whether status
+                queries should return HTTP 500 for failed orchestrations.
         """
-        payload = self._get_client_response_links(request, instance_id)
+        payload = self._get_client_response_links(
+            request,
+            instance_id,
+            return_internal_server_error_on_failure)
         return func.HttpResponse(
             body=str(payload),
             status_code=202,
             headers={
-                'content-type': 'application/json',
+                'Content-Type': 'application/json',
                 # Match v1: Location points at statusQueryGetUri, which includes
                 # the required query string (webhook key / task hub / connection)
                 # so a client that follows the header is authorized.
                 'Location': payload['statusQueryGetUri'],
+                'Retry-After': '10',
             },
         )
 
     def create_http_management_payload(
             self,
             request: func.HttpRequest | str | None = None,
-            instance_id: str | None = None) -> HttpManagementPayload:
+            instance_id: str | None = None,
+            return_internal_server_error_on_failure: bool = False
+    ) -> HttpManagementPayload:
         """Creates an HTTP management payload for a Durable Function instance.
 
         Two call styles are supported:
@@ -287,6 +303,8 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
                 for backwards compatibility, the instance ID when called with a
                 single positional argument.
             instance_id (str | None): The ID of the Durable Function instance.
+            return_internal_server_error_on_failure (bool): Whether the status
+                query should return HTTP 500 for failed orchestrations.
         """
         # Backwards-compatibility: v1 accepted a single positional ``instance_id``.
         if instance_id is None and isinstance(request, str):
@@ -295,9 +313,17 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         if instance_id is None:
             raise TypeError("instance_id is required")
         resolved_request = request if isinstance(request, func.HttpRequest) else None
-        return self._get_client_response_links(resolved_request, instance_id)
+        return self._get_client_response_links(
+            resolved_request,
+            instance_id,
+            return_internal_server_error_on_failure)
 
-    def _get_client_response_links(self, request: func.HttpRequest | None, instance_id: str) -> HttpManagementPayload:
+    def _get_client_response_links(
+            self,
+            request: func.HttpRequest | None,
+            instance_id: str,
+            return_internal_server_error_on_failure: bool = False
+    ) -> HttpManagementPayload:
         return _build_http_management_payload(
             instance_id,
             self.managementUrls,
@@ -305,7 +331,8 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             self.httpBaseUrl,
             self.requiredQueryStringParameters,
             self.useForwardedHost,
-            request)
+            request,
+            return_internal_server_error_on_failure)
 
     # ------------------------------------------------------------------
     # Backwards-compatibility shims for the v1 azure-functions-durable
@@ -534,7 +561,9 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             request: func.HttpRequest,
             instance_id: str,
             timeout_in_milliseconds: int = 10000,
-            retry_interval_in_milliseconds: int = 1000) -> func.HttpResponse:
+            retry_interval_in_milliseconds: int = 1000,
+            return_internal_server_error_on_failure: bool = False
+    ) -> func.HttpResponse:
         """Wait for an orchestration to complete, or return a check-status response.
 
         If the orchestration completes within the timeout, an HTTP response
@@ -543,6 +572,9 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
 
         The ``retry_interval_in_milliseconds`` argument has no durabletask
         equivalent (durabletask waits server-side) and is ignored.
+
+        When ``return_internal_server_error_on_failure`` is true, failed
+        orchestrations return HTTP 500 instead of HTTP 200.
         """
         if retry_interval_in_milliseconds > timeout_in_milliseconds:
             raise Exception(
@@ -553,10 +585,16 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             state = await self.wait_for_orchestration_completion(
                 instance_id, timeout=timeout_in_milliseconds / 1000)
         except TimeoutError:
-            return self.create_check_status_response(request, instance_id)
+            return self.create_check_status_response(
+                request,
+                instance_id,
+                return_internal_server_error_on_failure)
 
         if state is None:
-            return self.create_check_status_response(request, instance_id)
+            return self.create_check_status_response(
+                request,
+                instance_id,
+                return_internal_server_error_on_failure)
 
         if state.runtime_status == OrchestrationStatus.COMPLETED:
             return self._create_http_response(200, state.serialized_output)
@@ -565,8 +603,12 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
                 200, DurableOrchestrationStatus.from_orchestration_state(state).to_json())
         if state.runtime_status == OrchestrationStatus.FAILED:
             return self._create_http_response(
-                500, DurableOrchestrationStatus.from_orchestration_state(state).to_json())
-        return self.create_check_status_response(request, instance_id)
+                500 if return_internal_server_error_on_failure else 200,
+                DurableOrchestrationStatus.from_orchestration_state(state).to_json())
+        return self.create_check_status_response(
+            request,
+            instance_id,
+            return_internal_server_error_on_failure)
 
     @deprecated("rewind is deprecated; use rewind_orchestration instead.")
     async def rewind(
@@ -662,32 +704,48 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             "grpcHttpClientTimeout") or timedelta(seconds=30)
 
     def create_check_status_response(
-            self, request: func.HttpRequest, instance_id: str) -> func.HttpResponse:
-        payload = self._get_client_response_links(request, instance_id)
+            self,
+            request: func.HttpRequest,
+            instance_id: str,
+            return_internal_server_error_on_failure: bool = False
+    ) -> func.HttpResponse:
+        payload = self._get_client_response_links(
+            request,
+            instance_id,
+            return_internal_server_error_on_failure)
         return func.HttpResponse(
             body=str(payload),
             status_code=202,
             headers={
-                "content-type": "application/json",
+                "Content-Type": "application/json",
                 "Location": payload["statusQueryGetUri"],
+                "Retry-After": "10",
             },
         )
 
     def create_http_management_payload(
             self,
             request: func.HttpRequest | str | None = None,
-            instance_id: str | None = None) -> HttpManagementPayload:
+            instance_id: str | None = None,
+            return_internal_server_error_on_failure: bool = False
+    ) -> HttpManagementPayload:
         if instance_id is None and isinstance(request, str):
             instance_id = request
             request = None
         if instance_id is None:
             raise TypeError("instance_id is required")
         resolved_request = request if isinstance(request, func.HttpRequest) else None
-        return self._get_client_response_links(resolved_request, instance_id)
+        return self._get_client_response_links(
+            resolved_request,
+            instance_id,
+            return_internal_server_error_on_failure)
 
     def _get_client_response_links(
-            self, request: func.HttpRequest | None,
-            instance_id: str) -> HttpManagementPayload:
+            self,
+            request: func.HttpRequest | None,
+            instance_id: str,
+            return_internal_server_error_on_failure: bool = False
+    ) -> HttpManagementPayload:
         return _build_http_management_payload(
             instance_id,
             self.managementUrls,
@@ -695,7 +753,8 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             self.httpBaseUrl,
             self.requiredQueryStringParameters,
             self.useForwardedHost,
-            request)
+            request,
+            return_internal_server_error_on_failure)
 
 
 def _close_cached_sync_clients() -> None:

@@ -207,6 +207,30 @@ async def test_create_http_management_payload_v2_signature():
         await client.close()
 
 
+@pytest.mark.parametrize(
+    "use_sync_client",
+    [False, True],
+)
+async def test_create_http_management_payload_can_request_failure_status_500(
+        use_sync_client):
+    async_client = df.DurableFunctionsClient(_CLIENT_CONFIG)
+    sync_client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
+    client = sync_client if use_sync_client else async_client
+    try:
+        payload = client.create_http_management_payload(
+            _make_request(),
+            "inst",
+            return_internal_server_error_on_failure=True)
+        assert payload["statusQueryGetUri"] == (
+            "http://localhost:7071/runtime/webhooks/durabletask/instances/"
+            "inst?code=xyz&returnInternalServerErrorOnFailure=true")
+        assert "returnInternalServerErrorOnFailure" not in (
+            payload["purgeHistoryDeleteUri"])
+    finally:
+        await async_client.close()
+        sync_client.close()
+
+
 async def test_create_http_management_payload_requires_instance_id():
     client = _make_client()
     try:
@@ -564,11 +588,27 @@ def _make_request() -> func.HttpRequest:
         method="GET", url="http://localhost:7071/api/status", body=b"")
 
 
+def _make_terminal_state(
+        runtime_status: OrchestrationStatus,
+        serialized_output=None,
+        failure_details=None):
+    return SimpleNamespace(
+        name="orch",
+        instance_id="abc",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        last_updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        runtime_status=runtime_status,
+        serialized_input=None,
+        serialized_output=serialized_output,
+        serialized_custom_status=None,
+        failure_details=failure_details)
+
+
 async def test_wait_for_completion_returns_output_when_completed():
     client = _make_client()
     try:
-        state = SimpleNamespace(
-            runtime_status=OrchestrationStatus.COMPLETED,
+        state = _make_terminal_state(
+            OrchestrationStatus.COMPLETED,
             serialized_output='"done"')
         with patch.object(client, "wait_for_orchestration_completion",
                           new=AsyncMock(return_value=state)):
@@ -577,6 +617,25 @@ async def test_wait_for_completion_returns_output_when_completed():
                     _make_request(), "abc")
         assert response.status_code == 200
         assert response.get_body() == b'"done"'
+    finally:
+        await client.close()
+
+
+async def test_wait_for_completion_returns_status_when_terminated():
+    client = _make_client()
+    try:
+        state = _make_terminal_state(
+            OrchestrationStatus.TERMINATED,
+            serialized_output='"stopped"')
+        with patch.object(client, "wait_for_orchestration_completion",
+                          new=AsyncMock(return_value=state)):
+            with pytest.warns(DeprecationWarning):
+                response = await client.wait_for_completion_or_create_check_status_response(
+                    _make_request(), "abc")
+        body = json.loads(response.get_body())
+        assert response.status_code == 200
+        assert body["runtimeStatus"] == "Terminated"
+        assert body["output"] == "stopped"
     finally:
         await client.close()
 
@@ -594,29 +653,49 @@ async def test_wait_for_completion_returns_check_status_on_timeout():
         await client.close()
 
 
-async def test_wait_for_completion_surfaces_failure_details_when_failed():
+async def test_wait_for_completion_preserves_failure_option_on_timeout():
+    client = _make_client()
+    try:
+        with patch.object(client, "wait_for_orchestration_completion",
+                          new=AsyncMock(side_effect=TimeoutError)):
+            with pytest.warns(DeprecationWarning):
+                response = await client.wait_for_completion_or_create_check_status_response(
+                    _make_request(),
+                    "abc",
+                    return_internal_server_error_on_failure=True)
+        body = json.loads(response.get_body())
+        assert response.status_code == 202
+        assert body["statusQueryGetUri"].endswith(
+            "code=xyz&returnInternalServerErrorOnFailure=true")
+        assert response.headers["Location"] == body["statusQueryGetUri"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize(
+    ("return_internal_server_error_on_failure", "expected_status_code"),
+    [(False, 200), (True, 500)],
+)
+async def test_wait_for_completion_surfaces_failure_details_when_failed(
+        return_internal_server_error_on_failure, expected_status_code):
     client = _make_client()
     try:
         # A failed orchestration carries its error in failure_details;
         # serialized_output is typically None. v1 returns the full status JSON
         # (runtimeStatus, instanceId, timestamps, output) for terminal states.
-        state = SimpleNamespace(
-            name="orch",
-            instance_id="abc",
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            last_updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            runtime_status=OrchestrationStatus.FAILED,
-            serialized_input=None,
-            serialized_output=None,
-            serialized_custom_status=None,
+        state = _make_terminal_state(
+            OrchestrationStatus.FAILED,
             failure_details=SimpleNamespace(
                 message="boom", error_type="ValueError", stack_trace="tb"))
         with patch.object(client, "wait_for_orchestration_completion",
                           new=AsyncMock(return_value=state)):
             with pytest.warns(DeprecationWarning):
                 response = await client.wait_for_completion_or_create_check_status_response(
-                    _make_request(), "abc")
-        assert response.status_code == 500
+                    _make_request(),
+                    "abc",
+                    return_internal_server_error_on_failure=(
+                        return_internal_server_error_on_failure))
+        assert response.status_code == expected_status_code
         body = json.loads(response.get_body())
         assert body["runtimeStatus"] == "Failed"
         assert body["instanceId"] == "abc"
@@ -626,11 +705,20 @@ async def test_wait_for_completion_surfaces_failure_details_when_failed():
         await client.close()
 
 
-async def test_create_check_status_response_location_includes_query_string():
-    client = _make_client()
+@pytest.mark.parametrize(
+    "use_sync_client",
+    [False, True],
+)
+async def test_create_check_status_response_has_polling_headers(
+        use_sync_client):
+    async_client = df.DurableFunctionsClient(_CLIENT_CONFIG)
+    sync_client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
+    client = sync_client if use_sync_client else async_client
     try:
         response = client.create_check_status_response(_make_request(), "abc")
         assert response.status_code == 202
+        assert response.headers["Content-Type"] == "application/json"
+        assert response.headers["Retry-After"] == "10"
         location = response.headers["Location"]
         # The Location must carry the required query string so a client that
         # follows it is authorized, and it matches the body's statusQueryGetUri.
@@ -638,7 +726,31 @@ async def test_create_check_status_response_location_includes_query_string():
         body = json.loads(response.get_body())
         assert location == body["statusQueryGetUri"]
     finally:
-        await client.close()
+        await async_client.close()
+        sync_client.close()
+
+
+@pytest.mark.parametrize(
+    "use_sync_client",
+    [False, True],
+)
+async def test_create_check_status_response_can_request_failure_status_500(
+        use_sync_client):
+    async_client = df.DurableFunctionsClient(_CLIENT_CONFIG)
+    sync_client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
+    client = sync_client if use_sync_client else async_client
+    try:
+        response = client.create_check_status_response(
+            _make_request(),
+            "abc",
+            return_internal_server_error_on_failure=True)
+        body = json.loads(response.get_body())
+        assert body["statusQueryGetUri"].endswith(
+            "code=xyz&returnInternalServerErrorOnFailure=true")
+        assert response.headers["Location"] == body["statusQueryGetUri"]
+    finally:
+        await async_client.close()
+        sync_client.close()
 
 
 # ---------------------------------------------------------------------------
