@@ -39,5 +39,8 @@ changelog = "https://github.com/microsoft/durabletask-python/blob/main/azure-fun
 [tool.setuptools.packages.find]
 include = ["azure.durable_functions", "azure.durable_functions.*"]
 
+[tool.setuptools.package-data]
+"azure.durable_functions" = ["py.typed"]
+
 [tool.pytest.ini_options]
 minversion = "6.0"

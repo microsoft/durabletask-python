@@ -1,0 +1,7 @@
+{
+  "include": [
+    "import_package.py"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict"
+}
