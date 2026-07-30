@@ -12,6 +12,7 @@ Usage:
 
     nox -s lint
     nox -s typecheck_core
+    nox -s typecheck_functions_package
     nox -s core_tests-3.10
     nox -s azuremanaged_tests-3.10
     nox -s functions_unit-3.13
@@ -313,13 +314,29 @@ def typecheck_core(session: nox.Session) -> None:
 
 @nox.session(python=["3.13"])
 def typecheck_functions(session: nox.Session) -> None:
-    """Run strict pyright checks for azure-functions-durable and its wheel."""
+    """Run strict pyright checks for azure-functions-durable."""
     session.install("-r", "requirements.txt")
-    session.install("-e", str(REPO_ROOT))
+    _install_packages(session, editable=True)
+    session.install("pyright")
+    session.run(
+        "pyright",
+        "-p",
+        "azure-functions-durable/pyrightconfig.json",
+        *session.posargs,
+    )
+
+
+@nox.session(python=["3.13"])
+def typecheck_functions_package(session: nox.Session) -> None:
+    """Check the installed Functions and core wheels with strict Pyright."""
     session.install("build", "pyright")
-    artifact_dir = Path(session.create_tmp()) / "dist"
+    temp_dir = Path(session.create_tmp())
+    artifact_dir = temp_dir / "functions-dist"
+    core_artifact_dir = temp_dir / "core-dist"
     if artifact_dir.exists():
         shutil.rmtree(artifact_dir)
+    if core_artifact_dir.exists():
+        shutil.rmtree(core_artifact_dir)
     session.run(
         "python",
         "-m",
@@ -328,13 +345,26 @@ def typecheck_functions(session: nox.Session) -> None:
         str(artifact_dir),
         str(AZURE_FUNCTIONS_DURABLE),
     )
+    session.run(
+        "python",
+        "-m",
+        "build",
+        "--wheel",
+        "--outdir",
+        str(core_artifact_dir),
+        str(REPO_ROOT),
+    )
 
     wheels = list(artifact_dir.glob("azure_functions_durable-*.whl"))
     sdists = list(artifact_dir.glob("azure_functions_durable-*.tar.gz"))
-    if len(wheels) != 1 or len(sdists) != 1:
-        session.error("Expected exactly one wheel and one source distribution")
+    core_wheels = list(core_artifact_dir.glob("durabletask-*.whl"))
+    if len(wheels) != 1 or len(sdists) != 1 or len(core_wheels) != 1:
+        session.error(
+            "Expected one provider wheel, provider source distribution, "
+            "and core wheel")
     wheel = wheels[0]
     sdist = sdists[0]
+    core_wheel = core_wheels[0]
     marker = "azure/durable_functions/py.typed"
     with zipfile.ZipFile(wheel) as archive:
         if marker not in archive.namelist():
@@ -343,7 +373,7 @@ def typecheck_functions(session: nox.Session) -> None:
         if not any(name.endswith(f"/{marker}") for name in archive.getnames()):
             session.error(f"{marker} is missing from {sdist.name}")
 
-    session.install(str(wheel))
+    session.install(str(core_wheel), str(wheel))
     session.run(
         "python",
         "-m",
@@ -351,13 +381,8 @@ def typecheck_functions(session: nox.Session) -> None:
         "install",
         "--force-reinstall",
         "--no-deps",
+        str(core_wheel),
         str(wheel),
-    )
-    session.run(
-        "pyright",
-        "-p",
-        "azure-functions-durable/pyrightconfig.json",
-        *session.posargs,
     )
     python_path = session.run(
         "python",
@@ -510,6 +535,7 @@ def ci(session: nox.Session) -> None:
     session.notify("lint", ())
     session.notify("typecheck_core", ())
     session.notify("typecheck_functions", ())
+    session.notify("typecheck_functions_package", ())
     session.notify(f"core_tests-{python_version}", ())
     session.notify(f"azuremanaged_tests-{python_version}", ())
     session.notify("functions_unit-3.13", ())

@@ -53,3 +53,6 @@ jobs:
 
       - name: Run pyright (strict, Python 3.13)
         run: nox -s typecheck_functions
+
+      - name: Check packaged types (strict, Python 3.13)
+        run: nox -s typecheck_functions_package
