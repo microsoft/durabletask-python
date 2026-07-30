@@ -19,7 +19,7 @@ from azure.durable_functions.internal.compat.orchestration_runtime_status import
 from azure.durable_functions.http.http_management_payload import (
     replace_url_origin,
 )
-from durabletask import history as dt_history
+from durabletask import history as dt_history, task as dt_task
 from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus
 from durabletask.entities import EntityInstanceId
 from durabletask.task import RetryPolicy
@@ -846,9 +846,36 @@ def _fake_history():
             timestamp=started_at + timedelta(seconds=3),
             task_scheduled_id=1,
             result='{"result": 2}'),
-        dt_history.ExecutionCompletedEvent(
-            event_id=3,
+        dt_history.TaskScheduledEvent(
+            event_id=4,
             timestamp=started_at + timedelta(seconds=4),
+            name="failed_activity",
+            input='{"value": 2}'),
+        dt_history.TaskFailedEvent(
+            event_id=5,
+            timestamp=started_at + timedelta(seconds=5),
+            task_scheduled_id=4,
+            failure_details=dt_task.FailureDetails(
+                "activity failed", "RuntimeError", "activity details"),
+            reason="activity failed",
+            details="activity details"),
+        dt_history.SubOrchestrationInstanceCreatedEvent(
+            event_id=6,
+            timestamp=started_at + timedelta(seconds=6),
+            instance_id="child",
+            name="failed_child",
+            input='{"child": 1}'),
+        dt_history.SubOrchestrationInstanceFailedEvent(
+            event_id=7,
+            timestamp=started_at + timedelta(seconds=7),
+            task_scheduled_id=6,
+            failure_details=dt_task.FailureDetails(
+                "child failed", "RuntimeError", "child details"),
+            reason="child failed",
+            details="child details"),
+        dt_history.ExecutionCompletedEvent(
+            event_id=8,
+            timestamp=started_at + timedelta(seconds=8),
             orchestration_status=OrchestrationStatus.COMPLETED.value,
             result='{"done": true}'),
     ]
@@ -879,8 +906,13 @@ async def test_get_status_projects_v1_history(show_history_output):
         assert [event["EventType"] for event in status.history] == [
             "ExecutionStarted",
             "TaskCompleted",
+            "TaskFailed",
+            "SubOrchestrationInstanceFailed",
             "ExecutionCompleted",
         ]
+        events_by_type = {
+            event["EventType"]: event for event in status.history
+        }
         assert status.history[0]["FunctionName"] == "orch"
         assert status.history[0]["Input"] == '{"root": true}'
         assert status.history[0]["ScheduledStartTime"] == (
@@ -889,17 +921,28 @@ async def test_get_status_projects_v1_history(show_history_output):
         assert status.history[0]["ParentTraceContext"]["SpanId"] == "span-id"
         assert status.history[0]["OrchestrationSpanId"] == (
             "orchestration-span-id")
-        assert status.history[1]["FunctionName"] == "activity"
-        assert status.history[1]["Input"] == '{"value": 1}'
-        assert status.history[1]["ScheduledTime"] == (
+        completed = events_by_type["TaskCompleted"]
+        assert completed["FunctionName"] == "activity"
+        assert completed["Input"] == '{"value": 1}'
+        assert completed["ScheduledTime"] == (
             "2026-01-01T00:00:01.000000Z")
-        assert status.history[2]["OrchestrationStatus"] == "Completed"
+        task_failed = events_by_type["TaskFailed"]
+        assert task_failed["Reason"] == "activity failed"
+        assert task_failed["Details"] == "activity details"
+        assert task_failed["FailureDetails"]["ErrorMessage"] == (
+            "activity failed")
+        child_failed = events_by_type["SubOrchestrationInstanceFailed"]
+        assert child_failed["Reason"] == "child failed"
+        assert child_failed["Details"] == "child details"
+        assert child_failed["FailureDetails"]["ErrorMessage"] == "child failed"
+        execution_completed = events_by_type["ExecutionCompleted"]
+        assert execution_completed["OrchestrationStatus"] == "Completed"
         if show_history_output:
-            assert status.history[1]["Result"] == {"result": 2}
-            assert status.history[2]["Result"] == {"done": True}
+            assert completed["Result"] == {"result": 2}
+            assert execution_completed["Result"] == {"done": True}
         else:
-            assert "Result" not in status.history[1]
-            assert "Result" not in status.history[2]
+            assert "Result" not in completed
+            assert "Result" not in execution_completed
         assert status.to_json()["historyEvents"] == status.history
     finally:
         await client.close()

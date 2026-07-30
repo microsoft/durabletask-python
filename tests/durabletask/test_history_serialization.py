@@ -19,8 +19,10 @@ from datetime import datetime, timezone
 from typing import Any, NamedTuple, cast
 
 import pytest
+from google.protobuf import timestamp_pb2, wrappers_pb2
 
 from durabletask import history, task
+import durabletask.internal.orchestrator_service_pb2 as pb
 
 _TS = datetime(2025, 1, 2, 3, 4, 5, 678901, tzinfo=timezone.utc)
 _NAIVE_TS = datetime(2024, 12, 31, 23, 59, 58)
@@ -48,6 +50,40 @@ def _legacy_to_dict(event: history.HistoryEvent) -> dict[str, Any]:
 
 def _failure(message: str = 'boom') -> task.FailureDetails:
     return task.FailureDetails(message, 'RuntimeError', 'Traceback...')
+
+
+@pytest.mark.parametrize(
+    ("proto_field", "expected_type"),
+    [
+        ("taskFailed", history.TaskFailedEvent),
+        ("subOrchestrationInstanceFailed",
+         history.SubOrchestrationInstanceFailedEvent),
+    ],
+)
+def test_failed_events_preserve_legacy_failure_fields_from_proto(
+        proto_field: str,
+        expected_type: type[history.HistoryEvent]):
+    timestamp = timestamp_pb2.Timestamp()
+    timestamp.FromDatetime(_TS)
+    event = pb.HistoryEvent(eventId=2, timestamp=timestamp)
+    failed_event = getattr(event, proto_field)
+    failed_event.taskScheduledId = 1
+    failed_event.failureDetails.CopyFrom(pb.TaskFailureDetails(
+        errorMessage="activity failed",
+        errorType="RuntimeError",
+        stackTrace=wrappers_pb2.StringValue(value="redacted details")))
+
+    converted = history._from_protobuf(event)  # pyright: ignore[reportPrivateUsage]
+
+    assert type(converted) is expected_type
+    assert isinstance(
+        converted,
+        (history.TaskFailedEvent,
+         history.SubOrchestrationInstanceFailedEvent))
+    assert converted.reason == "activity failed"
+    assert converted.details == "redacted details"
+    assert converted.failure_details == task.FailureDetails(
+        "activity failed", "RuntimeError", "redacted details")
 
 
 @dataclass
