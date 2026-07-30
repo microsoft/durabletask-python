@@ -33,8 +33,11 @@ avoiding repeated allocation of unused worker resources.
 FIXED
 
 - The v1-compatible `get_status()` API now supports `show_history` and
-  `show_history_output`, including compacted `historyEvents` output without an
-  additional history request when history is not requested.
+`show_history_output`, including compacted `historyEvents` output without an
+additional history request when history is not requested. Failed activity and
+sub-orchestration events expose the structured `FailureDetails` supplied by
+the gRPC host, but not the v1-only top-level `Reason` and `Details` fields,
+which are not represented by the shared gRPC history protocol.
 - Check-status responses now include the standard `Retry-After: 10` polling
 header. Failed orchestrations return HTTP 200 from the wait helper by default;
 callers can request HTTP 500 responses through

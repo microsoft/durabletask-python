@@ -968,9 +968,7 @@ def _fake_history():
             timestamp=started_at + timedelta(seconds=5),
             task_scheduled_id=4,
             failure_details=dt_task.FailureDetails(
-                "activity failed", "RuntimeError", "activity details"),
-            reason="activity failed",
-            details="activity details"),
+                "activity failed", "RuntimeError", "activity stack trace")),
         dt_history.SubOrchestrationInstanceCreatedEvent(
             event_id=6,
             timestamp=started_at + timedelta(seconds=6),
@@ -980,11 +978,7 @@ def _fake_history():
         dt_history.SubOrchestrationInstanceFailedEvent(
             event_id=7,
             timestamp=started_at + timedelta(seconds=7),
-            task_scheduled_id=6,
-            failure_details=dt_task.FailureDetails(
-                "child failed", "RuntimeError", "child details"),
-            reason="child failed",
-            details="child details"),
+            task_scheduled_id=6),
         dt_history.ExecutionCompletedEvent(
             event_id=8,
             timestamp=started_at + timedelta(seconds=8),
@@ -994,7 +988,7 @@ def _fake_history():
 
 
 @pytest.mark.parametrize("show_history_output", [False, True])
-async def test_get_status_projects_v1_history(show_history_output):
+async def test_get_status_projects_available_v1_history(show_history_output):
     client = _make_client()
     try:
         history_mock = AsyncMock(return_value=_fake_history())
@@ -1039,14 +1033,16 @@ async def test_get_status_projects_v1_history(show_history_output):
         assert completed["ScheduledTime"] == (
             "2026-01-01T00:00:01.000000Z")
         task_failed = events_by_type["TaskFailed"]
-        assert task_failed["Reason"] == "activity failed"
-        assert task_failed["Details"] == "activity details"
         assert task_failed["FailureDetails"]["ErrorMessage"] == (
             "activity failed")
+        assert task_failed["FailureDetails"]["StackTrace"] == (
+            "activity stack trace")
+        assert "Reason" not in task_failed
+        assert "Details" not in task_failed
         child_failed = events_by_type["SubOrchestrationInstanceFailed"]
-        assert child_failed["Reason"] == "child failed"
-        assert child_failed["Details"] == "child details"
-        assert child_failed["FailureDetails"]["ErrorMessage"] == "child failed"
+        assert "Reason" not in child_failed
+        assert "Details" not in child_failed
+        assert "FailureDetails" not in child_failed
         execution_completed = events_by_type["ExecutionCompleted"]
         assert execution_completed["OrchestrationStatus"] == "Completed"
         if show_history_output:

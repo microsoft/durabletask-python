@@ -94,8 +94,6 @@ class TaskCompletedEvent(HistoryEvent):
 class TaskFailedEvent(HistoryEvent):
     task_scheduled_id: int
     failure_details: task.FailureDetails | None = None
-    reason: str | None = None
-    details: str | None = None
 
 
 @dataclass(slots=True)
@@ -118,8 +116,6 @@ class SubOrchestrationInstanceCompletedEvent(HistoryEvent):
 class SubOrchestrationInstanceFailedEvent(HistoryEvent):
     task_scheduled_id: int
     failure_details: task.FailureDetails | None = None
-    reason: str | None = None
-    details: str | None = None
 
 
 @dataclass(slots=True)
@@ -288,15 +284,6 @@ def _failure_details(msg: Message, field_name: str) -> task.FailureDetails | Non
         details.errorType,
         details.stackTrace.value if details.HasField('stackTrace') else None,
     )
-
-
-def _failure_event_kwargs(msg: Message) -> dict[str, Any]:
-    failure_details = _failure_details(msg, 'failureDetails')
-    return {
-        'failure_details': failure_details,
-        'reason': failure_details.message if failure_details is not None else None,
-        'details': failure_details.stack_trace if failure_details is not None else None,
-    }
 
 
 def _trace_context(msg: Message, field_name: str) -> TraceContext | None:
@@ -503,7 +490,7 @@ _EVENT_CONVERTERS: dict[str, Callable[[pb.HistoryEvent], HistoryEvent]] = {
     'taskFailed': lambda event: TaskFailedEvent(
         **_base_kwargs(event),
         task_scheduled_id=event.taskFailed.taskScheduledId,
-        **_failure_event_kwargs(event.taskFailed),
+        failure_details=_failure_details(event.taskFailed, 'failureDetails'),
     ),
     'subOrchestrationInstanceCreated': lambda event: SubOrchestrationInstanceCreatedEvent(
         **_base_kwargs(event),
@@ -522,7 +509,7 @@ _EVENT_CONVERTERS: dict[str, Callable[[pb.HistoryEvent], HistoryEvent]] = {
     'subOrchestrationInstanceFailed': lambda event: SubOrchestrationInstanceFailedEvent(
         **_base_kwargs(event),
         task_scheduled_id=event.subOrchestrationInstanceFailed.taskScheduledId,
-        **_failure_event_kwargs(event.subOrchestrationInstanceFailed),
+        failure_details=_failure_details(event.subOrchestrationInstanceFailed, 'failureDetails'),
     ),
     'timerCreated': lambda event: TimerCreatedEvent(
         **_base_kwargs(event),

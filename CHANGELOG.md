@@ -41,8 +41,6 @@ import paths, `__all__`, `dir()`, and star-imports behave exactly as before.
 
 FIXED
 
-- Failed task and sub-orchestration history events now retain the host-provided
-  failure `reason` and redacted `details` alongside structured failure details.
 - Fixed `AsyncTaskHubGrpcClient` failing during construction when no current
 event loop was set. SDK-owned async gRPC channels are now created on first use,
 binding them to the event loop that performs the RPC.
