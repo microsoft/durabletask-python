@@ -28,6 +28,7 @@ from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .http.http_management_payload import HttpManagementPayload, replace_url_origin
 from .internal.compat.durable_orchestration_status import DurableOrchestrationStatus
 from .internal.compat.entity_state_response import EntityStateResponse
+from .internal.compat.history_projection import project_history
 from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus, to_durabletask_statuses
 from .internal.compat.purge_history_result import PurgeHistoryResult
 
@@ -366,15 +367,27 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         ``OrchestrationState`` for v1 back-compat. When the instance does not
         exist, a falsy status is returned rather than ``None``.
 
-        The ``show_history`` and ``show_history_output`` flags have no
-        equivalent in durabletask and are ignored. Payloads are fetched to
+        When ``show_history`` is true, history is fetched and projected into
+        the v1 status-query shape. ``show_history_output`` controls whether
+        output-bearing history fields are included. Payloads are fetched to
         preserve the v1 output, custom-status, and failure-detail fields;
         ``show_input`` controls whether the compatibility wrapper exposes the
-        input.
+        orchestration and history inputs.
         """
         state = await self.get_orchestration_state(instance_id, fetch_payloads=True)
+        projected_history = None
+        if (show_history
+                and state is not None
+                and state.runtime_status != OrchestrationStatus.PENDING):
+            history = await self.get_orchestration_history(instance_id)
+            projected_history = project_history(
+                history,
+                show_input=show_input,
+                show_history_output=show_history_output)
         return DurableOrchestrationStatus.from_orchestration_state(
-            state, include_input=show_input)
+            state,
+            include_input=show_input,
+            history=projected_history)
 
     @deprecated("get_status_all is deprecated; use get_all_orchestration_states instead.")
     async def get_status_all(self) -> list[DurableOrchestrationStatus]:

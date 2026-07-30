@@ -269,8 +269,10 @@ instead of calling `context.set_result`.
 
 - `DurableOrchestrationContext.histories` is unavailable. Retrieve history with
   `client.get_orchestration_history(instance_id)`.
-- The compatibility `show_history` and `show_history_output` status flags are
-  accepted but ignored.
+- `get_status(show_history=True)` cannot reproduce the v1 top-level `Reason`
+  and `Details` fields for failed activities or sub-orchestrations because the
+  shared gRPC history protocol represents only structured `FailureDetails`.
+  Read `FailureDetails` when present.
 - Distributed tracing is not yet wired through the Python provider.
 - Continuous history export is not supported by Azure Functions.
 - Unusual callable signatures can be misclassified by the compatibility layer.

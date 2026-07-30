@@ -19,6 +19,7 @@ from azure.durable_functions.internal.compat.orchestration_runtime_status import
 from azure.durable_functions.http.http_management_payload import (
     replace_url_origin,
 )
+from durabletask import history as dt_history, task as dt_task
 from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus
 from durabletask.entities import EntityInstanceId
 from durabletask.task import RetryPolicy
@@ -850,10 +851,14 @@ async def test_get_status_suppresses_only_input_by_default():
     client = _make_client()
     try:
         state = _fake_state(runtime_status=OrchestrationStatus.COMPLETED)
+        history_mock = AsyncMock()
         with patch.object(client, "get_orchestration_state",
-                          new=AsyncMock(return_value=state)):
+                          new=AsyncMock(return_value=state)), \
+                patch.object(client, "get_orchestration_history",
+                             new=history_mock):
             with pytest.warns(DeprecationWarning):
                 status = await client.get_status("abc")
+        history_mock.assert_not_awaited()
         assert bool(status) is True
         assert status.name == "orch"
         assert status.instance_id == "abc"
@@ -908,13 +913,213 @@ async def test_get_status_failed_preserves_failure_output():
 async def test_get_status_missing_instance_is_falsy():
     client = _make_client()
     try:
+        history_mock = AsyncMock()
         with patch.object(client, "get_orchestration_state",
-                          new=AsyncMock(return_value=None)):
+                          new=AsyncMock(return_value=None)), \
+                patch.object(client, "get_orchestration_history",
+                             new=history_mock):
             with pytest.warns(DeprecationWarning):
-                status = await client.get_status("missing")
+                status = await client.get_status("missing", show_history=True)
+        history_mock.assert_not_awaited()
         assert bool(status) is False
         assert status.runtime_status is None
         assert status.output is None
+    finally:
+        await client.close()
+
+
+def _fake_history():
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return [
+        dt_history.OrchestratorStartedEvent(
+            event_id=-1, timestamp=started_at),
+        dt_history.ExecutionStartedEvent(
+            event_id=0,
+            timestamp=started_at,
+            name="orch",
+            version="v1",
+            input='{"root": true}',
+            scheduled_start_timestamp=started_at + timedelta(minutes=1),
+            parent_trace_context=dt_history.TraceContext(
+                trace_parent="trace-parent",
+                span_id="span-id"),
+            orchestration_span_id="orchestration-span-id"),
+        dt_history.TaskScheduledEvent(
+            event_id=1,
+            timestamp=started_at + timedelta(seconds=1),
+            name="activity",
+            version="v1",
+            input='{"value": 1}'),
+        dt_history.OrchestratorCompletedEvent(
+            event_id=-1,
+            timestamp=started_at + timedelta(seconds=2)),
+        dt_history.TaskCompletedEvent(
+            event_id=2,
+            timestamp=started_at + timedelta(seconds=3),
+            task_scheduled_id=1,
+            result='{"result": 2}'),
+        dt_history.TaskScheduledEvent(
+            event_id=4,
+            timestamp=started_at + timedelta(seconds=4),
+            name="failed_activity",
+            input='{"value": 2}'),
+        dt_history.TaskFailedEvent(
+            event_id=5,
+            timestamp=started_at + timedelta(seconds=5),
+            task_scheduled_id=4,
+            failure_details=dt_task.FailureDetails(
+                "activity failed", "RuntimeError", "activity stack trace")),
+        dt_history.SubOrchestrationInstanceCreatedEvent(
+            event_id=6,
+            timestamp=started_at + timedelta(seconds=6),
+            instance_id="child",
+            name="failed_child",
+            input='{"child": 1}'),
+        dt_history.SubOrchestrationInstanceFailedEvent(
+            event_id=7,
+            timestamp=started_at + timedelta(seconds=7),
+            task_scheduled_id=6),
+        dt_history.ExecutionCompletedEvent(
+            event_id=8,
+            timestamp=started_at + timedelta(seconds=8),
+            orchestration_status=OrchestrationStatus.COMPLETED.value,
+            result='{"done": true}'),
+    ]
+
+
+@pytest.mark.parametrize("show_history_output", [False, True])
+async def test_get_status_projects_available_v1_history(show_history_output):
+    client = _make_client()
+    try:
+        history_mock = AsyncMock(return_value=_fake_history())
+        with patch.object(
+                client,
+                "get_orchestration_state",
+                new=AsyncMock(return_value=_fake_state())), \
+                patch.object(
+                    client,
+                    "get_orchestration_history",
+                    new=history_mock):
+            with pytest.warns(DeprecationWarning):
+                status = await client.get_status(
+                    "abc",
+                    show_history=True,
+                    show_history_output=show_history_output,
+                    show_input=True)
+
+        history_mock.assert_awaited_once_with("abc")
+        assert status.history is not None
+        assert [event["EventType"] for event in status.history] == [
+            "ExecutionStarted",
+            "TaskCompleted",
+            "TaskFailed",
+            "SubOrchestrationInstanceFailed",
+            "ExecutionCompleted",
+        ]
+        events_by_type = {
+            event["EventType"]: event for event in status.history
+        }
+        assert status.history[0]["FunctionName"] == "orch"
+        assert status.history[0]["Input"] == '{"root": true}'
+        assert status.history[0]["ScheduledStartTime"] == (
+            "2026-01-01T00:01:00.000000Z")
+        assert "ScheduledStartTimestamp" not in status.history[0]
+        assert status.history[0]["ParentTraceContext"]["SpanId"] == "span-id"
+        assert status.history[0]["OrchestrationSpanId"] == (
+            "orchestration-span-id")
+        completed = events_by_type["TaskCompleted"]
+        assert completed["FunctionName"] == "activity"
+        assert completed["Input"] == '{"value": 1}'
+        assert completed["ScheduledTime"] == (
+            "2026-01-01T00:00:01.000000Z")
+        task_failed = events_by_type["TaskFailed"]
+        assert task_failed["FailureDetails"]["ErrorMessage"] == (
+            "activity failed")
+        assert task_failed["FailureDetails"]["StackTrace"] == (
+            "activity stack trace")
+        assert "Reason" not in task_failed
+        assert "Details" not in task_failed
+        child_failed = events_by_type["SubOrchestrationInstanceFailed"]
+        assert "Reason" not in child_failed
+        assert "Details" not in child_failed
+        assert "FailureDetails" not in child_failed
+        execution_completed = events_by_type["ExecutionCompleted"]
+        assert execution_completed["OrchestrationStatus"] == "Completed"
+        if show_history_output:
+            assert completed["Result"] == {"result": 2}
+            assert execution_completed["Result"] == {"done": True}
+        else:
+            assert "Result" not in completed
+            assert "Result" not in execution_completed
+        assert status.to_json()["historyEvents"] == status.history
+    finally:
+        await client.close()
+
+
+async def test_get_status_history_suppresses_inputs():
+    client = _make_client()
+    try:
+        with patch.object(
+                client,
+                "get_orchestration_state",
+                new=AsyncMock(return_value=_fake_state())), \
+                patch.object(
+                    client,
+                    "get_orchestration_history",
+                    new=AsyncMock(return_value=_fake_history())):
+            with pytest.warns(DeprecationWarning):
+                status = await client.get_status("abc", show_history=True)
+
+        assert status.history is not None
+        assert all("Input" not in event for event in status.history)
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize(
+    "runtime_status",
+    [OrchestrationStatus.PENDING, None],
+)
+async def test_get_status_show_history_skips_unavailable_history(runtime_status):
+    client = _make_client()
+    try:
+        state = None if runtime_status is None else _fake_state(runtime_status)
+        history_mock = AsyncMock()
+        with patch.object(
+                client,
+                "get_orchestration_state",
+                new=AsyncMock(return_value=state)), \
+                patch.object(
+                    client,
+                    "get_orchestration_history",
+                    new=history_mock):
+            with pytest.warns(DeprecationWarning):
+                status = await client.get_status("abc", show_history=True)
+
+        history_mock.assert_not_awaited()
+        assert status.history is None
+    finally:
+        await client.close()
+
+
+async def test_get_status_show_history_fetches_continued_as_new_history():
+    client = _make_client()
+    try:
+        history_mock = AsyncMock(return_value=[])
+        with patch.object(
+                client,
+                "get_orchestration_state",
+                new=AsyncMock(return_value=_fake_state(
+                    OrchestrationStatus.CONTINUED_AS_NEW))), \
+                patch.object(
+                    client,
+                    "get_orchestration_history",
+                    new=history_mock):
+            with pytest.warns(DeprecationWarning):
+                status = await client.get_status("abc", show_history=True)
+
+        history_mock.assert_awaited_once_with("abc")
+        assert status.history == []
     finally:
         await client.close()
 

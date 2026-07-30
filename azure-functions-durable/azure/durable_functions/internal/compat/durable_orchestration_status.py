@@ -27,18 +27,23 @@ class DurableOrchestrationStatus:
     the v1 behaviour where ``get_status`` never returned ``None``.
     """
 
-    def __init__(self, state: Optional[OrchestrationState] = None):
+    def __init__(
+            self,
+            state: Optional[OrchestrationState] = None,
+            history: Optional[list[Any]] = None):
         self._state = state
         self._include_input = True
+        self._history = history
 
     @classmethod
     def from_orchestration_state(
             cls,
             state: Optional[OrchestrationState],
             *,
-            include_input: bool = True) -> "DurableOrchestrationStatus":
+            include_input: bool = True,
+            history: Optional[list[Any]] = None) -> "DurableOrchestrationStatus":
         """Wrap a durabletask ``OrchestrationState`` (or ``None``)."""
-        status = cls(state)
+        status = cls(state, history)
         status._include_input = include_input
         return status
 
@@ -77,7 +82,8 @@ class DurableOrchestrationStatus:
             serialized_custom_status=_reserialize(data.get("customStatus")),
             failure_details=None,
         )
-        return cls(state)
+        history = data.get("historyEvents", data.get("history"))
+        return cls(state, history)
 
     def __bool__(self) -> bool:
         return self._state is not None
@@ -145,10 +151,10 @@ class DurableOrchestrationStatus:
     def history(self) -> Optional[list[Any]]:
         """Get the execution history.
 
-        History is not available through this compatibility path and is always
-        ``None``; use ``get_orchestration_history`` on the client instead.
+        The history is populated only when requested by passing
+        ``show_history=True`` to the client's compatibility ``get_status`` API.
         """
-        return None
+        return self._history
 
     def to_json(self) -> dict[str, Any]:
         """Convert this status into a v1-compatible JSON dictionary.
@@ -179,6 +185,8 @@ class DurableOrchestrationStatus:
             self._state.serialized_custom_status if self._state is not None else None)
         if custom_status is not None:
             result["customStatus"] = custom_status
+        if self.history is not None:
+            result["historyEvents"] = self.history
         return result
 
     @staticmethod
