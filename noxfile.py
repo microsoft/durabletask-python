@@ -12,6 +12,7 @@ Usage:
 
     nox -s lint
     nox -s typecheck_core
+    nox -s typecheck_functions_package
     nox -s core_tests-3.10
     nox -s azuremanaged_tests-3.10
     nox -s functions_unit-3.13
@@ -27,8 +28,10 @@ import os
 import shutil
 import socket
 import subprocess
+import tarfile
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Sequence
 
@@ -323,6 +326,79 @@ def typecheck_functions(session: nox.Session) -> None:
     )
 
 
+@nox.session(python=["3.13"])
+def typecheck_functions_package(session: nox.Session) -> None:
+    """Check the installed Functions and core wheels with strict Pyright."""
+    session.install("build", "pyright")
+    temp_dir = Path(session.create_tmp())
+    artifact_dir = temp_dir / "functions-dist"
+    core_artifact_dir = temp_dir / "core-dist"
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir)
+    if core_artifact_dir.exists():
+        shutil.rmtree(core_artifact_dir)
+    session.run(
+        "python",
+        "-m",
+        "build",
+        "--outdir",
+        str(artifact_dir),
+        str(AZURE_FUNCTIONS_DURABLE),
+    )
+    session.run(
+        "python",
+        "-m",
+        "build",
+        "--wheel",
+        "--outdir",
+        str(core_artifact_dir),
+        str(REPO_ROOT),
+    )
+
+    wheels = list(artifact_dir.glob("azure_functions_durable-*.whl"))
+    sdists = list(artifact_dir.glob("azure_functions_durable-*.tar.gz"))
+    core_wheels = list(core_artifact_dir.glob("durabletask-*.whl"))
+    if len(wheels) != 1 or len(sdists) != 1 or len(core_wheels) != 1:
+        session.error(
+            "Expected one provider wheel, provider source distribution, "
+            "and core wheel")
+    wheel = wheels[0]
+    sdist = sdists[0]
+    core_wheel = core_wheels[0]
+    marker = "azure/durable_functions/py.typed"
+    with zipfile.ZipFile(wheel) as archive:
+        if marker not in archive.namelist():
+            session.error(f"{marker} is missing from {wheel.name}")
+    with tarfile.open(sdist, "r:gz") as archive:
+        if not any(name.endswith(f"/{marker}") for name in archive.getnames()):
+            session.error(f"{marker} is missing from {sdist.name}")
+
+    session.install(str(core_wheel), str(wheel))
+    session.run(
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "--force-reinstall",
+        "--no-deps",
+        str(core_wheel),
+        str(wheel),
+    )
+    python_path = session.run(
+        "python",
+        "-c",
+        "import sys; print(sys.executable)",
+        silent=True,
+    ).strip()
+    session.run(
+        "pyright",
+        "--pythonpath",
+        python_path,
+        "-p",
+        "tests/azure-functions-durable/typing/pyrightconfig.json",
+    )
+
+
 @nox.session(python=PYTHON_VERSIONS)
 def core_tests(session: nox.Session) -> None:
     """Run core SDK tests against an automatically started Blob Azurite."""
@@ -459,6 +535,7 @@ def ci(session: nox.Session) -> None:
     session.notify("lint", ())
     session.notify("typecheck_core", ())
     session.notify("typecheck_functions", ())
+    session.notify("typecheck_functions_package", ())
     session.notify(f"core_tests-{python_version}", ())
     session.notify(f"azuremanaged_tests-{python_version}", ())
     session.notify("functions_unit-3.13", ())
