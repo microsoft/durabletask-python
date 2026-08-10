@@ -8,14 +8,14 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, TypeVar, cast, overload
+from typing import Any, Protocol, TypeVar, cast, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -58,6 +58,14 @@ DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
 _STREAM_CLOSED_SENTINEL = object()
 _WorkItem = tuple[Callable[..., Any], Callable[..., Any], tuple[Any, ...], dict[str, Any]]
+
+
+class ExceptionPropertiesProvider(Protocol):
+    """Extract portable custom properties from an exception."""
+
+    def get_exception_properties(self, exception: Exception) -> Mapping[str, Any] | None:
+        """Return properties to include in the exception's failure details."""
+        ...
 
 
 class ConcurrencyOptions:
@@ -463,6 +471,8 @@ class TaskHubGrpcWorker:
             gRPC resiliency settings retained for reconnect handling.
         concurrency_options (ConcurrencyOptions | None, optional): Configuration for
             controlling worker concurrency limits. If None, default settings are used.
+        exception_properties_provider (ExceptionPropertiesProvider | None, optional):
+            Extracts portable custom properties from exceptions reported by this worker.
         emit_trace_spans (bool, optional): Whether the worker emits Durable Task
             lifecycle spans. Set to ``False`` when the host owns those spans; the
             worker will still make inbound trace context current during user-code
@@ -537,6 +547,7 @@ class TaskHubGrpcWorker:
             maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
             payload_store: PayloadStore | None = None,
             data_converter: DataConverter | None = None,
+            exception_properties_provider: ExceptionPropertiesProvider | None = None,
             emit_trace_spans: bool = True,
     ):
         self._registry = _Registry()
@@ -557,6 +568,7 @@ class TaskHubGrpcWorker:
         self._owns_channel = channel is None
         self._secure_channel = secure_channel
         self._payload_store = payload_store
+        self._exception_properties_provider = exception_properties_provider
         self._emit_trace_spans = emit_trace_spans
         self._channel_options = channel_options
         self._resiliency_options = (
@@ -1176,7 +1188,8 @@ class TaskHubGrpcWorker:
                 self._registry, self._logger,
                 persisted_orch_span_id=persisted_orch_span_id,
                 maximum_timer_interval=self.maximum_timer_interval,
-                data_converter=self._data_converter)
+                data_converter=self._data_converter,
+                exception_properties_provider=self._exception_properties_provider)
             with tracing.suppress_span_emission(not self._emit_trace_spans):
                 with tracing.use_trace_context(
                         parent_trace_ctx if not self._emit_trace_spans else None):
@@ -1254,7 +1267,8 @@ class TaskHubGrpcWorker:
             self._logger.exception(
                 f"An error occurred while trying to execute instance '{instance_id}': {ex}"
             )
-            failure_details = ph.new_failure_details(ex)
+            failure_details = ph.new_failure_details(
+                ex, self._exception_properties_provider, self._logger)
             actions = [
                 ph.new_complete_orchestration_action(
                     -1, pb.ORCHESTRATION_STATUS_FAILED, "", failure_details
@@ -1340,7 +1354,8 @@ class TaskHubGrpcWorker:
                 res = pb.ActivityResponse(
                     instanceId=instance_id,
                     taskId=req.taskId,
-                    failureDetails=ph.new_failure_details(ex),
+                    failureDetails=ph.new_failure_details(
+                        ex, self._exception_properties_provider, self._logger),
                     completionToken=completionToken,
                 )
 
@@ -1444,7 +1459,8 @@ class TaskHubGrpcWorker:
                         tracing.set_span_error(span, ex)
                         self._logger.exception(ex)
                         operation_result = pb.OperationResult(failure=pb.OperationResultFailure(
-                            failureDetails=ph.new_failure_details(ex),
+                            failureDetails=ph.new_failure_details(
+                                ex, self._exception_properties_provider, self._logger),
                             startTimeUtc=new_timestamp(start_time),
                             endTimeUtc=new_timestamp(datetime.now(timezone.utc))
                         ))
@@ -1499,6 +1515,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                  registry: _Registry,
                  data_converter: DataConverter,
                  maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+                 exception_properties_provider: ExceptionPropertiesProvider | None = None,
+                 logger: logging.Logger | None = None,
                  ):
         self._generator = None
         self._is_replaying = True
@@ -1529,6 +1547,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._orchestration_trace_context: pb.TraceContext | None = None
         self._maximum_timer_interval = maximum_timer_interval
         self._data_converter = data_converter
+        self._exception_properties_provider = exception_properties_provider
+        self._logger = logger
 
     def run(self, generator: Generator[task.Task[Any], Any, Any]) -> None:
         self._generator = generator
@@ -1615,7 +1635,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             self.next_sequence_number(),
             pb.ORCHESTRATION_STATUS_FAILED,
             None,
-            ph.new_failure_details(ex) if isinstance(ex, Exception) else ex,
+            ph.new_failure_details(
+                ex, self._exception_properties_provider, self._logger) if isinstance(ex, Exception) else ex,
         )
         self._pending_actions[action.id] = action
 
@@ -2177,11 +2198,13 @@ class _OrchestrationExecutor:
         data_converter: DataConverter,
         persisted_orch_span_id: str | None = None,
         maximum_timer_interval: timedelta | None = DEFAULT_MAXIMUM_TIMER_INTERVAL,
+        exception_properties_provider: ExceptionPropertiesProvider | None = None,
     ):
         self._registry = registry
         self._logger = logger
         self._data_converter = data_converter
         self._maximum_timer_interval = maximum_timer_interval
+        self._exception_properties_provider = exception_properties_provider
         self._is_suspended = False
         self._suspended_events: list[pb.HistoryEvent] = []
         self._persisted_orch_span_id = persisted_orch_span_id
@@ -2246,6 +2269,8 @@ class _OrchestrationExecutor:
             self._registry,
             maximum_timer_interval=self._maximum_timer_interval,
             data_converter=self._data_converter,
+            exception_properties_provider=self._exception_properties_provider,
+            logger=self._logger,
         )
         try:
             # Rebuild local state by replaying old history into the orchestrator function

@@ -19,7 +19,11 @@ from durabletask.grpc_options import (
 import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
 from durabletask.serialization import DataConverter
-from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
+from durabletask.worker import (
+    ConcurrencyOptions,
+    ExceptionPropertiesProvider,
+    TaskHubGrpcWorker,
+)
 
 
 # Worker class used for Durable Task Scheduler (DTS)
@@ -46,6 +50,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             externalizing large payloads. If None, payloads are sent inline.
         log_handler (logging.Handler | None, optional): Custom logging handler for worker logs.
         log_formatter (logging.Formatter | None, optional): Custom log formatter for worker logs.
+        exception_properties_provider (ExceptionPropertiesProvider | None, optional):
+            Extracts portable custom properties from exceptions reported by this worker.
 
     Raises:
         ValueError: If taskhub is empty or None.
@@ -84,7 +90,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  payload_store: PayloadStore | None = None,
                  data_converter: DataConverter | None = None,
                  log_handler: logging.Handler | None = None,
-                 log_formatter: logging.Formatter | None = None):
+                 log_formatter: logging.Formatter | None = None,
+                 exception_properties_provider: ExceptionPropertiesProvider | None = None):
 
         if not taskhub:
             raise ValueError("The taskhub value cannot be empty.")
@@ -113,5 +120,6 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             # DTS natively supports long timers so chunking is unnecessary
             maximum_timer_interval=None,
             payload_store=payload_store,
-            data_converter=data_converter
+            data_converter=data_converter,
+            exception_properties_provider=exception_properties_provider,
         )

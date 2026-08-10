@@ -254,10 +254,7 @@ def parse_orchestration_state(
         data_converter: DataConverter | None = None) -> OrchestrationState:
     failure_details = None
     if state.failureDetails.errorMessage != '' or state.failureDetails.errorType != '':
-        failure_details = task.FailureDetails(
-            state.failureDetails.errorMessage,
-            state.failureDetails.errorType,
-            state.failureDetails.stackTrace.value if not helpers.is_empty(state.failureDetails.stackTrace) else None)
+        failure_details = helpers.failure_details_from_protobuf(state.failureDetails)
 
     return OrchestrationState(
         state.instanceId,

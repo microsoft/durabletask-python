@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `exception_properties_provider` to `DurableTaskSchedulerWorker` for
+  attaching portable custom properties to activity, entity, and orchestration
+  failures.
+
 ## v1.9.0
 
 CHANGED
