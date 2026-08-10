@@ -56,4 +56,5 @@ def test_azure_managed_legacy_logging_warning_points_to_caller():
             log_handler=logging.NullHandler(),
         )
 
-    assert warnings[0].filename == __file__
+    warning = next(warning for warning in warnings if "log_handler" in str(warning.message))
+    assert warning.filename == __file__

@@ -42,7 +42,8 @@ def test_legacy_logging_options_warn_and_remain_supported(legacy_options):
     with pytest.warns(DeprecationWarning, match="log_handler") as warnings:
         client = TaskHubGrpcClient(channel=MagicMock(), **legacy_options)
 
-    assert warnings[0].filename == __file__
+    warning = next(warning for warning in warnings if "log_handler" in str(warning.message))
+    assert warning.filename == __file__
     if expected_handler is not None:
         assert client._logger.handlers == [expected_handler]
 
