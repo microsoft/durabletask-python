@@ -1746,7 +1746,7 @@ def test_continue_as_new(save_events: bool, new_version: str | None):
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
     assert complete_action.result.value == json.dumps(2)
-    assert complete_action.HasField("newVersion") is (new_version is not None)
+    assert complete_action.HasField("newVersion") == (new_version is not None)
     if new_version is not None:
         assert complete_action.newVersion.value == new_version
     assert len(complete_action.carryoverEvents) == (3 if save_events else 0)
