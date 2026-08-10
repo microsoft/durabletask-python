@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- Fixed deprecated `DurableFunctionsClient.suspend()` and `resume()` methods
+discarding their `reason` arguments. Reasons are now forwarded to the Durable
+Task backend.
+
 ## v2.0.0b2
 
 ADDED

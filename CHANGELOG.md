@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added optional `reason` parameters to `TaskHubGrpcClient` and
+`AsyncTaskHubGrpcClient` suspend and resume operations. The reason is now sent
+to the backend with the lifecycle request.
+
 ## v1.9.0
 
 ADDED

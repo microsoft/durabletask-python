@@ -786,13 +786,21 @@ class TaskHubGrpcClient:
             )
         self._stub.TerminateInstance(req)
 
-    def suspend_orchestration(self, instance_id: str) -> None:
-        req = pb.SuspendRequest(instanceId=instance_id)
+    def suspend_orchestration(self, instance_id: str, *,
+                              reason: str | None = None) -> None:
+        req = pb.SuspendRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Suspending instance '{instance_id}'.")
         self._stub.SuspendInstance(req)
 
-    def resume_orchestration(self, instance_id: str) -> None:
-        req = pb.ResumeRequest(instanceId=instance_id)
+    def resume_orchestration(self, instance_id: str, *,
+                             reason: str | None = None) -> None:
+        req = pb.ResumeRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Resuming instance '{instance_id}'.")
         self._stub.ResumeInstance(req)
 
@@ -1320,13 +1328,21 @@ class AsyncTaskHubGrpcClient:
             )
         await self._get_stub().TerminateInstance(req)
 
-    async def suspend_orchestration(self, instance_id: str) -> None:
-        req = pb.SuspendRequest(instanceId=instance_id)
+    async def suspend_orchestration(self, instance_id: str, *,
+                                    reason: str | None = None) -> None:
+        req = pb.SuspendRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Suspending instance '{instance_id}'.")
         await self._get_stub().SuspendInstance(req)
 
-    async def resume_orchestration(self, instance_id: str) -> None:
-        req = pb.ResumeRequest(instanceId=instance_id)
+    async def resume_orchestration(self, instance_id: str, *,
+                                   reason: str | None = None) -> None:
+        req = pb.ResumeRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Resuming instance '{instance_id}'.")
         await self._get_stub().ResumeInstance(req)
 
