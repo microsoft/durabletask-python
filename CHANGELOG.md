@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added an optional timeout to filtered orchestration purges. Callers can now
+limit a purge operation's duration and inspect `PurgeInstancesResult.is_complete`
+to determine whether it finished.
+
 ## v1.9.0
 
 ADDED

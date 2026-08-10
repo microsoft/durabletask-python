@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import AsyncIterable, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Generic, Protocol, TypeVar, cast, overload
 
@@ -846,13 +846,15 @@ class TaskHubGrpcClient:
                                 created_time_from: datetime | None = None,
                                 created_time_to: datetime | None = None,
                                 runtime_status: list[OrchestrationStatus] | None = None,
-                                recursive: bool = False) -> PurgeInstancesResult:
+                                recursive: bool = False,
+                                timeout: timedelta | None = None) -> PurgeInstancesResult:
         self._logger.info("Purging orchestrations by filter: "
                           f"created_time_from={created_time_from}, "
                           f"created_time_to={created_time_to}, "
                           f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
-                          f"recursive={recursive}")
-        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive)
+                          f"recursive={recursive}, "
+                          f"timeout={timeout}")
+        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive, timeout)
         resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(req)
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
@@ -1380,13 +1382,15 @@ class AsyncTaskHubGrpcClient:
                                       created_time_from: datetime | None = None,
                                       created_time_to: datetime | None = None,
                                       runtime_status: list[OrchestrationStatus] | None = None,
-                                      recursive: bool = False) -> PurgeInstancesResult:
+                                      recursive: bool = False,
+                                      timeout: timedelta | None = None) -> PurgeInstancesResult:
         self._logger.info("Purging orchestrations by filter: "
                           f"created_time_from={created_time_from}, "
                           f"created_time_to={created_time_to}, "
                           f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
-                          f"recursive={recursive}")
-        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive)
+                          f"recursive={recursive}, "
+                          f"timeout={timeout}")
+        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive, timeout)
         resp: pb.PurgeInstancesResponse = await self._get_stub().PurgeInstances(req)
         return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
 
