@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added the optional `new_version` argument to
+`OrchestrationContext.continue_as_new()` so continued orchestrations can
+switch to a new version.
+
 ## v1.9.0
 
 ADDED
