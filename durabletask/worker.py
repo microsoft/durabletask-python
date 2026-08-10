@@ -453,7 +453,7 @@ class TaskHubGrpcWorker:
             formatter. Use ``logger`` instead.
         logger (logging.Logger | None, optional): Caller-configured logger for
             worker logs. It cannot be combined with ``log_handler`` or
-            ``log_formatter``.
+            ``log_formatter``; doing so raises ``ValueError``.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to False.
         channel (grpc.Channel | None, optional): Pre-configured gRPC channel to use.

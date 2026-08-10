@@ -94,7 +94,7 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
             formatter. Use ``logger`` instead.
         logger (logging.Logger | None, optional): Caller-configured logger for
             client logs. It cannot be combined with ``log_handler`` or
-            ``log_formatter``.
+            ``log_formatter``; doing so raises ``ValueError``.
 
     Raises:
         ValueError: If taskhub is empty or None.

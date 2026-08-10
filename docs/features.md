@@ -331,7 +331,8 @@ client = TaskHubGrpcClient(
 ```
 
 The older `log_handler` and `log_formatter` parameters are deprecated. They
-cannot be combined with `logger` and will be removed in a future major release.
+will be removed in a future major release. Passing either one together with
+`logger` raises `ValueError`; none of the supplied logging options are ignored.
 
 ### Large payload externalization
 
