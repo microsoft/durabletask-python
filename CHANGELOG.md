@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `OrchestrationQuery.instance_id_prefix` to retrieve orchestration
+instances whose IDs begin with a specified prefix.
+
 ## v1.9.0
 
 ADDED

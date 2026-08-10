@@ -192,6 +192,7 @@ class OrchestrationQuery:
     created_time_from: datetime | None = None
     created_time_to: datetime | None = None
     runtime_status: list[OrchestrationStatus] | None = None
+    instance_id_prefix: str | None = None
     # Some backends don't respond well with max_instance_count = None, so we use the integer limit for non-paginated
     # results instead.
     max_instance_count: int | None = (1 << 31) - 1

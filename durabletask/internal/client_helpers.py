@@ -103,6 +103,7 @@ def build_query_instances_req(
             runtimeStatus=[status.value for status in orchestration_query.runtime_status] if orchestration_query.runtime_status else None,
             createdTimeFrom=helpers.new_timestamp(orchestration_query.created_time_from) if orchestration_query.created_time_from else None,
             createdTimeTo=helpers.new_timestamp(orchestration_query.created_time_to) if orchestration_query.created_time_to else None,
+            instanceIdPrefix=helpers.get_string_value(orchestration_query.instance_id_prefix),
             maxInstanceCount=orchestration_query.max_instance_count,
             fetchInputsAndOutputs=orchestration_query.fetch_inputs_and_outputs,
             continuationToken=continuation_token
