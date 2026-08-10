@@ -760,9 +760,7 @@ class TaskHubGrpcWorker:
         self._shutdown.clear()
 
         def run_loop() -> None:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self._async_run_loop())
+            asyncio.run(self._async_run_loop())
 
         self._logger.info(f"Starting gRPC worker that connects to {self._host_address}")
         self._runLoop = Thread(target=run_loop)

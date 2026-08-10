@@ -48,6 +48,9 @@ import paths, `__all__`, `dir()`, and star-imports behave exactly as before.
 
 FIXED
 
+- Fixed `TaskHubGrpcWorker` leaving its background event loop unclosed after
+shutdown, which could retain resources and emit delayed `ResourceWarning`
+messages.
 - Fixed `AsyncTaskHubGrpcClient` failing during construction when no current
 event loop was set. SDK-owned async gRPC channels are now created on first use,
 binding them to the event loop that performs the RPC.
