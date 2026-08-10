@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import inspect
 import logging
 import warnings
 from collections.abc import Sequence
@@ -70,6 +71,22 @@ AsyncClientInterceptor: TypeAlias = (
 
 SECURE_PROTOCOLS = ["https://", "grpcs://"]
 INSECURE_PROTOCOLS = ["http://", "grpc://"]
+
+
+def _get_legacy_logging_warning_stacklevel() -> int:
+    stacklevel = 1
+    frame = inspect.currentframe()
+    if frame is not None:
+        frame = frame.f_back
+
+    while frame is not None:
+        module_name = frame.f_globals.get("__name__", "")
+        if not module_name.startswith("durabletask"):
+            break
+        stacklevel += 1
+        frame = frame.f_back
+
+    return stacklevel
 
 
 def get_default_host_address() -> str:
@@ -191,7 +208,7 @@ def get_logger(
             "'log_handler' and 'log_formatter' are deprecated and will be removed "
             "in a future major release. Configure and pass a 'logger' instead.",
             DeprecationWarning,
-            stacklevel=3,
+            stacklevel=_get_legacy_logging_warning_stacklevel(),
         )
 
     logger = logging.Logger(f"durabletask-{name_suffix}")

@@ -4,6 +4,8 @@
 import logging
 from unittest.mock import MagicMock
 
+import pytest
+
 from durabletask.azuremanaged.client import (
     AsyncDurableTaskSchedulerClient,
     DurableTaskSchedulerClient,
@@ -42,3 +44,16 @@ def test_azure_managed_components_forward_supplied_logger():
     assert async_client._logger is logger
     assert worker._logger is logger
     assert logger.handlers == [handler]
+
+
+def test_azure_managed_legacy_logging_warning_points_to_caller():
+    with pytest.warns(DeprecationWarning, match="log_handler") as warnings:
+        DurableTaskSchedulerClient(
+            host_address="localhost:4001",
+            taskhub="test",
+            token_credential=None,
+            channel=MagicMock(),
+            log_handler=logging.NullHandler(),
+        )
+
+    assert warnings[0].filename == __file__

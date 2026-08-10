@@ -39,9 +39,10 @@ def test_core_components_use_supplied_logger_without_modifying_it():
 def test_legacy_logging_options_warn_and_remain_supported(legacy_options):
     expected_handler = legacy_options.get("log_handler")
 
-    with pytest.warns(DeprecationWarning, match="log_handler"):
+    with pytest.warns(DeprecationWarning, match="log_handler") as warnings:
         client = TaskHubGrpcClient(channel=MagicMock(), **legacy_options)
 
+    assert warnings[0].filename == __file__
     if expected_handler is not None:
         assert client._logger.handlers == [expected_handler]
 
