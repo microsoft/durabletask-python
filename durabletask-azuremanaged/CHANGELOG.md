@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added a `logger` parameter to `DurableTaskSchedulerClient`,
+  `AsyncDurableTaskSchedulerClient`, and `DurableTaskSchedulerWorker`. Applications
+  can now provide fully configured loggers without the SDK modifying them.
+
+CHANGED
+
+- Deprecated the `log_handler` and `log_formatter` parameters on
+  `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
+  `DurableTaskSchedulerWorker`. Configure and pass a `logger` instead. These
+  parameters will be removed in a future major release.
+
 ## v1.9.0
 
 CHANGED

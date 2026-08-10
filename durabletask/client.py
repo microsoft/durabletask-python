@@ -412,6 +412,7 @@ class TaskHubGrpcClient:
                  metadata: list[tuple[str, str]] | None = None,
                  log_handler: logging.Handler | None = None,
                  log_formatter: logging.Formatter | None = None,
+                 logger: logging.Logger | None = None,
                  channel: grpc.Channel | None = None,
                  secure_channel: bool = False,
                  interceptors: Sequence[shared.ClientInterceptor] | None = None,
@@ -482,7 +483,7 @@ class TaskHubGrpcClient:
         # can prepend the interceptor themselves via grpc.intercept_channel.
         self._channel = channel
         self._stub = cast(_SyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(channel))
-        self._logger = shared.get_logger("client", log_handler, log_formatter)
+        self._logger = shared.get_logger("client", log_handler, log_formatter, logger)
         self.default_version = default_version
         self._payload_store = payload_store
         self._emit_trace_spans = emit_trace_spans
@@ -941,6 +942,7 @@ class AsyncTaskHubGrpcClient:
                  metadata: list[tuple[str, str]] | None = None,
                  log_handler: logging.Handler | None = None,
                  log_formatter: logging.Formatter | None = None,
+                 logger: logging.Logger | None = None,
                  channel: grpc.aio.Channel | None = None,
                  secure_channel: bool = False,
                  interceptors: Sequence[shared.AsyncClientInterceptor] | None = None,
@@ -1008,7 +1010,7 @@ class AsyncTaskHubGrpcClient:
             if channel is not None
             else None
         )
-        self._logger = shared.get_logger("async_client", log_handler, log_formatter)
+        self._logger = shared.get_logger("async_client", log_handler, log_formatter, logger)
         self.default_version = default_version
         self._payload_store = payload_store
         self._emit_trace_spans = emit_trace_spans

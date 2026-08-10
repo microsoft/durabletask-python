@@ -38,7 +38,8 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
                  payload_store: PayloadStore | None = None,
                  data_converter: DataConverter | None = None,
                  log_handler: logging.Handler | None = None,
-                 log_formatter: logging.Formatter | None = None):
+                 log_formatter: logging.Formatter | None = None,
+                 logger: logging.Logger | None = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
@@ -57,6 +58,7 @@ class DurableTaskSchedulerClient(TaskHubGrpcClient):
             metadata=None,
             log_handler=log_handler,
             log_formatter=log_formatter,
+            logger=logger,
             interceptors=resolved_interceptors,
             channel_options=channel_options,
             resiliency_options=resiliency_options,
@@ -86,8 +88,13 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
         default_version (str | None, optional): Default version string for orchestrations.
         payload_store (PayloadStore | None, optional): A payload store for
             externalizing large payloads. If None, payloads are sent inline.
-        log_handler (logging.Handler | None, optional): Custom logging handler for client logs.
-        log_formatter (logging.Formatter | None, optional): Custom log formatter for client logs.
+        log_handler (logging.Handler | None, optional): Deprecated custom logging
+            handler for client logs. Use ``logger`` instead.
+        log_formatter (logging.Formatter | None, optional): Deprecated custom log
+            formatter. Use ``logger`` instead.
+        logger (logging.Logger | None, optional): Caller-configured logger for
+            client logs. It cannot be combined with ``log_handler`` or
+            ``log_formatter``.
 
     Raises:
         ValueError: If taskhub is empty or None.
@@ -118,7 +125,8 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
                  payload_store: PayloadStore | None = None,
                  data_converter: DataConverter | None = None,
                  log_handler: logging.Handler | None = None,
-                 log_formatter: logging.Formatter | None = None):
+                 log_formatter: logging.Formatter | None = None,
+                 logger: logging.Logger | None = None):
 
         if not taskhub:
             raise ValueError("Taskhub value cannot be empty. Please provide a value for your taskhub")
@@ -137,6 +145,7 @@ class AsyncDurableTaskSchedulerClient(AsyncTaskHubGrpcClient):
             metadata=None,
             log_handler=log_handler,
             log_formatter=log_formatter,
+            logger=logger,
             interceptors=resolved_interceptors,
             channel_options=channel_options,
             resiliency_options=resiliency_options,

@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added a `logger` parameter to `TaskHubGrpcClient`,
+  `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`. Applications can now
+  provide fully configured loggers without the SDK modifying their handlers,
+  formatter, level, filters, or propagation.
+
+CHANGED
+
+- Deprecated the `log_handler` and `log_formatter` parameters on
+  `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`.
+  Configure and pass a `logger` instead. These parameters will be removed in a
+  future major release.
+
 ## v1.9.0
 
 ADDED

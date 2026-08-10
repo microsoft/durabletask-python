@@ -447,9 +447,13 @@ class TaskHubGrpcWorker:
             Defaults to the value from environment variables or localhost.
         metadata (list[tuple[str, str]] | None, optional): gRPC metadata to include with
             requests. Used for authentication and routing. Defaults to None.
-        log_handler (logging.Handler | None, optional): Custom logging handler for worker logs. Defaults to None.
-        log_formatter (logging.Formatter | None, optional): Custom log formatter.
-            Defaults to None.
+        log_handler (logging.Handler | None, optional): Deprecated custom logging
+            handler for worker logs. Use ``logger`` instead.
+        log_formatter (logging.Formatter | None, optional): Deprecated custom log
+            formatter. Use ``logger`` instead.
+        logger (logging.Logger | None, optional): Caller-configured logger for
+            worker logs. It cannot be combined with ``log_handler`` or
+            ``log_formatter``.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to False.
         channel (grpc.Channel | None, optional): Pre-configured gRPC channel to use.
@@ -528,6 +532,7 @@ class TaskHubGrpcWorker:
             metadata: list[tuple[str, str]] | None = None,
             log_handler: logging.Handler | None = None,
             log_formatter: logging.Formatter | None = None,
+            logger: logging.Logger | None = None,
             channel: grpc.Channel | None = None,
             secure_channel: bool = False,
             interceptors: Sequence[shared.ClientInterceptor] | None = None,
@@ -546,7 +551,7 @@ class TaskHubGrpcWorker:
         self._host_address = (
             host_address if host_address else shared.get_default_host_address()
         )
-        self._logger = shared.get_logger("worker", log_handler, log_formatter)
+        self._logger = shared.get_logger("worker", log_handler, log_formatter, logger)
         self._shutdown = Event()
         self._is_running = False
         self._channel = channel
