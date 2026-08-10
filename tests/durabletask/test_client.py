@@ -1258,7 +1258,7 @@ def test_worker_stores_resiliency_options():
     assert worker._resiliency_options is resiliency
 
 
-def test_suspend_resume_orchestration_include_optional_reason():
+def test_suspend_resume_orchestration_includes_optional_reason():
     stub = MagicMock()
 
     with patch('durabletask.client.shared.get_grpc_channel', return_value=MagicMock()), patch(
@@ -1276,7 +1276,7 @@ def test_suspend_resume_orchestration_include_optional_reason():
 
 
 @pytest.mark.asyncio
-async def test_async_suspend_resume_orchestration_include_optional_reason():
+async def test_async_suspend_resume_orchestration_includes_optional_reason():
     stub = MagicMock()
     stub.SuspendInstance = AsyncMock()
     stub.ResumeInstance = AsyncMock()
