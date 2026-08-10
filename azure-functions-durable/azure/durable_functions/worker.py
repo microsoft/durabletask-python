@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import base64
+import logging
 from threading import Lock
 from typing import Any, Optional
 
@@ -18,6 +19,8 @@ from .internal.azurefunctions_null_stub import AzureFunctionsNullStub
 from .internal.compat.entity_context import wrap_entity
 from .internal.compat.orchestration_context import wrap_orchestrator
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
+
+_LOGGER = logging.getLogger(__name__)
 
 
 # Host-driven Azure Functions execution engine for orchestrator and entity
@@ -44,6 +47,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         super().__init__(
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
             emit_trace_spans=False,
+            logger=_LOGGER,
         )
         self._registration_lock = Lock()
         self._registered_orchestrator_functions: dict[

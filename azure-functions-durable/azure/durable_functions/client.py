@@ -4,6 +4,7 @@
 import asyncio
 import atexit
 import json
+import logging
 import threading
 
 from datetime import datetime, timedelta
@@ -35,6 +36,7 @@ from .internal.compat.purge_history_result import PurgeHistoryResult
 
 _sync_client_cache: dict[str, "SyncDurableFunctionsClient"] = {}
 _sync_client_cache_lock = threading.Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 def _first_forwarded_value(value: str) -> str:
@@ -176,7 +178,8 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             interceptors=interceptors,
             channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
-            emit_trace_spans=False)
+            emit_trace_spans=False,
+            logger=_LOGGER)
 
         # The gRPC aio channel is bound to the event loop it is created on. A
         # ``durable_client_input`` decode runs on the worker's invocation loop,
@@ -669,7 +672,8 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             interceptors=interceptors,
             channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
-            emit_trace_spans=False)
+            emit_trace_spans=False,
+            logger=_LOGGER)
 
     @classmethod
     def get_cached(cls, client_as_string: str) -> "SyncDurableFunctionsClient":
