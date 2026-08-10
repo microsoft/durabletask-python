@@ -225,6 +225,19 @@ def test_failure_details_provider_failure_does_not_mask_original(caplog: LogCapt
     assert "ExceptionPropertiesProvider failed" in caplog.text
 
 
+def test_invalid_failure_details_properties_do_not_mask_original(caplog: LogCaptureFixture):
+    class InvalidProvider:
+        def get_exception_properties(self, exception: Exception):
+            return ["invalid"]
+
+    details = helpers.new_failure_details(
+        ValueError("original"), InvalidProvider(), TEST_LOGGER)
+
+    assert details.errorMessage == "original"
+    assert not details.properties
+    assert "ExceptionPropertiesProvider returned invalid properties" in caplog.text
+
+
 def test_task_failure_and_orchestration_state_expose_properties():
     proto = helpers.new_failure_details(ValueError("boom"), _PropertiesProvider())
 

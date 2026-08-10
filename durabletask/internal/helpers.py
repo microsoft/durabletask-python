@@ -223,16 +223,33 @@ def new_failure_details(
     inner: BaseException | None = ex.__cause__ or ex.__context__
     if len(_visited) > 10 or (inner and id(inner) in _visited) or not isinstance(inner, Exception):
         inner = None
-    properties = None
+    properties: dict[str, struct_pb2.Value] | None = None
     if exception_properties_provider is not None:
         try:
-            properties = exception_properties_provider.get_exception_properties(ex)
+            provider_properties = exception_properties_provider.get_exception_properties(ex)
         except Exception:
             if logger is not None:
                 logger.warning(
                     "ExceptionPropertiesProvider failed while processing %s.",
                     get_qualified_name(type(ex)),
                     exc_info=True)
+        else:
+            try:
+                if provider_properties is not None:
+                    if not isinstance(provider_properties, Mapping):
+                        raise TypeError(
+                            "ExceptionPropertiesProvider.get_exception_properties() "
+                            "must return a mapping or None.")
+                    properties = {
+                        str(key): protobuf_value_from_python(value)
+                        for key, value in cast(Mapping[Any, Any], provider_properties).items()
+                    }
+            except Exception:
+                if logger is not None:
+                    logger.warning(
+                        "ExceptionPropertiesProvider returned invalid properties for %s.",
+                        get_qualified_name(type(ex)),
+                        exc_info=True)
 
     failure_details = pb.TaskFailureDetails(
         errorType=get_qualified_name(type(ex)),
@@ -244,8 +261,8 @@ def new_failure_details(
             if inner else None)
     )
     if properties:
-        for key, value in cast(Mapping[Any, Any], properties).items():
-            failure_details.properties[str(key)].CopyFrom(protobuf_value_from_python(value))
+        for key, value in properties.items():
+            failure_details.properties[key].CopyFrom(value)
     return failure_details
 
 

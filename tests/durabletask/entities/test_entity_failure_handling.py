@@ -163,6 +163,7 @@ def test_entity_failure_properties_are_available_to_orchestrators():
         except task.TaskFailedError as error:
             assert error.details.properties is not None
             return error.details.properties
+        return None
 
     with worker.TaskHubGrpcWorker(
             host_address=HOST,
