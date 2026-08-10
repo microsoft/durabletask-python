@@ -15,6 +15,7 @@ native method names: ``schedule_new_orchestration``,
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -32,6 +33,7 @@ from azure.durable_functions.internal.serialization import (
 )
 
 bp = df.Blueprint()
+_LOGGER = logging.getLogger(__name__)
 
 
 def _sync_client(client: df.DurableFunctionsClient) -> TaskHubGrpcClient:
@@ -87,6 +89,19 @@ async def start_orchestration(
     name = req.route_params["name"]
     body = req.get_json()
     instance_id = await client.schedule_new_orchestration(name, input=body.get("input"))
+    return func.HttpResponse(
+        json.dumps({"id": instance_id}), status_code=202, mimetype="application/json")
+
+
+@bp.route(route="start-logging-filtered/{name}", methods=["POST"])
+@bp.durable_client_input(client_name="client")
+async def start_logging_filtered(
+        req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
+    name = req.route_params["name"]
+    body = req.get_json()
+    instance_id = await client.schedule_new_orchestration(name, input=body.get("input"))
+    _LOGGER.info("client-info-filter-anchor %s", instance_id)
+    _LOGGER.warning("client-filter-anchor %s", instance_id)
     return func.HttpResponse(
         json.dumps({"id": instance_id}), status_code=202, mimetype="application/json")
 

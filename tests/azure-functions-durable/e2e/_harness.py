@@ -411,6 +411,23 @@ class FunctionApp:
         except OSError:
             return "(no host log captured)"
 
+    def read_host_log(self) -> str:
+        """Return the Functions host output captured for this app."""
+        return self._read_log()
+
+    def wait_for_host_log(self, text: str, timeout: float = 30) -> str:
+        """Wait until captured Functions host output contains ``text``."""
+        deadline = time.time() + timeout
+        log = self._read_log()
+        while text not in log and time.time() < deadline:
+            time.sleep(0.1)
+            log = self._read_log()
+        if text not in log:
+            raise TimeoutError(
+                f"Functions host log did not contain {text!r} within {timeout}s.\n"
+                f"{log}")
+        return next(line for line in log.splitlines() if text in line)
+
     def stop(self) -> None:
         proc = self._process
         if proc is not None:

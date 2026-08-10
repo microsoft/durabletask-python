@@ -13,12 +13,14 @@ and context properties -- plus the failure paths.
 """
 
 from datetime import timedelta
+import logging
 from typing import Any
 
 import azure.durable_functions as df
 from durabletask import entities, task
 
 bp = df.Blueprint()
+_LOGGER = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +33,13 @@ def activity_chain(ctx: task.OrchestrationContext, _: Any):
     second = yield ctx.call_activity("say_hello", input="Seattle")
     third = yield ctx.call_activity("say_hello", input="London")
     return [first, second, third]
+
+
+@bp.orchestration_trigger(context_name="context")
+def logging_filtered(ctx: task.OrchestrationContext, _: Any):
+    _LOGGER.info("worker-info-filter-anchor %s", ctx.instance_id)
+    _LOGGER.warning("worker-filter-anchor %s", ctx.instance_id)
+    return "logged"
 
 
 @bp.orchestration_trigger(context_name="context")

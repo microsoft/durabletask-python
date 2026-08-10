@@ -2,7 +2,9 @@
   "version": "2.0",
   "logging": {
     "logLevel": {
-      "default": "Information"
+      "default": "Information",
+      "Function.start_logging_filtered.User": "Warning",
+      "Function.logging_filtered.User": "Warning"
     }
   },
   "extensionBundle": {
