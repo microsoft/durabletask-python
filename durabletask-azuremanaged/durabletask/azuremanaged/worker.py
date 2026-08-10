@@ -16,12 +16,12 @@ from durabletask.grpc_options import (
     GrpcChannelOptions,
     GrpcWorkerResiliencyOptions,
 )
+from durabletask.exception_properties import ExceptionPropertiesProvider
 import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
 from durabletask.serialization import DataConverter
 from durabletask.worker import (
     ConcurrencyOptions,
-    ExceptionPropertiesProvider,
     TaskHubGrpcWorker,
 )
 

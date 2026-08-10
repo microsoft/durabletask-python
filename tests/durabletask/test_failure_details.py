@@ -5,11 +5,13 @@
 
 import logging
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from _pytest.logging import LogCaptureFixture
 
 from durabletask import client, task, worker
+from durabletask.exception_properties import ExceptionPropertiesProvider
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
 
@@ -231,7 +233,9 @@ def test_invalid_failure_details_properties_do_not_mask_original(caplog: LogCapt
             return ["invalid"]
 
     details = helpers.new_failure_details(
-        ValueError("original"), InvalidProvider(), TEST_LOGGER)
+        ValueError("original"),
+        cast(ExceptionPropertiesProvider, InvalidProvider()),
+        TEST_LOGGER)
 
     assert details.errorMessage == "original"
     assert not details.properties

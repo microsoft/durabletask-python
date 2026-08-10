@@ -6,13 +6,13 @@
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from durabletask.exception_properties import ExceptionPropertiesProvider
     from durabletask.grpc_options import GrpcChannelOptions, GrpcRetryPolicyOptions
     from durabletask.payload.store import LargePayloadStorageOptions, PayloadStore
     from durabletask.worker import (
         ActivityWorkItemFilter,
         ConcurrencyOptions,
         EntityWorkItemFilter,
-        ExceptionPropertiesProvider,
         OrchestrationWorkItemFilter,
         VersioningOptions,
         WorkItemFilters,
@@ -44,7 +44,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ActivityWorkItemFilter": "durabletask.worker",
     "ConcurrencyOptions": "durabletask.worker",
     "EntityWorkItemFilter": "durabletask.worker",
-    "ExceptionPropertiesProvider": "durabletask.worker",
+    "ExceptionPropertiesProvider": "durabletask.exception_properties",
     "GrpcChannelOptions": "durabletask.grpc_options",
     "GrpcRetryPolicyOptions": "durabletask.grpc_options",
     "LargePayloadStorageOptions": "durabletask.payload.store",

@@ -8,14 +8,14 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, Protocol, TypeVar, cast, overload
+from typing import Any, TypeVar, cast, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -26,6 +26,7 @@ from durabletask.grpc_options import (
     GrpcChannelOptions,
     GrpcWorkerResiliencyOptions,
 )
+from durabletask.exception_properties import ExceptionPropertiesProvider
 from durabletask.entities.entity_operation_failed_exception import EntityOperationFailedException
 from durabletask.internal import helpers
 from durabletask.internal.entity_state_shim import StateShim
@@ -58,14 +59,6 @@ DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
 _STREAM_CLOSED_SENTINEL = object()
 _WorkItem = tuple[Callable[..., Any], Callable[..., Any], tuple[Any, ...], dict[str, Any]]
-
-
-class ExceptionPropertiesProvider(Protocol):
-    """Extract portable custom properties from an exception."""
-
-    def get_exception_properties(self, exception: Exception) -> Mapping[str, Any] | None:
-        """Return properties to include in the exception's failure details."""
-        ...
 
 
 class ConcurrencyOptions:

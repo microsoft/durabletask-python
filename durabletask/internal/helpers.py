@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import logging
 import traceback
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from google.protobuf import struct_pb2, timestamp_pb2, wrappers_pb2
 
 from durabletask.entities import EntityInstanceId
+from durabletask.exception_properties import ExceptionPropertiesProvider
 import durabletask.internal.orchestrator_service_pb2 as pb
 
 if TYPE_CHECKING:
@@ -214,8 +216,8 @@ def failure_details_from_protobuf(details: pb.TaskFailureDetails) -> "FailureDet
 
 def new_failure_details(
         ex: Exception,
-        exception_properties_provider: Any = None,
-        logger: Any = None,
+        exception_properties_provider: ExceptionPropertiesProvider | None = None,
+        logger: logging.Logger | None = None,
         _visited: set[int] | None = None) -> pb.TaskFailureDetails:
     if _visited is None:
         _visited = set()
@@ -235,14 +237,15 @@ def new_failure_details(
                     exc_info=True)
         else:
             try:
-                if provider_properties is not None:
-                    if not isinstance(provider_properties, Mapping):
+                untyped_properties: object = cast(object, provider_properties)
+                if untyped_properties is not None:
+                    if not isinstance(untyped_properties, Mapping):
                         raise TypeError(
                             "ExceptionPropertiesProvider.get_exception_properties() "
                             "must return a mapping or None.")
                     properties = {
                         str(key): protobuf_value_from_python(value)
-                        for key, value in cast(Mapping[Any, Any], provider_properties).items()
+                        for key, value in cast(Mapping[Any, Any], untyped_properties).items()
                     }
             except Exception:
                 if logger is not None:
