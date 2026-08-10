@@ -83,6 +83,8 @@ class TestEventToDict:
             "message": "boom",
             "error_type": "RuntimeError",
             "stack_trace": "trace",
+            "inner_failure": None,
+            "properties": None,
         }
         # The full document must be JSON-serializable.
         fmt = ExportFormat(kind=ExportFormatKind.JSON)

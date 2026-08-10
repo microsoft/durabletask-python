@@ -574,11 +574,11 @@ class TaskFailedError(Exception):
         super().__init__(message)
         if isinstance(details, Exception):
             nested_failure = getattr(details, "failure_details", None)
-            details = (
-                nested_failure
-                if isinstance(nested_failure, pb.TaskFailureDetails)
-                else pbh.new_failure_details(details)
-            )
+            details = pbh.new_failure_details(details)
+            if isinstance(nested_failure, pb.TaskFailureDetails):
+                details.innerFailure.CopyFrom(nested_failure)
+                for key, value in nested_failure.properties.items():
+                    details.properties[key].CopyFrom(value)
         self._details = pbh.failure_details_from_protobuf(details)
 
     @property
