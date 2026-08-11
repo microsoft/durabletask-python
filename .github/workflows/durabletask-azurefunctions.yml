@@ -85,7 +85,7 @@ jobs:
       - name: Install Azurite and Azure Functions Core Tools
         run: |
           npm install -g azurite@latest
-          npm install -g azure-functions-core-tools@4.12.1 --unsafe-perm true
+          npm install -g azure-functions-core-tools@4 --unsafe-perm true
 
       - name: Install nox
         run: |
