@@ -234,7 +234,7 @@ works correctly:
   `azure-functions-durable`, do not update package versions or dependency
   minimums in the feature PR. Document the affected package changelogs and
   release coordination instead.
-- Create a dedicated release PR after the core package has been released. It
-  must publish `durabletask` first, then update provider dependency minimums,
-  package versions, and release notes so resolvers cannot select a provider
-  release with an incompatible older core package.
+- Create a dedicated release PR after the core package has been released. The
+  pipeline will publish `durabletask` first, so bump all dependency minimums,
+  package versions, and release notes together so resolvers cannot select a
+  provider release with an incompatible older core package.
