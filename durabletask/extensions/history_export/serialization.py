@@ -52,6 +52,20 @@ def event_to_dict(event: history.HistoryEvent) -> dict[str, Any]:
     return {"event_type": type(event).__name__, **payload}
 
 
+def failure_details_to_dict(failure: task.FailureDetails) -> dict[str, Any]:
+    """Convert recursively nested failure details into a JSON-safe dict."""
+    return {
+        "message": failure.message,
+        "error_type": failure.error_type,
+        "stack_trace": failure.stack_trace,
+        "inner_failure": (
+            failure_details_to_dict(failure.inner_failure)
+            if failure.inner_failure is not None else None
+        ),
+        "properties": failure.properties,
+    }
+
+
 def orchestration_state_to_dict(
     state: client_module.OrchestrationState,
 ) -> dict[str, Any]:
@@ -61,20 +75,7 @@ def orchestration_state_to_dict(
     class names or module paths appear in the resulting dict.
     """
     failure = state.failure_details
-    failure_dict: dict[str, Any] | None = None
-    if failure is not None:
-        failure_dict = {
-            "message": failure.message,
-            "error_type": failure.error_type,
-            "stack_trace": failure.stack_trace,
-        }
-        inner = getattr(failure, "inner_failure", None)
-        if isinstance(inner, task.FailureDetails):
-            failure_dict["inner_failure"] = {
-                "message": inner.message,
-                "error_type": inner.error_type,
-                "stack_trace": inner.stack_trace,
-            }
+    failure_dict = failure_details_to_dict(failure) if failure is not None else None
     return {
         "instance_id": state.instance_id,
         "name": state.name,

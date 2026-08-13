@@ -1624,12 +1624,21 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # self._pending_actions.clear()  # Cancel any pending actions
         self._completion_status = pb.ORCHESTRATION_STATUS_FAILED
 
+        if isinstance(ex, task.TaskFailedError):
+            failure_details = ph.new_failure_details(
+                ex, self._exception_properties_provider, self._logger)
+            failure_details.innerFailure.CopyFrom(ex.failure_details)
+        elif isinstance(ex, Exception):
+            failure_details = ph.new_failure_details(
+                ex, self._exception_properties_provider, self._logger)
+        else:
+            failure_details = ex
+
         action = ph.new_complete_orchestration_action(
             self.next_sequence_number(),
             pb.ORCHESTRATION_STATUS_FAILED,
             None,
-            ph.new_failure_details(
-                ex, self._exception_properties_provider, self._logger) if isinstance(ex, Exception) else ex,
+            failure_details,
         )
         self._pending_actions[action.id] = action
 

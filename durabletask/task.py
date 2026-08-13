@@ -579,11 +579,17 @@ class TaskFailedError(Exception):
                 details.innerFailure.CopyFrom(nested_failure)
                 for key, value in nested_failure.properties.items():
                     details.properties[key].CopyFrom(value)
+        self._failure_details = details
         self._details = pbh.failure_details_from_protobuf(details)
 
     @property
     def details(self) -> FailureDetails:
         return self._details
+
+    @property
+    def failure_details(self) -> pb.TaskFailureDetails:
+        """Return the underlying protobuf failure details."""
+        return self._failure_details
 
 
 class NonDeterminismError(Exception):
