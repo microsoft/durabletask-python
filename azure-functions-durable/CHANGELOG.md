@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added an optional timeout to filtered orchestration purges through
+`DurableFunctionsClient` and `SyncDurableFunctionsClient`.
+
 ## v2.0.0b2
 
 ADDED

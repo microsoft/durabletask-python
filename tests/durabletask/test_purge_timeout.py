@@ -48,6 +48,20 @@ def test_sync_filtered_purge_omits_timeout_when_not_supplied():
     assert not request.purgeInstanceFilter.HasField("timeout")
 
 
+def test_sync_filtered_purge_preserves_unknown_completion_state():
+    stub = MagicMock()
+    stub.PurgeInstances.return_value = pb.PurgeInstancesResponse()
+
+    with (
+        patch("durabletask.client.shared.get_grpc_channel", return_value=MagicMock()),
+        patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub),
+    ):
+        client = TaskHubGrpcClient()
+        result = client.purge_orchestrations_by()
+
+    assert result.is_complete is None
+
+
 @pytest.mark.parametrize("timeout", [timedelta(), timedelta(seconds=-1)])
 def test_sync_filtered_purge_rejects_non_positive_timeout(timeout):
     client = TaskHubGrpcClient(channel=MagicMock())

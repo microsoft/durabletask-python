@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added an optional timeout to filtered orchestration purges through
+`DurableTaskSchedulerClient` and `AsyncDurableTaskSchedulerClient`.
+
 ## v1.9.0
 
 CHANGED

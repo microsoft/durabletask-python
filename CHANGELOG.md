@@ -11,7 +11,7 @@ ADDED
 
 - Added an optional timeout to filtered orchestration purges. Callers can now
 limit a purge operation's duration and inspect `PurgeInstancesResult.is_complete`
-to determine whether it finished.
+for completed, partial, or backend-unknown completion status.
 
 ## v1.9.0
 
