@@ -389,7 +389,8 @@ class OrchestrationContext(ABC):
         )
 
     @abstractmethod
-    def continue_as_new(self, new_input: Any, *, save_events: bool = False) -> None:
+    def continue_as_new(self, new_input: Any, *, save_events: bool = False,
+                        new_version: str | None = None) -> None:
         """Continue the orchestration execution as a new instance.
 
         Parameters
@@ -398,6 +399,8 @@ class OrchestrationContext(ABC):
             The new input to use for the new orchestration instance.
         save_events : bool
             A flag indicating whether to add any unprocessed external events in the new orchestration history.
+        new_version : str | None
+            An optional version to assign to the new orchestration instance.
         """
         pass
 
