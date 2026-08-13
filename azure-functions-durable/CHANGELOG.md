@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+> [!NOTE]
+> Release this change only in coordination with a new `durabletask` release
+> that contains the suspend/resume reason APIs. Publish `durabletask` first,
+> then update this package's minimum dependency in its dedicated release PR.
+
 FIXED
 
 - Fixed deprecated `DurableFunctionsClient.suspend()` and `resume()` methods
