@@ -760,9 +760,7 @@ class TaskHubGrpcWorker:
         self._shutdown.clear()
 
         def run_loop() -> None:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self._async_run_loop())
+            asyncio.run(self._async_run_loop())
 
         self._logger.info(f"Starting gRPC worker that connects to {self._host_address}")
         self._runLoop = Thread(target=run_loop)
@@ -1523,6 +1521,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._received_events: dict[str, list[str | None]] = {}
         self._pending_events: dict[str, list[task.CancellableTask[Any]]] = {}
         self._new_input: Any | None = None
+        self._new_version: str | None = None
         self._save_events = False
         self._encoded_custom_status: str | None = None
         self._parent_trace_context: pb.TraceContext | None = None
@@ -1619,7 +1618,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         )
         self._pending_actions[action.id] = action
 
-    def set_continued_as_new(self, new_input: Any, save_events: bool):
+    def set_continued_as_new(self, new_input: Any, save_events: bool,
+                             new_version: str | None = None):
         if self._is_complete:
             return
 
@@ -1633,6 +1633,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # self._pending_actions.clear()  # Cancel any pending actions
         self._completion_status = pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
         self._new_input = new_input
+        self._new_version = new_version
         self._save_events = save_events
 
     def get_actions(self) -> list[pb.OrchestratorAction]:
@@ -1657,6 +1658,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 result=self._data_converter.serialize(self._new_input),
                 failure_details=None,
                 carryover_events=carryover_events,
+                new_version=self._new_version,
             )
             # We must return the existing tasks as well, to capture entity unlocks
             current_actions.append(action)
@@ -2135,11 +2137,12 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 ),
             )
 
-    def continue_as_new(self, new_input: Any, *, save_events: bool = False) -> None:
+    def continue_as_new(self, new_input: Any, *, save_events: bool = False,
+                        new_version: str | None = None) -> None:
         if self._is_complete:
             return
 
-        self.set_continued_as_new(new_input, save_events)
+        self.set_continued_as_new(new_input, save_events, new_version)
 
     def new_uuid(self) -> str:
         NAMESPACE_UUID: str = "9e952958-5e33-4daf-827f-2fa12937b875"
