@@ -300,12 +300,14 @@ def new_complete_orchestration_action(
         status: pb.OrchestrationStatus,
         result: str | None = None,
         failure_details: pb.TaskFailureDetails | None = None,
-        carryover_events: list[pb.HistoryEvent] | None = None) -> pb.OrchestratorAction:
+        carryover_events: list[pb.HistoryEvent] | None = None,
+        new_version: str | None = None) -> pb.OrchestratorAction:
     completeOrchestrationAction = pb.CompleteOrchestrationAction(
         orchestrationStatus=status,
         result=get_string_value(result),
         failureDetails=failure_details,
-        carryoverEvents=carryover_events)
+        carryoverEvents=carryover_events,
+        newVersion=get_string_value(new_version))
 
     return pb.OrchestratorAction(id=id, completeOrchestration=completeOrchestrationAction)
 

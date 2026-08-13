@@ -12,6 +12,9 @@ ADDED
 - Added an optional timeout to filtered orchestration purges. Callers can now
 limit a purge operation's duration and inspect `PurgeInstancesResult.is_complete`
 for completed, partial, or backend-unknown completion status.
+- Added the optional `new_version` argument to
+`OrchestrationContext.continue_as_new()` so continued orchestrations can
+switch to a new version.
 
 ## v1.9.0
 
@@ -54,6 +57,9 @@ import paths, `__all__`, `dir()`, and star-imports behave exactly as before.
 
 FIXED
 
+- Fixed `TaskHubGrpcWorker` leaving its background event loop unclosed after
+shutdown, which could retain resources and emit delayed `ResourceWarning`
+messages.
 - Fixed `AsyncTaskHubGrpcClient` failing during construction when no current
 event loop was set. SDK-owned async gRPC channels are now created on first use,
 binding them to the event loop that performs the RPC.
