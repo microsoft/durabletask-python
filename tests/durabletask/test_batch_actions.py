@@ -197,6 +197,14 @@ def test_orchestration_query_serializes_instance_id_prefix():
     assert request.query.instanceIdPrefix.value == "prefix-"
 
 
+def test_orchestration_query_preserves_positional_argument_order():
+    query = client.OrchestrationQuery(None, None, None, None, True)
+
+    assert query.max_instance_count is None
+    assert query.fetch_inputs_and_outputs is True
+    assert query.instance_id_prefix is None
+
+
 def test_get_orchestration_state_pagination_succeeds(backend):
     # Create a custom handler to capture log messages
     log_records = []
