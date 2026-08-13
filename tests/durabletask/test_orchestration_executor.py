@@ -1719,11 +1719,12 @@ def test_terminate():
 
 
 @pytest.mark.parametrize("save_events", [True, False])
-def test_continue_as_new(save_events: bool):
+@pytest.mark.parametrize("new_version", [None, "v2"])
+def test_continue_as_new(save_events: bool, new_version: str | None):
     """Tests the behavior of the continue-as-new API"""
     def orchestrator(ctx: task.OrchestrationContext, input: int):
         yield ctx.create_timer(ctx.current_utc_datetime + timedelta(days=1))
-        ctx.continue_as_new(input + 1, save_events=save_events)
+        ctx.continue_as_new(input + 1, save_events=save_events, new_version=new_version)
 
     registry = worker._Registry()
     orchestrator_name = registry.add_orchestrator(orchestrator)
@@ -1745,6 +1746,9 @@ def test_continue_as_new(save_events: bool):
     complete_action = get_and_validate_complete_orchestration_action_list(1, actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
     assert complete_action.result.value == json.dumps(2)
+    assert complete_action.HasField("newVersion") == (new_version is not None)
+    if new_version is not None:
+        assert complete_action.newVersion.value == new_version
     assert len(complete_action.carryoverEvents) == (3 if save_events else 0)
     for i in range(len(complete_action.carryoverEvents)):
         event = complete_action.carryoverEvents[i]
