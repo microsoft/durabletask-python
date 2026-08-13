@@ -81,7 +81,7 @@ def _get_legacy_logging_warning_stacklevel() -> int:
 
     while frame is not None:
         module_name = frame.f_globals.get("__name__", "")
-        if not module_name.startswith("durabletask"):
+        if module_name != "durabletask" and not module_name.startswith("durabletask."):
             break
         stacklevel += 1
         frame = frame.f_back

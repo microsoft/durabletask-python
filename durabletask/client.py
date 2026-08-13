@@ -423,6 +423,7 @@ class TaskHubGrpcClient:
                  data_converter: DataConverter | None = None,
                  emit_trace_spans: bool = True):
 
+        self._logger = shared.get_logger("client", log_handler, log_formatter, logger)
         self._owns_channel = channel is None
         self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
         self._host_address = (
@@ -483,7 +484,6 @@ class TaskHubGrpcClient:
         # can prepend the interceptor themselves via grpc.intercept_channel.
         self._channel = channel
         self._stub = cast(_SyncTaskHubSidecarServiceStub, stubs.TaskHubSidecarServiceStub(channel))
-        self._logger = shared.get_logger("client", log_handler, log_formatter, logger)
         self.default_version = default_version
         self._payload_store = payload_store
         self._emit_trace_spans = emit_trace_spans
@@ -953,6 +953,7 @@ class AsyncTaskHubGrpcClient:
                  data_converter: DataConverter | None = None,
                  emit_trace_spans: bool = True):
 
+        self._logger = shared.get_logger("async_client", log_handler, log_formatter, logger)
         self._owns_channel = channel is None
         self._data_converter = data_converter if data_converter is not None else JsonDataConverter()
         self._host_address = (
@@ -1010,7 +1011,6 @@ class AsyncTaskHubGrpcClient:
             if channel is not None
             else None
         )
-        self._logger = shared.get_logger("async_client", log_handler, log_formatter, logger)
         self.default_version = default_version
         self._payload_store = payload_store
         self._emit_trace_spans = emit_trace_spans
