@@ -180,6 +180,23 @@ def test_worker_start_clears_prior_shutdown_request():
     worker.stop()
 
 
+def test_worker_start_closes_background_event_loop():
+    worker = TaskHubGrpcWorker()
+    event_loops = []
+
+    async def fake_run_loop():
+        event_loops.append(asyncio.get_running_loop())
+
+    worker._async_run_loop = fake_run_loop
+    worker.start()
+    worker._runLoop.join(timeout=1.0)
+
+    assert len(event_loops) == 1
+    assert event_loops[0].is_closed() is True
+
+    worker.stop()
+
+
 def test_worker_classifies_graceful_close_before_first_message():
     worker = TaskHubGrpcWorker(
         resiliency_options=GrpcWorkerResiliencyOptions(silent_disconnect_timeout_seconds=5.0)
