@@ -589,6 +589,7 @@ class TaskFailedError(Exception):
     def details(self) -> FailureDetails:
         return self._details
 
+
 class NonDeterminismError(Exception):
     pass
 
