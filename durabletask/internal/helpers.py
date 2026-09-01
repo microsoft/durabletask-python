@@ -234,19 +234,23 @@ def new_event_raised_event(name: str, encoded_input: str | None = None) -> pb.Hi
     )
 
 
-def new_suspend_event() -> pb.HistoryEvent:
+def new_suspend_event(*, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
-        executionSuspended=pb.ExecutionSuspendedEvent()
+        executionSuspended=pb.ExecutionSuspendedEvent(
+            input=get_string_value(encoded_input)
+        )
     )
 
 
-def new_resume_event() -> pb.HistoryEvent:
+def new_resume_event(*, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
-        executionResumed=pb.ExecutionResumedEvent()
+        executionResumed=pb.ExecutionResumedEvent(
+            input=get_string_value(encoded_input)
+        )
     )
 
 

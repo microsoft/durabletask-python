@@ -386,7 +386,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             if instance.status == pb.ORCHESTRATION_STATUS_SUSPENDED:
                 return pb.SuspendResponse()
 
-            event = helpers.new_suspend_event()
+            event = helpers.new_suspend_event(
+                encoded_input=request.reason.value if request.HasField("reason") else None
+            )
             instance.pending_events.append(event)
             instance.last_updated_at = datetime.now(timezone.utc)
             self._enqueue_orchestration(instance.instance_id)
@@ -403,7 +405,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                               f"Orchestration instance '{request.instanceId}' not found")
                 return pb.ResumeResponse()
 
-            event = helpers.new_resume_event()
+            event = helpers.new_resume_event(
+                encoded_input=request.reason.value if request.HasField("reason") else None
+            )
             instance.pending_events.append(event)
             instance.last_updated_at = datetime.now(timezone.utc)
             self._enqueue_orchestration(instance.instance_id)

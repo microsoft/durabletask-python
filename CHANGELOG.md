@@ -12,6 +12,9 @@ ADDED
 - Added an optional timeout to filtered orchestration purges. Callers can now
 limit a purge operation's duration and inspect `PurgeInstancesResult.is_complete`
 for completed, partial, or backend-unknown completion status.
+- Added optional `reason` parameters to `TaskHubGrpcClient` and
+`AsyncTaskHubGrpcClient` suspend and resume operations. The reason is now sent
+to the backend with the lifecycle request.
 - Added the optional `new_version` argument to
 `OrchestrationContext.continue_as_new()` so continued orchestrations can
 switch to a new version.

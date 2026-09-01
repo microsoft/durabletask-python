@@ -11,6 +11,8 @@ ADDED
 
 - Added an optional timeout to filtered orchestration purges through
 `DurableTaskSchedulerClient` and `AsyncDurableTaskSchedulerClient`.
+- Added optional `reason` parameters to suspend and resume operations inherited
+from `TaskHubGrpcClient` and `AsyncTaskHubGrpcClient`.
 
 ## v1.9.0
 

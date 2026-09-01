@@ -472,13 +472,13 @@ async def test_suspend_resume_delegate():
                           new=AsyncMock()) as suspend_mock:
             with pytest.warns(DeprecationWarning):
                 await client.suspend("abc", "reason")
-        suspend_mock.assert_awaited_once_with("abc")
+        suspend_mock.assert_awaited_once_with("abc", reason="reason")
 
         with patch.object(client, "resume_orchestration",
                           new=AsyncMock()) as resume_mock:
             with pytest.warns(DeprecationWarning):
                 await client.resume("abc", "reason")
-        resume_mock.assert_awaited_once_with("abc")
+        resume_mock.assert_awaited_once_with("abc", reason="reason")
     finally:
         await client.close()
 
