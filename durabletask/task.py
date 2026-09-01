@@ -589,12 +589,6 @@ class TaskFailedError(Exception):
     def details(self) -> FailureDetails:
         return self._details
 
-    @property
-    def failure_details(self) -> pb.TaskFailureDetails:
-        """Return the underlying protobuf failure details."""
-        return self._failure_details
-
-
 class NonDeterminismError(Exception):
     pass
 

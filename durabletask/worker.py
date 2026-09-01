@@ -1626,7 +1626,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if isinstance(ex, task.TaskFailedError):
             failure_details = ph.new_failure_details(
                 ex, self._exception_properties_provider, self._logger)
-            failure_details.innerFailure.CopyFrom(ex.failure_details)
+            failure_details.innerFailure.CopyFrom(
+                ex._failure_details)  # pyright: ignore[reportPrivateUsage]
         elif isinstance(ex, Exception):
             failure_details = ph.new_failure_details(
                 ex, self._exception_properties_provider, self._logger)

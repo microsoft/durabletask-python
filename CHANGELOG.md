@@ -10,10 +10,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ADDED
 
 - Added `ExceptionPropertiesProvider` and the
-  `exception_properties_provider` worker option to attach portable custom
-  properties to activity, entity, and orchestration failures. Failure
-  properties and recursive inner failures are available through
-  `FailureDetails`, task-failure exceptions, orchestration state, and history.
+`exception_properties_provider` worker option to attach portable custom
+properties to activity, entity, and orchestration failures. Failure
+properties and recursive inner failures are available through
+`FailureDetails`, task-failure exceptions, orchestration state, and history.
 - Added the optional `new_version` argument to
 `OrchestrationContext.continue_as_new()` so continued orchestrations can
 switch to a new version.
