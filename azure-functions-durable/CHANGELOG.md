@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added an optional timeout to filtered orchestration purges through
+`DurableFunctionsClient` and `SyncDurableFunctionsClient`.
+- Added inherited `OrchestrationQuery.instance_id_prefix` support to retrieve
+orchestration instances whose IDs begin with a specified prefix.
+> [!NOTE]
+> Release this change only in coordination with a new `durabletask` release
+> that contains the suspend/resume reason APIs. Publish `durabletask` first,
+> then update this package's minimum dependency in its dedicated release PR.
+
+FIXED
+
+- Fixed deprecated `DurableFunctionsClient.suspend()` and `resume()` methods
+discarding their `reason` arguments. Reasons are now forwarded to the Durable
+Task backend.
+
 ## v2.0.0b2
 
 ADDED

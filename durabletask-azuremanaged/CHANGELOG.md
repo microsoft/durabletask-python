@@ -12,6 +12,12 @@ ADDED
 - Added `exception_properties_provider` to `DurableTaskSchedulerWorker` for
 attaching portable custom properties to activity, entity, and orchestration
 failures.
+- Added an optional timeout to filtered orchestration purges through
+`DurableTaskSchedulerClient` and `AsyncDurableTaskSchedulerClient`.
+- Added inherited `OrchestrationQuery.instance_id_prefix` support to retrieve
+orchestration instances whose IDs begin with a specified prefix.
+- Added optional `reason` parameters to suspend and resume operations inherited
+from `TaskHubGrpcClient` and `AsyncTaskHubGrpcClient`.
 
 ## v1.9.0
 

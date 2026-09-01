@@ -275,7 +275,7 @@ def test_wait_for_external_event_timeout(raise_event: bool):
         assert state.serialized_output == json.dumps("timed out")
 
 
-def test_suspend_and_resume():
+def test_suspend_and_resume_preserves_reasons_in_history():
     def orchestrator(ctx: task.OrchestrationContext, _):
         result = yield ctx.wait_for_external_event("my_event")
         return result
@@ -290,7 +290,7 @@ def test_suspend_and_resume():
             assert state is not None
 
             # Suspend the orchestration and wait for it to go into the SUSPENDED state
-            task_hub_client.suspend_orchestration(id)
+            task_hub_client.suspend_orchestration(id, reason="maintenance")
             deadline = time.time() + 10
             while state.runtime_status == client.OrchestrationStatus.RUNNING:
                 assert time.time() < deadline, "Timed out waiting for SUSPENDED status"
@@ -308,11 +308,18 @@ def test_suspend_and_resume():
                 pass
 
             # Resume the orchestration and wait for it to complete
-            task_hub_client.resume_orchestration(id)
+            task_hub_client.resume_orchestration(id, reason="maintenance complete")
             state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+            events = task_hub_client.get_orchestration_history(id)
             assert state is not None
             assert state.runtime_status == client.OrchestrationStatus.COMPLETED
             assert state.serialized_output == json.dumps(42)
+            suspended_event = next(
+                event for event in events if isinstance(event, history.ExecutionSuspendedEvent))
+            resumed_event = next(
+                event for event in events if isinstance(event, history.ExecutionResumedEvent))
+            assert suspended_event.input == "maintenance"
+            assert resumed_event.input == "maintenance complete"
 
 
 def test_terminate():

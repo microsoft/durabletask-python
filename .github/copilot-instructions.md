@@ -224,3 +224,17 @@ works correctly:
 - If a new public API is added to the core SDK (e.g. a method on
   `OrchestrationContext`), confirm it is accessible through the
   azuremanaged package and add a test or example if appropriate.
+
+## Release Coordination
+
+- Package versions and inter-package minimum dependencies record the latest
+  released compatibility contract. They are not an instruction to bump versions
+  in a feature PR.
+- When a core `durabletask` API is consumed by `durabletask.azuremanaged` or
+  `azure-functions-durable`, do not update package versions or dependency
+  minimums in the feature PR. Document the affected package changelogs and
+  release coordination instead.
+- Create a dedicated release PR after the core package has been released. The
+  pipeline will publish `durabletask` first, so bump all dependency minimums,
+  package versions, and release notes together so resolvers cannot select a
+  provider release with an incompatible older core package.
