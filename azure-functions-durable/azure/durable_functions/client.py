@@ -431,21 +431,13 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
 
     @deprecated("suspend is deprecated; use suspend_orchestration instead.")
     async def suspend(self, instance_id: str, reason: Optional[str] = None) -> None:
-        """Deprecated alias for :meth:`suspend_orchestration`.
-
-        The v1 ``reason`` argument has no equivalent in durabletask and is
-        ignored.
-        """
-        await self.suspend_orchestration(instance_id)
+        """Deprecated alias for :meth:`suspend_orchestration`."""
+        await self.suspend_orchestration(instance_id, reason=reason)
 
     @deprecated("resume is deprecated; use resume_orchestration instead.")
     async def resume(self, instance_id: str, reason: Optional[str] = None) -> None:
-        """Deprecated alias for :meth:`resume_orchestration`.
-
-        The v1 ``reason`` argument has no equivalent in durabletask and is
-        ignored.
-        """
-        await self.resume_orchestration(instance_id)
+        """Deprecated alias for :meth:`resume_orchestration`."""
+        await self.resume_orchestration(instance_id, reason=reason)
 
     @deprecated("restart is deprecated; use restart_orchestration instead.")
     async def restart(

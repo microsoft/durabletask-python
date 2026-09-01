@@ -11,6 +11,9 @@ ADDED
 
 - Added `OrchestrationQuery.instance_id_prefix` to retrieve orchestration
 instances whose IDs begin with a specified prefix.
+- Added optional `reason` parameters to `TaskHubGrpcClient` and
+`AsyncTaskHubGrpcClient` suspend and resume operations. The reason is now sent
+to the backend with the lifecycle request.
 - Added the optional `new_version` argument to
 `OrchestrationContext.continue_as_new()` so continued orchestrations can
 switch to a new version.
