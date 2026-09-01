@@ -11,6 +11,8 @@ ADDED
 
 - Added an optional timeout to filtered orchestration purges through
 `DurableFunctionsClient` and `SyncDurableFunctionsClient`.
+- Added inherited `OrchestrationQuery.instance_id_prefix` support to retrieve
+orchestration instances whose IDs begin with a specified prefix.
 > [!NOTE]
 > Release this change only in coordination with a new `durabletask` release
 > that contains the suspend/resume reason APIs. Publish `durabletask` first,

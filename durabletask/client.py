@@ -196,6 +196,7 @@ class OrchestrationQuery:
     # results instead.
     max_instance_count: int | None = (1 << 31) - 1
     fetch_inputs_and_outputs: bool = False
+    instance_id_prefix: str | None = None
 
 
 @dataclass
