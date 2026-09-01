@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from durabletask import client, entities, task
 from durabletask.client import TaskHubGrpcClient
+from durabletask.internal.client_helpers import build_query_instances_req
 from durabletask.testing import create_test_backend
 from durabletask.worker import TaskHubGrpcWorker
 
@@ -161,6 +162,47 @@ def test_get_orchestration_state_by_time_range(backend):
 
     assert len([o for o in orchestrations_in_range if o.instance_id == id]) == 1
     assert len([o for o in orchestrations_outside_range if o.instance_id == id]) == 0
+
+
+def test_get_orchestration_state_by_instance_id_prefix(backend):
+    worker = TaskHubGrpcWorker(host_address=HOST)
+
+    worker.add_orchestrator(empty_orchestrator)
+    worker.start()
+
+    try:
+        with TaskHubGrpcClient(host_address=HOST) as c:
+            matching_id = "prefix-match"
+            non_matching_id = "other-instance"
+            c.schedule_new_orchestration(empty_orchestrator, instance_id=matching_id)
+            c.schedule_new_orchestration(empty_orchestrator, instance_id=non_matching_id)
+            c.wait_for_orchestration_completion(matching_id, timeout=30)
+            c.wait_for_orchestration_completion(non_matching_id, timeout=30)
+
+            query = client.OrchestrationQuery(instance_id_prefix="prefix-")
+            orchestrations = c.get_all_orchestration_states(query)
+    finally:
+        worker.stop()
+
+    assert [orchestration.instance_id for orchestration in orchestrations] == [matching_id]
+
+
+def test_orchestration_query_serializes_instance_id_prefix():
+    request = build_query_instances_req(
+        client.OrchestrationQuery(instance_id_prefix="prefix-"),
+        continuation_token=None,
+    )
+
+    assert request.query.HasField("instanceIdPrefix")
+    assert request.query.instanceIdPrefix.value == "prefix-"
+
+
+def test_orchestration_query_preserves_positional_argument_order():
+    query = client.OrchestrationQuery(None, None, None, None, True)
+
+    assert query.max_instance_count is None
+    assert query.fetch_inputs_and_outputs is True
+    assert query.instance_id_prefix is None
 
 
 def test_get_orchestration_state_pagination_succeeds(backend):

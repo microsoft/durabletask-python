@@ -6,10 +6,10 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from google.protobuf import wrappers_pb2
+from google.protobuf import duration_pb2, wrappers_pb2
 
 import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -103,6 +103,7 @@ def build_query_instances_req(
             runtimeStatus=[status.value for status in orchestration_query.runtime_status] if orchestration_query.runtime_status else None,
             createdTimeFrom=helpers.new_timestamp(orchestration_query.created_time_from) if orchestration_query.created_time_from else None,
             createdTimeTo=helpers.new_timestamp(orchestration_query.created_time_to) if orchestration_query.created_time_to else None,
+            instanceIdPrefix=helpers.get_string_value(orchestration_query.instance_id_prefix),
             maxInstanceCount=orchestration_query.max_instance_count,
             fetchInputsAndOutputs=orchestration_query.fetch_inputs_and_outputs,
             continuationToken=continuation_token
@@ -114,14 +115,24 @@ def build_purge_by_filter_req(
         created_time_from: datetime | None,
         created_time_to: datetime | None,
         runtime_status: list[OrchestrationStatus] | None,
-        recursive: bool) -> pb.PurgeInstancesRequest:
+        recursive: bool,
+        timeout: timedelta | None = None) -> pb.PurgeInstancesRequest:
     """Build a PurgeInstancesRequest for purging orchestrations by filter."""
+    if timeout is not None and timeout <= timedelta():
+        raise ValueError("timeout must be greater than zero.")
+
+    purge_filter = pb.PurgeInstanceFilter(
+        createdTimeFrom=helpers.new_timestamp(created_time_from) if created_time_from else None,
+        createdTimeTo=helpers.new_timestamp(created_time_to) if created_time_to else None,
+        runtimeStatus=[status.value for status in runtime_status] if runtime_status else None
+    )
+    if timeout is not None:
+        timeout_duration = duration_pb2.Duration()
+        timeout_duration.FromTimedelta(timeout)
+        purge_filter.timeout.CopyFrom(timeout_duration)
+
     return pb.PurgeInstancesRequest(
-        purgeInstanceFilter=pb.PurgeInstanceFilter(
-            createdTimeFrom=helpers.new_timestamp(created_time_from) if created_time_from else None,
-            createdTimeTo=helpers.new_timestamp(created_time_to) if created_time_to else None,
-            runtimeStatus=[status.value for status in runtime_status] if runtime_status else None
-        ),
+        purgeInstanceFilter=purge_filter,
         recursive=recursive
     )
 

@@ -1,14 +1,21 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import logging
 import traceback
+from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from google.protobuf import timestamp_pb2, wrappers_pb2
+from google.protobuf import struct_pb2, timestamp_pb2, wrappers_pb2
 
 from durabletask.entities import EntityInstanceId
+from durabletask.exception_properties import ExceptionPropertiesProvider
 import durabletask.internal.orchestrator_service_pb2 as pb
+
+if TYPE_CHECKING:
+    from durabletask.task import FailureDetails
 
 # TODO: The new_xxx_event methods are only used by test code and should be moved elsewhere
 
@@ -141,32 +148,143 @@ def get_qualified_name(t: type) -> str:
     return f"{module}.{qualname}"
 
 
-def new_failure_details(ex: Exception, _visited: set[int] | None = None) -> pb.TaskFailureDetails:
+def protobuf_value_from_python(value: Any) -> struct_pb2.Value:
+    """Convert a portable Python value to a protobuf ``Value``."""
+    if value is None:
+        return struct_pb2.Value(null_value=struct_pb2.NullValue.NULL_VALUE)
+    if isinstance(value, bool):
+        return struct_pb2.Value(bool_value=value)
+    if isinstance(value, (int, float, Decimal)):
+        return struct_pb2.Value(number_value=float(value))
+    if isinstance(value, str):
+        return struct_pb2.Value(string_value=value)
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], value)
+        fields = {
+            str(key): protobuf_value_from_python(item)
+            for key, item in mapping.items()
+        }
+        return struct_pb2.Value(struct_value=struct_pb2.Struct(fields=fields))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        sequence = cast(Sequence[Any], value)
+        return struct_pb2.Value(
+            list_value=struct_pb2.ListValue(
+                values=[protobuf_value_from_python(item) for item in sequence]))
+    return struct_pb2.Value(string_value=str(value))
+
+
+def python_value_from_protobuf(value: struct_pb2.Value) -> Any:
+    """Convert a protobuf ``Value`` to a JSON-safe Python value."""
+    kind = value.WhichOneof("kind")
+    if kind == "null_value":
+        return None
+    if kind == "bool_value":
+        return value.bool_value
+    if kind == "number_value":
+        return value.number_value
+    if kind == "string_value":
+        return value.string_value
+    if kind == "struct_value":
+        return {
+            key: python_value_from_protobuf(item)
+            for key, item in value.struct_value.fields.items()
+        }
+    if kind == "list_value":
+        return [python_value_from_protobuf(item) for item in value.list_value.values]
+    return str(value)
+
+
+def failure_details_from_protobuf(details: pb.TaskFailureDetails) -> "FailureDetails":
+    """Convert protobuf failure details to the public, JSON-safe model."""
+    from durabletask.task import FailureDetails
+
+    return FailureDetails(
+        message=details.errorMessage,
+        error_type=details.errorType,
+        stack_trace=details.stackTrace.value if details.HasField("stackTrace") else None,
+        inner_failure=(
+            failure_details_from_protobuf(details.innerFailure)
+            if details.HasField("innerFailure") else None),
+        properties=(
+            {
+                key: python_value_from_protobuf(value)
+                for key, value in details.properties.items()
+            }
+            if details.properties else None),
+    )
+
+
+def new_failure_details(
+        ex: Exception,
+        exception_properties_provider: ExceptionPropertiesProvider | None = None,
+        logger: logging.Logger | None = None,
+        _visited: set[int] | None = None) -> pb.TaskFailureDetails:
     if _visited is None:
         _visited = set()
     _visited.add(id(ex))
     inner: BaseException | None = ex.__cause__ or ex.__context__
     if len(_visited) > 10 or (inner and id(inner) in _visited) or not isinstance(inner, Exception):
         inner = None
-    return pb.TaskFailureDetails(
+    properties: dict[str, struct_pb2.Value] | None = None
+    if exception_properties_provider is not None:
+        try:
+            provider_properties = exception_properties_provider.get_exception_properties(ex)
+        except Exception:
+            if logger is not None:
+                logger.warning(
+                    "ExceptionPropertiesProvider failed while processing %s.",
+                    get_qualified_name(type(ex)),
+                    exc_info=True)
+        else:
+            try:
+                untyped_properties: object = cast(object, provider_properties)
+                if untyped_properties is not None:
+                    if not isinstance(untyped_properties, Mapping):
+                        raise TypeError(
+                            "ExceptionPropertiesProvider.get_exception_properties() "
+                            "must return a mapping or None.")
+                    properties = {
+                        str(key): protobuf_value_from_python(value)
+                        for key, value in cast(Mapping[Any, Any], untyped_properties).items()
+                    }
+            except Exception:
+                if logger is not None:
+                    logger.warning(
+                        "ExceptionPropertiesProvider returned invalid properties for %s.",
+                        get_qualified_name(type(ex)),
+                        exc_info=True)
+
+    failure_details = pb.TaskFailureDetails(
         errorType=get_qualified_name(type(ex)),
         errorMessage=str(ex),
         stackTrace=wrappers_pb2.StringValue(value=''.join(traceback.format_tb(ex.__traceback__))),
-        innerFailure=new_failure_details(inner, _visited) if inner else None
+        innerFailure=(
+            new_failure_details(
+                inner, exception_properties_provider, logger, _visited)
+            if inner else None)
     )
+    if properties:
+        for key, value in properties.items():
+            failure_details.properties[key].CopyFrom(value)
+    return failure_details
 
 
 def _failure_details_from_core_dict(fd: dict[str, Any]) -> pb.TaskFailureDetails:
     """Convert a serialized DurableTask.Core ``FailureDetails`` dict to protobuf."""
     inner = fd.get("InnerFailure")
     stack_trace = fd.get("StackTrace")
-    return pb.TaskFailureDetails(
+    result = pb.TaskFailureDetails(
         errorType=str(fd.get("ErrorType") or ""),
         errorMessage=str(fd.get("ErrorMessage") or ""),
         stackTrace=get_string_value(str(stack_trace) if stack_trace is not None else None),
         innerFailure=_failure_details_from_core_dict(cast(dict[str, Any], inner)) if isinstance(inner, dict) else None,
         isNonRetriable=bool(fd.get("IsNonRetriable", False)),
     )
+    properties = fd.get("Properties")
+    if isinstance(properties, Mapping):
+        for key, value in cast(Mapping[Any, Any], properties).items():
+            result.properties[str(key)].CopyFrom(protobuf_value_from_python(value))
+    return result
 
 
 def entity_response_failure_details(
@@ -234,19 +352,23 @@ def new_event_raised_event(name: str, encoded_input: str | None = None) -> pb.Hi
     )
 
 
-def new_suspend_event() -> pb.HistoryEvent:
+def new_suspend_event(*, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
-        executionSuspended=pb.ExecutionSuspendedEvent()
+        executionSuspended=pb.ExecutionSuspendedEvent(
+            input=get_string_value(encoded_input)
+        )
     )
 
 
-def new_resume_event() -> pb.HistoryEvent:
+def new_resume_event(*, encoded_input: str | None = None) -> pb.HistoryEvent:
     return pb.HistoryEvent(
         eventId=-1,
         timestamp=timestamp_pb2.Timestamp(),
-        executionResumed=pb.ExecutionResumedEvent()
+        executionResumed=pb.ExecutionResumedEvent(
+            input=get_string_value(encoded_input)
+        )
     )
 
 

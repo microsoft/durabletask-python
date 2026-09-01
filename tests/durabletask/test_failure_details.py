@@ -3,10 +3,20 @@
 
 """Unit tests for :class:`durabletask.task.FailureDetails` introspection."""
 
-import pytest
+import logging
+from decimal import Decimal
+from typing import cast
 
-from durabletask import task, worker
+import pytest
+from _pytest.logging import LogCaptureFixture
+
+from durabletask import client, task, worker
+from durabletask.exception_properties import ExceptionPropertiesProvider
 from durabletask.internal import helpers
+from durabletask.internal import orchestrator_service_pb2 as pb
+
+
+TEST_LOGGER = logging.getLogger(__name__)
 
 
 class _BaseError(Exception):
@@ -165,3 +175,87 @@ def test_task_failed_error_details_is_caused_by():
     assert err.details.is_caused_by(ValueError) is True
     assert err.details.is_caused_by(Exception) is True
     assert err.details.is_caused_by(KeyError) is False
+
+
+class _PropertiesProvider:
+    def get_exception_properties(self, exception: Exception):
+        return {
+            "message": str(exception),
+            "number": Decimal("1.5"),
+            "nested": {"enabled": True, "items": [None, 2]},
+        }
+
+
+def test_failure_details_properties_round_trip_and_inner_failure():
+    try:
+        raise ValueError("inner")
+    except ValueError as inner:
+        try:
+            raise RuntimeError("outer") from inner
+        except RuntimeError as outer:
+            details = helpers.new_failure_details(outer, _PropertiesProvider())
+
+    result = helpers.failure_details_from_protobuf(details)
+
+    assert result.properties == {
+        "message": "outer",
+        "number": 1.5,
+        "nested": {"enabled": True, "items": [None, 2.0]},
+    }
+    assert result.inner_failure is not None
+    assert result.inner_failure.message == "inner"
+    assert result.inner_failure.properties is not None
+    assert result.inner_failure.properties["message"] == "inner"
+
+
+def test_failure_details_properties_stringify_unsupported_values():
+    value = helpers.protobuf_value_from_python(object())
+
+    assert helpers.python_value_from_protobuf(value).startswith("<object object at ")
+
+
+def test_failure_details_provider_failure_does_not_mask_original(caplog: LogCaptureFixture):
+    class FailingProvider:
+        def get_exception_properties(self, exception: Exception):
+            raise RuntimeError("provider failed")
+
+    details = helpers.new_failure_details(
+        ValueError("original"), FailingProvider(), TEST_LOGGER)
+
+    assert details.errorMessage == "original"
+    assert not details.properties
+    assert "ExceptionPropertiesProvider failed" in caplog.text
+
+
+def test_invalid_failure_details_properties_do_not_mask_original(caplog: LogCaptureFixture):
+    class InvalidProvider:
+        def get_exception_properties(self, exception: Exception):
+            return ["invalid"]
+
+    details = helpers.new_failure_details(
+        ValueError("original"),
+        cast(ExceptionPropertiesProvider, InvalidProvider()),
+        TEST_LOGGER)
+
+    assert details.errorMessage == "original"
+    assert not details.properties
+    assert "ExceptionPropertiesProvider returned invalid properties" in caplog.text
+
+
+def test_task_failure_and_orchestration_state_expose_properties():
+    proto = helpers.new_failure_details(ValueError("boom"), _PropertiesProvider())
+
+    failure = task.TaskFailedError("failed", proto)
+    state = client.parse_orchestration_state(pb.OrchestrationState(
+        failureDetails=proto))
+
+    assert failure.details.properties is not None
+    assert failure.details.properties["message"] == "boom"
+    assert state.failure_details is not None
+    assert state.failure_details.properties == failure.details.properties
+
+
+def test_worker_accepts_exception_properties_provider():
+    with worker.TaskHubGrpcWorker(
+            exception_properties_provider=_PropertiesProvider()):
+        pass

@@ -16,10 +16,14 @@ from durabletask.grpc_options import (
     GrpcChannelOptions,
     GrpcWorkerResiliencyOptions,
 )
+from durabletask.exception_properties import ExceptionPropertiesProvider
 import durabletask.internal.shared as shared
 from durabletask.payload.store import PayloadStore
 from durabletask.serialization import DataConverter
-from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
+from durabletask.worker import (
+    ConcurrencyOptions,
+    TaskHubGrpcWorker,
+)
 
 
 # Worker class used for Durable Task Scheduler (DTS)
@@ -51,6 +55,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         logger (logging.Logger | None, optional): Caller-configured logger for
             worker logs. It cannot be combined with ``log_handler`` or
             ``log_formatter``; doing so raises ``ValueError``.
+        exception_properties_provider (ExceptionPropertiesProvider | None, optional):
+            Extracts portable custom properties from exceptions reported by this worker.
 
     Raises:
         ValueError: If taskhub is empty or None.
@@ -90,7 +96,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  data_converter: DataConverter | None = None,
                  log_handler: logging.Handler | None = None,
                  log_formatter: logging.Formatter | None = None,
-                 logger: logging.Logger | None = None):
+                 logger: logging.Logger | None = None,
+                 exception_properties_provider: ExceptionPropertiesProvider | None = None):
 
         if not taskhub:
             raise ValueError("The taskhub value cannot be empty.")
@@ -120,5 +127,6 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             # DTS natively supports long timers so chunking is unnecessary
             maximum_timer_interval=None,
             payload_store=payload_store,
-            data_converter=data_converter
+            data_converter=data_converter,
+            exception_properties_provider=exception_properties_provider,
         )

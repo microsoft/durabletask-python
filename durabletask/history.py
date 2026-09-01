@@ -13,6 +13,7 @@ from google.protobuf import json_format
 from google.protobuf.message import Message
 
 from durabletask import task
+import durabletask.internal.helpers as helpers
 import durabletask.internal.orchestrator_service_pb2 as pb
 
 
@@ -279,11 +280,7 @@ def _failure_details(msg: Message, field_name: str) -> task.FailureDetails | Non
     if not msg.HasField(field_name):
         return None
     details = getattr(msg, field_name)
-    return task.FailureDetails(
-        details.errorMessage,
-        details.errorType,
-        details.stackTrace.value if details.HasField('stackTrace') else None,
-    )
+    return helpers.failure_details_from_protobuf(details)
 
 
 def _trace_context(msg: Message, field_name: str) -> TraceContext | None:

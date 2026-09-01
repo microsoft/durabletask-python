@@ -6,6 +6,7 @@ E2E tests for entity failure handling using the in-memory backend.
 """
 
 import json
+from typing import Any
 
 import pytest
 
@@ -57,10 +58,10 @@ def test_class_entity_unhandled_failure_fails():
 
 def test_function_entity_unhandled_failure_fails():
     """Test that an unhandled exception in a function entity causes the orchestration to fail."""
-    def failing_entity(ctx: entities.EntityContext, _):
+    def failing_entity(ctx: entities.EntityContext, _: Any):
         raise ValueError("Something went wrong!")
 
-    def test_orchestrator(ctx: task.OrchestrationContext, _):
+    def test_orchestrator(ctx: task.OrchestrationContext, _: Any):
         entity_id = entities.EntityInstanceId("failing_entity", "testEntity")
         yield ctx.call_entity(entity_id, "fail")
 
@@ -145,6 +146,42 @@ def test_function_entity_handled_failure_succeeds():
     output = json.loads(state.serialized_output)
     assert "Something went wrong!" in output
     assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+
+
+def test_entity_failure_properties_are_available_to_orchestrators():
+    class PropertiesProvider:
+        def get_exception_properties(self, exception: Exception):
+            return {"message": str(exception), "retryable": False}
+
+    def failing_entity(ctx: entities.EntityContext, _):
+        raise ValueError("Something went wrong!")
+
+    def test_orchestrator(ctx: task.OrchestrationContext, _):
+        entity_id = entities.EntityInstanceId("failing_entity", "testEntity")
+        try:
+            yield ctx.call_entity(entity_id, "fail")
+        except task.TaskFailedError as error:
+            assert error.details.properties is not None
+            return error.details.properties
+        return None
+
+    with worker.TaskHubGrpcWorker(
+            host_address=HOST,
+            exception_properties_provider=PropertiesProvider()) as w:
+        w.add_orchestrator(test_orchestrator)
+        w.add_entity(failing_entity)
+        w.start()
+
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            id = c.schedule_new_orchestration(test_orchestrator)
+            state = c.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.serialized_output is not None
+    assert json.loads(state.serialized_output) == {
+        "message": "Something went wrong!",
+        "retryable": False,
+    }
 
 
 def test_entity_failure_unlocks_entity():

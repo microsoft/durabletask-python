@@ -39,6 +39,34 @@ pip install durabletask[azure-blob-payloads]
 See the [feature documentation](./docs/features.md#large-payload-externalization) and the
 [example](./examples/large_payload/) for usage details.
 
+### Failure Details Properties
+
+Configure an `ExceptionPropertiesProvider` to attach portable diagnostic
+properties to activity, entity, and orchestration failures:
+
+```python
+from durabletask import ExceptionPropertiesProvider
+from durabletask.worker import TaskHubGrpcWorker
+
+
+class FailureProperties(ExceptionPropertiesProvider):
+    def get_exception_properties(self, exception: Exception):
+        return {"error_code": getattr(exception, "error_code", None)}
+
+
+worker = TaskHubGrpcWorker(exception_properties_provider=FailureProperties())
+```
+
+Properties support `None`, booleans, numbers, strings, nested mappings, and
+lists. They are available from `TaskFailedError.details`, orchestration state,
+and history as `FailureDetails.properties`.
+
+> [!NOTE]
+> Python intentionally treats `.NET`'s `dt:` and `dto:` property strings as
+> ordinary strings, matching the Java SDK. Consequently, `datetime` values do
+> not retain their type across Python/.NET failure-details property round trips;
+> this is a .NET SDK parity gap.
+
 ## Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of

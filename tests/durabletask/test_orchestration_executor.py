@@ -718,6 +718,46 @@ def test_activity_task_failed():
     assert user_code_statement in complete_action.failureDetails.stackTrace.value
 
 
+def test_unhandled_activity_failure_preserves_failure_details():
+    """An unhandled task failure keeps its original metadata as an inner failure."""
+    def dummy_activity(ctx, _):
+        pass
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        yield ctx.call_activity(dummy_activity, input=orchestrator_input)
+
+    class PropertiesProvider:
+        def get_exception_properties(self, exception: Exception):
+            if isinstance(exception, ValueError):
+                return {"code": "VALUE"}
+            return None
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity)),
+    ]
+    executor = worker._OrchestrationExecutor(
+        registry,
+        TEST_LOGGER,
+        JsonDataConverter(),
+        exception_properties_provider=PropertiesProvider(),
+    )
+    activity_failure = ValueError("boom")
+    failed_event = helpers.new_task_failed_event(1, activity_failure)
+    failed_event.taskFailed.failureDetails.CopyFrom(
+        helpers.new_failure_details(activity_failure, PropertiesProvider()))
+
+    result = executor.execute(TEST_INSTANCE_ID, old_events, [failed_event])
+
+    failure = get_and_validate_complete_orchestration_action_list(1, result.actions).failureDetails
+    assert failure.errorType == "durabletask.task.TaskFailedError"
+    assert failure.innerFailure.errorType == "builtins.ValueError"
+    assert failure.innerFailure.properties["code"].string_value == "VALUE"
+
+
 def test_activity_retry_policies():
     """Tests the retry policy logic for activity tasks"""
 

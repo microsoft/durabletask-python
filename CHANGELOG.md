@@ -10,19 +10,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ADDED
 
 - Added a `logger` parameter to `TaskHubGrpcClient`,
-  `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`. Applications can now
-  provide fully configured loggers without the SDK modifying their handlers,
-  formatter, level, filters, or propagation.
+`AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`. Applications can now
+provide fully configured loggers without the SDK modifying their handlers,
+formatter, level, filters, or propagation.
+- Added `ExceptionPropertiesProvider` and the
+`exception_properties_provider` worker option to attach portable custom
+properties to activity, entity, and orchestration failures. Failure properties
+and recursive inner failures are available through `FailureDetails`,
+task-failure exceptions, orchestration state, and history.
+- Added an optional timeout to filtered orchestration purges. Callers can now
+limit a purge operation's duration and inspect `PurgeInstancesResult.is_complete`
+for completed, partial, or backend-unknown completion status.
+- Added `OrchestrationQuery.instance_id_prefix` to retrieve orchestration
+instances whose IDs begin with a specified prefix.
+- Added optional `reason` parameters to `TaskHubGrpcClient` and
+`AsyncTaskHubGrpcClient` suspend and resume operations. The reason is now sent
+to the backend with the lifecycle request.
+- Added the optional `new_version` argument to
+`OrchestrationContext.continue_as_new()` so continued orchestrations can switch
+to a new version.
 
 CHANGED
 
 - Deprecated the `log_handler` and `log_formatter` parameters on
-  `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`.
-  Configure and pass a `logger` instead. These parameters will be removed in a
-  future major release.
-- Added the optional `new_version` argument to
-`OrchestrationContext.continue_as_new()` so continued orchestrations can
-switch to a new version.
+`TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`.
+Configure and pass a `logger` instead. These parameters will be removed in a
+future major release.
 
 ## v1.9.0
 

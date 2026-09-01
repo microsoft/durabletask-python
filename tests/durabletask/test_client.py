@@ -1258,6 +1258,43 @@ def test_worker_stores_resiliency_options():
     assert worker._resiliency_options is resiliency
 
 
+def test_suspend_resume_orchestration_includes_optional_reason():
+    stub = MagicMock()
+
+    with patch('durabletask.client.shared.get_grpc_channel', return_value=MagicMock()), patch(
+            'durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        client = TaskHubGrpcClient()
+        client.suspend_orchestration('suspended', reason='maintenance')
+        client.resume_orchestration('resumed')
+
+    suspend_request = stub.SuspendInstance.call_args.args[0]
+    assert suspend_request.instanceId == 'suspended'
+    assert suspend_request.reason.value == 'maintenance'
+    resume_request = stub.ResumeInstance.call_args.args[0]
+    assert resume_request.instanceId == 'resumed'
+    assert not resume_request.HasField('reason')
+
+
+@pytest.mark.asyncio
+async def test_async_suspend_resume_orchestration_includes_optional_reason():
+    stub = MagicMock()
+    stub.SuspendInstance = AsyncMock()
+    stub.ResumeInstance = AsyncMock()
+
+    with patch('durabletask.client.shared.get_async_grpc_channel', return_value=MagicMock()), patch(
+            'durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        client = AsyncTaskHubGrpcClient()
+        await client.suspend_orchestration('suspended')
+        await client.resume_orchestration('resumed', reason='maintenance complete')
+
+    suspend_request = stub.SuspendInstance.call_args.args[0]
+    assert suspend_request.instanceId == 'suspended'
+    assert not suspend_request.HasField('reason')
+    resume_request = stub.ResumeInstance.call_args.args[0]
+    assert resume_request.instanceId == 'resumed'
+    assert resume_request.reason.value == 'maintenance complete'
+
+
 def test_get_orchestration_history_aggregates_chunks_and_deexternalizes_payloads():
     store = FakePayloadStore()
     token = store.upload(b'history payload')

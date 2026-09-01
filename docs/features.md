@@ -334,6 +334,11 @@ The older `log_handler` and `log_formatter` parameters are deprecated. They
 will be removed in a future major release. Passing either one together with
 `logger` raises `ValueError`; none of the supplied logging options are ignored.
 
+> [!NOTE]
+> SDK clients and workers emit detailed `DEBUG` logs that can help diagnose
+> orchestration behavior. Enable that level on the logger you pass to the SDK
+> when reproducing an issue.
+
 ### Large payload externalization
 
 Orchestration inputs, outputs, and event data are transmitted through gRPC messages. When these
@@ -636,34 +641,6 @@ export_client = ExportHistoryClient(
 > dependencies — only the bundled destination does. Future
 > first-party destinations (S3, GCS, etc.) will be packaged as
 > additional optional extras using the same pattern.
-
-### Logging configuration
-
-Both the TaskHubGrpcWorker and TaskHubGrpcClient (as well as DurableTaskSchedulerWorker and
-DurableTaskSchedulerClient for durabletask-azuremanaged) accept a log_handler and log_formatter
-object from `logging`. These can be used to customize verbosity, output location, and format of logs
-emitted by these sources.
-
-For example, to output logs to a file called `worker.log` at level `DEBUG`, the following syntax
-might apply:
-
-```python
-log_handler = logging.FileHandler('durable.log', encoding='utf-8')
-log_handler.setLevel(logging.DEBUG)
-
-with DurableTaskSchedulerWorker(
-    host_address=endpoint,
-    secure_channel=secure_channel,
-    taskhub=taskhub_name,
-    token_credential=credential,
-    log_handler=log_handler,
-) as w:
-```
-
-> [!NOTE]
-> The worker and client output many logs at the `DEBUG` level that will be useful when understanding
-orchestration flow and diagnosing issues with Durable applications. Before submitting issues, please
-attempt a repro of the issue with debug logging enabled.
 
 ### Work item filtering
 

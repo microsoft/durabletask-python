@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import AsyncIterable, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Generic, Protocol, TypeVar, cast, overload
 
@@ -196,6 +196,7 @@ class OrchestrationQuery:
     # results instead.
     max_instance_count: int | None = (1 << 31) - 1
     fetch_inputs_and_outputs: bool = False
+    instance_id_prefix: str | None = None
 
 
 @dataclass
@@ -210,8 +211,15 @@ class EntityQuery:
 
 @dataclass
 class PurgeInstancesResult:
+    """The outcome of a purge operation.
+
+    ``is_complete`` is ``None`` when the backend does not report whether the
+    purge completed, ``False`` when the operation stopped before completion,
+    and ``True`` when it completed.
+    """
+
     deleted_instance_count: int
-    is_complete: bool
+    is_complete: bool | None
 
 
 @dataclass
@@ -254,10 +262,7 @@ def parse_orchestration_state(
         data_converter: DataConverter | None = None) -> OrchestrationState:
     failure_details = None
     if state.failureDetails.errorMessage != '' or state.failureDetails.errorType != '':
-        failure_details = task.FailureDetails(
-            state.failureDetails.errorMessage,
-            state.failureDetails.errorType,
-            state.failureDetails.stackTrace.value if not helpers.is_empty(state.failureDetails.stackTrace) else None)
+        failure_details = helpers.failure_details_from_protobuf(state.failureDetails)
 
     return OrchestrationState(
         state.instanceId,
@@ -270,6 +275,12 @@ def parse_orchestration_state(
         state.customStatus.value if not helpers.is_empty(state.customStatus) else None,
         failure_details,
         data_converter if data_converter is not None else DEFAULT_DATA_CONVERTER)
+
+
+def new_purge_instances_result(response: pb.PurgeInstancesResponse) -> PurgeInstancesResult:
+    """Build a purge result while preserving the completion field's presence."""
+    is_complete = response.isComplete.value if response.HasField("isComplete") else None
+    return PurgeInstancesResult(response.deletedInstanceCount, is_complete)
 
 
 # Grace period before a retired SDK-owned channel is force-closed. Long enough
@@ -787,13 +798,21 @@ class TaskHubGrpcClient:
             )
         self._stub.TerminateInstance(req)
 
-    def suspend_orchestration(self, instance_id: str) -> None:
-        req = pb.SuspendRequest(instanceId=instance_id)
+    def suspend_orchestration(self, instance_id: str, *,
+                              reason: str | None = None) -> None:
+        req = pb.SuspendRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Suspending instance '{instance_id}'.")
         self._stub.SuspendInstance(req)
 
-    def resume_orchestration(self, instance_id: str) -> None:
-        req = pb.ResumeRequest(instanceId=instance_id)
+    def resume_orchestration(self, instance_id: str, *,
+                             reason: str | None = None) -> None:
+        req = pb.ResumeRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Resuming instance '{instance_id}'.")
         self._stub.ResumeInstance(req)
 
@@ -841,21 +860,23 @@ class TaskHubGrpcClient:
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
         resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(req)
-        return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
+        return new_purge_instances_result(resp)
 
     def purge_orchestrations_by(self,
                                 created_time_from: datetime | None = None,
                                 created_time_to: datetime | None = None,
                                 runtime_status: list[OrchestrationStatus] | None = None,
-                                recursive: bool = False) -> PurgeInstancesResult:
+                                recursive: bool = False,
+                                timeout: timedelta | None = None) -> PurgeInstancesResult:
         self._logger.info("Purging orchestrations by filter: "
                           f"created_time_from={created_time_from}, "
                           f"created_time_to={created_time_to}, "
                           f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
-                          f"recursive={recursive}")
-        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive)
+                          f"recursive={recursive}, "
+                          f"timeout={timeout}")
+        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive, timeout)
         resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(req)
-        return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
+        return new_purge_instances_result(resp)
 
     def signal_entity(self,
                       entity_instance_id: EntityInstanceId,
@@ -1322,13 +1343,21 @@ class AsyncTaskHubGrpcClient:
             )
         await self._get_stub().TerminateInstance(req)
 
-    async def suspend_orchestration(self, instance_id: str) -> None:
-        req = pb.SuspendRequest(instanceId=instance_id)
+    async def suspend_orchestration(self, instance_id: str, *,
+                                    reason: str | None = None) -> None:
+        req = pb.SuspendRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Suspending instance '{instance_id}'.")
         await self._get_stub().SuspendInstance(req)
 
-    async def resume_orchestration(self, instance_id: str) -> None:
-        req = pb.ResumeRequest(instanceId=instance_id)
+    async def resume_orchestration(self, instance_id: str, *,
+                                   reason: str | None = None) -> None:
+        req = pb.ResumeRequest(
+            instanceId=instance_id,
+            reason=helpers.get_string_value(reason),
+        )
         self._logger.info(f"Resuming instance '{instance_id}'.")
         await self._get_stub().ResumeInstance(req)
 
@@ -1376,21 +1405,23 @@ class AsyncTaskHubGrpcClient:
         req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
         self._logger.info(f"Purging instance '{instance_id}'.")
         resp: pb.PurgeInstancesResponse = await self._get_stub().PurgeInstances(req)
-        return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
+        return new_purge_instances_result(resp)
 
     async def purge_orchestrations_by(self,
                                       created_time_from: datetime | None = None,
                                       created_time_to: datetime | None = None,
                                       runtime_status: list[OrchestrationStatus] | None = None,
-                                      recursive: bool = False) -> PurgeInstancesResult:
+                                      recursive: bool = False,
+                                      timeout: timedelta | None = None) -> PurgeInstancesResult:
         self._logger.info("Purging orchestrations by filter: "
                           f"created_time_from={created_time_from}, "
                           f"created_time_to={created_time_to}, "
                           f"runtime_status={[str(status) for status in runtime_status] if runtime_status else None}, "
-                          f"recursive={recursive}")
-        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive)
+                          f"recursive={recursive}, "
+                          f"timeout={timeout}")
+        req = build_purge_by_filter_req(created_time_from, created_time_to, runtime_status, recursive, timeout)
         resp: pb.PurgeInstancesResponse = await self._get_stub().PurgeInstances(req)
-        return PurgeInstancesResult(resp.deletedInstanceCount, resp.isComplete.value)
+        return new_purge_instances_result(resp)
 
     async def signal_entity(self,
                             entity_instance_id: EntityInstanceId,

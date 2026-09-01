@@ -83,6 +83,8 @@ class TestEventToDict:
             "message": "boom",
             "error_type": "RuntimeError",
             "stack_trace": "trace",
+            "inner_failure": None,
+            "properties": None,
         }
         # The full document must be JSON-serializable.
         fmt = ExportFormat(kind=ExportFormatKind.JSON)
@@ -182,13 +184,42 @@ class TestMetadataEmbedding:
     def test_state_with_failure_details(self) -> None:
         st = self._state()
         st.failure_details = task.FailureDetails(
-            message="boom", error_type="RuntimeError", stack_trace="trace",
+            message="boom",
+            error_type="RuntimeError",
+            stack_trace="trace",
+            properties={"code": "OUTER"},
+            inner_failure=task.FailureDetails(
+                message="middle",
+                error_type="ValueError",
+                stack_trace=None,
+                properties={"code": "MIDDLE"},
+                inner_failure=task.FailureDetails(
+                    message="inner",
+                    error_type="KeyError",
+                    stack_trace=None,
+                    properties={"code": "INNER"},
+                ),
+            ),
         )
         d = orchestration_state_to_dict(st)
         assert d["failure_details"] == {
             "message": "boom",
             "error_type": "RuntimeError",
             "stack_trace": "trace",
+            "properties": {"code": "OUTER"},
+            "inner_failure": {
+                "message": "middle",
+                "error_type": "ValueError",
+                "stack_trace": None,
+                "properties": {"code": "MIDDLE"},
+                "inner_failure": {
+                    "message": "inner",
+                    "error_type": "KeyError",
+                    "stack_trace": None,
+                    "properties": {"code": "INNER"},
+                    "inner_failure": None,
+                },
+            },
         }
 
     def test_metadata_embedded_in_json(self) -> None:

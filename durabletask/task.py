@@ -484,6 +484,8 @@ class FailureDetails:
     message: str
     error_type: str
     stack_trace: str | None
+    inner_failure: FailureDetails | None = None
+    properties: dict[str, Any] | None = None
 
     def is_caused_by(self, error_type: str | type[BaseException]) -> bool:
         """Return ``True`` if this failure was caused by ``error_type``.
@@ -574,11 +576,14 @@ class TaskFailedError(Exception):
     def __init__(self, message: str, details: pb.TaskFailureDetails | Exception):
         super().__init__(message)
         if isinstance(details, Exception):
+            nested_failure = getattr(details, "failure_details", None)
             details = pbh.new_failure_details(details)
-        self._details = FailureDetails(
-            details.errorMessage,
-            details.errorType,
-            details.stackTrace.value if not pbh.is_empty(details.stackTrace) else None)
+            if isinstance(nested_failure, pb.TaskFailureDetails):
+                details.innerFailure.CopyFrom(nested_failure)
+                for key, value in nested_failure.properties.items():
+                    details.properties[key].CopyFrom(value)
+        self._failure_details = details
+        self._details = pbh.failure_details_from_protobuf(details)
 
     @property
     def details(self) -> FailureDetails:
