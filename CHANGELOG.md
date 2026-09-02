@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.10.0
+
 ADDED
 
 - Added a `logger` parameter to `TaskHubGrpcClient`,
@@ -36,6 +38,12 @@ CHANGED
 `TaskHubGrpcClient`, `AsyncTaskHubGrpcClient`, and `TaskHubGrpcWorker`.
 Configure and pass a `logger` instead. These parameters will be removed in a
 future major release.
+
+FIXED
+
+- Fixed `TaskHubGrpcWorker` leaving its background event loop unclosed after
+shutdown, which could retain resources and emit delayed `ResourceWarning`
+messages.
 
 ## v1.9.0
 
@@ -78,9 +86,6 @@ import paths, `__all__`, `dir()`, and star-imports behave exactly as before.
 
 FIXED
 
-- Fixed `TaskHubGrpcWorker` leaving its background event loop unclosed after
-shutdown, which could retain resources and emit delayed `ResourceWarning`
-messages.
 - Fixed `AsyncTaskHubGrpcClient` failing during construction when no current
 event loop was set. SDK-owned async gRPC channels are now created on first use,
 binding them to the event loop that performs the RPC.

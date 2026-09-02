@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.10.0
+
 ADDED
 
 - Added a `logger` parameter to `DurableTaskSchedulerClient`,
@@ -25,6 +27,7 @@ from `TaskHubGrpcClient` and `AsyncTaskHubGrpcClient`.
 
 CHANGED
 
+- Updated the base dependency to `durabletask` v1.10.0.
 - Deprecated the `log_handler` and `log_formatter` parameters on
 `DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`, and
 `DurableTaskSchedulerWorker`. Configure and pass a `logger` instead. These

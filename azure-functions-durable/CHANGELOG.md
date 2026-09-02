@@ -7,29 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v2.0.0b3
+
 ADDED
 
 - Added an optional timeout to filtered orchestration purges through
 `DurableFunctionsClient` and `SyncDurableFunctionsClient`.
 - Added inherited `OrchestrationQuery.instance_id_prefix` support to retrieve
 orchestration instances whose IDs begin with a specified prefix.
-> [!NOTE]
-> Release this change only in coordination with a new `durabletask` release
-> that contains the suspend/resume reason APIs. Publish `durabletask` first,
-> then update this package's minimum dependency in its dedicated release PR.
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.10.0.
+- Durable Functions client and worker logs now use the Azure Functions
+host-managed `azure.durable_functions` logger hierarchy instead of private SDK
+handlers. Configure their level, destination, and telemetry routing through the
+standard Functions/Python logging configuration.
+- Updated the v2 migration guidance and samples to use the public Azure
+Functions extension bundle, which now includes an AFD v2-compatible extension.
 
 FIXED
 
 - Fixed deprecated `DurableFunctionsClient.suspend()` and `resume()` methods
 discarding their `reason` arguments. Reasons are now forwarded to the Durable
 Task backend.
-
-CHANGED
-
-- Durable Functions client and worker logs now use the Azure Functions
-host-managed `azure.durable_functions` logger hierarchy instead of private SDK
-handlers. Configure their level, destination, and telemetry routing through the
-standard Functions/Python logging configuration.
 
 ## v2.0.0b2
 
