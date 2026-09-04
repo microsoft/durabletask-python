@@ -2590,14 +2590,17 @@ class _OrchestrationExecutor:
                         if not timer_task._retryable_parent._is_sub_orch:  # pyright: ignore[reportPrivateUsage]
                             cur_task = activity_action.scheduleTask
                             instance_id = None
+                            tags = dict(cur_task.tags)
                         else:
                             cur_task = activity_action.createSubOrchestration
                             instance_id = cur_task.instanceId
+                            tags = None
                         ctx.call_activity_function_helper(
                             id=activity_action.id,
                             activity_function=cur_task.name,
                             input=cur_task.input.value,
                             retry_policy=timer_task._retryable_parent._retry_policy,  # pyright: ignore[reportPrivateUsage]
+                            tags=tags,
                             is_sub_orch=timer_task._retryable_parent._is_sub_orch,  # pyright: ignore[reportPrivateUsage]
                             instance_id=instance_id,
                             fn_task=timer_task._retryable_parent,  # pyright: ignore[reportPrivateUsage]
