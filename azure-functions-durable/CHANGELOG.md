@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v2.0.0rc1
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.10.1.
+
 ## v2.0.0b3
 
 ADDED
