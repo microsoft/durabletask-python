@@ -933,6 +933,65 @@ def test_activity_retry_policies():
     assert actions[-1].id == 7
 
 
+def test_activity_retry_preserves_tags():
+    """Activity tags are preserved on every retry-generated schedule action."""
+
+    def dummy_activity(ctx, _):
+        raise ValueError("Kah-BOOOOM!!!")
+
+    tags = {
+        "durabletask.displayName": "reserve_inventory",
+        "custom": "value",
+    }
+
+    def orchestrator(ctx: task.OrchestrationContext, orchestrator_input):
+        return (yield ctx.call_activity(
+            dummy_activity,
+            retry_policy=task.RetryPolicy(
+                first_retry_interval=timedelta(seconds=1),
+                max_number_of_attempts=3,
+            ),
+            input=orchestrator_input,
+            tags=tags,
+        ))
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    current_timestamp = datetime.utcnow()
+    old_events = [
+        helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(dummy_activity)),
+    ]
+
+    for _ in range(2):
+        failed_events = [
+            helpers.new_orchestrator_started_event(timestamp=current_timestamp),
+            helpers.new_task_failed_event(1, ValueError("Kah-BOOOOM!!!")),
+        ]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+        result = executor.execute(TEST_INSTANCE_ID, old_events, failed_events)
+        timer_action = next(action for action in result.actions if action.HasField("createTimer"))
+
+        old_events += failed_events
+        current_timestamp = timer_action.createTimer.fireAt.ToDatetime()
+        timer_events = [
+            helpers.new_orchestrator_started_event(current_timestamp),
+            helpers.new_timer_fired_event(timer_action.id, current_timestamp),
+        ]
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+        result = executor.execute(TEST_INSTANCE_ID, old_events, timer_events)
+        retry_actions = [
+            action.scheduleTask
+            for action in result.actions
+            if action.HasField("scheduleTask")
+        ]
+
+        assert len(retry_actions) == 1
+        assert dict(retry_actions[0].tags) == tags
+        old_events += timer_events
+
+
 def test_activity_retry_without_max_retry_interval():
     """Tests that retry logic works correctly when max_retry_interval is not set.
 

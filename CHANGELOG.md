@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Activity tags, including `durabletask.displayName`, are now preserved across
+retry attempts.
+
 ## v1.10.0
 
 ADDED
