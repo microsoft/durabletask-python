@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Nested composite tasks now notify their parent when they complete. Patterns
+such as `when_any([cancel, when_all(tasks)])` now complete correctly.
+
 ## v1.10.1
 
 FIXED

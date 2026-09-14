@@ -2051,6 +2051,74 @@ def test_when_all_handles_pre_completed_children():
     assert when_all.is_failed
 
 
+def test_when_any_completes_when_nested_when_all_succeeds():
+    """A nested when_all task must notify its when_any parent."""
+    cancel = task.CompletableTask()
+    first = task.CompletableTask()
+    second = task.CompletableTask()
+    all_task = task.when_all([first, second])
+    race = task.when_any([cancel, all_task])
+
+    first.complete("first")
+    assert not all_task.is_complete
+    assert not race.is_complete
+
+    second.complete("second")
+
+    assert all_task.is_complete
+    assert all_task.get_result() == ["first", "second"]
+    assert race.is_complete
+    assert race.get_result() is all_task
+
+
+def test_when_any_completes_when_nested_when_all_fails():
+    """A failed nested when_all task must notify its when_any parent."""
+    cancel = task.CompletableTask()
+    failed = task.CompletableTask()
+    completed = task.CompletableTask()
+    all_task = task.when_all([failed, completed])
+    race = task.when_any([cancel, all_task])
+
+    failed.fail("boom", Exception("boom"))
+    assert not all_task.is_complete
+    assert not race.is_complete
+
+    completed.complete("done")
+
+    assert all_task.is_complete
+    assert all_task.is_failed
+    assert race.is_complete
+    assert race.get_result() is all_task
+    with pytest.raises(task.TaskFailedError, match="boom"):
+        all_task.get_result()
+
+
+def test_nested_when_any_notifies_parent_once():
+    """A nested when_any task must notify its parent only for its winner."""
+    first = task.CompletableTask()
+    second = task.CompletableTask()
+    sibling = task.CompletableTask()
+    nested_race = task.when_any([first, second])
+    all_task = task.when_all([nested_race, sibling])
+
+    first.complete("first")
+
+    assert nested_race.is_complete
+    assert nested_race.get_result() is first
+    assert all_task.get_completed_tasks() == 1
+    assert not all_task.is_complete
+
+    second.complete("second")
+
+    assert all_task.get_completed_tasks() == 1
+    assert not all_task.is_complete
+
+    sibling.complete("sibling")
+
+    assert all_task.is_complete
+    assert all_task.get_result() == [first, "sibling"]
+
+
 def test_when_any():
     """Tests that a when_any pattern works correctly"""
     def hello(_, name: str):
