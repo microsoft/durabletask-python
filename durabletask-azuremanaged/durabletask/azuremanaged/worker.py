@@ -39,6 +39,12 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
         taskhub (str): The name of the task hub. Cannot be empty.
         token_credential (TokenCredential | None): Azure credential for authentication.
             If None, anonymous authentication will be used.
+        resource_id (str | None, optional): Token audience override. If None or empty,
+            defaults to ``https://durabletask.azure.us`` when ``REGION_NAME`` starts
+            with ``usgov`` or ``usdod`` (case-insensitive), or ``https://durabletask.io``
+            otherwise. Surrounding whitespace, trailing slashes, and an existing
+            ``/.default`` suffix are removed before requesting the ``/.default`` scope.
+            Does not configure the service endpoint or the credential's authority.
         secure_channel (bool, optional): Whether to use a secure gRPC channel (TLS).
             Defaults to True.
         resiliency_options (GrpcWorkerResiliencyOptions | None, optional): Worker-side
@@ -60,6 +66,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
 
     Raises:
         ValueError: If taskhub is empty or None.
+        ValueError: If resource_id becomes empty after normalization.
 
     Example:
         >>> from azure.identity import DefaultAzureCredential
@@ -86,6 +93,7 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
                  host_address: str,
                  taskhub: str,
                  token_credential: TokenCredential | None,
+                 resource_id: str | None = None,
                  channel: grpc.Channel | None = None,
                  secure_channel: bool = True,
                  interceptors: Sequence[shared.ClientInterceptor] | None = None,
@@ -107,7 +115,8 @@ class DurableTaskSchedulerWorker(TaskHubGrpcWorker):
             list(interceptors) if interceptors is not None else []
         )
         resolved_interceptors.append(
-            DTSDefaultClientInterceptorImpl(token_credential, taskhub, worker_id=worker_id)
+            DTSDefaultClientInterceptorImpl(
+                token_credential, taskhub, worker_id=worker_id, resource_id=resource_id)
         )
 
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class

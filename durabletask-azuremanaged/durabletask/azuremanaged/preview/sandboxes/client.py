@@ -18,13 +18,19 @@ import durabletask.internal.shared as shared
 
 
 class SandboxActivitiesClient:
-    """Client for Durable Task Scheduler sandbox activity management operations."""
+    """Client for Durable Task Scheduler sandbox activity management operations.
+
+    ``resource_id`` selects the token audience using the same normalization and
+    ``REGION_NAME`` defaults as ``DurableTaskSchedulerClient``. It does not change
+    the endpoint or credential authority. A supplied channel owns its authentication.
+    """
 
     def __init__(
             self, *,
             host_address: str,
             taskhub: str,
             token_credential: Optional[TokenCredential],
+            resource_id: Optional[str] = None,
             channel: Optional[grpc.Channel] = None,
             secure_channel: bool = True,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
@@ -33,6 +39,7 @@ class SandboxActivitiesClient:
             host_address=host_address,
             taskhub=taskhub,
             token_credential=token_credential,
+            resource_id=resource_id,
             channel=channel,
             secure_channel=secure_channel,
             interceptors=interceptors,

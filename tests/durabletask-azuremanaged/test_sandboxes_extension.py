@@ -700,7 +700,10 @@ def test_generated_stub_uses_sandbox_rpc_paths() -> None:
 
 
 def test_sandbox_worker_constructor_does_not_expose_runtime_contract() -> None:
-    assert list(inspect.signature(SandboxWorker).parameters) == []
+    parameters = inspect.signature(SandboxWorker).parameters
+    assert list(parameters) == ["resource_id"]
+    assert parameters["resource_id"].kind == inspect.Parameter.KEYWORD_ONLY
+    assert parameters["resource_id"].default is None
     assert "_execute_activity" not in SandboxWorker.__dict__
     assert "add_activity" not in SandboxWorker.__dict__
 
@@ -1042,6 +1045,56 @@ def test_sandbox_registration_reuses_one_transport_across_retriable_failures(mon
     assert backoff.upper_bounds == [1.0, 2.0, 4.0]
 
 
+@pytest.mark.parametrize(("region", "resource_id", "expected_resource"), [
+    ("westus2", None, "https://durabletask.io"),
+    ("UsGovVirginia", None, "https://durabletask.azure.us"),
+    ("USDODEAST", "", "https://durabletask.azure.us"),
+    ("usgovvirginia", " https://durabletask.example/.default/ ", "https://durabletask.example"),
+    ("westus2", "api://custom/.default/.default", "api://custom/.default"),
+])
+def test_sandbox_worker_uses_same_audience_for_execution_and_registration(
+        monkeypatch, region: str, resource_id: str | None, expected_resource: str) -> None:
+    monkeypatch.setenv("REGION_NAME", region)
+    worker = _build_registration_test_worker(monkeypatch, resource_id=resource_id)
+    requested_scopes: list[tuple[str, ...]] = []
+
+    def get_token(*scopes, **kwargs):
+        requested_scopes.append(scopes)
+        return AccessToken("sandbox-token", 9999999999)
+
+    monkeypatch.setattr(worker._sandbox_token_credential, "get_token", get_token)
+    worker._interceptors[-1]._token_manager.get_access_token()
+    assert requested_scopes == [(f"{expected_resource}/.default",)]
+
+    # Registration can begin or reconnect after the environment has changed.
+    monkeypatch.setenv("REGION_NAME", "usdodcentral" if region == "westus2" else "westus2")
+    attempts = 0
+
+    def connect(_messages):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise _FakeRpcError(grpc.StatusCode.CANCELLED, "Channel closed!")
+        worker._sandbox_registration_stop.set()
+        return object()
+
+    transports = _install_fake_registration_transport(monkeypatch, connect)
+    monkeypatch.setattr(sandbox_worker, "random", _StubBackoff())
+    worker._run_sandbox_registration_loop()
+
+    assert len(transports) == 2
+    assert all(transport.kwargs["resource_id"] == (resource_id or expected_resource)
+               for transport in transports)
+    assert all(transport.kwargs["token_credential"] is worker._sandbox_token_credential
+               for transport in transports)
+
+
+@pytest.mark.parametrize("resource_id", [" \t ", "///", "/.default", " /.DEFAULT/// "])
+def test_sandbox_worker_rejects_invalid_resource_id(monkeypatch, resource_id: str) -> None:
+    with pytest.raises(ValueError, match="resource_id cannot be empty after normalization"):
+        _build_registration_test_worker(monkeypatch, resource_id=resource_id)
+
+
 def test_sandbox_registration_rebuilds_transport_after_channel_shutdown(monkeypatch) -> None:
     worker = _build_registration_test_worker(monkeypatch)
     attempts = 0
@@ -1129,7 +1182,7 @@ def _install_fake_registration_transport(
     return transports
 
 
-def _build_registration_test_worker(monkeypatch) -> SandboxWorker:
+def _build_registration_test_worker(monkeypatch, resource_id: str | None = None) -> SandboxWorker:
     monkeypatch.setenv("DTS_ENDPOINT", "http://localhost:8080")
     monkeypatch.setenv("DTS_TASK_HUB", "env-hub")
     monkeypatch.setenv("DTS_WORKER_PROFILE_ID", "env-profile")
@@ -1139,7 +1192,7 @@ def _build_registration_test_worker(monkeypatch) -> SandboxWorker:
     def RegistrationActivity(_ctx, value):
         return value
 
-    worker = SandboxWorker()
+    worker = SandboxWorker(resource_id=resource_id)
     worker.add_activity(RegistrationActivity)
     worker._configure_sandbox_activity_filters()
     worker._sandbox_registration_stop.clear()
