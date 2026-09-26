@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Asynchronous Azure Blob payload uploads and downloads no longer run gzip
+compression or decompression on the calling event loop, keeping concurrent
+async operations responsive during large transfers.
+
 ## v1.10.1
 
 FIXED

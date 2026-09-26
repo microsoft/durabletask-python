@@ -4,3 +4,5 @@
 # a real app rather than being pip-installed by the host at start time.
 azure-functions
 azure-functions-durable
+durabletask[azure-blob-payloads]
+aiohttp

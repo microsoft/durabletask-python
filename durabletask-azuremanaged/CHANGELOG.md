@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core SDK update, asynchronous Azure Blob payload
+transfers no longer block the event loop during compression or decompression.
+
 ## v1.10.1
 
 CHANGED

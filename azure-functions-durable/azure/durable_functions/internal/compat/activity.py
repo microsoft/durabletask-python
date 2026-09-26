@@ -16,8 +16,10 @@ classic Functions shape -- are returned unchanged.
 from __future__ import annotations
 
 import inspect
+import json
 import keyword
 import typing
+from functools import wraps
 from collections.abc import (
     Mapping,
     MutableMapping,
@@ -28,6 +30,17 @@ from collections.abc import (
 )
 from typing import Any, Callable, cast
 
+from azure.functions._durable_functions import df_loads
+
+from ..converters import ActivityTriggerConverter
+from ..invocation import preserve_function_source
+from ..payloads import (
+    ActivityPayload,
+    deexternalize_payload,
+    deexternalize_payload_async,
+    externalize_activity_output,
+    externalize_activity_output_async,
+)
 from .orchestration_context import accepts_two_positional_args
 
 
@@ -125,9 +138,11 @@ def wrap_activity(fn: Callable[..., Any], input_name: str) -> Callable[..., Any]
     # and the original is invoked positionally (its second-parameter name is
     # irrelevant).
     namespace: dict[str, Any] = {"_fn": fn, "_ctx": _NO_ACTIVITY_CONTEXT}
+    async_prefix = "async " if inspect.iscoroutinefunction(fn) else ""
+    await_prefix = "await " if async_prefix else ""
     exec(  # noqa: S102 - input_name is validated to be a bare identifier above
-        f"def _activity_adapter({input_name}):\n"
-        f"    return _fn(_ctx, {input_name})\n",
+        f"{async_prefix}def _activity_adapter({input_name}):\n"
+        f"    return {await_prefix}_fn(_ctx, {input_name})\n",
         namespace,
     )
     adapter = cast("Callable[..., Any]", namespace["_activity_adapter"])
@@ -159,4 +174,55 @@ def wrap_activity(fn: Callable[..., Any], input_name: str) -> Callable[..., Any]
         if ret_ann is not inspect.Parameter.empty:
             annotations["return"] = ret_ann
     adapter.__annotations__ = annotations
+    preserve_function_source(adapter, fn)
     return adapter
+
+
+def wrap_activity_payloads(fn: Callable[..., Any], input_name: str) -> Callable[..., Any]:
+    """Run payload I/O inside the invocation, preserving sync/async dispatch."""
+    signature = inspect.signature(fn)
+
+    def decode(value: str) -> Any:
+        try:
+            return df_loads(value)
+        except json.JSONDecodeError:
+            return value
+        except Exception as error:
+            raise ValueError('activity trigger input must be a string or a '
+                             f'valid json serializable ({value})') from error
+
+    wrapper: Callable[..., Any]
+    if inspect.iscoroutinefunction(fn):
+        @wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            bound = signature.bind(*args, **kwargs)
+            value = bound.arguments.get(input_name)
+            if not isinstance(value, ActivityPayload):
+                return await fn(*args, **kwargs)
+            bound.arguments[input_name] = decode(await deexternalize_payload_async(value.value))
+            result = await fn(*bound.args, **bound.kwargs)
+            if result is None:
+                return None
+            encoded = ActivityTriggerConverter.encode(result, expected_type=None).value
+            return ActivityPayload(await externalize_activity_output_async(encoded))
+
+        wrapper = async_wrapper
+    else:
+        @wraps(fn)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            bound = signature.bind(*args, **kwargs)
+            value = bound.arguments.get(input_name)
+            if not isinstance(value, ActivityPayload):
+                return fn(*args, **kwargs)
+            bound.arguments[input_name] = decode(deexternalize_payload(value.value))
+            result = fn(*bound.args, **bound.kwargs)
+            if result is None:
+                return None
+            encoded = ActivityTriggerConverter.encode(result, expected_type=None).value
+            return ActivityPayload(externalize_activity_output(encoded))
+
+        wrapper = sync_wrapper
+
+    setattr(wrapper, "__signature__", signature)
+    preserve_function_source(wrapper, fn)
+    return wrapper
