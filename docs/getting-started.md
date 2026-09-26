@@ -57,6 +57,29 @@ request. For example, both `https://durabletask.azure.us/` and
 `https://durabletask.azure.us/.default`. Nonempty inputs that become empty after
 normalization, such as whitespace, `///`, or `/.default`, raise `ValueError`.
 
+### Credential Ownership and Authority Host
+
+`DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`,
+`SandboxActivitiesClient`, and `DurableTaskSchedulerWorker` require a
+`token_credential` argument. They use the caller-created credential directly;
+they do not construct `DefaultAzureCredential` or another credential on the
+caller's behalf. Passing `None` disables SDK token authentication rather than
+creating a default credential. A caller-supplied channel remains responsible
+for its own authentication.
+
+Credentials may come from Azure Identity or implement the Azure Core
+`TokenCredential` / `AsyncTokenCredential` protocol themselves. Token requests
+use `get_token(scope)`; the protocol has no supported per-request authority
+override. Configure `authority` when creating a compatible Azure Identity
+credential, as in the example above. Omitting it preserves the credential's
+default behavior, including `AZURE_AUTHORITY_HOST` where applicable.
+
+The preview `SandboxWorker` is the only Azure Managed runtime path that creates
+an Azure Identity credential internally. It creates `ManagedIdentityCredential`
+using the injected `DTS_UMI_CLIENT_ID`. Managed identities use their hosting
+environment's identity endpoint and ignore the authority setting, so this path
+does not require an authority-host option either.
+
 > [!NOTE]
 > The resource audience, service endpoint, and credential authority/cloud are
 > separate settings. Neither `resource_id` nor `REGION_NAME` changes the endpoint
