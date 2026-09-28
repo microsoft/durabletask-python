@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.11.0
+
 FIXED
 
 - Asynchronous Azure Blob payload uploads and downloads no longer run gzip

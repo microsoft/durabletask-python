@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v2.0.0rc2
+
 ADDED
 
 - Added `DFApp.configure_large_payloads(payload_store=...)` to externalize large
 durable payloads to Azure Blob Storage or a custom payload store.
 - Configured clients automatically hydrate stored payloads, including
 orchestration history and entity operation inputs and results.
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.11.0.
 
 FIXED
 
