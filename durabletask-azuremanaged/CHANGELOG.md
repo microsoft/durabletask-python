@@ -24,6 +24,11 @@ use `https://durabletask.azure.us` if `REGION_NAME` starts with `usgov` or `usdo
 `https://durabletask.io`. The endpoint and credential authority remain separately
 configured.
 
+FIXED
+
+- With the corresponding core SDK update, asynchronous Azure Blob payload
+transfers no longer block the event loop during compression or decompression.
+
 ## v1.10.1
 
 CHANGED

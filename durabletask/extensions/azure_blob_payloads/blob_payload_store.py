@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import logging
 import uuid
@@ -173,7 +174,7 @@ class BlobPayloadStore(PayloadStore):
         await self._ensure_container_async()
 
         if self._options.enable_compression:
-            data = gzip.compress(data)
+            data = await asyncio.to_thread(gzip.compress, data)
 
         blob_name = self._make_blob_name(instance_id)
         container_client: AsyncContainerClient = self._async_blob_service_client.get_container_client(
@@ -194,7 +195,7 @@ class BlobPayloadStore(PayloadStore):
         blob_data = await stream.readall()
 
         if self._options.enable_compression:
-            blob_data = gzip.decompress(blob_data)
+            blob_data = await asyncio.to_thread(gzip.decompress, blob_data)
 
         logger.debug("Downloaded %d bytes <- %s", len(blob_data), token)
         return blob_data

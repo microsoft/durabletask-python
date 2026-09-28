@@ -12,7 +12,7 @@ Functions host extension (and the SDK's ``ActivityTriggerConverter``) expect.
 from __future__ import annotations
 from azure.functions._durable_functions import df_dumps, df_loads
 
-from typing import Any
+from typing import Any, override
 
 from durabletask.serialization import JsonDataConverter
 
@@ -34,21 +34,25 @@ class FunctionsDataConverter(JsonDataConverter):
     dataclass / ``from_json`` policy.
     """
 
+    @override
     def serialize(self, value: Any) -> str | None:
         if value is None:
             return None
         return df_dumps(value)
 
+    @override
     def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
         if data is None or data == "":
             return None
         return df_loads(data, expected_type=target_type)
 
+    @override
     def coerce(self, value: Any, target_type: type | None = None) -> Any:
         if value is None or target_type is None:
             return value
         return self.deserialize(self.serialize(value), target_type)
 
+    @override
     def can_reconstruct(self, target_type: Any) -> bool:
         return True
 
