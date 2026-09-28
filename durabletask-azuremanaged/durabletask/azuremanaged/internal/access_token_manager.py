@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 
@@ -10,14 +11,31 @@ from azure.core.credentials_async import AsyncTokenCredential
 import durabletask.internal.shared as shared
 
 
+def resolve_resource_id(resource_id: str | None) -> str:
+    """Normalize an explicit token audience or resolve the current region's default."""
+    if resource_id is None or resource_id == "":
+        region = os.getenv("REGION_NAME", "")
+        if region.lower().startswith(("usgov", "usdod")):
+            return "https://durabletask.azure.us"
+        return "https://durabletask.io"
+
+    resource_id = resource_id.strip().rstrip("/")
+    if resource_id.lower().endswith("/.default"):
+        resource_id = resource_id[:-len("/.default")].rstrip("/")
+    if not resource_id:
+        raise ValueError("resource_id cannot be empty after normalization.")
+    return resource_id
+
+
 # By default, when there's 10minutes left before the token expires, refresh the token
 class AccessTokenManager:
 
     _token: AccessToken | None
     expiry_time: datetime | None
 
-    def __init__(self, token_credential: TokenCredential | None, refresh_interval_seconds: int = 600):
-        self._scope = "https://durabletask.io/.default"
+    def __init__(self, token_credential: TokenCredential | None, refresh_interval_seconds: int = 600,
+                 *, resource_id: str | None = None):
+        self._scope = f"{resolve_resource_id(resource_id)}/.default"
         self._refresh_interval_seconds = refresh_interval_seconds
         self._logger = shared.get_logger("token_manager")
 
@@ -63,8 +81,8 @@ class AsyncAccessTokenManager:
     _token: AccessToken | None
 
     def __init__(self, token_credential: AsyncTokenCredential | None,
-                 refresh_interval_seconds: int = 600):
-        self._scope = "https://durabletask.io/.default"
+                 refresh_interval_seconds: int = 600, *, resource_id: str | None = None):
+        self._scope = f"{resolve_resource_id(resource_id)}/.default"
         self._refresh_interval_seconds = refresh_interval_seconds
         self._logger = shared.get_logger("async_token_manager")
 

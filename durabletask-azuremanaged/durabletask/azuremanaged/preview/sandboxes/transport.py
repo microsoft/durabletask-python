@@ -40,6 +40,7 @@ class SandboxActivitiesGrpcTransport:
             host_address: str,
             taskhub: str,
             token_credential: Optional[TokenCredential],
+            resource_id: Optional[str] = None,
             channel: Optional[grpc.Channel] = None,
             secure_channel: bool = True,
             interceptors: Optional[Sequence[shared.ClientInterceptor]] = None,
@@ -52,7 +53,8 @@ class SandboxActivitiesGrpcTransport:
             resolved_interceptors: list[shared.ClientInterceptor] = (
                 list(interceptors) if interceptors is not None else []
             )
-            resolved_interceptors.append(DTSDefaultClientInterceptorImpl(token_credential, taskhub))
+            resolved_interceptors.append(DTSDefaultClientInterceptorImpl(
+                token_credential, taskhub, resource_id=resource_id))
             channel = shared.get_grpc_channel(
                 host_address=host_address,
                 secure_channel=secure_channel,

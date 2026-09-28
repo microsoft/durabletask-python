@@ -12,6 +12,7 @@ from azure.core.credentials import TokenCredential
 from azure.identity import ManagedIdentityCredential
 
 from durabletask.azuremanaged.internal import sandbox_service_pb2 as pb
+from durabletask.azuremanaged.internal.access_token_manager import resolve_resource_id
 from durabletask.azuremanaged.preview.sandboxes.helpers import SandboxActivity
 from durabletask.azuremanaged.preview.sandboxes.helpers import resolve_activities
 from durabletask.azuremanaged.preview.sandboxes.worker_profiles import (
@@ -38,9 +39,15 @@ class SandboxWorker(DurableTaskSchedulerWorker):
 
     This worker registers a live worker session with Durable Task Scheduler and
     restricts dispatch to the activities registered on this worker.
+
+    ``resource_id`` selects the token audience using the same normalization and
+    ``REGION_NAME`` defaults as ``DurableTaskSchedulerWorker``. It applies to both
+    activity execution and worker registration without changing the runtime endpoint
+    or managed identity configuration.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, resource_id: str | None = None) -> None:
+        resolved_resource_id = resource_id or resolve_resource_id(None)
         resolved_host_address = _resolve_host_address()
         resolved_taskhub = _resolve_taskhub()
         resolved_secure_channel = _resolve_secure_channel(resolved_host_address)
@@ -54,12 +61,14 @@ class SandboxWorker(DurableTaskSchedulerWorker):
         self._sandbox_host_address = resolved_host_address
         self._sandbox_secure_channel = resolved_secure_channel
         self._sandbox_token_credential = resolved_token_credential
+        self._sandbox_resource_id = resolved_resource_id
         self._sandbox_logger = shared.get_logger("worker")
 
         super().__init__(
             host_address=resolved_host_address,
             taskhub=resolved_taskhub,
             token_credential=resolved_token_credential,
+            resource_id=resolved_resource_id,
             secure_channel=resolved_secure_channel,
             concurrency_options=concurrency_options)
 
@@ -139,6 +148,7 @@ class SandboxWorker(DurableTaskSchedulerWorker):
                             host_address=self._sandbox_host_address,
                             taskhub=self._sandbox_taskhub,
                             token_credential=self._sandbox_token_credential,
+                            resource_id=self._sandbox_resource_id,
                             secure_channel=self._sandbox_secure_channel)
                     client.connect_sandbox_activity_worker(self._registration_messages())
                     retry_delay = 1.0

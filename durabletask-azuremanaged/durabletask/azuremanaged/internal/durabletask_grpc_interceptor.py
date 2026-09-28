@@ -11,6 +11,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from durabletask.azuremanaged.internal.access_token_manager import (
     AccessTokenManager,
     AsyncAccessTokenManager,
+    resolve_resource_id,
 )
 from durabletask.internal.grpc_interceptor import (
     DefaultAsyncClientInterceptorImpl,
@@ -43,7 +44,10 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
             self,
             token_credential: TokenCredential | None,
             taskhub_name: str,
-            worker_id: str | None = None):
+            worker_id: str | None = None,
+            *, resource_id: str | None = None):
+        if token_credential is None:
+            resolve_resource_id(resource_id)
         user_agent = f"durabletask-python/{_get_sdk_version()}"
         self._metadata = [
             ("taskhub", taskhub_name),
@@ -58,7 +62,8 @@ class DTSDefaultClientInterceptorImpl (DefaultClientInterceptorImpl):
         self._token_manager = None
         if token_credential is not None:
             self._token_credential = token_credential
-            self._token_manager = AccessTokenManager(token_credential=self._token_credential)
+            self._token_manager = AccessTokenManager(
+                token_credential=self._token_credential, resource_id=resource_id)
 
     def _upsert_authorization_header(self, token: str) -> None:
         found = False
@@ -91,7 +96,10 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
     This class implements async gRPC interceptors to add DTS-specific headers
     (task hub name, user agent, and authentication token) to all async calls."""
 
-    def __init__(self, token_credential: AsyncTokenCredential | None, taskhub_name: str):
+    def __init__(self, token_credential: AsyncTokenCredential | None, taskhub_name: str,
+                 *, resource_id: str | None = None):
+        if token_credential is None:
+            resolve_resource_id(resource_id)
         user_agent = f"durabletask-python/{_get_sdk_version()}"
         self._metadata = [
             ("taskhub", taskhub_name),
@@ -104,7 +112,8 @@ class DTSAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
         self._token_manager = None
         if token_credential is not None:
             self._token_credential = token_credential
-            self._token_manager = AsyncAccessTokenManager(token_credential=self._token_credential)
+            self._token_manager = AsyncAccessTokenManager(
+                token_credential=self._token_credential, resource_id=resource_id)
 
     def _upsert_authorization_header(self, token: str) -> None:
         found = False

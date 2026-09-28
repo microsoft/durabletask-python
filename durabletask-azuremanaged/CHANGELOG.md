@@ -7,6 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added optional `resource_id` configuration for the token audience on
+`DurableTaskSchedulerClient`, `AsyncDurableTaskSchedulerClient`,
+`DurableTaskSchedulerWorker`, `SandboxActivitiesClient`, and `SandboxWorker`.
+Explicit values override region defaults and support custom resource URIs.
+Surrounding whitespace, trailing slashes, and an existing `/.default` suffix
+are normalized before token requests; values that become empty are rejected.
+
+CHANGED
+
+- When `resource_id` is omitted or empty, Azure Managed clients and workers now
+use `https://durabletask.azure.us` if `REGION_NAME` starts with `usgov` or `usdod`
+(case-insensitive). Other regions, including an unset `REGION_NAME`, retain
+`https://durabletask.io`. The endpoint and credential authority remain separately
+configured.
+
 FIXED
 
 - With the corresponding core SDK update, asynchronous Azure Blob payload
