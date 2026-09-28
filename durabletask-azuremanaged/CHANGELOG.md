@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Orchestrations using a corrected core `durabletask` SDK no longer remain
+blocked when a nested `when_all` or `when_any` task completes, including patterns
+such as `when_any([cancel, when_all(tasks)])`.
+
+> [!WARNING]
+> **Replay-breaking bug fix:** Existing instances that progressed past a nested
+> race under the previous behavior can select a different winner during replay
+> and fail with `NonDeterminismError`. Ordinary, non-nested composites are
+> unaffected. See the [core changelog](../CHANGELOG.md) for the affected scenario
+> and guidance on draining or isolating existing instances before upgrading.
+>
+> Pinning `durabletask.azuremanaged` alone does not pin the core SDK. Its
+> open-ended `durabletask` dependency allows a fresh dependency resolution to
+> select a newer core SDK containing this fix even when the provider version is
+> unchanged. Pin or lock `durabletask` as well to control when this behavior
+> change is adopted.
+
 ## v1.10.1
 
 CHANGED

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- With a corrected core `durabletask` SDK, nested `when_all` and `when_any`
+composites now complete correctly instead of leaving their enclosing composite
+waiting. This also applies to the compatibility APIs `context.task_all()` and
+`context.task_any()`.
+
+> [!WARNING]
+> **Replay-breaking bug fix:** Existing instances that progressed past a nested
+> race under the previous behavior can select a different winner during replay
+> and fail with `NonDeterminismError`. Ordinary, non-nested composites are
+> unaffected. This warning also applies when upgrading from earlier
+> `azure-functions-durable` 2.x prereleases, including release candidates. See
+> the [core changelog](../CHANGELOG.md) for the affected scenario and guidance on
+> draining or isolating existing instances before upgrading.
+>
+> Pinning `azure-functions-durable` v2 alone does not pin the core SDK. Its
+> open-ended `durabletask[opentelemetry]` dependency allows a fresh dependency
+> resolution to select a newer core SDK containing this fix even when the
+> provider version is unchanged. Pin or lock `durabletask` as well to control
+> when this behavior change is adopted.
+
 ## v2.0.0rc1
 
 CHANGED
