@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Asynchronous Azure Blob payload uploads and downloads no longer run gzip
+compression or decompression on the calling event loop, keeping concurrent
+async operations responsive during large transfers.
 - Fixed nested `when_all` and `when_any` tasks leaving their enclosing composite
 tasks waiting after completion. Patterns such as
 `when_any([cancel, when_all(tasks)])` now complete correctly.

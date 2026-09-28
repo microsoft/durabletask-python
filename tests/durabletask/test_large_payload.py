@@ -3,7 +3,10 @@
 
 """Tests for large-payload externalization and de-externalization."""
 
-from unittest.mock import MagicMock
+import asyncio
+import gzip
+import threading
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from google.protobuf import wrappers_pb2
@@ -431,6 +434,72 @@ class TestBlobPayloadStoreTokenParsing:
 # ------------------------------------------------------------------
 # Tests: BlobPayloadStore construction and defaults
 # ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["upload", "download"])
+@pytest.mark.parametrize("enable_compression", [False, True])
+async def test_async_blob_compression_yields(monkeypatch, operation, enable_compression):
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import blob_payload_store as module
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStoreOptions
+
+    data = b"payload" * 1000
+    stored_data = gzip.compress(data) if enable_compression else data
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    entered = asyncio.Event()
+    release = threading.Event()
+    gzip_method = "compress" if operation == "upload" else "decompress"
+    original = getattr(gzip, gzip_method)
+
+    def gated_gzip(value):
+        assert enable_compression
+        assert threading.get_ident() != loop_thread
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(5), "Event loop did not release compression"
+        return original(value)
+
+    async def upload_blob(**kwargs):
+        assert threading.get_ident() == loop_thread
+
+    async def readall():
+        assert threading.get_ident() == loop_thread
+        return stored_data
+
+    stream = MagicMock()
+    stream.readall = AsyncMock(side_effect=readall)
+    container = MagicMock()
+    container.create_container = AsyncMock()
+    container.upload_blob = AsyncMock(side_effect=upload_blob)
+    container.download_blob = AsyncMock(return_value=stream)
+    service = MagicMock()
+    service.get_container_client.return_value = container
+    service.close = AsyncMock()
+    monkeypatch.setattr(module, "BlobServiceClient", MagicMock())
+    monkeypatch.setattr(module, "AsyncBlobServiceClient", MagicMock(return_value=service))
+    monkeypatch.setattr(gzip, gzip_method, gated_gzip)
+    store = module.BlobPayloadStore(BlobPayloadStoreOptions(
+        account_url="https://example.blob.core.windows.net", enable_compression=enable_compression))
+    transfer = asyncio.create_task(store.upload_async(data) if operation == "upload"
+                                   else store.download_async("blob:v1:durabletask-payloads:example"))
+    try:
+        if enable_compression:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            assert not transfer.done()
+    finally:
+        release.set()
+        try:
+            result = await transfer
+        finally:
+            store.close()
+            await store.close_async()
+    if operation == "upload":
+        uploaded = container.upload_blob.call_args.kwargs["data"]
+        assert (gzip.decompress(uploaded) if enable_compression else uploaded) == data
+        assert store.is_known_token(result)
+    else:
+        assert result == data
 
 
 class TestBlobPayloadStoreDefaults:

@@ -8,11 +8,12 @@ import logging
 import threading
 
 from datetime import datetime, timedelta
-from typing import Any, Mapping, Optional, Union, cast
+from typing import Any, Mapping, Optional, Union, cast, override
 from warnings import deprecated
 import azure.functions as func
 from urllib.parse import urlparse, quote
 
+from durabletask import history
 from durabletask.client import (
     AsyncTaskHubGrpcClient,
     OrchestrationQuery,
@@ -26,6 +27,11 @@ from .internal.azurefunctions_grpc_interceptor import (
     AzureFunctionsDefaultClientInterceptorImpl,
 )
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
+from .internal.payloads import (
+    get_transport_payload_store,
+    hydrate_entity_history,
+    hydrate_entity_history_async,
+)
 from .http.http_management_payload import HttpManagementPayload, replace_url_origin
 from .internal.compat.durable_orchestration_status import DurableOrchestrationStatus
 from .internal.compat.entity_state_response import EntityStateResponse
@@ -178,6 +184,7 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
             interceptors=interceptors,
             channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
+            payload_store=get_transport_payload_store(),
             emit_trace_spans=False,
             logger=_LOGGER)
 
@@ -192,6 +199,16 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         except RuntimeError:
             self._creation_loop = None
         self._close_scheduled = False
+
+    @override
+    async def get_orchestration_history(
+            self, instance_id: str, *, execution_id: str | None = None,
+            for_work_item_processing: bool = False) -> list[history.HistoryEvent]:
+        events = await super().get_orchestration_history(
+            instance_id, execution_id=execution_id,
+            for_work_item_processing=for_work_item_processing)
+        await hydrate_entity_history_async(events, self._payload_store, instance_id)
+        return events
 
     def schedule_close(self) -> None:
         """Schedule the underlying gRPC channel to close after the invocation.
@@ -664,8 +681,19 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             interceptors=interceptors,
             channel_options=channel_options,
             data_converter=DEFAULT_FUNCTIONS_DATA_CONVERTER,
+            payload_store=get_transport_payload_store(),
             emit_trace_spans=False,
             logger=_LOGGER)
+
+    @override
+    def get_orchestration_history(
+            self, instance_id: str, *, execution_id: str | None = None,
+            for_work_item_processing: bool = False) -> list[history.HistoryEvent]:
+        events = super().get_orchestration_history(
+            instance_id, execution_id=execution_id,
+            for_work_item_processing=for_work_item_processing)
+        hydrate_entity_history(events, self._payload_store, instance_id)
+        return events
 
     @classmethod
     def get_cached(cls, client_as_string: str) -> "SyncDurableFunctionsClient":

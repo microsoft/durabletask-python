@@ -4,7 +4,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import azure.functions as func
 import pytest
@@ -22,7 +22,9 @@ from azure.durable_functions.http.http_management_payload import (
 from durabletask import history as dt_history, task as dt_task
 from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus
 from durabletask.entities import EntityInstanceId
+from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.task import RetryPolicy
+from azure.durable_functions.internal import payloads
 
 
 _CLIENT_CONFIG = json.dumps({
@@ -115,6 +117,132 @@ def test_durable_clients_use_propagate_only_tracing():
 
     assert init.call_args is not None
     assert init.call_args.kwargs["emit_trace_spans"] is False
+
+
+@pytest.mark.asyncio
+async def test_durable_clients_use_configured_payload_store(monkeypatch, payload_store_factory):
+    store = payload_store_factory()
+    monkeypatch.setattr(payloads, "_payload_store", store)
+    sync_client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
+    async_client = df.DurableFunctionsClient(_CLIENT_CONFIG)
+    try:
+        assert sync_client._payload_store._store is store
+        assert async_client._payload_store._store is store
+    finally:
+        sync_client.close()
+        await async_client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("modern_request", [False, True])
+async def test_history_hydrates_only_correlated_entity_envelopes(
+        monkeypatch, payload_store_factory, use_async, modern_request):
+    store = payload_store_factory()
+    monkeypatch.setattr(payloads, "_payload_store", store)
+    token = json.dumps(store.upload(b'{"data":"hydrated"}'))
+    download = store.download
+    monkeypatch.setattr(store, "download", Mock(wraps=download))
+    monkeypatch.setattr(store, "download_async", AsyncMock(side_effect=download))
+    request_id = "63c281d7-02d7-412c-9f66-1d6d26a83948"
+    request = pb.HistoryEvent(eventId=1)
+    if modern_request:
+        request.entityOperationCalled.requestId = request_id
+        request.entityOperationCalled.operation = "get"
+        request.entityOperationCalled.targetInstanceId.value = "@counter@one"
+    else:
+        request.eventSent.instanceId = "@counter@one"
+        request.eventSent.name = "op"
+        request.eventSent.input.value = json.dumps({
+            "id": request_id, "op": "get", "parent": "instance", "input": token})
+    reply = pb.HistoryEvent(eventId=2)
+    reply.eventRaised.name = request_id
+    reply.eventRaised.input.value = json.dumps({"result": token})
+    ordinary = pb.HistoryEvent(eventId=3)
+    ordinary.eventRaised.name = "application-event"
+    ordinary.eventRaised.input.value = reply.eventRaised.input.value
+    scheduled = pb.HistoryEvent(eventId=4)
+    scheduled.taskScheduled.name = "echo"
+    scheduled.taskScheduled.input.value = token
+    chunks = [pb.HistoryChunk(events=[request]), pb.HistoryChunk(events=[reply, ordinary, scheduled])]
+
+    async def stream():
+        for chunk in chunks:
+            yield chunk
+
+    client = (df.DurableFunctionsClient(_CLIENT_CONFIG) if use_async
+              else df.SyncDurableFunctionsClient(_CLIENT_CONFIG))
+    stub = Mock()
+    stub.StreamInstanceHistory.return_value = stream() if use_async else iter(chunks)
+    try:
+        if use_async:
+            monkeypatch.setattr(client, "_get_stub", lambda: stub)
+            events = await client.get_orchestration_history("instance", execution_id="execution")
+        else:
+            monkeypatch.setattr(client, "_stub", stub)
+            events = client.get_orchestration_history("instance", execution_id="execution")
+        assert json.loads(json.loads(events[1].input)["result"]) == {"data": "hydrated"}
+        assert events[2].input == ordinary.eventRaised.input.value
+        assert json.loads(events[3].input) == {"data": "hydrated"}
+        assert json.loads(reply.eventRaised.input.value)["result"] == token
+        if not modern_request:
+            assert json.loads(json.loads(events[0].input)["input"]) == {"data": "hydrated"}
+        assert stub.StreamInstanceHistory.call_args.args[0].executionId.value == "execution"
+        expected_downloads = 2 if modern_request else 3
+        assert store.download.call_count == (0 if use_async else expected_downloads)
+        assert store.download_async.await_count == (expected_downloads if use_async else 0)
+    finally:
+        if use_async:
+            await client.close()
+        else:
+            client.close()
+
+
+@pytest.mark.parametrize("invalid", ["lock", "parent", "id", "target", "name", "json", "signal"])
+def test_history_preserves_unrelated_or_malformed_envelopes(monkeypatch, payload_store_factory, invalid):
+    store = payload_store_factory()
+    monkeypatch.setattr(payloads, "_payload_store", store)
+    token = json.dumps("blob:v1:test-container:missing")
+    request_id = "63c281d7-02d7-412c-9f66-1d6d26a83948"
+    envelope = {"id": request_id, "op": "get", "parent": "instance", "input": token}
+    if invalid == "lock":
+        envelope.pop("op")
+        envelope["lockset"] = ["@counter@one"]
+    elif invalid == "parent":
+        envelope["parent"] = "another-instance"
+    elif invalid == "id":
+        envelope["id"] = "not-a-request-id"
+    elif invalid == "signal":
+        envelope["signal"] = "false"
+    request = dt_history.EventSentEvent(
+        event_id=1, timestamp=datetime.now(timezone.utc),
+        instance_id="ordinary-instance" if invalid == "target" else "@counter@one",
+        name="application-event" if invalid == "name" else "op",
+        input="not-json" if invalid == "json" else json.dumps(envelope))
+    reply = dt_history.EventRaisedEvent(
+        event_id=2, timestamp=request.timestamp, name=request_id,
+        input=json.dumps({"result": token}))
+    original = [request.input, reply.input]
+    payloads.hydrate_entity_history([request, reply], payloads.get_transport_payload_store(), "instance")
+    assert [request.input, reply.input] == original
+
+
+@pytest.mark.parametrize("name", ["op", "op@2026-09-01T00:00:00Z"])
+def test_history_hydrates_signals_without_correlating_replies(monkeypatch, payload_store_factory, name):
+    store = payload_store_factory()
+    monkeypatch.setattr(payloads, "_payload_store", store)
+    token = json.dumps(store.upload(b'{"reference":"blob:v1:test-container:literal"}'))
+    request_id = "63c281d7-02d7-412c-9f66-1d6d26a83948"
+    request = dt_history.EventSentEvent(
+        event_id=1, timestamp=datetime.now(timezone.utc), instance_id="@counter@one", name=name,
+        input=json.dumps({"id": request_id, "op": "set", "signal": True, "input": token}))
+    reply = dt_history.EventRaisedEvent(
+        event_id=2, timestamp=request.timestamp, name=request_id,
+        input=json.dumps({"result": token}))
+    original_reply = reply.input
+    payloads.hydrate_entity_history([request, reply], payloads.get_transport_payload_store(), "instance")
+    assert json.loads(json.loads(request.input)["input"]) == {"reference": "blob:v1:test-container:literal"}
+    assert reply.input == original_reply
 
 
 def test_client_handles_all_config_fields_sent_as_null():

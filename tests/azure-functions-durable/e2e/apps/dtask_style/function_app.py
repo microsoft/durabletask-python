@@ -14,6 +14,8 @@ Together with the v1-style app it exercises both authoring surfaces the
 compatibility layer supports, end-to-end against a real Functions host.
 """
 
+import os
+
 import azure.functions as func
 
 import azure.durable_functions as df
@@ -22,15 +24,22 @@ import activities
 import client_routes
 import entities
 import history_export_routes
+import large_payloads
 import orchestrators
+from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
 
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+app.configure_large_payloads(payload_store=BlobPayloadStore(BlobPayloadStoreOptions(
+    connection_string=os.environ.get("AzureWebJobsStorage", "UseDevelopmentStorage=true"),
+    container_name=os.environ.get("E2E_PAYLOAD_CONTAINER", "functions-e2e-payloads"),
+)))
 
 app.register_functions(activities.bp)
 app.register_functions(entities.bp)
 app.register_functions(orchestrators.bp)
 app.register_functions(client_routes.bp)
 app.register_functions(history_export_routes.bp)
+app.register_functions(large_payloads.bp)
 
 # Opt in to durabletask scheduled tasks: registers the schedule entity and
 # operation orchestrator so schedules can be managed via ScheduledTaskClient.

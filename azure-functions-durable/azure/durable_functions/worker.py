@@ -7,6 +7,10 @@ from threading import Lock
 from typing import Any, Optional
 
 from durabletask import task
+from durabletask.payload import (
+    deexternalize_payloads, deexternalize_payloads_async,
+    externalize_payloads, externalize_payloads_async,
+)
 from durabletask.internal.orchestrator_service_pb2 import (
     EntityBatchRequest,
     EntityBatchResult,
@@ -16,8 +20,13 @@ from durabletask.internal.orchestrator_service_pb2 import (
 )
 from durabletask.worker import TaskHubGrpcWorker
 from .internal.azurefunctions_null_stub import AzureFunctionsNullStub
+from .internal.invocation import run_sync
 from .internal.compat.entity_context import wrap_entity
 from .internal.compat.orchestration_context import wrap_orchestrator
+from .internal.payloads import (
+    discard_scheduled_activity_inputs, get_transport_payload_store,
+    hydrate_entity_request, hydrate_entity_request_async,
+)
 from .internal.serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 
 _LOGGER = logging.getLogger(__name__)
@@ -84,12 +93,37 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             self._registered_entity_functions[name] = func
 
     def execute_orchestration_request(self, func: task.Orchestrator[Any, Any], context: Any) -> str:
+        payload_store = get_transport_payload_store()
         context_body = getattr(context, "body", None)
         if context_body is None:
             context_body = context
         orchestration_context = context_body
         request = OrchestratorRequest()
         request.ParseFromString(base64.b64decode(orchestration_context))
+        if payload_store is not None:
+            discard_scheduled_activity_inputs(request)
+            deexternalize_payloads(request, payload_store)
+            hydrate_entity_request(request, payload_store)
+        response = self._run_orchestration(func, request)
+        if payload_store is not None:
+            externalize_payloads(response, payload_store, instance_id=request.instanceId)
+        return base64.b64encode(response.SerializeToString()).decode("utf-8")
+
+    async def execute_orchestration_request_async(self, func: task.Orchestrator[Any, Any], context: Any) -> str:
+        payload_store = get_transport_payload_store()
+        request = OrchestratorRequest()
+        request.ParseFromString(base64.b64decode(getattr(context, "body", None) or context))
+        if payload_store is not None:
+            discard_scheduled_activity_inputs(request)
+            await deexternalize_payloads_async(request, payload_store)
+            await hydrate_entity_request_async(request, payload_store)
+        response = await run_sync(self._run_orchestration, func, request)
+        if payload_store is not None:
+            await externalize_payloads_async(response, payload_store, instance_id=request.instanceId)
+        return base64.b64encode(response.SerializeToString()).decode("utf-8")
+
+    def _run_orchestration(
+            self, func: task.Orchestrator[Any, Any], request: OrchestratorRequest) -> OrchestratorResponse:
         stub: Any = AzureFunctionsNullStub()
         response: Optional[OrchestratorResponse] = None
 
@@ -113,17 +147,36 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
 
         if response is None:
             raise RuntimeError("Orchestrator execution did not produce a response.")
-        # Return the protobuf response serialized and base64-encoded, the exact
-        # format the Durable Functions host expects.
-        return base64.b64encode(response.SerializeToString()).decode("utf-8")
+        return response
 
     def execute_entity_batch_request(self, func: task.Entity[Any, Any], context: Any) -> str:
+        payload_store = get_transport_payload_store()
         context_body = getattr(context, "body", None)
         if context_body is None:
             context_body = context
         orchestration_context = context_body
         request = EntityBatchRequest()
         request.ParseFromString(base64.b64decode(orchestration_context))
+        if payload_store is not None:
+            deexternalize_payloads(request, payload_store)
+        response = self._run_entity_batch(func, request)
+        if payload_store is not None:
+            externalize_payloads(response, payload_store, instance_id=request.instanceId)
+        return base64.b64encode(response.SerializeToString()).decode("utf-8")
+
+    async def execute_entity_batch_request_async(self, func: task.Entity[Any, Any], context: Any) -> str:
+        payload_store = get_transport_payload_store()
+        request = EntityBatchRequest()
+        request.ParseFromString(base64.b64decode(getattr(context, "body", None) or context))
+        if payload_store is not None:
+            await deexternalize_payloads_async(request, payload_store)
+        response = await run_sync(self._run_entity_batch, func, request)
+        if payload_store is not None:
+            await externalize_payloads_async(response, payload_store, instance_id=request.instanceId)
+        return base64.b64encode(response.SerializeToString()).decode("utf-8")
+
+    def _run_entity_batch(
+            self, func: task.Entity[Any, Any], request: EntityBatchRequest) -> EntityBatchResult:
         stub: Any = AzureFunctionsNullStub()
         response: Optional[EntityBatchResult] = None
 
@@ -137,6 +190,4 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
 
         if response is None:
             raise RuntimeError("Entity execution did not produce a response.")
-        # Return the protobuf response serialized and base64-encoded, the exact
-        # format the Durable Functions host expects.
-        return base64.b64encode(response.SerializeToString()).decode("utf-8")
+        return response

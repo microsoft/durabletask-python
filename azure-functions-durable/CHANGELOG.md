@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added `DFApp.configure_large_payloads(payload_store=...)` to externalize large
+durable payloads to Azure Blob Storage or a custom payload store.
+- Configured clients automatically hydrate stored payloads, including
+orchestration history and entity operation inputs and results.
+
 FIXED
 
+- Preserved the application's source directory in `context.function_directory`
+for decorated activities and durable-client functions.
 - With a corrected core `durabletask` SDK, nested `when_all` and `when_any`
 composites now complete correctly instead of leaving their enclosing composite
 waiting. This also applies to the compatibility APIs `context.task_all()` and

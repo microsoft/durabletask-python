@@ -58,6 +58,12 @@ the SDK. In a sandbox, `SandboxWorker()` reads `DTS_ENDPOINT`, `DTS_TASK_HUB`,
 Durable Task Scheduler. It also reads optional `DTS_SANDBOX_PROVIDER` metadata
 when present. The worker requires `DTS_AUTHENTICATION=ManagedIdentity` and
 reports its sandbox ID plus registered activity identities when it connects.
+
+The optional `SandboxWorker(resource_id=...)` argument overrides only the token
+audience, for both activity execution and worker registration. When omitted,
+`REGION_NAME` selects the audience as described in
+[Azure Managed authentication](../../docs/getting-started.md#configure-azure-managed-authentication).
+It does not override the runtime-injected endpoint or identity.
 Durable Task Scheduler validates they match the worker_profile before
 advertising worker capacity.
 
