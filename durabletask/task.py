@@ -643,6 +643,10 @@ class Task(ABC, Generic[T]):
             raise ValueError('The task has not failed.')
         return self._exception
 
+    def _notify_parent(self) -> None:
+        if self._parent is not None:
+            self._parent.on_child_completed(self)
+
 
 class CompositeTask(Task[T]):
     """A task that is composed of other tasks."""
@@ -710,6 +714,7 @@ class WhenAllTask(CompositeTask[list[T]]):
                 # The order of the result MUST match the order of the tasks
                 # provided to the constructor.
                 self._result = [child.get_result() for child in self._tasks]
+            self._notify_parent()
 
     def get_completed_tasks(self) -> int:
         return self._completed_tasks
@@ -727,16 +732,14 @@ class CompletableTask(Task[T]):
             raise ValueError('The task has already completed.')
         self._result = result
         self._is_complete = True
-        if self._parent is not None:
-            self._parent.on_child_completed(self)
+        self._notify_parent()
 
     def fail(self, message: str, details: Exception | pb.TaskFailureDetails):
         if self._is_complete:
             raise ValueError('The task has already completed.')
         self._exception = TaskFailedError(message, details)
         self._is_complete = True
-        if self._parent is not None:
-            self._parent.on_child_completed(self)
+        self._notify_parent()
 
 
 class CancellableTask(CompletableTask[T]):
@@ -776,8 +779,7 @@ class CancellableTask(CompletableTask[T]):
 
         self._is_cancelled = True
         self._is_complete = True
-        if self._parent is not None:
-            self._parent.on_child_completed(self)
+        self._notify_parent()
         return True
 
 
@@ -859,6 +861,7 @@ class WhenAnyTask(CompositeTask[Task[T]], Generic[T]):
         if not self.is_complete:
             self._is_complete = True
             self._result = cast(Task[T], task)
+            self._notify_parent()
 
 
 def when_all(tasks: list[Task[T]]) -> WhenAllTask[T]:

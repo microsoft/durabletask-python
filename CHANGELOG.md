@@ -12,6 +12,25 @@ FIXED
 - Asynchronous Azure Blob payload uploads and downloads no longer run gzip
 compression or decompression on the calling event loop, keeping concurrent
 async operations responsive during large transfers.
+- Fixed nested `when_all` and `when_any` tasks leaving their enclosing composite
+tasks waiting after completion. Patterns such as
+`when_any([cancel, when_all(tasks)])` now complete correctly.
+
+> [!WARNING]
+> **Replay-breaking bug fix:** This correction can change the winner of a nested
+> race when replaying an existing orchestration. For example, an inner
+> `when_all` could previously finish without completing the enclosing
+> `when_any`, allowing a later cancellation to win instead. If the orchestration
+> already recorded downstream actions for that cancellation branch, replay with
+> the corrected behavior can take a different branch and fail with
+> `NonDeterminismError`. Ordinary, non-nested `when_all` and `when_any` usage is
+> unchanged; not every nested-composite history is affected.
+>
+> Before upgrading, allow affected instances to finish on the previous SDK, or
+> keep their task hub on the previous SDK and use a separate task hub for new
+> instances. Instances already stuck because of this bug may need deliberate
+> recovery rather than waiting to drain. Pin or lock the `durabletask` dependency
+> while planning the transition, including when using it through a provider.
 
 ## v1.10.1
 
