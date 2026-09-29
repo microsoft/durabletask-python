@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- With a corrected core `durabletask` SDK, native durabletask orchestrators
+preserve external events arriving after `continue_as_new(..., save_events=True)`
+instead of losing them to abandoned waits.
+
 ## v2.0.0rc2
 
 ADDED
