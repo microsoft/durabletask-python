@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, timer callbacks no longer
+schedule additional long-timer chunks, retry activities or sub-orchestrations,
+or resume orchestrator code after completion, failure, termination, or
+continue-as-new. This applies to both native and compatibility orchestration APIs.
+
 ## v2.0.0rc2
 
 ADDED

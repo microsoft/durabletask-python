@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, timer callbacks no longer
+retry activities or sub-orchestrations, or resume orchestrator code after
+completion, failure, termination, or continue-as-new. Azure Managed uses native
+long timers without chunking; the core long-timer chunking correction does not
+change that behavior.
+
 ## v1.11.0
 
 ADDED
