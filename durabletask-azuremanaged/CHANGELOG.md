@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.11.0
+
 ADDED
 
 - Added optional `resource_id` configuration for the token audience on
@@ -18,6 +20,7 @@ are normalized before token requests; values that become empty are rejected.
 
 CHANGED
 
+- Updated the base dependency to `durabletask` v1.11.0.
 - When `resource_id` is omitted or empty, Azure Managed clients and workers now
 use `https://durabletask.azure.us` if `REGION_NAME` starts with `usgov` or `usdod`
 (case-insensitive). Other regions, including an unset `REGION_NAME`, retain
