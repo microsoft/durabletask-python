@@ -15,7 +15,7 @@ import base64
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -27,6 +27,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import azure.durable_functions as df
 from azure.durable_functions.internal import invocation, payloads
 from azure.durable_functions.worker import DurableFunctionsWorker
+from durabletask import task
 from durabletask.entities import EntityInstanceId
 from durabletask.payload import PayloadStore
 
@@ -500,6 +501,37 @@ def test_execute_orchestration_request_captures_failure():
     completion = _get_completion_action(_decode_orchestrator_response(result))
     assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert "boom" in completion.failureDetails.errorMessage
+
+
+@pytest.mark.parametrize("save_events", [True, False])
+def test_continue_as_new_preserves_trailing_events_in_worker_response(save_events: bool):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        event_task = ctx.wait_for_external_event("event")
+        timer = ctx.create_timer(timedelta(seconds=1))
+        yield task.when_any([event_task, timer])
+        ctx.continue_as_new(None, save_events=save_events)
+
+    started_at = datetime(2026, 1, 1)
+    fire_at = started_at + timedelta(seconds=1)
+    request = pb.OrchestratorRequest(instanceId=TEST_INSTANCE_ID)
+    request.pastEvents.extend([
+        helpers.new_orchestrator_started_event(started_at),
+        helpers.new_execution_started_event("continue-events", TEST_INSTANCE_ID),
+        helpers.new_timer_created_event(1, fire_at),
+    ])
+    request.newEvents.extend([
+        helpers.new_timer_fired_event(1, fire_at),
+        helpers.new_event_raised_event("event", "1"),
+        helpers.new_event_raised_event("event", "2"),
+    ])
+    encoded = base64.b64encode(request.SerializeToString()).decode("utf-8")
+    response = _decode_orchestrator_response(
+        DurableFunctionsWorker().execute_orchestration_request(orchestrator, encoded))
+    completion = _get_completion_action(response)
+
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert [event.eventRaised.input.value for event in completion.carryoverEvents] == (
+        ["1", "2"] if save_events else [])
 
 
 def test_activity_retry_then_fan_out_uses_distinct_task_ids():

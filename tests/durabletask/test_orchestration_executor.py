@@ -1857,6 +1857,239 @@ def test_continue_as_new(save_events: bool, new_version: str | None):
         assert event.eventRaised.input.value == json.dumps(42 + i)
 
 
+@pytest.mark.parametrize("save_events", [True, False])
+@pytest.mark.parametrize("replay_completion", [True, False])
+@pytest.mark.parametrize("event_wins", [True, False])
+@pytest.mark.parametrize("cancel_waits", [True, False])
+def test_continue_as_new_trailing_external_events(
+        save_events: bool, replay_completion: bool, event_wins: bool, cancel_waits: bool):
+    waits: list[task.CancellableTask[Any]] = []
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        waits.extend([ctx.wait_for_external_event("EVENT"), ctx.wait_for_external_event("event")])
+        timer = ctx.create_timer(timedelta(seconds=1))
+        yield task.when_any([waits[0], timer])
+        if cancel_waits:
+            for event_task in waits:
+                if not event_task.is_complete:
+                    event_task.cancel()
+        ctx.continue_as_new(None, save_events=save_events)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    fire_at = start_time + timedelta(seconds=1)
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_timer_created_event(1, fire_at),
+    ]
+    payloads = ["1", "2", None, '{ "value": 3 }']
+    new_events = [
+        helpers.new_event_raised_event("eVeNt", "0") if event_wins
+        else helpers.new_timer_fired_event(1, fire_at),
+        *[helpers.new_event_raised_event("eVeNt", payload) for payload in payloads],
+    ]
+    if replay_completion:
+        old_events.extend(new_events[:2])
+        new_events = new_events[2:]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert not completion.HasField("result")
+    assert [
+        event.eventRaised.input.value if event.eventRaised.HasField("input") else None
+        for event in completion.carryoverEvents
+    ] == (payloads if save_events else [])
+    assert all(event.eventRaised.name == "event" for event in completion.carryoverEvents)
+    if event_wins:
+        assert waits[0].get_result() == 0
+    for event_task in waits[1:] if event_wins else waits:
+        assert event_task.is_cancelled == cancel_waits
+        assert event_task.is_complete == cancel_waits
+
+
+@pytest.mark.parametrize("save_events", [True, False])
+def test_continue_as_new_does_not_restore_events_delivered_while_live(save_events: bool):
+    waits: list[task.CancellableTask[Any]] = []
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        waits.extend([ctx.wait_for_external_event("event"), ctx.wait_for_external_event("event")])
+        yield ctx.create_timer(timedelta(seconds=1))
+        ctx.continue_as_new(None, save_events=save_events)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    fire_at = start_time + timedelta(seconds=1)
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_timer_created_event(1, fire_at),
+        helpers.new_event_raised_event("event", "0"),
+    ]
+    new_events = [
+        helpers.new_event_raised_event("event", "1"),
+        helpers.new_timer_fired_event(1, fire_at),
+        helpers.new_event_raised_event("event", "2"),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    # Delivery to a live wait consumes the event, even if the generator never yielded that wait.
+    assert [event_task.get_result() for event_task in waits] == [0, 1]
+    assert [event.eventRaised.input.value for event in completion.carryoverEvents] == (
+        ["2"] if save_events else [])
+
+
+@pytest.mark.parametrize("save_events", [True, False])
+def test_continue_as_new_is_terminal_before_generator_returns(save_events: bool):
+    resumed: list[bool] = []
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        event_task = ctx.wait_for_external_event("event")
+        ctx.continue_as_new(None, save_events=save_events)
+        yield event_task
+        resumed.append(True)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    events = [
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_event_raised_event("event", "1"),
+        helpers.new_event_raised_event("event", "2"),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, [], events)
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert resumed == []
+    assert [event.eventRaised.input.value for event in completion.carryoverEvents] == (
+        ["1", "2"] if save_events else [])
+
+
+@pytest.mark.parametrize("terminal", ["completed", "failed", "terminated"])
+def test_terminal_external_events_do_not_complete_abandoned_waits(terminal: str):
+    waits: list[task.CancellableTask[Any]] = []
+    resumed: list[bool] = []
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        event_task = ctx.wait_for_external_event("event")
+        waits.append(event_task)
+        timer = ctx.create_timer(timedelta(seconds=1))
+        yield task.when_any([event_task, timer])
+        resumed.append(True)
+        if terminal == "failed":
+            raise ValueError("orchestrator failed")
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    fire_at = start_time + timedelta(seconds=1)
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_timer_created_event(1, fire_at),
+    ]
+    new_events = [
+        helpers.new_terminated_event(encoded_output=json.dumps("terminated")) if terminal == "terminated"
+        else helpers.new_timer_fired_event(1, fire_at),
+        helpers.new_event_raised_event("event", "1"),
+        helpers.new_event_raised_event("event", "2"),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+
+    assert completion.orchestrationStatus == {
+        "completed": pb.ORCHESTRATION_STATUS_COMPLETED,
+        "failed": pb.ORCHESTRATION_STATUS_FAILED,
+        "terminated": pb.ORCHESTRATION_STATUS_TERMINATED,
+    }[terminal]
+    assert not completion.carryoverEvents
+    assert not waits[0].is_complete
+    assert not waits[0].is_cancelled
+    assert resumed == ([] if terminal == "terminated" else [True])
+    if terminal == "failed":
+        assert completion.failureDetails.errorMessage == "orchestrator failed"
+    else:
+        assert completion.result.value == json.dumps("terminated" if terminal == "terminated" else "done")
+
+
+@pytest.mark.parametrize("continue_before_failure", [True, False])
+def test_continue_as_new_failure_keeps_existing_completion_boundary(continue_before_failure: bool):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        if continue_before_failure:
+            ctx.continue_as_new(None, save_events=True)
+        raise ValueError("orchestrator failed")
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(
+        TEST_INSTANCE_ID, [], [helpers.new_execution_started_event(name, TEST_INSTANCE_ID)])
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+
+    assert completion.orchestrationStatus == (
+        pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW if continue_before_failure
+        else pb.ORCHESTRATION_STATUS_FAILED)
+    assert not completion.carryoverEvents
+
+
+@pytest.mark.parametrize("entity_response", ["call", "lock"])
+def test_continue_as_new_entity_responses_are_not_external_events(entity_response: str):
+    entity_id = entities.EntityInstanceId("Counter", "key")
+    entity_tasks: list[task.Task[Any]] = []
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        entity_tasks.append(
+            ctx.call_entity(entity_id, "get") if entity_response == "call"
+            else ctx.lock_entities([entity_id]))
+        yield ctx.create_timer(timedelta(seconds=1))
+        ctx.continue_as_new(None, save_events=True)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    fire_at = start_time + timedelta(seconds=1)
+    started_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    initial_result = executor.execute(TEST_INSTANCE_ID, [], started_events)
+    message = initial_result.actions[0].sendEntityMessage
+    request_id = (message.entityOperationCalled.requestId if entity_response == "call"
+                  else message.entityLockRequested.criticalSectionId)
+    old_events = started_events + [
+        helpers.new_event_sent_event(1, str(entity_id), json.dumps({"id": request_id})),
+        helpers.new_timer_created_event(2, fire_at),
+    ]
+    response_event = helpers.new_event_raised_event(
+        request_id, json.dumps({"result": "42"}) if entity_response == "call" else None)
+    timer_event = helpers.new_timer_fired_event(2, fire_at)
+    new_events = ([timer_event, response_event] if entity_response == "call"
+                  else [response_event, timer_event])
+    new_events.append(helpers.new_event_raised_event("event", "1"))
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+    completion = get_and_validate_complete_orchestration_action_list(
+        1 if entity_response == "call" else 2, result.actions)
+
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert entity_tasks[-1].is_complete
+    if entity_response == "lock":
+        assert result.actions[0].sendEntityMessage.entityUnlockSent.criticalSectionId == request_id
+    assert [(event.eventRaised.name, event.eventRaised.input.value)
+            for event in completion.carryoverEvents] == [("event", "1")]
+
+
 def test_fan_out():
     """Tests that a fan-out pattern correctly schedules N tasks"""
     def hello(_, name: str):

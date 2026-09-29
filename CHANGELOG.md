@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Fixed external events arriving after `continue_as_new(..., save_events=True)`
+being lost to abandoned waits instead of carried into the next execution.
+Events already delivered to live waits are not carried over, and
+`save_events=False` still discards unprocessed events.
+
 ## v1.11.0
 
 FIXED

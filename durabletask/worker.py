@@ -2843,7 +2843,9 @@ class _OrchestrationExecutor:
                         self._logger.info(f"{ctx.instance_id} Event raised: {event_name}")
                     task_list = ctx._pending_events.get(event_name, None)  # pyright: ignore[reportPrivateUsage]
                     decoded_result: Any | None = None
-                    if task_list:
+                    # Completed executions leave abandoned waits behind. Buffer
+                    # trailing events instead, so continue-as-new can carry them over.
+                    if task_list and not ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
                         event_task = task_list.pop(0)
                         if not ph.is_empty(event.eventRaised.input):
                             decoded_result = self._data_converter.deserialize(
@@ -2869,7 +2871,7 @@ class _OrchestrationExecutor:
                         event_list.append(buffered_payload)
                         if not ctx.is_replaying:
                             self._logger.info(
-                                f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no tasks waiting for it."
+                                f"{ctx.instance_id}: Event '{event_name}' has been buffered as there are no active tasks waiting for it."
                             )
             elif event.HasField("executionSuspended"):
                 if not self._is_suspended and not ctx.is_replaying:
