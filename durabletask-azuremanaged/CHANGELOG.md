@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, single-instance
+`purge_orchestration()` requests from synchronous and asynchronous Azure Managed
+clients now explicitly target orchestrations rather than entities.
+
 ## v1.11.0
 
 ADDED

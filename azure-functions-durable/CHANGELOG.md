@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, single-instance
+`purge_orchestration()` requests from `DurableFunctionsClient` and
+`SyncDurableFunctionsClient` now explicitly target orchestrations rather than
+entities. This also applies to the `purge_instance_history()` compatibility alias.
+
 ## v2.0.0rc2
 
 ADDED

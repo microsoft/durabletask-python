@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Single-instance `purge_orchestration()` requests now explicitly target
+orchestrations rather than entities in both synchronous and asynchronous clients.
+
 ## v1.11.0
 
 FIXED
