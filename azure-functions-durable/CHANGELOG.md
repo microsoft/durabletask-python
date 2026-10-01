@@ -13,6 +13,9 @@ FIXED
 schedule additional long-timer chunks, retry activities or sub-orchestrations,
 or resume orchestrator code after completion, failure, termination, or
 continue-as-new. This applies to both native and compatibility orchestration APIs.
+- With the corresponding core `durabletask` SDK fix,
+`continue_as_new(..., save_events=True)` preserves the global arrival order
+of unconsumed buffered external events across different event names.
 
 ## v2.0.0rc2
 

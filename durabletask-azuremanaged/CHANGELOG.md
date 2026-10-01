@@ -14,6 +14,9 @@ retry activities or sub-orchestrations, or resume orchestrator code after
 completion, failure, termination, or continue-as-new. Azure Managed uses native
 long timers without chunking; the core long-timer chunking correction does not
 change that behavior.
+- With the corresponding core `durabletask` SDK fix,
+`continue_as_new(..., save_events=True)` preserves the global arrival order
+of unconsumed buffered external events across different event names.
 
 ## v1.11.0
 

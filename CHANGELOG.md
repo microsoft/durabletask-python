@@ -13,6 +13,9 @@ FIXED
 activities or sub-orchestrations, or resume orchestrator code after completion,
 failure, termination, or continue-as-new. Work scheduled before the terminal
 state is preserved.
+- `continue_as_new(..., save_events=True)` now preserves the global arrival
+order of unconsumed buffered external events across different event names,
+instead of grouping carryover events by name.
 
 ## v1.11.0
 
