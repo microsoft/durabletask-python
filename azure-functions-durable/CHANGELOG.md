@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix,
+`continue_as_new(..., save_events=True)` preserves the global arrival order
+of unconsumed buffered external events across different event names.
+
 ## v2.0.0rc2
 
 ADDED

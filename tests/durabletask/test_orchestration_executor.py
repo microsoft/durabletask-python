@@ -1857,6 +1857,158 @@ def test_continue_as_new(save_events: bool, new_version: str | None):
         assert event.eventRaised.input.value == json.dumps(42 + i)
 
 
+@pytest.mark.parametrize("save_events", [True, False])
+@pytest.mark.parametrize("replayed_events", [0, 1, 3])
+@pytest.mark.parametrize("timer_fires_first", [True, False])
+def test_continue_as_new_preserves_global_event_order(
+        save_events: bool, replayed_events: int, timer_fires_first: bool):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        yield ctx.create_timer(ctx.current_utc_datetime + timedelta(seconds=1))
+        ctx.continue_as_new(None, save_events=save_events)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    fire_at = start_time + timedelta(seconds=1)
+    raised_events = [
+        helpers.new_event_raised_event("A", "1"),
+        helpers.new_event_raised_event("b", "2"),
+        helpers.new_event_raised_event("a", "3"),
+    ]
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_timer_created_event(1, fire_at),
+        *raised_events[:replayed_events],
+    ]
+    timer_fired = helpers.new_timer_fired_event(1, fire_at)
+    new_events = raised_events[replayed_events:]
+    new_events.insert(0 if timer_fires_first else len(new_events), timer_fired)
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert result.actions[0].id == 2
+    expected = [("a", "1"), ("b", "2"), ("a", "3")] if save_events else []
+    assert [
+        (event.eventRaised.name, event.eventRaised.input.value)
+        for event in complete_action.carryoverEvents
+    ] == expected
+
+
+@pytest.mark.parametrize("replay_consumption", [True, False])
+def test_continue_as_new_preserves_order_after_selective_event_consumption(
+        replay_consumption: bool):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        live_result = yield ctx.wait_for_external_event("LIVE")
+        cancelled_wait = ctx.wait_for_external_event("C")
+        cancelled_wait.cancel()
+        yield ctx.create_timer(ctx.current_utc_datetime + timedelta(seconds=1))
+        first = yield ctx.wait_for_external_event("a", data_type=int)
+        second = yield ctx.wait_for_external_event("A", data_type=int)
+        third = yield ctx.wait_for_external_event("c", data_type=int)
+        yield ctx.create_timer(ctx.current_utc_datetime + timedelta(seconds=2))
+        ctx.continue_as_new([live_result, first, second, third], save_events=True)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    first_fire_at = start_time + timedelta(seconds=1)
+    second_fire_at = start_time + timedelta(seconds=2)
+    history = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_event_raised_event("live", "0"),
+        helpers.new_timer_created_event(1, first_fire_at),
+        helpers.new_event_raised_event("A", "1"),
+        helpers.new_event_raised_event("b", "2"),
+        helpers.new_event_raised_event("a", "3"),
+        helpers.new_event_raised_event("C", "4"),
+        helpers.new_event_raised_event("B", "5"),
+        helpers.new_event_raised_event("A", "6"),
+        helpers.new_timer_fired_event(1, first_fire_at),
+        helpers.new_timer_created_event(2, second_fire_at),
+    ]
+    trailing_events = [
+        helpers.new_event_raised_event("c", "7"),
+        helpers.new_event_raised_event("a", "8"),
+        helpers.new_event_raised_event("b", "9"),
+        helpers.new_timer_fired_event(2, second_fire_at),
+    ]
+    old_events = history if replay_consumption else []
+    new_events = trailing_events if replay_consumption else history + trailing_events
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert result.actions[0].id == 3
+    assert json.loads(complete_action.result.value) == [0, 1, 3, 4]
+    assert [
+        (event.eventRaised.name, event.eventRaised.input.value)
+        for event in complete_action.carryoverEvents
+    ] == [("b", "2"), ("b", "5"), ("a", "6"), ("c", "7"), ("a", "8"), ("b", "9")]
+
+
+@pytest.mark.parametrize("consumed_payload", [None, "null", "23"])
+def test_continue_as_new_preserves_order_and_raw_event_payloads(consumed_payload: str | None):
+    class RecordingConverter(JsonDataConverter):
+        def __init__(self):
+            self.serialized: list[Any] = []
+            self.deserialized: list[tuple[str | None, type | None]] = []
+
+        def serialize(self, value: Any) -> str | None:
+            self.serialized.append(value)
+            return None if value is None else json.dumps({"wrapped": value})
+
+        def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
+            self.deserialized.append((data, target_type))
+            return super().deserialize(data, target_type)
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        yield ctx.create_timer(ctx.current_utc_datetime + timedelta(seconds=1))
+        consumed = yield ctx.wait_for_external_event("Consume", data_type=int)
+        ctx.continue_as_new(consumed, save_events=True)
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    fire_at = start_time + timedelta(seconds=1)
+    expected = [
+        ("a", '{ "value" : [1, 2] }'),
+        ("b", None),
+        ("a", "null"),
+        ("b", '"hello\\u0020world"'),
+        ("a", '{ "value" : [1, 2] }'),
+        ("c", "false"),
+        ("b", "0"),
+        ("a", '""'),
+    ]
+    old_events = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_timer_created_event(1, fire_at),
+        helpers.new_event_raised_event("consume", consumed_payload),
+        *[helpers.new_event_raised_event(name, payload) for name, payload in expected],
+    ]
+    converter = RecordingConverter()
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, converter)
+    result = executor.execute(
+        TEST_INSTANCE_ID, old_events, [helpers.new_timer_fired_event(1, fire_at)])
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    assert [
+        (event.eventRaised.name,
+         event.eventRaised.input.value if event.eventRaised.HasField("input") else None)
+        for event in complete_action.carryoverEvents
+    ] == expected
+    assert converter.deserialized == [(consumed_payload, int)]
+    assert converter.serialized == [json.loads(consumed_payload) if consumed_payload else None]
+
+
 def test_fan_out():
     """Tests that a fan-out pattern correctly schedules N tasks"""
     def hello(_, name: str):
