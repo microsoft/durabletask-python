@@ -857,7 +857,7 @@ class TaskHubGrpcClient:
         return res.instanceId
 
     def purge_orchestration(self, instance_id: str, recursive: bool = True) -> PurgeInstancesResult:
-        req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
+        req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive, isOrchestration=True)
         self._logger.info(f"Purging instance '{instance_id}'.")
         resp: pb.PurgeInstancesResponse = self._stub.PurgeInstances(req)
         return new_purge_instances_result(resp)
@@ -1402,7 +1402,7 @@ class AsyncTaskHubGrpcClient:
         return res.instanceId
 
     async def purge_orchestration(self, instance_id: str, recursive: bool = True) -> PurgeInstancesResult:
-        req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive)
+        req = pb.PurgeInstancesRequest(instanceId=instance_id, recursive=recursive, isOrchestration=True)
         self._logger.info(f"Purging instance '{instance_id}'.")
         resp: pb.PurgeInstancesResponse = await self._get_stub().PurgeInstances(req)
         return new_purge_instances_result(resp)

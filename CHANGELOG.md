@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Single-instance `purge_orchestration()` requests now explicitly target
+orchestrations rather than entities in both synchronous and asynchronous clients.
 - `continue_as_new(..., save_events=True)` now preserves the global arrival
 order of unconsumed buffered external events across different event names,
 instead of grouping carryover events by name.

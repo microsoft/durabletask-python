@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 FIXED
 
+- With the corresponding core `durabletask` SDK fix, single-instance
+`purge_orchestration()` requests from `DurableFunctionsClient` and
+`SyncDurableFunctionsClient` now explicitly target orchestrations rather than
+entities. This also applies to the `purge_instance_history()` compatibility alias.
 - With the corresponding core `durabletask` SDK fix,
 `continue_as_new(..., save_events=True)` preserves the global arrival order
 of unconsumed buffered external events across different event names.
