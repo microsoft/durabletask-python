@@ -2576,6 +2576,10 @@ class _OrchestrationExecutor:
                             scheduled_time_ns=created_ns,
                             parent_trace_context=ctx._orchestration_trace_context or ctx._parent_trace_context,  # pyright: ignore[reportPrivateUsage]
                         )
+                # A prior event in this batch may have ended the orchestration.
+                # Do not schedule another chunk, retry work, or resume user code.
+                if ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
+                    return
                 next_fire_at = timer_task._handle_timer_fired(event.timerFired.fireAt.ToDatetime())  # pyright: ignore[reportPrivateUsage]
                 if next_fire_at is not None:
                     id = ctx.next_sequence_number()

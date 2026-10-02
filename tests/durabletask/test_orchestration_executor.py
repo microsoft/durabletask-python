@@ -201,7 +201,8 @@ def test_create_timer_actions():
     assert actions[0].createTimer.fireAt.ToDatetime() == expected_fire_at
 
 
-def test_timer_fired_completion():
+@pytest.mark.parametrize("maximum_timer_interval", [timedelta(days=3), None])
+def test_timer_fired_completion(maximum_timer_interval):
     """Tests the resumption of task using a timer_fired event"""
 
     def delay_orchestrator(ctx: task.OrchestrationContext, _):
@@ -222,7 +223,10 @@ def test_timer_fired_completion():
     new_events = [
         helpers.new_timer_fired_event(1, expected_fire_at)]
 
-    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    executor = worker._OrchestrationExecutor(
+        registry, TEST_LOGGER, JsonDataConverter(),
+        maximum_timer_interval=maximum_timer_interval,
+    )
     result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
     actions = result.actions
 
@@ -352,6 +356,143 @@ def test_long_timer_progresses_and_completes_on_final_chunk():
     assert complete_action.result.value == '"done"'
 
 
+@pytest.mark.parametrize("terminal_state", [
+    "completed", "failed", "invalid_result", "terminated", "continued_as_new",
+])
+@pytest.mark.parametrize("replay_terminal_event", [False, True])
+def test_long_timer_does_not_continue_after_terminal_state(terminal_state, replay_terminal_event):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        done = ctx.wait_for_external_event("done")
+        timeout = ctx.create_timer(timedelta(days=10))
+        yield task.when_any([done, timeout])
+        if terminal_state == "failed":
+            raise ValueError("orchestrator failed")
+        if terminal_state == "invalid_result":
+            return object()
+        if terminal_state == "continued_as_new":
+            ctx.continue_as_new("next", save_events=True)
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    start = datetime(2020, 1, 1)
+    fire_at = start + timedelta(days=3)
+    old_events = [
+        helpers.new_orchestrator_started_event(start),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_timer_created_event(1, fire_at),
+    ]
+    terminal_event = (
+        helpers.new_terminated_event(encoded_output=json.dumps("terminated"))
+        if terminal_state == "terminated"
+        else helpers.new_event_raised_event("done", json.dumps(True))
+    )
+    new_events = [helpers.new_timer_fired_event(1, fire_at)]
+    if replay_terminal_event:
+        old_events.append(terminal_event)
+    else:
+        new_events.insert(0, terminal_event)
+    new_events.append(helpers.new_event_raised_event("carryover", json.dumps("saved")))
+
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    if terminal_state in ("failed", "invalid_result"):
+        assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+        assert completion.HasField("failureDetails")
+    elif terminal_state == "terminated":
+        assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_TERMINATED
+        assert completion.result.value == json.dumps("terminated")
+    elif terminal_state == "continued_as_new":
+        assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+        assert completion.result.value == json.dumps("next")
+        assert len(completion.carryoverEvents) == 1
+        assert completion.carryoverEvents[0].eventRaised.name == "carryover"
+        assert completion.carryoverEvents[0].eventRaised.input.value == json.dumps("saved")
+    else:
+        assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+        assert completion.result.value == json.dumps("done")
+
+
+@pytest.mark.parametrize("terminal_state", ["terminated", "continued_as_new"])
+def test_final_timer_callback_does_not_resume_terminal_orchestrator(terminal_state):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        done = ctx.wait_for_external_event("done")
+        timeout = ctx.create_timer(timedelta(hours=1))
+        yield task.when_any([done, timeout])
+        if terminal_state == "continued_as_new":
+            ctx.continue_as_new("next")
+            yield timeout
+        ctx.send_event("target", "unexpected")
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    start = datetime(2020, 1, 1)
+    fire_at = start + timedelta(hours=1)
+    old_events = [
+        helpers.new_orchestrator_started_event(start),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_timer_created_event(1, fire_at),
+    ]
+    new_events = [
+        helpers.new_terminated_event(encoded_output=None)
+        if terminal_state == "terminated"
+        else helpers.new_event_raised_event("done", json.dumps(True)),
+        helpers.new_timer_fired_event(1, fire_at),
+    ]
+
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    expected_status = (
+        pb.ORCHESTRATION_STATUS_TERMINATED
+        if terminal_state == "terminated"
+        else pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    )
+    assert completion.orchestrationStatus == expected_status
+
+
+@pytest.mark.parametrize("cancel_timer", [False, True])
+def test_long_timer_preserves_work_scheduled_before_completion(cancel_timer):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        done = ctx.wait_for_external_event("done")
+        timeout = ctx.create_timer(timedelta(days=10))
+        yield task.when_any([done, timeout])
+        if cancel_timer:
+            assert timeout.cancel()
+        ctx.send_event("target", "done", data=True)
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    start = datetime(2020, 1, 1)
+    fire_at = start + timedelta(days=3)
+    old_events = [
+        helpers.new_orchestrator_started_event(start),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_timer_created_event(1, fire_at),
+    ]
+    new_events = [
+        helpers.new_timer_fired_event(1, fire_at),
+        helpers.new_event_raised_event("done", json.dumps(True)),
+    ]
+
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    expected_actions = ["sendEvent", "completeOrchestration"]
+    if not cancel_timer:
+        expected_actions.insert(0, "createTimer")
+        assert result.actions[0].id == 2
+        assert result.actions[0].createTimer.fireAt.ToDatetime() == start + timedelta(days=6)
+    assert [action.WhichOneof("orchestratorActionType") for action in result.actions] == expected_actions
+    completion = result.actions[-1].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert completion.result.value == json.dumps("done")
+
+
 def test_long_timer_can_be_cancelled_after_when_any_winner():
     """Tests cancellation of a long timer after an external event wins when_any."""
 
@@ -393,7 +534,10 @@ def test_long_timer_can_be_cancelled_after_when_any_winner():
     second = executor.execute(
         TEST_INSTANCE_ID,
         old_events,
-        [helpers.new_event_raised_event("approval", json.dumps(True))],
+        [
+            helpers.new_event_raised_event("approval", json.dumps(True)),
+            helpers.new_timer_fired_event(1, first_chunk_fire_at),
+        ],
     )
     complete_action = get_and_validate_complete_orchestration_action_list(1, second.actions)
     assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
@@ -1244,6 +1388,80 @@ def test_activity_retry_with_long_timer_preserves_retryable_parent():
     actions = result.actions
     assert actions[-1].HasField("scheduleTask")
     assert actions[-1].id == 1
+
+
+@pytest.mark.parametrize("terminal_state", ["active", "completed", "terminated", "continued_as_new"])
+@pytest.mark.parametrize("is_sub_orchestration", [False, True])
+@pytest.mark.parametrize("retry_delay", [timedelta(hours=1), timedelta(days=10)])
+@pytest.mark.parametrize("maximum_timer_interval", [timedelta(days=3), None])
+def test_retry_timer_callback_respects_terminal_state(
+    terminal_state, is_sub_orchestration, retry_delay, maximum_timer_interval,
+):
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        retry_policy = task.RetryPolicy(
+            first_retry_interval=retry_delay, max_number_of_attempts=2,
+        )
+        if is_sub_orchestration:
+            work = ctx.call_sub_orchestrator("child", instance_id="child-instance", retry_policy=retry_policy)
+        else:
+            work = ctx.call_activity("activity", retry_policy=retry_policy)
+        done = ctx.wait_for_external_event("done")
+        yield task.when_any([done, work])
+        if terminal_state == "continued_as_new":
+            ctx.continue_as_new("next")
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(
+        registry, TEST_LOGGER, JsonDataConverter(),
+        maximum_timer_interval=maximum_timer_interval,
+    )
+    start = datetime(2020, 1, 1)
+    interval = min(retry_delay, maximum_timer_interval) if maximum_timer_interval else retry_delay
+    fire_at = start + interval
+    old_events = [
+        helpers.new_orchestrator_started_event(start),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+    if is_sub_orchestration:
+        old_events.extend([
+            helpers.new_sub_orchestration_created_event(1, "child", "child-instance"),
+            helpers.new_sub_orchestration_failed_event(1, ValueError("retry me")),
+        ])
+    else:
+        old_events.extend([
+            helpers.new_task_scheduled_event(1, "activity"),
+            helpers.new_task_failed_event(1, ValueError("retry me")),
+        ])
+    old_events.append(helpers.new_timer_created_event(2, fire_at))
+    new_events = []
+    if terminal_state == "terminated":
+        new_events.append(helpers.new_terminated_event(encoded_output=None))
+    elif terminal_state != "active":
+        new_events.append(helpers.new_event_raised_event("done", json.dumps(True)))
+    new_events.append(helpers.new_timer_fired_event(2, fire_at))
+
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    assert len(result.actions) == 1
+    if terminal_state == "active":
+        action = result.actions[0]
+        if interval < retry_delay:
+            assert action.HasField("createTimer")
+            assert action.id == 3
+            assert action.createTimer.fireAt.ToDatetime() == start + interval * 2
+        else:
+            assert action.HasField("createSubOrchestration" if is_sub_orchestration else "scheduleTask")
+            assert action.id == 1
+    else:
+        completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+        expected_status = {
+            "completed": pb.ORCHESTRATION_STATUS_COMPLETED,
+            "terminated": pb.ORCHESTRATION_STATUS_TERMINATED,
+            "continued_as_new": pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW,
+        }[terminal_state]
+        assert completion.orchestrationStatus == expected_status
 
 
 def test_nondeterminism_expected_timer():
