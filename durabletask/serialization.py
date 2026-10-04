@@ -504,7 +504,9 @@ def _build_dataclass(cls: Any, data: dict[str, Any],
     globalns = _type_namespace(cls)
     kwargs: dict[str, Any] = {}
     for field in dataclasses.fields(cls):
-        if field.name not in data:
+        # Derived fields are serialized, but are initialized by the dataclass
+        # itself (for example in __post_init__), not by constructor arguments.
+        if not field.init or field.name not in data:
             continue
         # ``get_type_hints`` on Python 3.10 does not deep-resolve forward
         # references nested inside container args (e.g. the ``"TreeNode"`` in

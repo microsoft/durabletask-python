@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Dataclasses with `init=False` fields now reconstruct as their declared type
+instead of falling back to a raw dictionary. Derived fields are initialized by
+the dataclass constructor rather than passed as unsupported keyword arguments.
 - Timer callbacks no longer schedule additional long-timer chunks, retry
 activities or sub-orchestrations, or resume orchestrator code after completion,
 failure, termination, or continue-as-new. Work scheduled before the terminal

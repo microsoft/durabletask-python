@@ -5,7 +5,7 @@
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from durabletask.serialization import (
@@ -19,6 +19,42 @@ from durabletask.serialization import (
 class Order:
     item: str
     quantity: int
+
+
+@dataclass(frozen=True)
+class PricedOrder:
+    quantity: int
+    unit_price: int
+    total: int = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "total", self.quantity * self.unit_price)
+
+
+@dataclass
+class Shipment:
+    order: PricedOrder
+
+
+def test_round_trip_dataclass_with_derived_field():
+    converter = JsonDataConverter()
+    order = PricedOrder(3, 10)
+    encoded = converter.serialize(order)
+    assert json.loads(encoded) == {"quantity": 3, "unit_price": 10, "total": 30}
+    assert converter.deserialize(encoded, PricedOrder) == order
+
+
+def test_coerce_dataclass_recomputes_derived_field():
+    converter = JsonDataConverter()
+    result = converter.coerce({"quantity": 3, "unit_price": 10, "total": 999}, PricedOrder)
+    assert result == PricedOrder(3, 10)
+    assert result.total == 30
+
+
+def test_round_trip_nested_dataclass_with_derived_field():
+    converter = JsonDataConverter()
+    shipment = Shipment(PricedOrder(3, 10))
+    assert converter.deserialize(converter.serialize(shipment), Shipment) == shipment
 
 
 # ----- JsonDataConverter -----
