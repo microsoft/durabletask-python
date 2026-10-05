@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- With the corresponding core `durabletask` SDK fix, single-instance
+`purge_orchestration()` requests from synchronous and asynchronous Azure Managed
+clients now explicitly target orchestrations rather than entities.
 - With the corresponding core `durabletask` SDK fix, timer callbacks no longer
 retry activities or sub-orchestrations, or resume orchestrator code after
 completion, failure, termination, or continue-as-new. Azure Managed uses native

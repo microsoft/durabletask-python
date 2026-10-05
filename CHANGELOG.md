@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Single-instance `purge_orchestration()` requests now explicitly target
+orchestrations rather than entities in both synchronous and asynchronous clients.
 - Timer callbacks no longer schedule additional long-timer chunks, retry
 activities or sub-orchestrations, or resume orchestrator code after completion,
 failure, termination, or continue-as-new. Work scheduled before the terminal
