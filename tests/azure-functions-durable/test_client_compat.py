@@ -20,7 +20,7 @@ from azure.durable_functions.http.http_management_payload import (
     replace_url_origin,
 )
 from durabletask import history as dt_history, task as dt_task
-from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus
+from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus, PurgeInstancesResult
 from durabletask.entities import EntityInstanceId
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.task import RetryPolicy
@@ -1288,14 +1288,54 @@ async def test_get_status_by_returns_wrapped_list():
 # Return-type shims: PurgeHistoryResult
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("recursive", [None, True, False])
+def test_sync_purge_orchestration_request(recursive: bool | None) -> None:
+    client = df.SyncDurableFunctionsClient(_CLIENT_CONFIG)
+    stub = Mock()
+    stub.PurgeInstances.return_value = pb.PurgeInstancesResponse(deletedInstanceCount=3)
+    try:
+        with patch.object(client, "_stub", stub):
+            if recursive is None:
+                result = client.purge_orchestration("abc")
+            else:
+                result = client.purge_orchestration("abc", recursive=recursive)
+        stub.PurgeInstances.assert_called_once_with(pb.PurgeInstancesRequest(
+            instanceId="abc", recursive=True if recursive is None else recursive,
+            isOrchestration=True))
+        assert result == PurgeInstancesResult(deleted_instance_count=3, is_complete=None)
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("recursive", [None, True, False])
+async def test_async_purge_orchestration_request(recursive: bool | None) -> None:
+    client = _make_client()
+    stub = Mock()
+    stub.PurgeInstances = AsyncMock(return_value=pb.PurgeInstancesResponse(deletedInstanceCount=3))
+    try:
+        with patch.object(client, "_get_stub", return_value=stub):
+            if recursive is None:
+                result = await client.purge_orchestration("abc")
+            else:
+                result = await client.purge_orchestration("abc", recursive=recursive)
+        stub.PurgeInstances.assert_awaited_once_with(pb.PurgeInstancesRequest(
+            instanceId="abc", recursive=True if recursive is None else recursive,
+            isOrchestration=True))
+        assert result == PurgeInstancesResult(deleted_instance_count=3, is_complete=None)
+    finally:
+        await client.close()
+
+
 async def test_purge_instance_history_returns_purge_history_result():
     client = _make_client()
+    stub = Mock()
+    stub.PurgeInstances = AsyncMock(return_value=pb.PurgeInstancesResponse(deletedInstanceCount=3))
     try:
-        result = SimpleNamespace(deleted_instance_count=3, is_complete=True)
-        with patch.object(client, "purge_orchestration",
-                          new=AsyncMock(return_value=result)):
+        with patch.object(client, "_get_stub", return_value=stub):
             with pytest.warns(DeprecationWarning):
                 purge = await client.purge_instance_history("abc")
+        stub.PurgeInstances.assert_awaited_once_with(pb.PurgeInstancesRequest(
+            instanceId="abc", recursive=True, isOrchestration=True))
         assert purge.instances_deleted == 3
     finally:
         await client.close()
