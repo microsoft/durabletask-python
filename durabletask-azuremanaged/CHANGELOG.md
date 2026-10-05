@@ -17,6 +17,9 @@ change that behavior.
 - With the corresponding core `durabletask` SDK fix,
 `continue_as_new(..., save_events=True)` preserves the global arrival order
 of unconsumed buffered external events across different event names.
+- With a corrected core `durabletask` SDK, external events arriving after
+`continue_as_new(..., save_events=True)` are no longer lost to abandoned waits
+and are carried into the next execution.
 
 ## v1.11.0
 
