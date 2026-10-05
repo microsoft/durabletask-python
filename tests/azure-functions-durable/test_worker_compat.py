@@ -15,7 +15,7 @@ import base64
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -27,6 +27,7 @@ import durabletask.internal.orchestrator_service_pb2 as pb
 import azure.durable_functions as df
 from azure.durable_functions.internal import invocation, payloads
 from azure.durable_functions.worker import DurableFunctionsWorker
+from durabletask import task
 from durabletask.entities import EntityInstanceId
 from durabletask.payload import PayloadStore
 
@@ -431,6 +432,45 @@ def test_execute_orchestration_request_completes_and_returns_output():
     completion = _get_completion_action(response)
     assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert json.loads(completion.result.value) == {"echo": {"n": 5}}
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_long_timer_does_not_schedule_chunk_after_completion(native):
+    def compatible_orchestrator(context):
+        done = context.wait_for_external_event("done")
+        timeout = context.create_timer(context.current_utc_datetime + timedelta(days=10))
+        yield context.task_any([done, timeout])
+        return "done"
+
+    def native_orchestrator(context: task.OrchestrationContext, _):
+        done = context.wait_for_external_event("done")
+        timeout = context.create_timer(timedelta(days=10))
+        yield task.when_any([done, timeout])
+        return "done"
+
+    start = datetime(2020, 1, 1)
+    fire_at = start + timedelta(days=3)
+    request = pb.OrchestratorRequest(
+        instanceId=TEST_INSTANCE_ID,
+        pastEvents=[
+            helpers.new_orchestrator_started_event(start),
+            helpers.new_execution_started_event("timer-race", TEST_INSTANCE_ID),
+            helpers.new_timer_created_event(1, fire_at),
+        ],
+        newEvents=[
+            helpers.new_event_raised_event("done", json.dumps(True)),
+            helpers.new_timer_fired_event(1, fire_at),
+        ],
+    )
+    encoded = base64.b64encode(request.SerializeToString()).decode("utf-8")
+    orchestrator = native_orchestrator if native else compatible_orchestrator
+    result = DurableFunctionsWorker().execute_orchestration_request(orchestrator, encoded)
+
+    response = _decode_orchestrator_response(result)
+    assert len(response.actions) == 1
+    completion = _get_completion_action(response)
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert json.loads(completion.result.value) == "done"
 
 
 def test_execute_orchestration_request_registers_under_event_name():
