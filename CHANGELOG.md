@@ -18,6 +18,10 @@ state is preserved.
 - `continue_as_new(..., save_events=True)` now preserves the global arrival
 order of unconsumed buffered external events across different event names,
 instead of grouping carryover events by name.
+- Fixed external events arriving after `continue_as_new(..., save_events=True)`
+being lost to abandoned waits instead of carried into the next execution.
+Events already delivered to live waits are not carried over, and
+`save_events=False` still discards unprocessed events.
 
 ## v1.11.0
 

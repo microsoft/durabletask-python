@@ -393,12 +393,18 @@ class OrchestrationContext(ABC):
                         new_version: str | None = None) -> None:
         """Continue the orchestration execution as a new instance.
 
+        Orchestrators should return immediately after calling this method.
+        Subsequent external events are no longer delivered to pending waits
+        in the current execution.
+
         Parameters
         ----------
         new_input : Any
             The new input to use for the new orchestration instance.
         save_events : bool
             A flag indicating whether to add any unprocessed external events in the new orchestration history.
+            Events already delivered to a waiting task are not saved, even if
+            the orchestrator has not yielded that task.
         new_version : str | None
             An optional version to assign to the new orchestration instance.
         """
