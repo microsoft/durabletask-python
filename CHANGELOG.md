@@ -17,6 +17,8 @@ serialized non-init fields they accept as keywords, including through
 `__post_init__` and may reset previously recorded values. Reconstruction must
 be deterministic for replay; use an explicit `from_json()` hook to preserve
 recorded state that the constructor cannot accept.
+- Single-instance `purge_orchestration()` requests now explicitly target
+orchestrations rather than entities in both synchronous and asynchronous clients.
 - Timer callbacks no longer schedule additional long-timer chunks, retry
 activities or sub-orchestrations, or resume orchestrator code after completion,
 failure, termination, or continue-as-new. Work scheduled before the terminal
