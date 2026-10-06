@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 FIXED
 
+- With the corresponding core `durabletask` SDK fix, single-instance
+`purge_orchestration()` requests from `DurableFunctionsClient` and
+`SyncDurableFunctionsClient` now explicitly target orchestrations rather than
+entities. This also applies to the `purge_instance_history()` compatibility alias.
 - With the corresponding core `durabletask` SDK fix, timer callbacks no longer
 schedule additional long-timer chunks, retry activities or sub-orchestrations,
 or resume orchestrator code after completion, failure, termination, or
@@ -16,6 +20,9 @@ continue-as-new. This applies to both native and compatibility orchestration API
 - With the corresponding core `durabletask` SDK fix,
 `continue_as_new(..., save_events=True)` preserves the global arrival order
 of unconsumed buffered external events across different event names.
+- With a corrected core `durabletask` SDK, native durabletask orchestrators
+preserve external events arriving after `continue_as_new(..., save_events=True)`
+instead of losing them to abandoned waits.
 
 ## v2.0.0rc2
 
