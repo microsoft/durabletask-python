@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Dataclasses with `init=False` fields now reconstruct as their declared type
+instead of falling back to a raw dictionary when their generated constructor
+cannot accept those fields. Handwritten constructors continue to receive
+serialized non-init fields they accept as keywords, including through
+`**kwargs`. Other non-init fields use defaults, default factories, or
+`__post_init__` and may reset previously recorded values. Reconstruction must
+be deterministic for replay; use an explicit `from_json()` hook to preserve
+recorded state that the constructor cannot accept.
 - Single-instance `purge_orchestration()` requests now explicitly target
 orchestrations rather than entities in both synchronous and asynchronous clients.
 - Timer callbacks no longer schedule additional long-timer chunks, retry

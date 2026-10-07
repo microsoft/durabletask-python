@@ -144,6 +144,16 @@ class JsonDataConverter(DataConverter):
     keeps the core SDK permissive; a stricter, validating converter can be
     supplied for callers who want coercion failures to surface as errors.
 
+    Dataclass fields marked ``init=False`` are passed to a handwritten
+    initializer when it accepts them as keywords, including through
+    ``**kwargs``. Otherwise they are omitted: generated initializers use
+    defaults and default factories, and ``__post_init__`` can recompute derived
+    values. Previously recorded non-init values may therefore be reset, or
+    remain unset if the class initializes them externally. Constructors,
+    default factories, and ``__post_init__`` must behave deterministically for
+    replay. Define an explicit ``from_json()`` hook to preserve recorded
+    non-init state that the initializer cannot accept.
+
     > [!NOTE]
     > Type-directed reconstruction recurses through dataclass fields,
     > ``list``/``Sequence``, ``dict``/``Mapping`` values, ``tuple`` elements,
@@ -494,6 +504,32 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
     return value
 
 
+@functools.lru_cache(maxsize=256)
+def _dataclass_init_keywords(initializer: Any) -> tuple[frozenset[str] | None, str | None]:
+    """Return keyword names and a potentially reserved receiver name.
+
+    A None keyword set represents **kwargs or an unavailable signature.
+    The caller accounts for receiver binding when using the reserved name.
+    """
+    try:
+        parameters = list(inspect.signature(initializer, follow_wrapped=False).parameters.values())
+    except (TypeError, ValueError):
+        # Preserve the legacy keyword-passing behavior when inspection fails.
+        return None, None
+    receiver = None
+    # Positional-only receiver names remain available as keys in **kwargs.
+    if parameters and parameters[0].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
+        receiver = parameters[0].name
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters):
+        return None, receiver
+    keywords = frozenset(
+        p.name for p in parameters
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                      inspect.Parameter.KEYWORD_ONLY)
+    )
+    return keywords, receiver
+
+
 def _build_dataclass(cls: Any, data: dict[str, Any],
                      converter: DataConverter | None = None) -> Any:
     """Construct a dataclass from its dict payload, recursing into typed fields."""
@@ -506,6 +542,22 @@ def _build_dataclass(cls: Any, data: dict[str, Any],
     for field in dataclasses.fields(cls):
         if field.name not in data:
             continue
+        if not field.init:
+            initializer = cls.__init__
+            try:
+                init_keywords, receiver = _dataclass_init_keywords(initializer)
+            except TypeError:
+                # Unhashable initializer callables cannot use the cache.
+                init_keywords, receiver = None, None
+            if init_keywords is not None and field.name not in init_keywords:
+                continue
+            if (field.name == receiver
+                    and (inspect.isfunction(initializer) or inspect.ismethoddescriptor(initializer))
+                    and not isinstance(inspect.getattr_static(cls, "__init__"), staticmethod)):
+                # Normal instance initializers already receive this argument.
+                # Bound classmethods omit it from their inspected signature;
+                # staticmethods have no implicit receiver.
+                continue
         # ``get_type_hints`` on Python 3.10 does not deep-resolve forward
         # references nested inside container args (e.g. the ``"TreeNode"`` in
         # ``list["TreeNode"]`` on a self-referential dataclass), leaving a bare
