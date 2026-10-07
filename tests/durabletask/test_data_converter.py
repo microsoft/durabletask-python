@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any
 from unittest.mock import patch
 
@@ -105,6 +106,39 @@ def test_non_init_field_preserved_by_custom_constructor(state_type):
     restored_state = state.get_state(state_type)
     assert restored_state.counter == 42
     state.set_state(restored_state)
+    assert json.loads(state.encode_state()) == {"name": "persisted", "counter": 42}
+
+
+@pytest.mark.parametrize("accept_kwargs", [False, True])
+def test_non_init_field_preserved_by_decorated_initializer(accept_kwargs):
+    @dataclass
+    class DecoratedCounterState:
+        name: str
+        counter: int = field(init=False, default=0)
+
+    generated_init = DecoratedCounterState.__init__
+    if accept_kwargs:
+        @wraps(generated_init)
+        def restore_counter(self, *args, **kwargs):
+            counter = kwargs.pop("counter", 0)
+            generated_init(self, *args, **kwargs)
+            self.counter = counter
+    else:
+        @wraps(generated_init)
+        def restore_counter(self, *args, counter=0, **kwargs):
+            generated_init(self, *args, **kwargs)
+            self.counter = counter
+    DecoratedCounterState.__init__ = restore_counter
+
+    converter = JsonDataConverter()
+    original = DecoratedCounterState("persisted", counter=42)
+    encoded = converter.serialize(original)
+    assert converter.deserialize(encoded, DecoratedCounterState).counter == 42
+
+    state = StateShim(encoded, converter, is_serialized=True)
+    restored = state.get_state(DecoratedCounterState)
+    assert restored.counter == 42
+    state.set_state(restored)
     assert json.loads(state.encode_state()) == {"name": "persisted", "counter": 42}
 
 
@@ -268,7 +302,7 @@ def test_constructor_signature_cached_by_initializer():
             restored = converter.deserialize('{"counter": 42}', cls)
             assert isinstance(restored, cls)
             assert restored.counter == 42
-    signature.assert_called_once_with(SharedInitializer.__init__)
+    signature.assert_called_once_with(SharedInitializer.__init__, follow_wrapped=False)
 
 
 # ----- JsonDataConverter -----

@@ -512,7 +512,7 @@ def _dataclass_init_keywords(initializer: Any) -> tuple[frozenset[str] | None, s
     The caller accounts for receiver binding when using the reserved name.
     """
     try:
-        parameters = list(inspect.signature(initializer).parameters.values())
+        parameters = list(inspect.signature(initializer, follow_wrapped=False).parameters.values())
     except (TypeError, ValueError):
         # Preserve the legacy keyword-passing behavior when inspection fails.
         return None, None
