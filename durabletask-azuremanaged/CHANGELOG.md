@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added Python 3.15 support. Python 3.10 remains supported.
+
 FIXED
 
 - With the corresponding core `durabletask` SDK fix, single-instance
