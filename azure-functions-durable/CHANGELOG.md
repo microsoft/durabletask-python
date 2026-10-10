@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added Python 3.15 support. The minimum supported Python version remains 3.13.
+
 FIXED
 
 - With the corresponding core `durabletask` SDK fix, single-instance
