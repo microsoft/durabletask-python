@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
-- Added Python 3.15 support. Python 3.10 remains supported.
+- Added Python 3.15 support.
 
 FIXED
 
