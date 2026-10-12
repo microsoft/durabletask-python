@@ -493,6 +493,23 @@ class DFApp(Blueprint, FunctionRegister):
     Exports the decorators required to declare and index DF Function-types.
     """
 
+    def configure_serialization(self, *, ensure_ascii: bool = True) -> None:
+        """Configure JSON encoding for this app and its registered blueprints.
+
+        The default preserves ASCII-escaped JSON. Set ``ensure_ascii=False``
+        to emit ordinary Unicode literally with a compatible ``azure-functions``
+        SDK. An older SDK raises RuntimeError when this option is requested.
+
+        Call at startup in every worker process, before durable payloads are
+        serialized. Clients, orchestrations, entities, and activity bindings
+        share one policy per process, including handlers created earlier.
+        Repeating the same setting is allowed. A conflicting setting, or
+        changing the policy after serialization starts, raises ValueError.
+        """
+        from ..internal.serialization import configure_serialization
+
+        configure_serialization(ensure_ascii=ensure_ascii)
+
     def configure_large_payloads(self, *, payload_store: PayloadStore) -> None:
         """Enable payload externalization for this app and its blueprints.
 
