@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v2.0.0rc3
+
 ADDED
 
 - Added Python 3.15 support. The minimum supported Python version remains 3.13.
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.12.0.
 
 FIXED
 
@@ -17,7 +23,8 @@ FIXED
 tasks no longer strand native `when_all` or compatibility `context.task_all()`
 groups. This correction can change shared nested `when_any` / `context.task_any()`
 race winners during replay; see the [core changelog](../CHANGELOG.md) for upgrade
-guidance. Dependency minimums will be coordinated after the core fix is released.
+guidance. This release requires `durabletask` v1.12.0 or later and adopts this
+correction.
 - With the corresponding core `durabletask` SDK fix, single-instance
 `purge_orchestration()` requests from `DurableFunctionsClient` and
 `SyncDurableFunctionsClient` now explicitly target orchestrations rather than
