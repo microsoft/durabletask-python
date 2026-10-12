@@ -13,6 +13,11 @@ ADDED
 
 FIXED
 
+- With the corresponding core `durabletask` SDK fix, shared or duplicate pending
+tasks no longer strand native `when_all` or compatibility `context.task_all()`
+groups. This correction can change shared nested `when_any` / `context.task_any()`
+race winners during replay; see the [core changelog](../CHANGELOG.md) for upgrade
+guidance. Dependency minimums will be coordinated after the core fix is released.
 - With the corresponding core `durabletask` SDK fix, single-instance
 `purge_orchestration()` requests from `DurableFunctionsClient` and
 `SyncDurableFunctionsClient` now explicitly target orchestrations rather than

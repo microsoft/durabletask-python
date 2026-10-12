@@ -3117,7 +3117,8 @@ def test_when_any_with_retry():
     assert complete_action.result.value == encoded_output
 
 
-def test_when_all_with_retry():
+@pytest.mark.parametrize("shared", [False, True])
+def test_when_all_with_retry(shared):
     """Tests that a when_all pattern works correctly with retries"""
     def dummy_activity(ctx, inp: str):
         if inp == "Tokyo":
@@ -3134,7 +3135,12 @@ def test_when_all_with_retry():
                                    retry_timeout=timedelta(seconds=50)),
                                input="Tokyo")
         t2 = ctx.call_activity(dummy_activity, input="Seattle")
-        results = yield task.when_all([t1, t2])
+        if shared:
+            left = task.when_all([t1, t2, t1])
+            right = task.when_all([t1, t2])
+            results = yield task.when_all([left, right])
+        else:
+            results = yield task.when_all([t1, t2])
         return results
 
     registry = worker._Registry()

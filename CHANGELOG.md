@@ -13,6 +13,26 @@ ADDED
 
 FIXED
 
+- Fixed `when_all` hanging when pending tasks are shared between groups or
+appear multiple times in one group. Results preserve input order and duplicate
+positions without scheduling additional activities. Completed `when_any` groups
+stop observing losing children without disturbing other groups, and a throwing
+completion callback no longer prevents other observers from being notified.
+
+> [!WARNING]
+> **Replay-breaking bug fix:** Shared nested races can select a different direct
+> child during replay. For example, with `first = when_any([timer, work])` and
+> `second = when_any([first, timer])`, timer completion now notifies `first`,
+> allowing `second` to select `first` rather than `timer`. Existing downstream
+> history can then fail replay with `NonDeterminismError`. Disjoint task groups
+> are unchanged.
+>
+> Drain affected instances on the previous SDK, or keep their task hub on the
+> previous SDK and use a separate task hub for new instances. Already-stuck
+> instances may need deliberate recovery. Pin or lock the core `durabletask`
+> dependency, including when using a provider. Provider dependency minimums
+> will be coordinated in a dedicated release PR after the core fix is released.
+
 - Dataclasses with `init=False` fields now reconstruct as their declared type
 instead of falling back to a raw dictionary when their generated constructor
 cannot accept those fields. Handwritten constructors continue to receive

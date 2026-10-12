@@ -51,6 +51,31 @@ def orchestrator(ctx: task.OrchestrationContext, _):
 
 See the full [fan-out sample](../examples/fanout_fanin.py).
 
+Tasks can be shared between `when_all` and `when_any` groups without scheduling
+the activity again. `when_all` preserves input order and every duplicate position:
+`when_all([work, work])` returns the result twice, whether `work` is pending or
+already complete. If a child fails, `when_all` waits for every child before raising
+the first observed failure.
+
+`when_any` returns its winning direct child, including when that child is itself
+a composite. It stops observing losing children but does not cancel them or
+remove other groups' subscriptions. Completion notifications follow group
+subscription order, so shared nested races can select a composite rather than
+the leaf task that triggered it.
+
+> [!WARNING]
+> Corrected shared-task notifications can change race winners during replay of
+> existing instances. Drain affected instances on the previous SDK or isolate
+> new instances in a separate task hub before upgrading. See the
+> [core changelog](../CHANGELOG.md) for migration guidance.
+
+A canceled task still raises `TaskCancelledError` when its result is read.
+If collecting `when_all` results throws, that group does not notify its own
+parents; do not catch the error and reuse the group. Other groups observing
+the same child are still notified. A single completion callback error is
+re-raised unchanged; multiple callback errors are collected in one exception
+whose `errors` tuple retains each original exception.
+
 ## Human interaction and durable timers
 
 An orchestration can wait for a user-defined event, such as a human approval event, before proceeding
