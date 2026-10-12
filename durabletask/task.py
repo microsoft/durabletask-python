@@ -608,17 +608,28 @@ class TaskCancelledError(Exception):
     """Exception type for cancelled orchestration tasks."""
 
 
+class _TaskCompletionError(Exception):
+    """Collect callback errors without requiring Python 3.11 ExceptionGroup."""
+
+    def __init__(self, errors: list[Exception]) -> None:
+        self.errors = tuple(errors)
+        super().__init__(
+            "Multiple task completion callbacks failed: "
+            + "; ".join(f"{type(error).__name__}: {error}" for error in errors))
+
+
 class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
     _exception: TaskFailedError | None
-    _parent: CompositeTask[Any] | None
+    _parents: dict[int, CompositeTask[Any]]
 
     def __init__(self) -> None:
         super().__init__()
         self._is_complete = False
         self._exception = None
-        self._parent = None
+        # Dict insertion order preserves subscription order for shared races.
+        self._parents = {}
 
     @property
     def is_complete(self) -> bool:
@@ -650,8 +661,19 @@ class Task(ABC, Generic[T]):
         return self._exception
 
     def _notify_parent(self) -> None:
-        if self._parent is not None:
-            self._parent.on_child_completed(self)
+        parents = tuple(self._parents.values())
+        self._parents.clear()
+        errors: list[Exception] = []
+        for parent in parents:
+            try:
+                parent.on_child_completed(self)
+            except Exception as error:
+                # A canceled result can throw without blocking other observers.
+                errors.append(error)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise _TaskCompletionError(errors) from errors[0]
 
 
 class CompositeTask(Task[T]):
@@ -665,10 +687,24 @@ class CompositeTask(Task[T]):
         self._tasks = tasks
         self._completed_tasks = 0
         self._failed_tasks = 0
+        # Track references by identity, including unhashable Task subclasses.
+        self._pending_children: dict[int, tuple[Task[Any], int]] = {}
         for task in tasks:
-            task._parent = self
+            _, count = self._pending_children.get(id(task), (task, 0))
+            self._pending_children[id(task)] = (task, count + 1)
+        for task, _ in tuple(self._pending_children.values()):
+            if self.is_complete:
+                break
             if task.is_complete:
                 self.on_child_completed(task)
+            else:
+                task._parents[id(self)] = self
+
+    def _notify_parent(self) -> None:
+        for task, _ in self._pending_children.values():
+            task._parents.pop(id(self), None)
+        self._pending_children.clear()
+        super()._notify_parent()
 
     def get_tasks(self) -> list[Task[Any]]:
         return self._tasks
@@ -698,10 +734,14 @@ class WhenAllTask(CompositeTask[list[T]]):
 
     def on_child_completed(self, task: Task[Any]) -> None:
         if self.is_complete:
-            raise ValueError('The task has already completed.')
-        self._completed_tasks += 1
+            return
+        pending = self._pending_children.pop(id(task), None)
+        if pending is None:
+            return
+        _, occurrences = pending
+        self._completed_tasks += occurrences
         if task.is_failed:
-            self._failed_tasks += 1
+            self._failed_tasks += occurrences
             if self._pending_exception is None:
                 # Stage the first failure but do NOT expose it via `_exception`
                 # yet. Exposing it now would make `is_failed` return True while
@@ -871,12 +911,20 @@ class WhenAnyTask(CompositeTask[Task[T]], Generic[T]):
 
 
 def when_all(tasks: list[Task[T]]) -> WhenAllTask[T]:
-    """Returns a task that completes when all of the provided tasks complete or when one of the tasks fail."""
+    """Wait for every provided task to complete or fail.
+
+    Results preserve input order and duplicate task references. Tasks may be
+    shared between groups without scheduling additional work. If any task fails,
+    the first observed failure is raised after every task has finished.
+    """
     return WhenAllTask(tasks)
 
 
 def when_any(tasks: Sequence[Task[T]]) -> WhenAnyTask[T]:
-    """Returns a task that completes when any of the provided tasks complete or fail."""
+    """Return the first direct child to complete or fail.
+
+    Tasks may be shared between groups. Losing tasks are not canceled.
+    """
     return WhenAnyTask(list(tasks))
 
 

@@ -6,6 +6,7 @@ from uuid import UUID
 
 import pytest
 
+from durabletask import task
 from azure.durable_functions.internal.compat.orchestration_context import (
     DurableOrchestrationContext,
     accepts_two_positional_args,
@@ -27,6 +28,25 @@ def _adapter(orchestration_input=None):
 def test_get_input_returns_stored_input():
     adapter, _ = _adapter({"x": 1})
     assert adapter.get_input() == {"x": 1}
+
+
+def test_task_helpers_support_shared_and_duplicate_pending_tasks():
+    adapter, _ = _adapter()
+    a = task.CompletableTask[str]()
+    b = task.CompletableTask[str]()
+    c = task.CompletableTask[str]()
+    left = adapter.task_all([a, b, a])
+    right = adapter.task_all([a, c])
+    race = adapter.task_any([a, c])
+    root = adapter.task_all([left, right])
+
+    a.complete("A")
+    b.complete("B")
+    c.complete("C")
+
+    assert root.is_complete
+    assert root.get_result() == [["A", "B", "A"], ["A", "C"]]
+    assert race.get_result() is a
 
 
 def test_property_delegation():

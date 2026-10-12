@@ -88,6 +88,59 @@ def test_activity_sequence():
     assert state.serialized_custom_status is None
 
 
+@pytest.mark.parametrize("pattern, expected, invocations", [
+    ("shared", [["A", "B"], ["A", "C"]], ["A", "B", "C"]),
+    ("duplicate", ["V", "V"], ["V"]),
+    ("precompleted_duplicate", ["V", "V"], ["V"]),
+    ("distinct", ["A", "B", "C"], ["A", "B", "C"]),
+    ("nested_disjoint", [["A", "B"], ["C"]], ["A", "B", "C"]),
+])
+def test_task_composition_executes_each_activity_once(pattern, expected, invocations):
+    calls: list[str] = []
+    lock = threading.Lock()
+
+    def echo(_: task.ActivityContext, value: str) -> str:
+        with lock:
+            calls.append(value)
+        return value
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        if pattern in ("duplicate", "precompleted_duplicate"):
+            work = ctx.call_activity(echo, input="V")
+            if pattern == "precompleted_duplicate":
+                yield work
+            return (yield task.when_all([work, work]))
+
+        a = ctx.call_activity(echo, input="A")
+        b = ctx.call_activity(echo, input="B")
+        c = ctx.call_activity(echo, input="C")
+        if pattern == "shared":
+            left = task.when_all([a, b])
+            right = task.when_all([a, c])
+            return (yield task.when_all([left, right]))
+        if pattern == "nested_disjoint":
+            return (yield task.when_all([task.when_all([a, b]), task.when_all([c])]))
+        return (yield task.when_all([a, b, c]))
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(echo)
+        w.start()
+        with client.TaskHubGrpcClient(host_address=HOST) as c:
+            instance_id = c.schedule_new_orchestration(orchestrator)
+            state = c.wait_for_orchestration_completion(instance_id, timeout=10)
+            committed_history = c.get_orchestration_history(instance_id)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_output == json.dumps(expected)
+    assert sorted(calls) == invocations
+    assert sum(isinstance(event, history.TaskScheduledEvent)
+               for event in committed_history) == len(invocations)
+    assert sum(isinstance(event, history.TaskCompletedEvent)
+               for event in committed_history) == len(invocations)
+
+
 def test_activity_error_handling():
 
     def throw(_: task.ActivityContext, input: int) -> int:
