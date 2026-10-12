@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added Python 3.15 support.
+
 FIXED
 
 - Dataclasses with `init=False` fields now reconstruct as their declared type

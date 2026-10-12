@@ -46,7 +46,7 @@ AZURE_FUNCTIONS_DURABLE = REPO_ROOT / "azure-functions-durable"
 E2E_APPS_DIR = REPO_ROOT / "tests" / "azure-functions-durable" / "e2e" / "apps"
 # Sample apps that need an in-app virtual environment for the E2E suite.
 E2E_APPS = ("v1_style", "dtask_style", "tracing")
-PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14")
+PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")
 DEFAULT_CI_PYTHON = "3.10"
 
 
@@ -446,7 +446,7 @@ def azuremanaged_tests(session: nox.Session) -> None:
         _stop_dts_emulator(container_name)
 
 
-@nox.session(python=["3.13", "3.14"])
+@nox.session(python=["3.13", "3.14", "3.15"])
 def functions_unit(session: nox.Session) -> None:
     """Run the azure-functions-durable unit tests (no func/azurite required)."""
     session.install("-r", "requirements.txt")
@@ -524,7 +524,7 @@ def ci(session: nox.Session) -> None:
     """Run the representative local lint, type, test, emulator, and E2E checks.
 
     Pass a core/Azure Managed Python version after ``--`` to override the
-    default representative version, for example ``nox -s ci -- 3.14``.
+    default representative version, for example ``nox -s ci -- 3.15``.
     """
     if len(session.posargs) > 1 or (
         session.posargs and session.posargs[0] not in PYTHON_VERSIONS
