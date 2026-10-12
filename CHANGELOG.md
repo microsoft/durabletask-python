@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.12.0
+
 ADDED
 
 - Added Python 3.15 support.
@@ -30,8 +32,8 @@ completion callback no longer prevents other observers from being notified.
 > Drain affected instances on the previous SDK, or keep their task hub on the
 > previous SDK and use a separate task hub for new instances. Already-stuck
 > instances may need deliberate recovery. Pin or lock the core `durabletask`
-> dependency, including when using a provider. Provider dependency minimums
-> will be coordinated in a dedicated release PR after the core fix is released.
+> dependency, including when using a provider. The coordinated provider releases
+> require `durabletask` v1.12.0 or later and adopt this correction.
 
 - Dataclasses with `init=False` fields now reconstruct as their declared type
 instead of falling back to a raw dictionary when their generated constructor

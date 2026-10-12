@@ -7,17 +7,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.12.0
+
 ADDED
 
 - Added Python 3.15 support.
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.12.0, including the
+`azure-blob-payloads` extra.
 
 FIXED
 
 - With the corresponding core `durabletask` SDK fix, shared or duplicate pending
 tasks no longer leave `when_all` groups waiting after their children complete.
 This correction can change shared nested race winners during replay; see the
-[core changelog](../CHANGELOG.md) for upgrade guidance. Dependency minimums will
-be coordinated after the core fix is released.
+[core changelog](../CHANGELOG.md) for upgrade guidance. This release requires
+`durabletask` v1.12.0 or later and adopts this correction.
 - With the corresponding core `durabletask` SDK fix, single-instance
 `purge_orchestration()` requests from synchronous and asynchronous Azure Managed
 clients now explicitly target orchestrations rather than entities.
