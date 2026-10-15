@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Prototype support for `async def` orchestrators that `await` durable tasks,
+including activities, timers, external events, and `when_all` / `when_any`.
+Generator orchestrators remain supported. This is replay-driven syntax, not
+support for asyncio I/O inside orchestrators.
+
 ## v1.12.0
 
 ADDED

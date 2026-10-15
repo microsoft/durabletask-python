@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- With the corresponding core SDK prototype, native and v1-style orchestrators
+can use `async def` and await durable tasks. The
+`orchestrator_generator_wrapper` test helper also accepts coroutines.
+Requires a coordinated release after the core SDK is published; dependency
+minimums are intentionally unchanged in this spike.
+
 ## v2.0.0rc3
 
 ADDED

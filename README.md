@@ -27,6 +27,44 @@ and [Azure Durable Functions](https://learn.microsoft.com/azure/azure-functions/
 
 ## Optional Features
 
+### Async Orchestrators (Prototype)
+
+This branch prototypes `async def` orchestrators across all three packages.
+Existing generator orchestrators continue to work.
+
+```python
+from durabletask import task
+
+
+async def sequence(ctx: task.OrchestrationContext, value: int) -> list[int]:
+    first = await ctx.call_activity("plus_one", input=value, return_type=int)
+    pending: list[task.Task[int]] = [
+        ctx.call_activity("plus_one", input=first, return_type=int),
+        ctx.call_activity("plus_one", input=value, return_type=int),
+    ]
+    return await task.when_all(pending)
+```
+
+Register the function with `TaskHubGrpcWorker`, `DurableTaskSchedulerWorker`,
+or the Azure Functions `orchestration_trigger` decorator as usual. Functions
+also supports single-argument `async def` orchestrators using the compatibility
+context and `await context.task_all(...)`.
+
+> [!WARNING]
+> This is replay-driven await syntax, not general-purpose asyncio execution.
+> Await only durable tasks or async helpers that themselves await durable tasks.
+> Use durable timers instead of `asyncio.sleep`, and `task.when_all` /
+> `task.when_any` instead of `asyncio.gather`, `create_task`, or `TaskGroup`.
+> Perform network, storage, and other nondeterministic I/O in activities.
+> Completed foreign awaitables and synchronous side effects cannot reliably be
+> detected by the replay engine.
+
+An async helper is not a durable sub-orchestration: use
+`await ctx.call_sub_orchestrator(...)` for a separate orchestration instance.
+An `async def` function containing `yield` is an async generator, not a supported
+orchestrator. Converting an existing orchestrator must preserve durable action
+order and payloads for replay compatibility.
+
 ### Large Payload Externalization
 
 Install the `azure-blob-payloads` extra to automatically offload oversized orchestration payloads to

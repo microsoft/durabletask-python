@@ -36,6 +36,15 @@ def activity_chain(ctx: task.OrchestrationContext, _: Any):
 
 
 @bp.orchestration_trigger(context_name="context")
+async def async_await_probe(ctx: task.OrchestrationContext, _: Any) -> dict[str, Any]:
+    greeting = await ctx.call_activity("say_hello", input="Tokyo", return_type=str)
+    values = await task.when_all([ctx.call_activity("square", input=i, return_type=int) for i in (2, 3)])
+    await ctx.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await ctx.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": sum(values), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
 def logging_filtered(ctx: task.OrchestrationContext, _: Any):
     _LOGGER.info("worker-info-filter-anchor %s", ctx.instance_id)
     _LOGGER.warning("worker-filter-anchor %s", ctx.instance_id)
