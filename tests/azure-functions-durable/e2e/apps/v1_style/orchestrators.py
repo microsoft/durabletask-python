@@ -13,6 +13,7 @@ retries, and the ``histories`` NotImplementedError).
 """
 
 from datetime import timedelta
+from typing import Any
 
 import azure.durable_functions as df
 
@@ -29,6 +30,15 @@ def activity_chain(context: df.DurableOrchestrationContext):
     second = yield context.call_activity("say_hello", "Seattle")
     third = yield context.call_activity("say_hello", "London")
     return [first, second, third]
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_await_probe(context: df.DurableOrchestrationContext) -> dict[str, Any]:
+    greeting = await context.call_activity("say_hello", "Tokyo")
+    values = await context.task_all([context.call_activity("square", i) for i in (2, 3)])
+    await context.create_timer(context.current_utc_datetime + timedelta(milliseconds=10))
+    child = await context.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": sum(values), "child": child}
 
 
 @bp.orchestration_trigger(context_name="context")

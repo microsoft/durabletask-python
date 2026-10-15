@@ -1,16 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Replay simulation helper for unit-testing orchestrator generators."""
+"""Replay simulation helper for unit-testing generator or coroutine orchestrators."""
 
-from typing import Any, Generator
+from collections.abc import Coroutine, Generator
+from typing import Any
 
 
 def orchestrator_generator_wrapper(
-        generator: Generator[Any, Any, Any]) -> Generator[Any, None, None]:
-    """Drive a user orchestrator generator the way the Durable replay engine does.
+        generator: Generator[Any, Any, Any] | Coroutine[Any, Any, Any]) -> Generator[Any, None, None]:
+    """Drive a user orchestrator the way the Durable replay engine does.
 
-    A Durable Functions orchestrator is a generator that yields task objects and
+    A Durable Functions orchestrator yields or awaits durable task objects and
     is resumed with each task's result until it returns the orchestration
     output. In a real execution the Durable Task runtime performs this drive
     loop during replay. This wrapper reproduces that loop in-process so an
@@ -22,8 +23,8 @@ def orchestrator_generator_wrapper(
 
     Parameters
     ----------
-    generator: Generator[Any, Any, Any]
-        The user orchestrator generator. It is expected to yield task objects
+    generator: Generator[Any, Any, Any] | Coroutine[Any, Any, Any]
+        The user orchestrator generator or coroutine. It must suspend on tasks
         that expose a ``result`` attribute and to be resumed with those results
         until it returns the orchestration output.
 
@@ -34,13 +35,12 @@ def orchestrator_generator_wrapper(
         orchestrator's final return value.
     """
     try:
-        previous = next(generator)
+        previous = generator.send(None)
     except StopIteration as e:
         # An orchestrator that returns immediately without yielding any task
         # completes right away (mirroring the runtime, which finishes the
         # orchestration on the first return). Surface its output as the final
-        # value and stop -- ``next`` raising here otherwise leaks as an
-        # unhandled ``StopIteration``.
+        # value and stop -- letting StopIteration escape would become RuntimeError.
         yield e.value
         return
     yield previous
