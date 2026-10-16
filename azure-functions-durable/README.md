@@ -32,6 +32,56 @@ Key capabilities include durable orchestrations and sub-orchestrations, durable
 timers, external events, durable entities, retries, versioning, durable HTTP
 calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 
+## Unicode JSON serialization
+
+By default, durable payloads preserve the shared `azure-functions` codec's
+ASCII-escaped JSON representation. With `azure-functions>=2.4.0b1`, opt in to
+literal Unicode JSON on the root `DFApp` at startup:
+
+```python
+import azure.durable_functions as df
+
+app = df.DFApp()
+app.configure_serialization(ensure_ascii=False)
+```
+
+The shared `df_dumps(..., ensure_ascii=...)` API was released in
+[`azure-functions` 2.4.0b1](https://github.com/Azure/azure-functions-python-library/releases/tag/2.4.0b1),
+which is the minimum required shared SDK version. Dependency installation
+selects a compatible release automatically. If an older SDK is manually
+installed despite that requirement, configuring the opt-in raises `RuntimeError`
+rather than silently ignoring it. Leaving the option unset, or explicitly
+choosing `ensure_ascii=True`, preserves the existing JSON encoding.
+
+There is one encoding policy per Python worker process. It applies to both
+synchronous and asynchronous durable clients, orchestration and entity workers,
+activity binding outputs, and all registered blueprints, including handlers
+created before configuration. Configure every scaled-out worker consistently
+before invocations. Repeating the same setting is allowed; a conflicting setting
+or changing the policy after the first durable JSON serialization raises
+`ValueError`.
+
+Literal Unicode reduces escaping overhead for non-Latin text. For example,
+a JSON object containing 100,000 Cyrillic characters occupies approximately
+200,012 UTF-8 bytes rather than 600,012 ASCII-escaped bytes. Actual reduction
+depends on the payload. The shared codec preserves surrogate-code-unit and
+ASCII DEL escapes, custom-object envelopes, and strict/loose typing semantics.
+This option does not normalize Unicode or change the decoder; existing escaped
+payloads remain readable.
+
+> [!WARNING]
+> Enabling or disabling this option changes serialized bytes for non-ASCII
+> text. Review applications deriving hashes, signatures, IDs, or replay
+> decisions from serialized JSON before rolling out or rolling back a change.
+> Do not change the setting inside orchestrator code or during invocations.
+
+The policy applies before large-payload externalization, so uploads use the
+selected JSON encoding and size thresholds use its serialized UTF-8 bytes.
+Reduced escaping does not eliminate aggregate request limits or replace
+externalization. Protocol envelopes, reference tokens, management responses, and
+JSON serialized explicitly by application code are not reformatted by this
+setting.
+
 ## Large payloads
 
 Configure a `durabletask.payload.PayloadStore` once at app startup to store large

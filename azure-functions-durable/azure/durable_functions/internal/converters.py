@@ -32,7 +32,6 @@ from azure.functions import meta
 from azure.functions._durable_functions import (
     EntityContext,
     OrchestrationContext,
-    df_dumps,
     df_loads,
 )
 
@@ -43,6 +42,7 @@ from ..constants import (
     ORCHESTRATION_TRIGGER,
 )
 from .payloads import ActivityPayload, get_transport_payload_store
+from .serialization import serialize_json
 
 _TriggerMetadata = Optional[Mapping[str, meta.Datum]]
 
@@ -162,7 +162,7 @@ class ActivityTriggerConverter(meta.InConverter,
         if isinstance(obj, ActivityPayload):
             return meta.Datum(type='json', value=obj.value)
         try:
-            result = df_dumps(obj)
+            result = serialize_json(obj)
         except TypeError as e:
             raise ValueError(
                 f'activity trigger output must be json serializable ({obj})') from e

@@ -7,7 +7,9 @@ import azure.durable_functions as df
 
 
 def create_app() -> df.DFApp:
-    return df.DFApp()
+    app = df.DFApp()
+    app.configure_serialization(ensure_ascii=True)
+    return app
 
 
 def create_retry_policy() -> df.RetryPolicy:
