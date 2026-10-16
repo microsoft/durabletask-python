@@ -18,7 +18,7 @@ Usage:
     nox -s functions_unit-3.13
     nox -s functions_e2e
 
-``azure-functions>=2.3.0b2`` is published to PyPI and installed as a declared
+``azure-functions>=2.4.0b1`` is published to PyPI and installed as a declared
 dependency of ``azure-functions-durable``, so no local build is required.
 """
 

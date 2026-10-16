@@ -66,7 +66,7 @@ later.
 Replace the 1.x package constraint in `requirements.txt`:
 
 ```text
-azure-functions>=2.3.0b2
+azure-functions>=2.4.0b1
 azure-functions-durable>=2.0.0b1,<3
 ```
 

@@ -497,8 +497,8 @@ class DFApp(Blueprint, FunctionRegister):
         """Configure JSON encoding for this app and its registered blueprints.
 
         The default preserves ASCII-escaped JSON. Set ``ensure_ascii=False``
-        to emit ordinary Unicode literally with a compatible ``azure-functions``
-        SDK. An older SDK raises RuntimeError when this option is requested.
+        to emit ordinary Unicode literally with ``azure-functions>=2.4.0b1``.
+        An older SDK raises RuntimeError when this option is requested.
 
         Call at startup in every worker process, before durable payloads are
         serialized. Clients, orchestrations, entities, and activity bindings

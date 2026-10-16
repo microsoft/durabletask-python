@@ -4,7 +4,6 @@
 """App-level encoding policy and shared-codec compatibility coverage."""
 
 import base64
-import inspect
 import json
 from unittest.mock import AsyncMock, Mock
 
@@ -42,12 +41,7 @@ def configurable_codec(monkeypatch):
 
     def dumps(value, *, ensure_ascii=True):
         calls.append(ensure_ascii)
-        if "ensure_ascii" in inspect.signature(shared_dumps).parameters:
-            return shared_dumps(value, ensure_ascii=ensure_ascii)
-        legacy = shared_dumps(value)
-        if ensure_ascii:
-            return legacy
-        return json.dumps(json.loads(legacy), ensure_ascii=False)
+        return shared_dumps(value, ensure_ascii=ensure_ascii)
 
     monkeypatch.setattr(serialization, "df_dumps", dumps)
     return calls
@@ -74,7 +68,7 @@ def test_legacy_sdk_rejects_optin_without_changing_policy(monkeypatch):
 
     monkeypatch.setattr(serialization, "df_dumps", legacy_dumps)
     app = df.DFApp()
-    with pytest.raises(RuntimeError, match="requires an azure-functions SDK"):
+    with pytest.raises(RuntimeError, match=r"requires azure-functions>=2\.4\.0b1"):
         app.configure_serialization(ensure_ascii=False)
     assert serialization._ensure_ascii is None
     app.configure_serialization()
@@ -366,14 +360,25 @@ async def test_externalized_activity_bytes_and_threshold_use_optin(
     assert store.download(token) == json.dumps(larger, ensure_ascii=False).encode("utf-8")
 
 
-def test_optin_with_actual_shared_codec():
-    if "ensure_ascii" not in inspect.signature(shared_dumps).parameters:
-        with pytest.raises(RuntimeError, match="requires an azure-functions SDK"):
-            df.DFApp().configure_serialization(ensure_ascii=False)
-        return
+@pytest.mark.parametrize("strict", [False, True])
+def test_optin_with_actual_shared_codec(monkeypatch, strict):
+    monkeypatch.setenv("AZURE_FUNCTIONS_DURABLE_STRICT_TYPING", "1" if strict else "0")
     df.DFApp().configure_serialization(ensure_ascii=False)
     for value in [VALUE, {"text": "\ud800\udc00\udfff\x7f"}]:
         encoded = serialization.serialize_json(value)
         assert encoded == shared_dumps(value, ensure_ascii=False)
         wire = pb.ActivityResponse(result=helpers.get_string_value(encoded)).SerializeToString()
         assert pb.ActivityResponse.FromString(wire).result.value == encoded
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_released_codec_reduces_serialized_utf8_size(monkeypatch, strict):
+    monkeypatch.setenv("AZURE_FUNCTIONS_DURABLE_STRICT_TYPING", "1" if strict else "0")
+    value = {"text": "\u0416" * 100_000}
+    legacy = shared_dumps(value)
+    assert legacy == shared_dumps(value, ensure_ascii=True)
+    assert len(legacy.encode("utf-8")) == 600_012
+    df.DFApp().configure_serialization(ensure_ascii=False)
+    encoded = serialization.serialize_json(value)
+    assert len(encoded.encode("utf-8")) == 200_012
+    assert serialization.FunctionsDataConverter().deserialize(encoded, dict) == value

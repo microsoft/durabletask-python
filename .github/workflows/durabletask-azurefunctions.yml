@@ -57,7 +57,7 @@ jobs:
     needs: run-tests
     runs-on: ubuntu-latest
     # The end-to-end suite launches a real Azure Functions host, which requires
-    # ``azure-functions>=2.3.0b2``. That build is published to PyPI and pulled
+    # ``azure-functions>=2.4.0b1``. That build is published to PyPI and pulled
     # in as a declared dependency of ``azure-functions-durable``.
     # Run the suite in both payload-typing modes: the default (loose) codec and
     # strict typing (``AZURE_FUNCTIONS_DURABLE_STRICT_TYPING=1``), which requires

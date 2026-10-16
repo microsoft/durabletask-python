@@ -53,7 +53,7 @@ def configure_serialization(*, ensure_ascii: object = True) -> None:
             encoder = df_dumps
             if not _supports_ensure_ascii(encoder):
                 raise RuntimeError(
-                    "ensure_ascii=False requires an azure-functions SDK whose "
+                    "ensure_ascii=False requires azure-functions>=2.4.0b1, whose "
                     "df_dumps supports the ensure_ascii keyword argument. "
                     "Install a compatible azure-functions SDK before opting in.")
             _unicode_encoder = encoder

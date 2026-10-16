@@ -12,9 +12,12 @@ ADDED
 - Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact
 Unicode JSON across durable clients, orchestration and entity workers, activity
 bindings, and registered blueprints. The default remains ASCII-escaped JSON.
-The opt-in requires an `azure-functions` SDK exposing the shared codec's
-`ensure_ascii` option; unsupported SDKs fail explicitly at configuration time.
-Coordinate the dependency minimum in a release after that upstream API ships.
+The opt-in uses the shared codec's `ensure_ascii` option available in
+`azure-functions` v2.4.0b1; unsupported SDKs fail explicitly at configuration time.
+
+CHANGED
+
+- Updated the minimum `azure-functions` dependency to v2.4.0b1.
 
 ## v2.0.0rc3
 

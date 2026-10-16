@@ -35,7 +35,7 @@ calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 ## Unicode JSON serialization
 
 By default, durable payloads preserve the shared `azure-functions` codec's
-ASCII-escaped JSON representation. With a compatible shared SDK, opt in to
+ASCII-escaped JSON representation. With `azure-functions>=2.4.0b1`, opt in to
 literal Unicode JSON on the root `DFApp` at startup:
 
 ```python
@@ -45,11 +45,13 @@ app = df.DFApp()
 app.configure_serialization(ensure_ascii=False)
 ```
 
-This requires the shared `df_dumps(..., ensure_ascii=...)` API tracked in
-[Azure/azure-functions-python-library#372](https://github.com/Azure/azure-functions-python-library/pull/372).
-An older SDK raises `RuntimeError` when the opt-in is configured, rather than
-silently ignoring it. Leaving the option unset, or explicitly choosing
-`ensure_ascii=True`, remains compatible with older shared SDKs.
+The shared `df_dumps(..., ensure_ascii=...)` API was released in
+[`azure-functions` 2.4.0b1](https://github.com/Azure/azure-functions-python-library/releases/tag/2.4.0b1),
+which is the minimum required shared SDK version. Dependency installation
+selects a compatible release automatically. If an older SDK is manually
+installed despite that requirement, configuring the opt-in raises `RuntimeError`
+rather than silently ignoring it. Leaving the option unset, or explicitly
+choosing `ensure_ascii=True`, preserves the existing JSON encoding.
 
 There is one encoding policy per Python worker process. It applies to both
 synchronous and asynchronous durable clients, orchestration and entity workers,
@@ -79,10 +81,6 @@ Reduced escaping does not eliminate aggregate request limits or replace
 externalization. Protocol envelopes, reference tokens, management responses, and
 JSON serialized explicitly by application code are not reformatted by this
 setting.
-
-Release coordination must set the shared-SDK dependency minimum after the
-upstream API is released. This feature does not guess an unreleased SDK version
-or change package versions.
 
 ## Large payloads
 
