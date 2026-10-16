@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
+by one or more task hubs.
+
 ## v1.12.0
 
 ADDED
