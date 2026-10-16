@@ -197,12 +197,36 @@ def test_orchestration_query_serializes_instance_id_prefix():
     assert request.query.instanceIdPrefix.value == "prefix-"
 
 
+def test_orchestration_query_serializes_task_hub_names():
+    request = build_query_instances_req(
+        client.OrchestrationQuery(task_hub_names=["hub1", "hub2"]),
+        continuation_token=None,
+    )
+
+    assert [name.value for name in request.query.taskHubNames] == ["hub1", "hub2"]
+
+
+def test_orchestration_query_serializes_task_hub_names_and_instance_id_prefix():
+    request = build_query_instances_req(
+        client.OrchestrationQuery(
+            instance_id_prefix="prefix-",
+            task_hub_names=["hub1"],
+        ),
+        continuation_token=None,
+    )
+
+    assert request.query.HasField("instanceIdPrefix")
+    assert request.query.instanceIdPrefix.value == "prefix-"
+    assert [name.value for name in request.query.taskHubNames] == ["hub1"]
+
+
 def test_orchestration_query_preserves_positional_argument_order():
     query = client.OrchestrationQuery(None, None, None, None, True)
 
     assert query.max_instance_count is None
     assert query.fetch_inputs_and_outputs is True
     assert query.instance_id_prefix is None
+    assert query.task_hub_names is None
 
 
 def test_get_orchestration_state_pagination_succeeds(backend):
