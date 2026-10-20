@@ -19,6 +19,12 @@ CHANGED
 
 - Updated the minimum `azure-functions` dependency to v2.4.0b1.
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, orchestrator generators
+are closed when a dispatch ends, so cleanup in `finally` blocks runs
+deterministically, including for async bridges.
+
 ## v2.0.0rc3
 
 ADDED

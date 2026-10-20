@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, orchestrator generators
+are closed when a dispatch ends, so cleanup in `finally` blocks runs
+deterministically, including for async bridges.
+
 ## v1.12.0
 
 ADDED
