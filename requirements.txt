@@ -3,6 +3,7 @@ grpcio>=1.60.0 # 1.60.0 is the version introducing protobuf 1.25.X support, newe
 protobuf
 pytest
 pytest-asyncio
+anyio
 pytest-cov
 azure-identity
 azure-functions

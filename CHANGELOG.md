@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Orchestrator generators are now closed when a dispatch ends, so cleanup in
+`finally` blocks runs deterministically, including for async bridges that would
+otherwise retain tasks, event loops, and orchestration contexts.
+
 ## v1.12.0
 
 ADDED
