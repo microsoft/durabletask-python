@@ -25,6 +25,12 @@ minimum supported version for this package.
 failures raise the built-in `ExceptionGroup`; a single failure is still raised
 directly.
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, orchestrator generators
+are closed when a dispatch ends, so cleanup in `finally` blocks runs
+deterministically, including for async bridges.
+
 ## v2.0.0rc3
 
 ADDED

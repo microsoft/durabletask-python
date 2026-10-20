@@ -16,6 +16,12 @@ preserve Azure Managed subclass types in type checkers.
 failures raise the built-in `ExceptionGroup`; a single failure is still raised
 directly.
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, orchestrator generators
+are closed when a dispatch ends, so cleanup in `finally` blocks runs
+deterministically, including for async bridges.
+
 ## v1.12.0
 
 ADDED

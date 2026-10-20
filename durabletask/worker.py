@@ -2289,64 +2289,80 @@ class _OrchestrationExecutor:
             logger=self._logger,
         )
         try:
-            # Rebuild local state by replaying old history into the orchestrator function
-            self._logger.debug(
-                f"{instance_id}: Rebuilding local state with {len(old_events)} history event..."
-            )
-            ctx._is_replaying = True  # pyright: ignore[reportPrivateUsage]
-            for old_event in old_events:
-                self.process_event(ctx, old_event)
-
-            # Get new actions by executing newly received events into the orchestrator function
-            if self._logger.level <= logging.DEBUG:
-                summary = _get_new_event_summary(new_events)
+            try:
+                # Rebuild local state by replaying old history into the orchestrator function
                 self._logger.debug(
-                    f"{instance_id}: Processing {len(new_events)} new event(s): {summary}"
+                    f"{instance_id}: Rebuilding local state with {len(old_events)} history event..."
                 )
-            ctx._is_replaying = False  # pyright: ignore[reportPrivateUsage]
-            for new_event in new_events:
-                self.process_event(ctx, new_event)
+                ctx._is_replaying = True  # pyright: ignore[reportPrivateUsage]
+                for old_event in old_events:
+                    self.process_event(ctx, old_event)
 
-        except pe.VersionFailureException as ex:
-            if self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
-                if ex.error_details:
-                    ctx.set_failed(ex.error_details)
-                else:
-                    ctx.set_failed(ex)
-            elif self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.REJECT:
-                raise pe.AbandonOrchestrationError
+                # Get new actions by executing newly received events into the orchestrator function
+                if self._logger.level <= logging.DEBUG:
+                    summary = _get_new_event_summary(new_events)
+                    self._logger.debug(
+                        f"{instance_id}: Processing {len(new_events)} new event(s): {summary}"
+                    )
+                ctx._is_replaying = False  # pyright: ignore[reportPrivateUsage]
+                for new_event in new_events:
+                    self.process_event(ctx, new_event)
 
-        except Exception as ex:
-            # Unhandled exceptions fail the orchestration
-            self._logger.debug(f"{instance_id}: Orchestration {orchestration_name} failed")
-            ctx.set_failed(ex)
+            except pe.VersionFailureException as ex:
+                if self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.FAIL:
+                    if ex.error_details:
+                        ctx.set_failed(ex.error_details)
+                    else:
+                        ctx.set_failed(ex)
+                elif self._registry.versioning and self._registry.versioning.failure_strategy == VersionFailureStrategy.REJECT:
+                    raise pe.AbandonOrchestrationError
 
-        if not ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
-            task_count = len(ctx._pending_tasks)  # pyright: ignore[reportPrivateUsage]
-            event_count = len(ctx._pending_events)  # pyright: ignore[reportPrivateUsage]
-            self._logger.info(
-                f"{instance_id}: Orchestrator {orchestration_name} yielded with {task_count} task(s) "
-                f"and {event_count} event(s) outstanding."
-            )
-        elif (
-                ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW  # pyright: ignore[reportPrivateUsage]
-        ):
-            completion_status_str = ph.get_orchestration_status_str(
-                ctx._completion_status  # pyright: ignore[reportPrivateUsage]
-            )
-            self._logger.info(
-                f"{instance_id}: Orchestration {orchestration_name} completed with status: {completion_status_str}"
-            )
+            except Exception as ex:
+                # Unhandled exceptions fail the orchestration
+                self._logger.debug(f"{instance_id}: Orchestration {orchestration_name} failed")
+                ctx.set_failed(ex)
 
-        actions = ctx.get_actions()
-        if self._logger.level <= logging.DEBUG:
-            self._logger.debug(
-                f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}"
+            if not ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
+                task_count = len(ctx._pending_tasks)  # pyright: ignore[reportPrivateUsage]
+                event_count = len(ctx._pending_events)  # pyright: ignore[reportPrivateUsage]
+                self._logger.info(
+                    f"{instance_id}: Orchestrator {orchestration_name} yielded with {task_count} task(s) "
+                    f"and {event_count} event(s) outstanding."
+                )
+            elif (
+                    ctx._completion_status and ctx._completion_status is not pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW  # pyright: ignore[reportPrivateUsage]
+            ):
+                completion_status_str = ph.get_orchestration_status_str(
+                    ctx._completion_status  # pyright: ignore[reportPrivateUsage]
+                )
+                self._logger.info(
+                    f"{instance_id}: Orchestration {orchestration_name} completed with status: {completion_status_str}"
+                )
+
+            actions = ctx.get_actions()
+            if self._logger.level <= logging.DEBUG:
+                self._logger.debug(
+                    f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}"
+                )
+            return ExecutionResults(
+                actions=actions, encoded_custom_status=ctx._encoded_custom_status,  # pyright: ignore[reportPrivateUsage]
+                orchestration_trace_context=ctx._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
             )
-        return ExecutionResults(
-            actions=actions, encoded_custom_status=ctx._encoded_custom_status,  # pyright: ignore[reportPrivateUsage]
-            orchestration_trace_context=ctx._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
-        )
+        finally:
+            # Close after building the response, so the orchestrator's finally
+            # blocks do not change the actions or custom status we return.
+            if ctx._generator is not None:  # pyright: ignore[reportPrivateUsage]
+                try:
+                    ctx._generator.close()  # pyright: ignore[reportPrivateUsage]
+                except Exception:
+                    cleanup_name = next(
+                        (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),
+                        orchestration_name,
+                    )
+                    self._logger.warning(
+                        f"{instance_id}: Failed to close orchestrator {cleanup_name} generator.",
+                        exc_info=True,
+                    )
 
     def _build_rewind_result(
             self,

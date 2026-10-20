@@ -16,6 +16,12 @@ Azure Managed clients and workers.
 `ExceptionGroup`, preserving each exception and its traceback. A single callback
 failure is still raised directly.
 
+FIXED
+
+- Orchestrator generators are now closed when a dispatch ends, so cleanup in
+`finally` blocks runs deterministically, including for async bridges that would
+otherwise retain tasks, event loops, and orchestration contexts.
+
 ## v1.12.0
 
 ADDED
