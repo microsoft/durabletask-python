@@ -7,6 +7,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any, Generator
+from unittest.mock import Mock
 from weakref import ReferenceType, ref
 
 import anyio
@@ -296,6 +297,114 @@ def test_cleanup_failure_is_logged_without_changing_returned_actions(
     finally:
         for generator in generators:
             generator.close()
+
+
+def _cancelling_orchestrator(
+        ctx: task.OrchestrationContext, _: Any,
+) -> Generator[task.Task[Any], Any, None]:
+    loop = asyncio.new_event_loop()
+
+    async def body():
+        await asyncio.Future[None]()
+
+    root = loop.create_task(body())
+    loop.run_until_complete(asyncio.sleep(0))
+    ctx.set_custom_status("waiting")
+    try:
+        yield ctx.create_timer(timedelta(seconds=5))
+    finally:
+        root.cancel()
+        try:
+            loop.run_until_complete(root)
+        finally:
+            loop.close()
+
+
+@pytest.mark.parametrize("via_worker", [False, True])
+def test_teardown_cancellation_preserves_response(
+        via_worker: bool, caplog: pytest.LogCaptureFixture):
+    executor = _executor(_cancelling_orchestrator)
+    with caplog.at_level(logging.WARNING, logger=TEST_LOGGER.name):
+        if via_worker:
+            with worker.TaskHubGrpcWorker(logger=TEST_LOGGER) as host:
+                host._registry = executor._registry  # pyright: ignore[reportPrivateUsage]
+                stub = Mock()
+                request = pb.OrchestratorRequest(instanceId=TEST_INSTANCE_ID, newEvents=_start_events())
+                host._execute_orchestrator(request, stub, "token")  # pyright: ignore[reportPrivateUsage]
+            stub.CompleteOrchestratorTask.assert_called_once()
+            stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+            response: pb.OrchestratorResponse = stub.CompleteOrchestratorTask.call_args.args[0]
+            assert response.instanceId == TEST_INSTANCE_ID
+            assert response.completionToken == "token"
+            actions = list(response.actions)
+            custom_status = response.customStatus.value
+        else:
+            result = executor.execute(TEST_INSTANCE_ID, [], _start_events())
+            actions = result.actions
+            custom_status = result.encoded_custom_status
+
+    assert actions == [helpers.new_create_timer_action(1, START_TIME + timedelta(seconds=5))]
+    assert custom_status == '"waiting"'
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.WARNING
+    assert record.message == f"{TEST_INSTANCE_ID}: Failed to close orchestrator orchestrator generator."
+    assert record.exc_info is not None
+    assert record.exc_info[0] is asyncio.CancelledError
+
+
+@pytest.mark.parametrize("via_worker", [False, True])
+def test_teardown_cancellation_preserves_version_rejection(
+        via_worker: bool, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture):
+    executor = _executor(_cancelling_orchestrator)
+    executor._registry.versioning = worker.VersioningOptions(  # pyright: ignore[reportPrivateUsage]
+        failure_strategy=worker.VersionFailureStrategy.REJECT,
+        match_strategy=worker.VersionMatchStrategy.NONE)
+    process_event = worker._OrchestrationExecutor.process_event  # pyright: ignore[reportPrivateUsage]
+
+    def process_with_version_failure(
+            self: worker._OrchestrationExecutor,  # pyright: ignore[reportPrivateUsage]
+            ctx: worker._RuntimeOrchestrationContext,  # pyright: ignore[reportPrivateUsage]
+            event: pb.HistoryEvent):
+        process_event(self, ctx, event)
+        if event.HasField("eventRaised"):
+            raise exceptions.VersionFailureException(pb.TaskFailureDetails(errorType="VersionMismatch"))
+
+    monkeypatch.setattr(
+        worker._OrchestrationExecutor, "process_event", process_with_version_failure)  # pyright: ignore[reportPrivateUsage]
+    events = _start_events() + [helpers.new_event_raised_event("unrelated", None)]
+    with caplog.at_level(logging.WARNING, logger=TEST_LOGGER.name):
+        if via_worker:
+            with worker.TaskHubGrpcWorker(logger=TEST_LOGGER) as host:
+                host._registry = executor._registry  # pyright: ignore[reportPrivateUsage]
+                stub = Mock()
+                request = pb.OrchestratorRequest(instanceId=TEST_INSTANCE_ID, newEvents=events)
+                host._execute_orchestrator(request, stub, "token")  # pyright: ignore[reportPrivateUsage]
+            stub.CompleteOrchestratorTask.assert_not_called()
+            stub.AbandonTaskOrchestratorWorkItem.assert_called_once_with(
+                pb.AbandonOrchestrationTaskRequest(completionToken="token"))
+        else:
+            with pytest.raises(exceptions.AbandonOrchestrationError):
+                executor.execute(TEST_INSTANCE_ID, [], events)
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is not None
+    assert record.exc_info[0] is asyncio.CancelledError
+
+
+@pytest.mark.parametrize("error_type", [SystemExit, KeyboardInterrupt])
+def test_process_control_exception_from_cleanup_still_propagates(error_type: type[BaseException]):
+    def orchestrator(ctx: task.OrchestrationContext, _: Any):
+        try:
+            yield ctx.wait_for_external_event("ready")
+        finally:
+            raise error_type("stop")
+
+    with pytest.raises(error_type, match="stop"):
+        _executor(orchestrator).execute(TEST_INSTANCE_ID, [], _start_events())
 
 
 @pytest.mark.parametrize("thread_pool", [False, True])

@@ -22,8 +22,11 @@ CHANGED
 FIXED
 
 - With the corresponding core `durabletask` SDK fix, orchestrator generators
-are closed when a dispatch ends, so cleanup in `finally` blocks runs
-deterministically, including for async bridges.
+are closed at the end of each dispatch, including while waiting for durable work.
+See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks)
+for repeated finalizers, discarded teardown actions/status, and yielding restrictions.
+- With the corresponding core `durabletask` SDK fix, async cancellation raised by
+generator teardown no longer replaces dispatch responses or version-rejection abandonment.
 
 ## v2.0.0rc3
 

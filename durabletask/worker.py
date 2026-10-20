@@ -2354,7 +2354,7 @@ class _OrchestrationExecutor:
             if ctx._generator is not None:  # pyright: ignore[reportPrivateUsage]
                 try:
                     ctx._generator.close()  # pyright: ignore[reportPrivateUsage]
-                except Exception:
+                except (Exception, asyncio.CancelledError):
                     cleanup_name = next(
                         (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),
                         orchestration_name,
