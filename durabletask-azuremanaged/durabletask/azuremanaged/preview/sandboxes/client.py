@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing import Optional, Sequence
+from typing import Optional, Self, Sequence
 
 import grpc
 from azure.core.credentials import TokenCredential
@@ -48,7 +48,7 @@ class SandboxActivitiesClient:
     def close(self) -> None:
         self._transport.close()
 
-    def __enter__(self) -> "SandboxActivitiesClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:

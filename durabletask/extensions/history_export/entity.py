@@ -41,7 +41,7 @@ Operations
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from durabletask import entities
@@ -76,7 +76,7 @@ __all__ = [
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _summarize_failures(failures: list[ExportFailure], *, limit: int = 10) -> str:

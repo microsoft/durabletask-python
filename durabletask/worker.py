@@ -11,11 +11,11 @@ import time
 from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
-from typing import Any, TypeVar, cast, overload
+from typing import Any, Self, TypeVar, cast, overload
 import uuid
 from packaging.version import InvalidVersion, parse
 
@@ -618,7 +618,7 @@ class TaskHubGrpcWorker:
         """Return whether this worker emits Durable Task lifecycle spans."""
         return self._emit_trace_spans
 
-    def __enter__(self) -> "TaskHubGrpcWorker":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -974,7 +974,7 @@ class TaskHubGrpcWorker:
                             loop.run_in_executor(None, work_item_queue.get),
                             timeout=queue_timeout,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         work_item = None
                         stream_outcome = self._classify_stream_outcome(
                             saw_message=saw_message,
@@ -1418,7 +1418,7 @@ class TaskHubGrpcWorker:
             entity_method_cache=self._entity_method_cache,
         )
         for operation in req.operations:
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(UTC)
 
             operation_result = None
 
@@ -1446,7 +1446,7 @@ class TaskHubGrpcWorker:
                         operation_result = pb.OperationResult(success=pb.OperationResultSuccess(
                             result=entity_result,
                             startTimeUtc=new_timestamp(start_time),
-                            endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                            endTimeUtc=new_timestamp(datetime.now(UTC))
                         ))
                         results.append(operation_result)
 
@@ -1458,7 +1458,7 @@ class TaskHubGrpcWorker:
                             failureDetails=ph.new_failure_details(
                                 ex, self._exception_properties_provider, self._logger),
                             startTimeUtc=new_timestamp(start_time),
-                            endTimeUtc=new_timestamp(datetime.now(timezone.utc))
+                            endTimeUtc=new_timestamp(datetime.now(UTC))
                         ))
                         results.append(operation_result)
 
@@ -1751,7 +1751,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         # tzinfo whose utcoffset() is None is still naive and must be left as-is
         # (calling astimezone() on it would raise ValueError).
         if final_fire_at.utcoffset() is not None:
-            final_fire_at = final_fire_at.astimezone(timezone.utc).replace(tzinfo=None)
+            final_fire_at = final_fire_at.astimezone(UTC).replace(tzinfo=None)
 
         next_fire_at: datetime = final_fire_at
 
@@ -3704,7 +3704,7 @@ class _AsyncWorkerManager:
             try:
                 try:
                     work = await asyncio.wait_for(queue.get(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 func, cancellation_func, args, kwargs = work

@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+CHANGED
+
+- Dropped Python 3.10 support. Python 3.11 or later is now required.
+- With the corresponding core SDK update, client and worker context managers
+preserve Azure Managed subclass types in type checkers.
+- With the corresponding core SDK update, multiple task completion callback
+failures raise the built-in `ExceptionGroup`; a single failure is still raised
+directly.
+
 ## v1.12.0
 
 ADDED

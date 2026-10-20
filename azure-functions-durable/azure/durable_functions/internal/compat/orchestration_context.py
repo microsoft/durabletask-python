@@ -3,7 +3,7 @@
 
 import inspect
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Callable, Generator, Optional, cast
 from uuid import UUID
 
@@ -74,7 +74,7 @@ class DurableOrchestrationContext:
         """
         value = self._ctx.current_utc_datetime
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
 
     @property

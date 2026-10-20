@@ -21,7 +21,7 @@ instead -- a method the extension does implement.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Optional, cast
 
 from durabletask.client import (
@@ -217,7 +217,7 @@ _CONTINUOUS_UNSUPPORTED_MESSAGE = (
 def _created_at_from(payload: Mapping[str, Any]) -> datetime:
     raw = payload.get("created_at")
     parsed = dt_from_iso(raw) if raw else None
-    return parsed or datetime.now(timezone.utc)
+    return parsed or datetime.now(UTC)
 
 
 class FunctionsExportJobEntity(ExportJobEntity):

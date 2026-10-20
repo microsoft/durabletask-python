@@ -18,6 +18,12 @@ The opt-in uses the shared codec's `ensure_ascii` option available in
 CHANGED
 
 - Updated the minimum `azure-functions` dependency to v2.4.0b1.
+- With the corresponding core SDK update, client and worker context managers
+preserve Functions subclass types in type checkers. Python 3.13 remains the
+minimum supported version for this package.
+- With the corresponding core SDK update, multiple task completion callback
+failures raise the built-in `ExceptionGroup`; a single failure is still raised
+directly.
 
 ## v2.0.0rc3
 
