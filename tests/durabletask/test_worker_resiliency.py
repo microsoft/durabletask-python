@@ -747,6 +747,85 @@ async def test_worker_never_closes_caller_owned_channel_after_graceful_reset(mon
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_uncertain_outcome_resets_only_originating_stream(monkeypatch):
+    channel = MagicMock()
+    worker = TaskHubGrpcWorker(channel=channel)
+    manager = DummyWorkerManager()
+    worker._async_worker_manager = manager
+    monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
+
+    first_stream = FakeResponseStream(items=[pb.WorkItem(
+        orchestratorRequest=pb.OrchestratorRequest(instanceId="instance-id"),
+        completionToken="original-token",
+    )])
+    next_stream = FakeResponseStream()
+    first_stub = MagicMock()
+    first_stub.GetWorkItems.return_value = first_stream
+    first_stub.CompleteOrchestratorTask.side_effect = RuntimeError("completion outcome unknown")
+    next_stub = MagicMock()
+    next_stub.GetWorkItems.return_value = next_stream
+    stop_stub = MagicMock()
+    stop_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
+    stubs = [first_stub, next_stub, stop_stub]
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", lambda _: stubs.pop(0))
+    await worker._async_run_loop()
+
+    assert len(manager.submissions) == 1
+    first_stream.cancelled = False
+    next_stream.cancelled = False
+    worker._response_stream = next_stream
+    _, submission = manager.submissions[0]
+    handler, _, request, original_stub, token = submission
+    handler(request, original_stub, token)
+
+    first_stub.CompleteOrchestratorTask.assert_called_once()
+    assert first_stub.CompleteOrchestratorTask.call_args.args[0].completionToken == "original-token"
+    first_stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    assert first_stream.cancelled
+    assert not next_stream.cancelled
+    channel.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_delivery_failure_reconnects_live_work_item_stream(monkeypatch):
+    worker = TaskHubGrpcWorker(
+        channel=MagicMock(),
+        concurrency_options=ConcurrencyOptions(
+            maximum_concurrent_orchestration_work_items=1,
+            maximum_thread_pool_workers=1,
+        ),
+    )
+    monkeypatch.setattr(worker._shutdown, "wait", lambda timeout: False)
+    cancelled = Event()
+
+    class LiveStream:
+        def __iter__(self):
+            yield pb.WorkItem(
+                orchestratorRequest=pb.OrchestratorRequest(instanceId="instance-id"),
+                completionToken="original-token",
+            )
+            assert cancelled.wait(timeout=5), "orphaned dispatch left its stream open"
+
+        def cancel(self):
+            cancelled.set()
+
+    first_stub = MagicMock()
+    first_stub.GetWorkItems.return_value = LiveStream()
+    first_stub.CompleteOrchestratorTask.side_effect = RuntimeError("completion outcome unknown")
+    next_stub = MagicMock()
+    next_stub.GetWorkItems.side_effect = _cancel_after_shutdown(worker)
+    stubs = [first_stub, next_stub]
+    monkeypatch.setattr("durabletask.worker.stubs.TaskHubSidecarServiceStub", lambda _: stubs.pop(0))
+
+    await asyncio.wait_for(worker._async_run_loop(), timeout=5)
+
+    assert cancelled.is_set()
+    first_stub.CompleteOrchestratorTask.assert_called_once()
+    first_stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    next_stub.GetWorkItems.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_worker_uses_reconnect_backoff_helper_after_connection_failure(monkeypatch):
     worker = TaskHubGrpcWorker(
         resiliency_options=GrpcWorkerResiliencyOptions(

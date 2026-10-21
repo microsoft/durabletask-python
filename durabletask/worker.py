@@ -7,6 +7,7 @@ import itertools
 import json
 import logging
 import os
+import sys
 import time
 from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
 from types import GeneratorType
 from enum import Enum
+from functools import partial
 from typing import Any, TypeVar, cast, overload
 import uuid
 from packaging.version import InvalidVersion, parse
@@ -59,6 +61,14 @@ DATETIME_STRING_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 DEFAULT_MAXIMUM_TIMER_INTERVAL = timedelta(days=3)
 _STREAM_CLOSED_SENTINEL = object()
 _WorkItem = tuple[Callable[..., Any], Callable[..., Any], tuple[Any, ...], dict[str, Any]]
+
+
+def _is_control_flow_exception(error: BaseException) -> bool:
+    if isinstance(error, (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit)):
+        return True
+    if sys.version_info >= (3, 11) and isinstance(error, BaseExceptionGroup):
+        return any(_is_control_flow_exception(inner) for inner in error.exceptions)
+    return False
 
 
 class ConcurrencyOptions:
@@ -935,7 +945,8 @@ class TaskHubGrpcWorker:
                     get_work_items_request.workItemFilters.CopyFrom(
                         self._work_item_filters._to_grpc()  # pyright: ignore[reportPrivateUsage]
                     )
-                self._response_stream = stub.GetWorkItems(get_work_items_request)
+                response_stream = stub.GetWorkItems(get_work_items_request)
+                self._response_stream = response_stream
                 self._logger.info(
                     f"Successfully connected to {self._host_address}. Waiting for work items..."
                 )
@@ -946,13 +957,8 @@ class TaskHubGrpcWorker:
                 work_item_queue: queue.Queue[Any] = queue.Queue()
                 saw_message = False
 
-                def stream_reader() -> None:
+                def stream_reader(response_stream: Any = response_stream) -> None:
                     try:
-                        response_stream = self._response_stream
-                        if response_stream is None:
-                            work_item_queue.put(_STREAM_CLOSED_SENTINEL)
-                            return
-
                         for work_item in response_stream:
                             work_item_queue.put(work_item)
                         work_item_queue.put(_STREAM_CLOSED_SENTINEL)
@@ -1004,7 +1010,10 @@ class TaskHubGrpcWorker:
                         if work_item.HasField("orchestratorRequest"):
                             submit_work_item(
                                 self._async_worker_manager.submit_orchestration,
-                                self._execute_orchestrator,
+                                partial(
+                                    self._execute_orchestrator,
+                                    _on_outcome_uncertain=response_stream.cancel,
+                                ),
                                 self._cancel_orchestrator,
                                 work_item.orchestratorRequest,
                                 stub,
@@ -1148,7 +1157,63 @@ class TaskHubGrpcWorker:
             req: pb.OrchestratorRequest,
             stub: Any,
             completionToken: Any,
+            *,
+            _on_outcome_uncertain: Callable[[], Any] | None = None,
     ) -> None:
+        outcome_attempted = False
+        try:
+            try:
+                res = self._get_orchestrator_response(req, completionToken)
+            except pe.AbandonOrchestrationError:
+                outcome_attempted = True
+                self._cancel_orchestrator(req, stub, completionToken)
+                return
+
+            outcome_attempted = True
+            stub.CompleteOrchestratorTask(res)
+        except BaseException as error:
+            recovery_error: BaseException | None = None
+            self._logger.error(
+                f"Orchestrator dispatch for '{req.instanceId}' exited without a confirmed outcome.",
+                exc_info=True,
+            )
+            if not outcome_attempted:
+                try:
+                    self._cancel_orchestrator(req, stub, completionToken)
+                except BaseException as abandonment_error:
+                    recovery_error = abandonment_error
+                    outcome_attempted = True
+                    self._logger.error(
+                        f"Failed to abandon orchestrator dispatch for '{req.instanceId}'.",
+                        exc_info=True,
+                    )
+            # A failed RPC may already have been accepted. Do not retry it or
+            # send a conflicting outcome; release ownership through its stream.
+            if outcome_attempted and _on_outcome_uncertain is not None:
+                self._logger.error(
+                    f"Resetting the owning work-item stream for '{req.instanceId}' after an uncertain outcome."
+                )
+                try:
+                    _on_outcome_uncertain()
+                except BaseException as reset_error:
+                    if recovery_error is None or (
+                        isinstance(recovery_error, Exception) and not isinstance(reset_error, Exception)
+                    ):
+                        recovery_error = reset_error
+                    self._logger.error(
+                        f"Failed to reset the owning work-item stream for '{req.instanceId}'.",
+                        exc_info=True,
+                    )
+            if not isinstance(error, Exception):
+                raise
+            if recovery_error is not None and not isinstance(recovery_error, Exception):
+                raise recovery_error
+
+    def _get_orchestrator_response(
+            self,
+            req: pb.OrchestratorRequest,
+            completionToken: Any,
+    ) -> pb.OrchestratorResponse:
         instance_id = req.instanceId
 
         # De-externalize any large-payload tokens in the incoming request
@@ -1216,16 +1281,7 @@ class TaskHubGrpcWorker:
                 ),
             )
         except pe.AbandonOrchestrationError:
-            # Abandoned — no span needed
-            self._logger.info(
-                f"Abandoning orchestration. InstanceId = '{instance_id}'. Completion token = '{completionToken}'"
-            )
-            stub.AbandonTaskOrchestratorWorkItem(
-                pb.AbandonOrchestrationTaskRequest(
-                    completionToken=completionToken
-                )
-            )
-            return
+            raise
         except Exception as ex:
             # Unhandled error — emit a failed span
             if self._emit_trace_spans:
@@ -1253,61 +1309,42 @@ class TaskHubGrpcWorker:
                 completionToken=completionToken,
             )
 
+        # Externalize before attempting the completion RPC.
         try:
-            # Externalize any large payloads in the response
-            try:
-                if self._payload_store is not None:
-                    payload_helpers.externalize_payloads(
-                        res, self._payload_store, instance_id=instance_id,
-                    )
-            except pe.PayloadSizeExceededError as ex:
-                self._logger.warning(
-                    f"Orchestration '{instance_id}' exceeded the payload storage limit: {ex}"
+            if self._payload_store is not None:
+                payload_helpers.externalize_payloads(
+                    res, self._payload_store, instance_id=instance_id,
                 )
-                # Use the original actions, not a partially externalized response.
-                releases = [
-                    action for action in result.actions
-                    if action.HasField("sendEntityMessage")
-                    and action.sendEntityMessage.HasField("entityUnlockSent")
-                ] if result is not None else []
-                next_id = max((action.id for action in res.actions), default=0) + 1
-                if result is not None:
-                    for release in result.entity_lock_releases:
-                        releases.append(pb.OrchestratorAction(id=next_id, sendEntityMessage=release))
-                        next_id += 1
-                releases.append(ph.new_complete_orchestration_action(
-                    next_id,
-                    pb.ORCHESTRATION_STATUS_FAILED,
-                    None,
-                    pb.TaskFailureDetails(
-                        errorType=ph.get_qualified_name(type(ex)),
-                        errorMessage=str(ex)[:1024],
-                        isNonRetriable=True,
-                    ),
-                ))
-                res.ClearField("actions")
-                res.actions.extend(releases)
-                res.ClearField("customStatus")
-                # Keep this fallback inline: it must not need the failing store.
-
-            if result is not None and self._emit_trace_spans:
-                for action in res.actions:
-                    if action.HasField("completeOrchestration"):
-                        completion = action.completeOrchestration
-                        tracing.emit_orchestration_span(
-                            orchestration_name,
-                            instance_id,
-                            start_time_ns,
-                            completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED,
-                            failure_details=completion.failureDetails if completion.HasField("failureDetails") else None,
-                            parent_trace_context=parent_trace_ctx,
-                            orchestration_trace_context=result._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
-                        )
-            stub.CompleteOrchestratorTask(res)
-        except Exception as ex:
-            self._logger.exception(
-                f"Failed to deliver orchestrator response for '{req.instanceId}' to sidecar: {ex}"
+        except pe.PayloadSizeExceededError as ex:
+            self._logger.warning(
+                f"Orchestration '{instance_id}' exceeded the payload storage limit: {ex}"
             )
+            # Use the original actions, not a partially externalized response.
+            original = result if result is not None else ExecutionResults(list(res.actions), None)
+            failed = original.as_failed(pb.TaskFailureDetails(
+                errorType=ph.get_qualified_name(type(ex)),
+                errorMessage=str(ex)[:1024],
+                isNonRetriable=True,
+            ))
+            res.ClearField("actions")
+            res.actions.extend(failed.actions)
+            res.ClearField("customStatus")
+            # Keep this fallback inline: it must not need the failing store.
+
+        if result is not None and self._emit_trace_spans:
+            for action in res.actions:
+                if action.HasField("completeOrchestration"):
+                    completion = action.completeOrchestration
+                    tracing.emit_orchestration_span(
+                        orchestration_name,
+                        instance_id,
+                        start_time_ns,
+                        completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED,
+                        failure_details=completion.failureDetails if completion.HasField("failureDetails") else None,
+                        parent_trace_context=parent_trace_ctx,
+                        orchestration_trace_context=result._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
+                    )
+        return res
 
     def _cancel_orchestrator(
             self,
@@ -1637,7 +1674,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         )
         self._pending_actions[action.id] = action
 
-    def set_failed(self, ex: Exception | pb.TaskFailureDetails):
+    def set_failed(self, ex: BaseException | pb.TaskFailureDetails):
         if self._is_complete:
             return
 
@@ -1656,7 +1693,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 ex, self._exception_properties_provider, self._logger)
             failure_details.innerFailure.CopyFrom(
                 ex._failure_details)  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(ex, Exception):
+        elif isinstance(ex, BaseException):
             failure_details = ph.new_failure_details(
                 ex, self._exception_properties_provider, self._logger)
         else:
@@ -2227,6 +2264,20 @@ class ExecutionResults:
         self._orchestration_trace_context = orchestration_trace_context
         self.entity_lock_releases = entity_lock_releases if entity_lock_releases is not None else []
 
+    def as_failed(self, failure_details: pb.TaskFailureDetails) -> "ExecutionResults":
+        actions = [
+            action for action in self.actions
+            if action.HasField("sendEntityMessage") and action.sendEntityMessage.HasField("entityUnlockSent")
+        ]
+        next_id = max((action.id for action in self.actions), default=-1) + 1
+        for message in self.entity_lock_releases:
+            actions.append(pb.OrchestratorAction(id=next_id, sendEntityMessage=message))
+            next_id += 1
+        actions.append(ph.new_complete_orchestration_action(
+            next_id, pb.ORCHESTRATION_STATUS_FAILED, None, failure_details))
+        return ExecutionResults(
+            actions, None, orchestration_trace_context=self._orchestration_trace_context)
+
 
 class _OrchestrationExecutor:
     _generator: task.Orchestrator[Any, Any] | None = None
@@ -2312,6 +2363,8 @@ class _OrchestrationExecutor:
             exception_properties_provider=self._exception_properties_provider,
             logger=self._logger,
         )
+        result: ExecutionResults | None = None
+        dispatch_exited = False
         try:
             try:
                 # Rebuild local state by replaying old history into the orchestrator function
@@ -2346,6 +2399,15 @@ class _OrchestrationExecutor:
                 self._logger.debug(f"{instance_id}: Orchestration {orchestration_name} failed")
                 ctx.set_failed(ex)
 
+            except BaseException as ex:
+                if _is_control_flow_exception(ex):
+                    raise
+                self._logger.error(
+                    f"{instance_id}: Orchestrator {orchestration_name} exited unexpectedly.",
+                    exc_info=True,
+                )
+                ctx.set_failed(ex)
+
             if not ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
                 task_count = len(ctx._pending_tasks)  # pyright: ignore[reportPrivateUsage]
                 event_count = len(ctx._pending_events)  # pyright: ignore[reportPrivateUsage]
@@ -2368,12 +2430,15 @@ class _OrchestrationExecutor:
                 self._logger.debug(
                     f"{instance_id}: Returning {len(actions)} action(s): {_get_action_summary(actions)}"
                 )
-            return ExecutionResults(
+            result = ExecutionResults(
                 actions=actions, encoded_custom_status=ctx._encoded_custom_status,  # pyright: ignore[reportPrivateUsage]
                 orchestration_trace_context=ctx._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
                 # Snapshot before generator teardown can exit a critical section.
                 entity_lock_releases=list(ctx._entity_context.get_lock_release_messages()),  # pyright: ignore[reportPrivateUsage]
             )
+        except BaseException:
+            dispatch_exited = True
+            raise
         finally:
             # Close after building the response, so the orchestrator's finally
             # blocks do not change the actions or custom status we return.
@@ -2389,6 +2454,24 @@ class _OrchestrationExecutor:
                         f"{instance_id}: Failed to close orchestrator {cleanup_name} generator.",
                         exc_info=True,
                     )
+                except BaseException as ex:
+                    self._logger.error(
+                        f"{instance_id}: Orchestrator {orchestration_name} generator teardown exited unexpectedly.",
+                        exc_info=True,
+                    )
+                    if not dispatch_exited:
+                        if _is_control_flow_exception(ex) or result is None:
+                            raise
+                        # Keep an existing failure rather than mask its cause.
+                        if not any(
+                            action.HasField("completeOrchestration")
+                            and action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+                            for action in result.actions
+                        ):
+                            result = result.as_failed(ph.new_failure_details(
+                                ex, self._exception_properties_provider, self._logger))
+        assert result is not None
+        return result
 
     def _build_rewind_result(
             self,

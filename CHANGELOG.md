@@ -17,6 +17,12 @@ now takes precedence over hypothetical earlier storage failures.
 - Orchestrations that exceed the configured external payload storage limit now
 fail without retrying and release their entity locks, allowing other callers to
 progress. Transient payload-store failures remain retryable.
+- Unexpected non-cancellation orchestration exits, including generator teardown
+failures, now fail with a clear reason instead of leaving an accepted dispatch
+unfinished. Cancellation and process-control signals retain their semantics.
+The gRPC worker abandons work that exits before an outcome is sent and resets
+the originating work-item stream after an uncertain completion or abandonment
+RPC, allowing scheduler ownership recovery without retrying an uncertain outcome.
 - Orchestrator generators are now closed at the end of each dispatch, including
 while waiting for durable work, releasing resources held by async bridges.
 `finally` blocks and context-manager exits can run before orchestration completion
