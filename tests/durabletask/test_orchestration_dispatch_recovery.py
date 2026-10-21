@@ -134,6 +134,43 @@ def test_unexpected_teardown_failure_preserves_entity_lock_releases(wait: str):
     assert result.encoded_custom_status is None
 
 
+def test_teardown_failure_preserves_post_call_lock_release_order():
+    entity_a = EntityInstanceId("Counter", "a")
+    entity_b = EntityInstanceId("Counter", "b")
+
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, None]:
+        call_finished = False
+        try:
+            with (yield ctx.lock_entities([entity_a, entity_b])):
+                yield ctx.call_entity(entity_a, "get")
+                call_finished = True
+                yield ctx.wait_for_external_event("ready")
+        finally:
+            if call_finished:
+                raise TeardownExit("cleanup after successful entity call")
+
+    executor = _executor(orchestrator)
+    request = _request()
+    initial = executor.execute(INSTANCE_ID, [], request.newEvents)
+    lock_id = initial.actions[0].sendEntityMessage.entityLockRequested.criticalSectionId
+    lock_events = [
+        helpers.new_event_sent_event(1, str(entity_a), json.dumps({"id": lock_id})),
+        helpers.new_event_raised_event(lock_id, None),
+    ]
+    calling = executor.execute(INSTANCE_ID, request.newEvents, lock_events)
+    call_id = calling.actions[0].sendEntityMessage.entityOperationCalled.requestId
+    history = list(request.newEvents) + lock_events + [
+        helpers.new_event_sent_event(2, str(entity_a), json.dumps({"id": call_id})),
+    ]
+    result = executor.execute(INSTANCE_ID, history, [
+        helpers.new_event_raised_event(call_id, json.dumps({"result": "42"})),
+    ])
+
+    assert [action.sendEntityMessage.entityUnlockSent.targetInstanceId.value
+            for action in result.actions[:-1]] == [str(entity_b), str(entity_a)]
+    assert result.actions[-1].completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+
+
 def test_cleanup_does_not_replace_pending_control_flow_error(monkeypatch: pytest.MonkeyPatch):
     primary = asyncio.CancelledError("original cancellation")
 
