@@ -2396,6 +2396,7 @@ class _OrchestrationExecutor:
         )
         result: ExecutionResults | None = None
         dispatch_exited = False
+        unexpected_failure = False
         try:
             try:
                 # Rebuild local state by replaying old history into the orchestrator function
@@ -2437,6 +2438,7 @@ class _OrchestrationExecutor:
                     f"{instance_id}: Orchestrator {orchestration_name} exited unexpectedly.",
                     exc_info=True,
                 )
+                unexpected_failure = not ctx._is_complete  # pyright: ignore[reportPrivateUsage]
                 ctx.set_failed(ex)
 
             if not ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
@@ -2467,6 +2469,13 @@ class _OrchestrationExecutor:
                 # Snapshot before generator teardown can exit a critical section.
                 entity_lock_releases=list(ctx._entity_context.get_lock_release_messages()),  # pyright: ignore[reportPrivateUsage]
             )
+            if unexpected_failure and result.entity_lock_releases:
+                failure_details = next(
+                    action.completeOrchestration.failureDetails for action in result.actions
+                    if action.HasField("completeOrchestration")
+                    and action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+                )
+                result = result.as_failed(failure_details)
         except BaseException:
             dispatch_exited = True
             raise

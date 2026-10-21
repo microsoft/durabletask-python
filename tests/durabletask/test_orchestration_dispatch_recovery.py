@@ -190,6 +190,54 @@ def test_output_serialization_exit_preserves_entity_lock_release():
     assert completion.failureDetails.errorMessage == str(error)
 
 
+@pytest.mark.parametrize("fail_during_teardown", [False, True])
+def test_terminal_failure_after_pending_call_timeout_preserves_missing_release(fail_during_teardown: bool):
+    entity_a = EntityInstanceId("Counter", "a")
+    entity_b = EntityInstanceId("Counter", "b")
+    error = TeardownExit("terminal failure after pending call timeout")
+
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, Any]:
+        after_timeout = False
+        try:
+            with (yield ctx.lock_entities([entity_a, entity_b])):
+                call = ctx.call_entity(entity_a, "get")
+                yield task.when_any([call, ctx.wait_for_external_event("timeout")])
+            after_timeout = True
+            yield ctx.call_activity("after_timeout")
+            if fail_during_teardown:
+                yield ctx.wait_for_external_event("never")
+            return _FailingOutput(error)
+        finally:
+            if fail_during_teardown and after_timeout:
+                raise error
+
+    executor = _executor(orchestrator)
+    started = list(_request().newEvents)
+    initial = executor.execute(INSTANCE_ID, [], started)
+    lock_id = initial.actions[0].sendEntityMessage.entityLockRequested.criticalSectionId
+    granted = [
+        helpers.new_event_sent_event(1, str(entity_a), json.dumps({"id": lock_id})),
+        helpers.new_event_raised_event(lock_id, None),
+    ]
+    calling = executor.execute(INSTANCE_ID, started, granted)
+    call_id = calling.actions[0].sendEntityMessage.entityOperationCalled.requestId
+    history = started + granted + [
+        helpers.new_event_sent_event(2, str(entity_a), json.dumps({"id": call_id})),
+        helpers.new_event_raised_event("timeout", None),
+        helpers.new_event_sent_event(3, str(entity_b), None),
+        helpers.new_task_scheduled_event(4, "after_timeout"),
+    ]
+    result = executor.execute(INSTANCE_ID, history, [helpers.new_task_completed_event(4, '"done"')])
+
+    assert len(result.actions) == 2
+    release = result.actions[0].sendEntityMessage.entityUnlockSent
+    assert release.targetInstanceId.value == str(entity_a)
+    assert release.criticalSectionId == lock_id
+    completion = result.actions[1].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert completion.failureDetails.errorMessage == str(error)
+
+
 @pytest.mark.parametrize("during_serialization", [False, True])
 def test_unexpected_exit_commits_failure_and_allows_next_dispatch(during_serialization: bool):
     def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, None]:
