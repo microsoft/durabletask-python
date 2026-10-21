@@ -9,6 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Large-payload externalization now checks every eligible payload's maximum
+size before uploading or replacing any protobuf values, including carryover
+events and entity payloads, for both synchronous and asynchronous calls.
+Oversized messages remain unchanged and cause no uploads; their size error
+now takes precedence over hypothetical earlier storage failures.
 - Orchestrator generators are now closed at the end of each dispatch, including
 while waiting for durable work, releasing resources held by async bridges.
 `finally` blocks and context-manager exits can run before orchestration completion
