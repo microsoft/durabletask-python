@@ -163,6 +163,7 @@ def test_payload_failure_after_normal_pending_call_exit_releases_all_locks(mode,
         if mode == "status":
             ctx.set_custom_status(LARGE_PAYLOAD)
         yield ctx.call_activity("after_timeout", input=LARGE_PAYLOAD if mode == "activity" else None)
+        return None
 
     store = FakePayloadStore(threshold_bytes=100, max_stored_payload_bytes=200)
     stub = MagicMock()
