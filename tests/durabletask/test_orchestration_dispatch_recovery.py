@@ -96,8 +96,8 @@ def test_unexpected_cleanup_does_not_replace_existing_failure():
     assert "secondary cleanup failure" not in completion.failureDetails.errorMessage
 
 
-@pytest.mark.parametrize("release_before_wait", [False, True])
-def test_unexpected_teardown_failure_preserves_entity_lock_releases(release_before_wait: bool):
+@pytest.mark.parametrize("wait", ["locked-event", "released-event", "entity-call"])
+def test_unexpected_teardown_failure_preserves_entity_lock_releases(wait: str):
     entity_id = EntityInstanceId("Counter", "key")
 
     def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, None]:
@@ -105,7 +105,9 @@ def test_unexpected_teardown_failure_preserves_entity_lock_releases(release_befo
         try:
             with (yield ctx.lock_entities([entity_id])):
                 acquired = True
-                if not release_before_wait:
+                if wait == "entity-call":
+                    yield ctx.call_entity(entity_id, "get")
+                elif wait == "locked-event":
                     yield ctx.wait_for_external_event("ready")
             yield ctx.wait_for_external_event("ready")
         finally:

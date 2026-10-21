@@ -1014,7 +1014,10 @@ class TaskHubGrpcWorker:
                                     self._execute_orchestrator,
                                     _on_outcome_uncertain=response_stream.cancel,
                                 ),
-                                self._cancel_orchestrator,
+                                partial(
+                                    self._cancel_orchestrator,
+                                    _on_outcome_uncertain=response_stream.cancel,
+                                ),
                                 work_item.orchestratorRequest,
                                 stub,
                                 work_item.completionToken,
@@ -1173,6 +1176,7 @@ class TaskHubGrpcWorker:
             stub.CompleteOrchestratorTask(res)
         except BaseException as error:
             recovery_error: BaseException | None = None
+            outcome_uncertain = outcome_attempted
             self._logger.error(
                 f"Orchestrator dispatch for '{req.instanceId}' exited without a confirmed outcome.",
                 exc_info=True,
@@ -1182,32 +1186,34 @@ class TaskHubGrpcWorker:
                     self._cancel_orchestrator(req, stub, completionToken)
                 except BaseException as abandonment_error:
                     recovery_error = abandonment_error
-                    outcome_attempted = True
-                    self._logger.error(
-                        f"Failed to abandon orchestrator dispatch for '{req.instanceId}'.",
-                        exc_info=True,
-                    )
+                    outcome_uncertain = True
             # A failed RPC may already have been accepted. Do not retry it or
             # send a conflicting outcome; release ownership through its stream.
-            if outcome_attempted and _on_outcome_uncertain is not None:
-                self._logger.error(
-                    f"Resetting the owning work-item stream for '{req.instanceId}' after an uncertain outcome."
-                )
+            if outcome_uncertain and _on_outcome_uncertain is not None:
                 try:
-                    _on_outcome_uncertain()
+                    self._reset_orchestrator_stream(req.instanceId, _on_outcome_uncertain)
                 except BaseException as reset_error:
                     if recovery_error is None or (
                         isinstance(recovery_error, Exception) and not isinstance(reset_error, Exception)
                     ):
                         recovery_error = reset_error
-                    self._logger.error(
-                        f"Failed to reset the owning work-item stream for '{req.instanceId}'.",
-                        exc_info=True,
-                    )
             if not isinstance(error, Exception):
                 raise
             if recovery_error is not None and not isinstance(recovery_error, Exception):
                 raise recovery_error
+
+    def _reset_orchestrator_stream(self, instance_id: str, reset: Callable[[], Any]) -> None:
+        self._logger.error(
+            f"Resetting the owning work-item stream for '{instance_id}' after an uncertain outcome."
+        )
+        try:
+            reset()
+        except BaseException:
+            self._logger.error(
+                f"Failed to reset the owning work-item stream for '{instance_id}'.",
+                exc_info=True,
+            )
+            raise
 
     def _get_orchestrator_response(
             self,
@@ -1351,12 +1357,27 @@ class TaskHubGrpcWorker:
             req: pb.OrchestratorRequest,
             stub: Any,
             completionToken: Any,
+            *,
+            _on_outcome_uncertain: Callable[[], Any] | None = None,
     ) -> None:
-        stub.AbandonTaskOrchestratorWorkItem(
-            pb.AbandonOrchestrationTaskRequest(
-                completionToken=completionToken
+        try:
+            stub.AbandonTaskOrchestratorWorkItem(
+                pb.AbandonOrchestrationTaskRequest(
+                    completionToken=completionToken
+                )
             )
-        )
+        except BaseException as error:
+            self._logger.error(
+                f"Failed to abandon orchestrator dispatch for '{req.instanceId}'.",
+                exc_info=True,
+            )
+            if _on_outcome_uncertain is not None:
+                try:
+                    self._reset_orchestrator_stream(req.instanceId, _on_outcome_uncertain)
+                except BaseException as reset_error:
+                    if isinstance(error, Exception) and not isinstance(reset_error, Exception):
+                        raise
+            raise
         self._logger.info(f"Cancelled orchestration task for invocation ID: {req.instanceId}")
 
     def _on_activity_execution_started(self, req: pb.ActivityRequest) -> None:

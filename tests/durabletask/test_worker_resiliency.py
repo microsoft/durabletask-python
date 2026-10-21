@@ -747,7 +747,8 @@ async def test_worker_never_closes_caller_owned_channel_after_graceful_reset(mon
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_uncertain_outcome_resets_only_originating_stream(monkeypatch):
+@pytest.mark.parametrize("operation", ["complete", "abandon"])
+async def test_orchestrator_uncertain_outcome_resets_only_originating_stream(monkeypatch, operation):
     channel = MagicMock()
     worker = TaskHubGrpcWorker(channel=channel)
     manager = DummyWorkerManager()
@@ -762,6 +763,7 @@ async def test_orchestrator_uncertain_outcome_resets_only_originating_stream(mon
     first_stub = MagicMock()
     first_stub.GetWorkItems.return_value = first_stream
     first_stub.CompleteOrchestratorTask.side_effect = RuntimeError("completion outcome unknown")
+    first_stub.AbandonTaskOrchestratorWorkItem.side_effect = RuntimeError("abandonment outcome unknown")
     next_stub = MagicMock()
     next_stub.GetWorkItems.return_value = next_stream
     stop_stub = MagicMock()
@@ -775,12 +777,18 @@ async def test_orchestrator_uncertain_outcome_resets_only_originating_stream(mon
     next_stream.cancelled = False
     worker._response_stream = next_stream
     _, submission = manager.submissions[0]
-    handler, _, request, original_stub, token = submission
-    handler(request, original_stub, token)
-
-    first_stub.CompleteOrchestratorTask.assert_called_once()
-    assert first_stub.CompleteOrchestratorTask.call_args.args[0].completionToken == "original-token"
-    first_stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    handler, cancel, request, original_stub, token = submission
+    if operation == "complete":
+        handler(request, original_stub, token)
+        first_stub.CompleteOrchestratorTask.assert_called_once()
+        assert first_stub.CompleteOrchestratorTask.call_args.args[0].completionToken == "original-token"
+        first_stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    else:
+        with pytest.raises(RuntimeError, match="abandonment outcome unknown"):
+            cancel(request, original_stub, token)
+        first_stub.CompleteOrchestratorTask.assert_not_called()
+        first_stub.AbandonTaskOrchestratorWorkItem.assert_called_once()
+        assert first_stub.AbandonTaskOrchestratorWorkItem.call_args.args[0].completionToken == "original-token"
     assert first_stream.cancelled
     assert not next_stream.cancelled
     channel.close.assert_not_called()
