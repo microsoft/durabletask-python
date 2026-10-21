@@ -9,9 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
-- Orchestrator generators are now closed when a dispatch ends, so cleanup in
-`finally` blocks runs deterministically, including for async bridges that would
-otherwise retain tasks, event loops, and orchestration contexts.
+- Orchestrator generators are now closed at the end of each dispatch, including
+while waiting for durable work, releasing resources held by async bridges.
+`finally` blocks and context-manager exits can run before orchestration completion
+and repeat across dispatches; see [cleanup semantics](docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks).
+- Async cancellation raised by generator teardown no longer replaces dispatch
+responses or version-rejection abandonment.
 
 ## v1.12.0
 

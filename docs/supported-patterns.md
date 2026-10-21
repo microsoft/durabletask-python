@@ -22,6 +22,52 @@ def sequence(ctx: task.OrchestrationContext, _):
 
 See the full [function chaining example](../examples/activity_sequence.py).
 
+## Cleanup in orchestrator finally blocks
+
+The SDK closes an orchestrator generator at the end of every dispatch, including
+when it is waiting for durable work. Closing injects `GeneratorExit`, running
+active `finally` blocks and context-manager exits. Replay creates a fresh
+generator, so this cleanup may run many times before the orchestration completes.
+
+Use these hooks to release dispatch-local resources, not as orchestration-completion
+or exactly-once compensation hooks. Do not release resources that an activity
+still needs: that activity may still be running when the dispatch ends.
+
+The response is built before this forced teardown. Durable actions, timer
+cancellation, custom-status changes, and `continue_as_new()` issued only during
+teardown do not change that response. Keep workflow-level cleanup in normal
+orchestration control flow, as a yielded activity:
+
+```python
+from io import StringIO
+from typing import Any, Generator
+from durabletask import task
+
+
+def orchestrator(
+    ctx: task.OrchestrationContext, value: str,
+) -> Generator[task.Task[Any], Any, Any]:
+    scratch = StringIO(value)
+    try:
+        result = yield ctx.call_activity("process", input=scratch.getvalue())
+    finally:
+        scratch.close()  # Local buffer cleanup runs at each dispatch boundary.
+
+    yield ctx.call_activity("cleanup_workflow", input=value)
+    return result
+```
+
+`ctx.is_replaying` is normally false after new events are processed. Neither
+`not ctx.is_replaying` nor replay-safe logging makes teardown completion-only.
+Yielding during forced close raises `RuntimeError: generator ignored GeneratorExit`;
+the SDK logs a warning, but the generator remains open and may retain resources.
+A `finally` reached through normal execution, rather than forced close, can
+still yield durable work.
+
+Garbage collection could already trigger finalization; completion-only timing
+was never guaranteed. Explicit dispatch teardown does not guarantee cleanup
+across process failure.
+
 ## Fan-out/fan-in
 
 An orchestration can fan-out a dynamic number of function calls in parallel and then fan-in the
