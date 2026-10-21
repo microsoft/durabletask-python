@@ -55,6 +55,7 @@ def test_legacy_multi_lock_release_history_replays(call_failed):
             try:
                 yield ctx.call_entity(ENTITY_IDS[0], "get")
             except task.TaskFailedError:
+                # Handle the expected failure so replay can verify lock releases.
                 pass
         yield ctx.wait_for_external_event("next")
         return "done"
