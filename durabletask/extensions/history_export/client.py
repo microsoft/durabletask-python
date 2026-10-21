@@ -42,8 +42,8 @@ Typical usage::
 
         desc = export_client.create_job(ExportJobCreationOptions(
             mode=ExportMode.BATCH,
-            completed_time_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            completed_time_to=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            completed_time_from=datetime(2026, 1, 1, tzinfo=UTC),
+            completed_time_to=datetime(2026, 2, 1, tzinfo=UTC),
             destination=ExportDestination(container="exports", prefix="january"),
         ))
         job_client = export_client.get_job_client(desc.job_id)
@@ -56,7 +56,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import grpc
@@ -180,7 +180,7 @@ class ExportHistoryClient:
         config = options.to_configuration()
         resolved_job_id = job_id or uuid.uuid4().hex
         entity_id = entities.EntityInstanceId(ENTITY_NAME, resolved_job_id)
-        created_at = datetime.now(timezone.utc)
+        created_at = datetime.now(UTC)
         config_dict = config.to_dict()
 
         # A single ``create`` signal is enough: the entity validates
@@ -502,7 +502,7 @@ class AsyncExportHistoryClient:
         config = options.to_configuration()
         resolved_job_id = job_id or uuid.uuid4().hex
         entity_id = entities.EntityInstanceId(ENTITY_NAME, resolved_job_id)
-        created_at = datetime.now(timezone.utc)
+        created_at = datetime.now(UTC)
         await self._client.signal_entity(
             entity_id,
             ExportJobEntity.OP_CREATE,

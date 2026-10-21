@@ -9,8 +9,8 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
+from datetime import UTC, datetime, timedelta
+from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
@@ -450,16 +450,7 @@ class OrchestrationContext(ABC):
         return ReplaySafeLogger(logger, lambda: self.is_replaying)
 
 
-if TYPE_CHECKING:
-    # logging.LoggerAdapter is generic in stubs but is not subscriptable
-    # at runtime before Python 3.11. Use a TYPE_CHECKING alias so the
-    # base class evaluates correctly at runtime.
-    _LoggerAdapterBase = logging.LoggerAdapter[logging.Logger]
-else:
-    _LoggerAdapterBase = logging.LoggerAdapter
-
-
-class ReplaySafeLogger(_LoggerAdapterBase):
+class ReplaySafeLogger(logging.LoggerAdapter[logging.Logger]):
     """A logger adapter that suppresses log messages during orchestration replay.
 
     This class extends :class:`logging.LoggerAdapter` and only emits log
@@ -608,16 +599,6 @@ class TaskCancelledError(Exception):
     """Exception type for cancelled orchestration tasks."""
 
 
-class _TaskCompletionError(Exception):
-    """Collect callback errors without requiring Python 3.11 ExceptionGroup."""
-
-    def __init__(self, errors: list[Exception]) -> None:
-        self.errors = tuple(errors)
-        super().__init__(
-            "Multiple task completion callbacks failed: "
-            + "; ".join(f"{type(error).__name__}: {error}" for error in errors))
-
-
 class Task(ABC, Generic[T]):
     """Abstract base class for asynchronous tasks in a durable orchestration."""
     _result: T
@@ -673,7 +654,7 @@ class Task(ABC, Generic[T]):
         if len(errors) == 1:
             raise errors[0]
         if errors:
-            raise _TaskCompletionError(errors) from errors[0]
+            raise ExceptionGroup("Multiple task completion callbacks failed", errors)
 
 
 class CompositeTask(Task[T]):
@@ -858,7 +839,7 @@ class RetryableTask(CompletableTask[T]):
         else:
             backoff_coefficient = self._retry_policy.backoff_coefficient
 
-        if datetime.now(tz=timezone.utc).replace(tzinfo=None) < retry_expiration:
+        if datetime.now(tz=UTC).replace(tzinfo=None) < retry_expiration:
             next_delay_f = math.pow(backoff_coefficient, self._attempt_count - 1) * self._retry_policy.first_retry_interval.total_seconds()
 
             if self._retry_policy.max_retry_interval is not None:

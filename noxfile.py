@@ -5,7 +5,7 @@
 
 Run ``nox -s ci`` for a representative local validation sweep. Use a focused
 session while developing (for example, ``nox -s lint`` or
-``nox -s core_tests-3.10``). The test sessions provision their required
+``nox -s core_tests-3.11``). The test sessions provision their required
 emulators when possible.
 
 Usage:
@@ -13,8 +13,8 @@ Usage:
     nox -s lint
     nox -s typecheck_core
     nox -s typecheck_functions_package
-    nox -s core_tests-3.10
-    nox -s azuremanaged_tests-3.10
+    nox -s core_tests-3.11
+    nox -s azuremanaged_tests-3.11
     nox -s functions_unit-3.13
     nox -s functions_e2e
 
@@ -46,8 +46,8 @@ AZURE_FUNCTIONS_DURABLE = REPO_ROOT / "azure-functions-durable"
 E2E_APPS_DIR = REPO_ROOT / "tests" / "azure-functions-durable" / "e2e" / "apps"
 # Sample apps that need an in-app virtual environment for the E2E suite.
 E2E_APPS = ("v1_style", "dtask_style", "tracing")
-PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")
-DEFAULT_CI_PYTHON = "3.10"
+PYTHON_VERSIONS = ("3.11", "3.12", "3.13", "3.14", "3.15")
+DEFAULT_CI_PYTHON = "3.11"
 
 
 def _install_packages(session: nox.Session, editable: bool = False) -> None:
@@ -294,7 +294,7 @@ def lint(session: nox.Session) -> None:
     session.run("flake8", *targets)
 
 
-@nox.session(python=["3.10"])
+@nox.session(python=["3.11"])
 def typecheck_core(session: nox.Session) -> None:
     """Run strict pyright checks for the core and Azure Managed packages."""
     session.install("-r", "requirements.txt")

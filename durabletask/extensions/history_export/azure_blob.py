@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 try:
     from azure.core.exceptions import ResourceExistsError
@@ -117,7 +117,7 @@ class AzureBlobHistoryExportWriter:
     def close(self) -> None:
         self._service.close()
 
-    def __enter__(self) -> "AzureBlobHistoryExportWriter":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:

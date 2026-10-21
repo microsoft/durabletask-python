@@ -18,7 +18,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TypeAlias, cast
 
 import grpc
@@ -49,8 +49,8 @@ class OrchestrationInstance:
     input: str | None = None
     output: str | None = None
     custom_status: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    last_updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     failure_details: pb.TaskFailureDetails | None = None
     history: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
@@ -76,7 +76,7 @@ class EntityState:
     """Internal entity state stored by the in-memory backend."""
     instance_id: str
     serialized_state: str | None = None
-    last_modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_modified_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     locked_by: str | None = None
     pending_operations: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
     dispatched_operations: list[pb.HistoryEvent] = field(default_factory=_new_history_event_list)
@@ -254,8 +254,8 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         f"Orchestration instance '{instance_id}' already exists")
                     return pb.CreateInstanceResponse(instanceId=instance_id)
 
-            now = datetime.now(timezone.utc)
-            start_time = request.scheduledStartTimestamp.ToDatetime(tzinfo=timezone.utc) \
+            now = datetime.now(UTC)
+            start_time = request.scheduledStartTimestamp.ToDatetime(tzinfo=UTC) \
                 if request.HasField("scheduledStartTimestamp") else now
 
             version = request.version.value if request.HasField("version") else None
@@ -350,7 +350,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 request.input.value if request.input else None
             )
             instance.pending_events.append(event)
-            instance.last_updated_at = datetime.now(timezone.utc)
+            instance.last_updated_at = datetime.now(UTC)
 
             # Don't dispatch work for suspended or terminal orchestrations;
             # suspended events will be delivered when the orchestration is
@@ -390,7 +390,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 encoded_input=request.reason.value if request.HasField("reason") else None
             )
             instance.pending_events.append(event)
-            instance.last_updated_at = datetime.now(timezone.utc)
+            instance.last_updated_at = datetime.now(UTC)
             self._enqueue_orchestration(instance.instance_id)
 
         self._logger.info(f"Suspended instance '{request.instanceId}'")
@@ -409,7 +409,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 encoded_input=request.reason.value if request.HasField("reason") else None
             )
             instance.pending_events.append(event)
-            instance.last_updated_at = datetime.now(timezone.utc)
+            instance.last_updated_at = datetime.now(UTC)
             self._enqueue_orchestration(instance.instance_id)
 
         self._logger.info(f"Resumed instance '{request.instanceId}'")
@@ -437,9 +437,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         continue
                     if pf.runtimeStatus and inst.status not in pf.runtimeStatus:
                         continue
-                    if pf.HasField("createdTimeFrom") and inst.created_at < pf.createdTimeFrom.ToDatetime(timezone.utc):
+                    if pf.HasField("createdTimeFrom") and inst.created_at < pf.createdTimeFrom.ToDatetime(UTC):
                         continue
-                    if pf.HasField("createdTimeTo") and inst.created_at >= pf.createdTimeTo.ToDatetime(timezone.utc):
+                    if pf.HasField("createdTimeTo") and inst.created_at >= pf.createdTimeTo.ToDatetime(UTC):
                         continue
                     to_purge.append(iid)
                 for iid in to_purge:
@@ -500,9 +500,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     continue
                 if instance.completed_at is None:
                     continue
-                if request.HasField("completedTimeFrom") and instance.completed_at < request.completedTimeFrom.ToDatetime(timezone.utc):
+                if request.HasField("completedTimeFrom") and instance.completed_at < request.completedTimeFrom.ToDatetime(UTC):
                     continue
-                if request.HasField("completedTimeTo") and instance.completed_at >= request.completedTimeTo.ToDatetime(timezone.utc):
+                if request.HasField("completedTimeTo") and instance.completed_at >= request.completedTimeTo.ToDatetime(UTC):
                     continue
                 matching.append(instance)
 
@@ -515,7 +515,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             if request.HasField("lastInstanceKey") and request.lastInstanceKey.value:
                 token = request.lastInstanceKey.value
                 sep_idx = token.index(_TOKEN_SEP)
-                token_ts = datetime.fromisoformat(token[:sep_idx]).replace(tzinfo=timezone.utc)
+                token_ts = datetime.fromisoformat(token[:sep_idx]).replace(tzinfo=UTC)
                 token_id = token[sep_idx + 1:]
                 # bisect_right positions us just after the cursor entry
                 start_index = bisect.bisect_right(sort_keys, (token_ts, token_id))
@@ -623,7 +623,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                         if instance.history and not (
                                 instance.dispatched_events
                                 and instance.dispatched_events[0].HasField("orchestratorStarted")):
-                            now = datetime.now(timezone.utc)
+                            now = datetime.now(UTC)
                             orch_started = helpers.new_orchestrator_started_event(now)
                             instance.dispatched_events.insert(0, orch_started)
 
@@ -772,7 +772,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             new_events = list(instance.dispatched_events)
             instance.history.extend(new_events)
             instance.dispatched_events.clear()
-            instance.last_updated_at = datetime.now(timezone.utc)
+            instance.last_updated_at = datetime.now(UTC)
 
             if request.customStatus:
                 instance.custom_status = request.customStatus.value
@@ -877,7 +877,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 )
 
             instance.pending_events.append(event)
-            instance.last_updated_at = datetime.now(timezone.utc)
+            instance.last_updated_at = datetime.now(UTC)
             self._enqueue_orchestration(request.instanceId)
 
         return pb.CompleteTaskResponse()
@@ -903,7 +903,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 entity.serialized_state = request.entityState.value
             else:
                 entity.serialized_state = None
-            entity.last_modified_at = datetime.now(timezone.utc)
+            entity.last_modified_at = datetime.now(UTC)
             entity.dispatched_operations.clear()
 
             # Update completion token for next batch
@@ -946,7 +946,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                                 continue
 
                             parent_instance.pending_events.append(event)
-                            parent_instance.last_updated_at = datetime.now(timezone.utc)
+                            parent_instance.last_updated_at = datetime.now(UTC)
                             self._enqueue_orchestration(parent_instance_id)
                 except Exception:
                     self._logger.exception(
@@ -959,7 +959,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     if action.HasField("sendSignal"):
                         signal = action.sendSignal
                         scheduled_time = (
-                            signal.scheduledTime.ToDatetime(tzinfo=timezone.utc)
+                            signal.scheduledTime.ToDatetime(tzinfo=UTC)
                             if signal.HasField("scheduledTime") else None
                         )
                         self._signal_entity_internal(
@@ -990,7 +990,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
     def SignalEntity(self, request: pb.SignalEntityRequest, context: grpc.ServicerContext) -> pb.SignalEntityResponse:
         """Signals an entity, queueing an operation for processing."""
         scheduled_time = (
-            request.scheduledTime.ToDatetime(tzinfo=timezone.utc)
+            request.scheduledTime.ToDatetime(tzinfo=UTC)
             if request.HasField("scheduledTime") else None
         )
         with self._lock:
@@ -1015,7 +1015,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     targetInstanceId=wrappers_pb2.StringValue(value=entity_id),
                 )
             )
-            if scheduled_time is not None and scheduled_time > datetime.now(timezone.utc):
+            if scheduled_time is not None and scheduled_time > datetime.now(UTC):
                 self._schedule_delayed_entity_operation(entity_id, event, scheduled_time)
             else:
                 entity.pending_operations.append(event)
@@ -1062,9 +1062,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 if query.runtimeStatus and instance.status not in query.runtimeStatus:
                     continue
                 # Filter by created time range
-                if query.HasField("createdTimeFrom") and instance.created_at < query.createdTimeFrom.ToDatetime(timezone.utc):
+                if query.HasField("createdTimeFrom") and instance.created_at < query.createdTimeFrom.ToDatetime(UTC):
                     continue
-                if query.HasField("createdTimeTo") and instance.created_at >= query.createdTimeTo.ToDatetime(timezone.utc):
+                if query.HasField("createdTimeTo") and instance.created_at >= query.createdTimeTo.ToDatetime(UTC):
                     continue
                 # Filter by instance ID prefix
                 if query.HasField("instanceIdPrefix") and query.instanceIdPrefix.value:
@@ -1130,9 +1130,9 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     if not entity.instance_id.startswith(query.instanceIdStartsWith.value):
                         continue
                 # Filter by last modified time range
-                if query.HasField("lastModifiedFrom") and entity.last_modified_at < query.lastModifiedFrom.ToDatetime(timezone.utc):
+                if query.HasField("lastModifiedFrom") and entity.last_modified_at < query.lastModifiedFrom.ToDatetime(UTC):
                     continue
-                if query.HasField("lastModifiedTo") and entity.last_modified_at >= query.lastModifiedTo.ToDatetime(timezone.utc):
+                if query.HasField("lastModifiedTo") and entity.last_modified_at >= query.lastModifiedTo.ToDatetime(UTC):
                     continue
                 # Filter transient (entities with pending operations)
                 if not query.includeTransient and entity.pending_operations:
@@ -1321,7 +1321,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             else:
                 raise ValueError(f"Orchestration instance '{instance_id}' already exists")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         instance = OrchestrationInstance(
             instance_id=instance_id,
             name=name,
@@ -1355,7 +1355,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         event = helpers.new_event_raised_event(event_name, event_data)
         instance.pending_events.append(event)
-        instance.last_updated_at = datetime.now(timezone.utc)
+        instance.last_updated_at = datetime.now(UTC)
         self._enqueue_orchestration(instance.instance_id)
 
     def _terminate_instance_internal(self, instance_id: str, output: str | None,
@@ -1374,7 +1374,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
         event = helpers.new_terminated_event(encoded_output=output)
         instance.pending_events.append(event)
-        instance.last_updated_at = datetime.now(timezone.utc)
+        instance.last_updated_at = datetime.now(UTC)
         self._enqueue_orchestration(instance.instance_id)
 
         self._logger.info(f"Terminated instance '{instance_id}'")
@@ -1486,7 +1486,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             if complete_action.HasField("failureDetails")
             else None
         )
-        instance.completed_at = datetime.now(timezone.utc) if self._is_terminal_status(status) else None
+        instance.completed_at = datetime.now(UTC) if self._is_terminal_status(status) else None
 
         if status == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
             # Handle continue-as-new
@@ -1513,7 +1513,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
 
             # Build the new pending events in the correct order:
             # OrchestratorStarted, ExecutionStarted, carryover, new arrivals
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             execution_started = helpers.new_execution_started_event(
                 instance.name, instance.instance_id, new_input,
                 version=new_version,
@@ -1566,7 +1566,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         """Processes a create timer action."""
         create_timer = action.createTimer
         timer_id = action.id
-        fire_at = create_timer.fireAt.ToDatetime(tzinfo=timezone.utc)
+        fire_at = create_timer.fireAt.ToDatetime(tzinfo=UTC)
 
         # Add TimerCreated event to history
         timer_created_event = helpers.new_timer_created_event(timer_id, fire_at)
@@ -1577,7 +1577,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
             instance.status = pb.ORCHESTRATION_STATUS_RUNNING
 
         # Schedule timer firing
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         delay = max(0, (fire_at - now).total_seconds())
 
         def fire_timer() -> None:
@@ -1587,7 +1587,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 if current_instance and not self._is_terminal_status(current_instance.status):
                     timer_fired_event = helpers.new_timer_fired_event(timer_id, fire_at)
                     current_instance.pending_events.append(timer_fired_event)
-                    current_instance.last_updated_at = datetime.now(timezone.utc)
+                    current_instance.last_updated_at = datetime.now(UTC)
                     self._enqueue_orchestration(instance.instance_id)
 
         timer_thread = threading.Thread(target=fire_timer, daemon=True)
@@ -1655,7 +1655,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     event = helpers.new_sub_orchestration_failed_event(task_id, Exception(error_msg))
 
                 parent_instance.pending_events.append(event)
-                parent_instance.last_updated_at = datetime.now(timezone.utc)
+                parent_instance.last_updated_at = datetime.now(UTC)
                 self._enqueue_orchestration(parent_instance_id)
 
         watcher_thread = threading.Thread(target=watch, daemon=True)
@@ -1718,10 +1718,10 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                     entityOperationSignaled=signaled,
                 )
                 scheduled_time = (
-                    signaled.scheduledTime.ToDatetime(tzinfo=timezone.utc)
+                    signaled.scheduledTime.ToDatetime(tzinfo=UTC)
                     if signaled.HasField("scheduledTime") else None
                 )
-                if scheduled_time is not None and scheduled_time > datetime.now(timezone.utc):
+                if scheduled_time is not None and scheduled_time > datetime.now(UTC):
                     self._schedule_delayed_entity_operation(target_id, operation_event, scheduled_time)
                 else:
                     self._queue_entity_operation(target_id, operation_event)
@@ -1828,7 +1828,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 ),
             )
             parent.pending_events.append(grant_event)
-            parent.last_updated_at = datetime.now(timezone.utc)
+            parent.last_updated_at = datetime.now(UTC)
             self._enqueue_orchestration(pending.parent_instance_id)
 
     def _try_grant_lock(self, pending: PendingLockRequest) -> bool:
@@ -1881,7 +1881,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
                 targetInstanceId=wrappers_pb2.StringValue(value=entity_id),
             )
         )
-        if scheduled_time is not None and scheduled_time > datetime.now(timezone.utc):
+        if scheduled_time is not None and scheduled_time > datetime.now(UTC):
             self._schedule_delayed_entity_operation(entity_id, event, scheduled_time)
         else:
             self._queue_entity_operation(entity_id, event)
@@ -1894,7 +1894,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         for orchestration timers, so that delayed entity signals are honored by the
         in-memory backend.
         """
-        delay = max(0.0, (fire_at - datetime.now(timezone.utc)).total_seconds())
+        delay = max(0.0, (fire_at - datetime.now(UTC)).total_seconds())
         # Capture the lifecycle generation so a timer outliving a stop()/reset()
         # does not enqueue into a restarted or cleared backend.
         scheduled_generation = self._generation
@@ -1929,7 +1929,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance.status = pb.ORCHESTRATION_STATUS_RUNNING
         instance.output = None
         instance.failure_details = None
-        instance.last_updated_at = datetime.now(timezone.utc)
+        instance.last_updated_at = datetime.now(UTC)
 
         # Clear any stale dispatched events.
         instance.dispatched_events.clear()
@@ -1939,7 +1939,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         # audit event carries a meaningful timestamp, consistent with
         # other backend-generated events.
         rewind_timestamp = timestamp_pb2.Timestamp()
-        rewind_timestamp.FromDatetime(datetime.now(timezone.utc))
+        rewind_timestamp.FromDatetime(datetime.now(UTC))
         rewind_event = pb.HistoryEvent(
             eventId=-1,
             timestamp=rewind_timestamp,
@@ -1973,7 +1973,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance.status = pb.ORCHESTRATION_STATUS_RUNNING
         instance.output = None
         instance.failure_details = None
-        instance.last_updated_at = datetime.now(timezone.utc)
+        instance.last_updated_at = datetime.now(UTC)
 
         # Identify sub-orchestrations that were created but did not
         # complete successfully — they need to be recursively rewound.
@@ -2026,7 +2026,7 @@ class InMemoryOrchestrationBackend(stubs.TaskHubSidecarServiceServicer):
         instance.pending_events.clear()
         instance.dispatched_events.clear()
         instance.pending_events.append(
-            helpers.new_orchestrator_started_event(datetime.now(timezone.utc)))
+            helpers.new_orchestrator_started_event(datetime.now(UTC)))
         instance.completion_token = self._next_completion_token
         self._next_completion_token += 1
         self._orchestration_in_flight.discard(instance.instance_id)

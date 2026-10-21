@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+CHANGED
+
+- Dropped Python 3.10 support. Python 3.11 or later is now required.
+- Context managers now preserve subclass types in type checkers, including
+Azure Managed clients and workers.
+- Multiple task completion callback failures now raise the built-in
+`ExceptionGroup`, preserving each exception and its traceback. A single callback
+failure is still raised directly.
+
 FIXED
 
 - Orchestrator generators are now closed at the end of each dispatch, including

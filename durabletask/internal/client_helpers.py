@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from google.protobuf import duration_pb2, wrappers_pb2
@@ -227,5 +227,5 @@ def build_signal_entity_req(
         requestId=str(uuid.uuid4()),
         scheduledTime=scheduled_time,
         parentTraceContext=None,
-        requestTime=helpers.new_timestamp(datetime.now(timezone.utc))
+        requestTime=helpers.new_timestamp(datetime.now(UTC))
     )

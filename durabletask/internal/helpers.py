@@ -5,7 +5,7 @@ import logging
 import traceback
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from google.protobuf import struct_pb2, timestamp_pb2, wrappers_pb2
@@ -545,7 +545,7 @@ def ensure_aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 

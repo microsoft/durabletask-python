@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Callable, TypeAlias, TypeVar, overload
 
 from durabletask.entities import DurableEntity, EntityContext, EntityInstanceId
@@ -228,7 +228,7 @@ def _decode_action(
     if action.HasField("sendSignal"):
         signal = action.sendSignal
         scheduled_time = (
-            signal.scheduledTime.ToDatetime(tzinfo=timezone.utc)
+            signal.scheduledTime.ToDatetime(tzinfo=UTC)
             if signal.HasField("scheduledTime")
             else None
         )

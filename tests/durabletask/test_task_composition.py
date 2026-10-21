@@ -186,16 +186,47 @@ def test_cancel_callback_errors_do_not_block_other_observers(group_count: int) -
     if group_count == 1:
         assert isinstance(raised.value, task.TaskCancelledError)
     else:
-        assert isinstance(raised.value, task._TaskCompletionError)
-        assert len(raised.value.errors) == group_count
+        assert isinstance(raised.value, ExceptionGroup)
+        assert len(raised.value.exceptions) == group_count
         assert all(isinstance(error, task.TaskCancelledError)
-                   for error in raised.value.errors)
+                   for error in raised.value.exceptions)
     assert child.is_cancelled
     assert not child.cancel()
     assert race.get_result() is child
     assert healthy.get_result() == [child]
     assert all(group.is_complete for group in broken)
     assert all(not parent.is_complete for parent in stranded_parents)
+    assert not child._parents
+
+
+def test_callback_exception_group_preserves_errors_and_tracebacks() -> None:
+    class ThrowingGroup(task.WhenAllTask[str]):
+        def __init__(self, child: task.Task[str], error: Exception) -> None:
+            self.error = error
+            super().__init__([child])
+
+        def on_child_completed(self, child: task.Task[Any]) -> None:
+            super().on_child_completed(child)
+            raise self.error
+
+    child = task.CompletableTask[str]()
+    first_error = ValueError("first callback")
+    second_error = RuntimeError("second callback")
+    first = ThrowingGroup(child, first_error)
+    second = ThrowingGroup(child, second_error)
+    healthy = task.when_all([child])
+
+    with pytest.raises(ExceptionGroup) as raised:
+        child.complete("ok")
+
+    assert raised.value.exceptions == (first_error, second_error)
+    assert all(error.__traceback__ is not None for error in raised.value.exceptions)
+    value_errors, other_errors = raised.value.split(ValueError)
+    assert value_errors is not None
+    assert value_errors.exceptions == (first_error,)
+    assert other_errors is not None
+    assert other_errors.exceptions == (second_error,)
+    assert first.get_result() == second.get_result() == healthy.get_result() == ["ok"]
     assert not child._parents
 
 
