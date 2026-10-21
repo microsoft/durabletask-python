@@ -176,20 +176,22 @@ def test_unexpected_teardown_failure_preserves_entity_lock_releases(wait: str):
     assert result.encoded_custom_status is None
 
 
-def test_teardown_failure_preserves_post_call_lock_release_order():
+@pytest.mark.parametrize("call_completed", [False, True])
+def test_teardown_failure_preserves_compatible_lock_release_order(call_completed: bool):
     entity_a = EntityInstanceId("Counter", "a")
     entity_b = EntityInstanceId("Counter", "b")
 
     def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, None]:
-        call_finished = False
+        fail_teardown = False
         try:
             with (yield ctx.lock_entities([entity_a, entity_b])):
+                fail_teardown = not call_completed
                 yield ctx.call_entity(entity_a, "get")
-                call_finished = True
+                fail_teardown = True
                 yield ctx.wait_for_external_event("ready")
         finally:
-            if call_finished:
-                raise TeardownExit("cleanup after successful entity call")
+            if fail_teardown:
+                raise TeardownExit("cleanup with entity locks")
 
     executor = _executor(orchestrator)
     request = _request()
@@ -200,13 +202,16 @@ def test_teardown_failure_preserves_post_call_lock_release_order():
         helpers.new_event_raised_event(lock_id, None),
     ]
     calling = executor.execute(INSTANCE_ID, request.newEvents, lock_events)
-    call_id = calling.actions[0].sendEntityMessage.entityOperationCalled.requestId
-    history = list(request.newEvents) + lock_events + [
-        helpers.new_event_sent_event(2, str(entity_a), json.dumps({"id": call_id})),
-    ]
-    result = executor.execute(INSTANCE_ID, history, [
-        helpers.new_event_raised_event(call_id, json.dumps({"result": "42"})),
-    ])
+    if call_completed:
+        call_id = calling.actions[0].sendEntityMessage.entityOperationCalled.requestId
+        history = list(request.newEvents) + lock_events + [
+            helpers.new_event_sent_event(2, str(entity_a), json.dumps({"id": call_id})),
+        ]
+        result = executor.execute(INSTANCE_ID, history, [
+            helpers.new_event_raised_event(call_id, json.dumps({"result": "42"})),
+        ])
+    else:
+        result = calling
 
     assert [action.sendEntityMessage.entityUnlockSent.targetInstanceId.value
             for action in result.actions[:-1]] == [str(entity_b), str(entity_a)]
