@@ -16,7 +16,8 @@ errors now take precedence over hypothetical earlier storage failures.
 the configured external payload storage limit fail without retrying and release
 their entity locks. Transient payload-store failures remain retryable.
 - With the corresponding core `durabletask` SDK fix, previously unhandled
-non-cancellation `BaseException` exits now fail with a clear reason. Cancellation and process-control
+non-cancellation `BaseException` exits, including result serialization failures,
+now fail with a clear reason. Cancellation and process-control
 exits recover dispatch ownership, and uncertain completion or abandonment RPCs
 reset the originating work-item stream rather than retaining unfinished work.
 - With the corresponding core `durabletask` SDK fix, orchestrator generators

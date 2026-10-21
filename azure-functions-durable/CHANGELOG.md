@@ -25,7 +25,7 @@ FIXED
 large-payload validation before any uploads or payload replacements. Size
 errors now take precedence over hypothetical earlier storage failures.
 - With the corresponding core `durabletask` SDK fix, previously unhandled non-cancellation
-`BaseException` exits from orchestration execution or teardown now produce a failed response
+`BaseException` exits from orchestration execution, result serialization, or teardown now produce a failed response
 with the exception's type, message, and stack trace instead of losing the response.
 - With the corresponding core `durabletask` SDK fix, orchestrator generators
 are closed at the end of each dispatch, including while waiting for durable work.

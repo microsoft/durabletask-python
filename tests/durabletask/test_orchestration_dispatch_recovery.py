@@ -29,6 +29,14 @@ class TeardownExit(BaseException):
     pass
 
 
+class _FailingOutput:
+    def __init__(self, error: BaseException):
+        self.error = error
+
+    def to_json(self) -> str:
+        raise self.error
+
+
 def _request() -> pb.OrchestratorRequest:
     return pb.OrchestratorRequest(instanceId=INSTANCE_ID, newEvents=[
         helpers.new_orchestrator_started_event(),
@@ -81,12 +89,117 @@ def test_unexpected_base_exception_fails_orchestration_without_reprocessing(
     assert any(record.exc_info and record.exc_info[1] is error for record in caplog.records)
 
 
-def test_unexpected_teardown_commits_failure_and_allows_next_dispatch():
+@pytest.mark.parametrize("as_generator", [False, True])
+@pytest.mark.parametrize("error", [
+    TeardownExit("output serialization exited"),
+    RuntimeError("output serialization failed"),
+    StopIteration("output serialization stopped"),
+    ValueError("invalid output"),
+    TypeError("invalid output type"),
+])
+def test_output_serialization_exit_submits_failed_completion(as_generator: bool, error: BaseException):
+    output = _FailingOutput(error)
+
+    def episode(ctx: task.OrchestrationContext) -> Generator[task.Task[Any], Any, _FailingOutput]:
+        yield ctx.wait_for_external_event("ready")
+        return output
+
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+        return episode(ctx) if as_generator else output
+
+    request = _request()
+    request.newEvents.append(helpers.new_event_raised_event("ready", None))
+    with worker.TaskHubGrpcWorker(logger=LOGGER) as host:
+        host._registry = _executor(orchestrator)._registry
+        stub = Mock()
+        reset = Mock()
+        host._execute_orchestrator(request, stub, "original-token", _on_outcome_uncertain=reset)
+
+    stub.CompleteOrchestratorTask.assert_called_once()
+    stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    reset.assert_not_called()
+    response: pb.OrchestratorResponse = stub.CompleteOrchestratorTask.call_args.args[0]
+    assert response.instanceId == INSTANCE_ID
+    assert response.completionToken == "original-token"
+    assert len(response.actions) == 1
+    completion = response.actions[0].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    if isinstance(error, (TypeError, ValueError)):
+        assert completion.failureDetails.errorType.endswith(".JsonEncodeOutputException")
+    else:
+        assert completion.failureDetails.errorType.endswith(f".{type(error).__name__}")
+        assert completion.failureDetails.errorMessage == str(error)
+        assert "raise self.error" in completion.failureDetails.stackTrace.value
+
+
+@pytest.mark.parametrize("error", [
+    None,
+    ValueError("invalid output"),
+    TypeError("invalid output type"),
+    TeardownExit("output serialization exited"),
+])
+def test_output_serialization_cannot_reenter_terminal_transition(error: BaseException | None):
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+        class Output:
+            def to_json(self) -> str:
+                ctx.continue_as_new("replacement")
+                if error is not None:
+                    raise error
+                return "original"
+
+        return Output()
+
+    result = _executor(orchestrator).execute(INSTANCE_ID, [], _request().newEvents)
+
+    assert len(result.actions) == 1
+    completion = result.actions[0].completeOrchestration
+    if error is None:
+        assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+        assert completion.result.value == '"original"'
+    else:
+        assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+        if isinstance(error, (ValueError, TypeError)):
+            assert completion.failureDetails.errorType.endswith(".JsonEncodeOutputException")
+        else:
+            assert completion.failureDetails.errorMessage == str(error)
+
+
+def test_output_serialization_exit_preserves_entity_lock_release():
+    entity_id = EntityInstanceId("Counter", "key")
+    error = TeardownExit("output serialization exited with a lock")
+
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, _FailingOutput]:
+        yield ctx.lock_entities([entity_id])
+        return _FailingOutput(error)
+
+    executor = _executor(orchestrator)
+    request = _request()
+    initial = executor.execute(INSTANCE_ID, [], request.newEvents)
+    lock_id = initial.actions[0].sendEntityMessage.entityLockRequested.criticalSectionId
+    result = executor.execute(INSTANCE_ID, request.newEvents, [
+        helpers.new_event_sent_event(1, str(entity_id), json.dumps({"id": lock_id})),
+        helpers.new_event_raised_event(lock_id, None),
+    ])
+
+    assert len(result.actions) == 2
+    release = result.actions[0].sendEntityMessage.entityUnlockSent
+    assert release.criticalSectionId == lock_id
+    assert release.targetInstanceId.value == str(entity_id)
+    completion = result.actions[1].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert completion.failureDetails.errorMessage == str(error)
+
+
+@pytest.mark.parametrize("during_serialization", [False, True])
+def test_unexpected_exit_commits_failure_and_allows_next_dispatch(during_serialization: bool):
     def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, None]:
         try:
             yield ctx.call_activity("unused")
         finally:
             raise TeardownExit("deterministic teardown failure")
+
+    def unserializable(ctx: task.OrchestrationContext, _: Any) -> _FailingOutput:
+        return _FailingOutput(TeardownExit("output serialization exited"))
 
     def healthy(ctx: task.OrchestrationContext, _: Any) -> str:
         return "healthy"
@@ -102,16 +215,19 @@ def test_unexpected_teardown_commits_failure_and_allows_next_dispatch():
                     maximum_thread_pool_workers=1,
                 )) as host:
             host.add_orchestrator(orchestrator)
+            host.add_orchestrator(unserializable)
             host.add_orchestrator(healthy)
             host.start()
             with client.TaskHubGrpcClient(host_address=address) as connection:
-                failed_id = connection.schedule_new_orchestration(orchestrator)
+                failed_id = connection.schedule_new_orchestration(
+                    unserializable if during_serialization else orchestrator)
                 failed = connection.wait_for_orchestration_completion(failed_id, timeout=10)
                 assert failed is not None
                 assert failed.runtime_status == client.OrchestrationStatus.FAILED
                 assert failed.failure_details is not None
                 assert failed.failure_details.error_type.endswith(".TeardownExit")
-                assert failed.failure_details.message == "deterministic teardown failure"
+                assert failed.failure_details.message == (
+                    "output serialization exited" if during_serialization else "deterministic teardown failure")
                 next_id = connection.schedule_new_orchestration(healthy)
                 completed = connection.wait_for_orchestration_completion(next_id, timeout=10)
                 assert completed is not None
@@ -282,6 +398,26 @@ def _control_flow_errors() -> list[BaseException]:
             ]),
         ])
     return errors
+
+
+@pytest.mark.parametrize("error", _control_flow_errors(), ids=str)
+def test_output_serialization_control_flow_propagates_after_abandonment(error: BaseException):
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> _FailingOutput:
+        return _FailingOutput(error)
+
+    with worker.TaskHubGrpcWorker(logger=LOGGER) as host:
+        host._registry = _executor(orchestrator)._registry
+        stub = Mock()
+        reset = Mock()
+        with pytest.raises(type(error)) as caught:
+            host._execute_orchestrator(
+                _request(), stub, "original-token", _on_outcome_uncertain=reset)
+
+    assert caught.value is error
+    stub.CompleteOrchestratorTask.assert_not_called()
+    stub.AbandonTaskOrchestratorWorkItem.assert_called_once_with(
+        pb.AbandonOrchestrationTaskRequest(completionToken="original-token"))
+    reset.assert_not_called()
 
 
 @pytest.mark.parametrize("error", _control_flow_errors(), ids=str)

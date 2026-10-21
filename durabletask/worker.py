@@ -1674,26 +1674,36 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         if self._entity_context.is_inside_critical_section:
             self._exit_critical_section()
 
-        self._is_complete = True
-        self._completion_status = status
         # This is probably a bug - an orchestrator may complete with some actions remaining that the user still
         # wants to execute - for example, signaling an entity. So we shouldn't clear the pending actions here.
         # self._pending_actions.clear()  # Cancel any pending actions
 
+        # Block reentrant terminal transitions from serialization callbacks,
+        # but leave failure conversion available if no completion was built.
+        self._is_complete = True
+        try:
+            result_json: str | None = None
+            if result is not None:
+                try:
+                    result_json = result if is_result_encoded else self._data_converter.serialize(result)
+                except StopIteration as ex:
+                    # This is a serialization failure, not generator completion.
+                    self._is_complete = False
+                    self.set_failed(ex)
+                    return
+                except (ValueError, TypeError):
+                    self._is_complete = False
+                    self.set_failed(JsonEncodeOutputException(result))
+                    return
+            action = ph.new_complete_orchestration_action(
+                self.next_sequence_number(), status, result_json
+            )
+            self._pending_actions[action.id] = action
+        except BaseException:
+            self._is_complete = False
+            raise
         self._result = result
-        result_json: str | None = None
-        if result is not None:
-            try:
-                result_json = result if is_result_encoded else self._data_converter.serialize(result)
-            except (ValueError, TypeError):
-                self._is_complete = False
-                self._result = None
-                self.set_failed(JsonEncodeOutputException(result))
-                return
-        action = ph.new_complete_orchestration_action(
-            self.next_sequence_number(), status, result_json
-        )
-        self._pending_actions[action.id] = action
+        self._completion_status = status
 
     def set_failed(self, ex: BaseException | pb.TaskFailureDetails):
         if self._is_complete:

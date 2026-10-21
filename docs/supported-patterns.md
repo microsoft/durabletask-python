@@ -68,8 +68,8 @@ Garbage collection could already trigger finalization; completion-only timing
 was never guaranteed. Explicit dispatch teardown does not guarantee cleanup
 across process failure.
 
-Unexpected non-cancellation `BaseException` exits from orchestration execution or
-forced generator teardown fail the orchestration with the exception's type,
+Unexpected non-cancellation `BaseException` exits from orchestration execution,
+result serialization, or forced generator teardown fail the orchestration with the exception's type,
 message, and stack trace. An existing orchestration failure is retained if
 teardown also fails. Outstanding acquired entity locks are released with the
 failed response; durable work and status changes made only by teardown are not
