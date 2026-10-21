@@ -12,6 +12,9 @@ FIXED
 - With the corresponding core `durabletask` SDK fix, oversized messages fail
 large-payload validation before any uploads or payload replacements. Size
 errors now take precedence over hypothetical earlier storage failures.
+- With the corresponding core `durabletask` SDK fix, orchestrations that exceed
+the configured external payload storage limit fail without retrying and release
+their entity locks. Transient payload-store failures remain retryable.
 - With the corresponding core `durabletask` SDK fix, orchestrator generators
 are closed at the end of each dispatch, including while waiting for durable work.
 See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks)
