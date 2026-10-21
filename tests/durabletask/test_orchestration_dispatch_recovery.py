@@ -13,11 +13,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from durabletask import task, worker
+from durabletask import client, task, worker
 from durabletask.entities import EntityInstanceId
 from durabletask.internal import exceptions, helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.serialization import JsonDataConverter
+from durabletask.testing import create_test_backend
+from tests.durabletask._port_utils import find_free_port
 
 INSTANCE_ID = "dispatch-recovery"
 LOGGER = logging.getLogger("tests.dispatch_recovery")
@@ -77,6 +79,46 @@ def test_unexpected_base_exception_fails_orchestration_without_reprocessing(
         assert len(response.actions) == 1
         assert not response.HasField("customStatus")
     assert any(record.exc_info and record.exc_info[1] is error for record in caplog.records)
+
+
+def test_unexpected_teardown_commits_failure_and_allows_next_dispatch():
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, None]:
+        try:
+            yield ctx.call_activity("unused")
+        finally:
+            raise TeardownExit("deterministic teardown failure")
+
+    def healthy(ctx: task.OrchestrationContext, _: Any) -> str:
+        return "healthy"
+
+    port = find_free_port()
+    address = f"localhost:{port}"
+    backend = create_test_backend(port=port)
+    try:
+        with worker.TaskHubGrpcWorker(
+                host_address=address,
+                concurrency_options=worker.ConcurrencyOptions(
+                    maximum_concurrent_orchestration_work_items=1,
+                    maximum_thread_pool_workers=1,
+                )) as host:
+            host.add_orchestrator(orchestrator)
+            host.add_orchestrator(healthy)
+            host.start()
+            with client.TaskHubGrpcClient(host_address=address) as connection:
+                failed_id = connection.schedule_new_orchestration(orchestrator)
+                failed = connection.wait_for_orchestration_completion(failed_id, timeout=10)
+                assert failed is not None
+                assert failed.runtime_status == client.OrchestrationStatus.FAILED
+                assert failed.failure_details is not None
+                assert failed.failure_details.error_type.endswith(".TeardownExit")
+                assert failed.failure_details.message == "deterministic teardown failure"
+                next_id = connection.schedule_new_orchestration(healthy)
+                completed = connection.wait_for_orchestration_completion(next_id, timeout=10)
+                assert completed is not None
+                assert completed.runtime_status == client.OrchestrationStatus.COMPLETED
+                assert completed.serialized_output == '"healthy"'
+    finally:
+        backend.stop()
 
 
 def test_unexpected_cleanup_does_not_replace_existing_failure():
