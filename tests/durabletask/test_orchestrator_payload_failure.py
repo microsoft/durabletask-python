@@ -99,6 +99,105 @@ def test_legacy_multi_lock_release_history_replays(call_failed):
     assert completed.actions[0].completeOrchestration.result.value == '"done"'
 
 
+def _timeout_history(executor, name):
+    started = list(_request(name).newEvents)
+    first = executor.execute("owner", [], started)
+    section = first.actions[0].sendEntityMessage.entityLockRequested.criticalSectionId
+    granted = [
+        ph.new_event_sent_event(1, str(ENTITY_IDS[0]), json.dumps({"id": section})),
+        ph.new_event_raised_event(section, None),
+    ]
+    second = executor.execute("owner", started, granted)
+    call = second.actions[0].sendEntityMessage.entityOperationCalled
+    pending = ph.new_event_sent_event(2, str(ENTITY_IDS[0]), json.dumps({"id": call.requestId}))
+    return started + granted + [pending], section
+
+
+def test_legacy_pending_call_timeout_history_replays_through_activity():
+    def orchestrator(ctx, _):
+        with (yield ctx.lock_entities(ENTITY_IDS)):
+            call = ctx.call_entity(ENTITY_IDS[0], "get")
+            timeout = ctx.wait_for_external_event("timeout")
+            yield task.when_any([call, timeout])
+        return (yield ctx.call_activity("after_timeout"))
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, logging.getLogger("test"), JsonDataConverter())
+    history, _ = _timeout_history(executor, name)
+    timed_out = ph.new_event_raised_event("timeout", None)
+    result = executor.execute("owner", history, [timed_out])
+    assert [action.id for action in result.actions] == [3, 4]
+    assert result.actions[0].sendEntityMessage.entityUnlockSent.targetInstanceId.value == str(ENTITY_IDS[1])
+    assert result.actions[1].scheduleTask.name == "after_timeout"
+    assert [release.entityUnlockSent.targetInstanceId.value for release in result.entity_lock_releases] == [
+        str(ENTITY_IDS[0]),
+    ]
+
+    # Literal history from the old emitter: only b was released, so the next
+    # activity kept ID 4 even though the call to a was still outstanding.
+    history += [
+        timed_out,
+        ph.new_event_sent_event(3, str(ENTITY_IDS[1]), None),
+        ph.new_task_scheduled_event(4, "after_timeout"),
+    ]
+    assert not executor.execute("owner", history, [ph.new_orchestrator_started_event()]).actions
+    completed = executor.execute("owner", history, [ph.new_task_completed_event(4, '"done"')])
+    assert len(completed.actions) == 1
+    assert completed.actions[0].id == 5
+    assert completed.actions[0].completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert completed.actions[0].completeOrchestration.result.value == '"done"'
+
+
+@pytest.mark.parametrize("mode", ["result", "status", "activity"])
+@pytest.mark.parametrize("replay_exit", [False, True])
+def test_payload_failure_after_normal_pending_call_exit_releases_all_locks(mode, replay_exit):
+    def orchestrator(ctx, _):
+        with (yield ctx.lock_entities(ENTITY_IDS)):
+            call = ctx.call_entity(ENTITY_IDS[0], "get")
+            yield task.when_any([call, ctx.wait_for_external_event("timeout")])
+        if replay_exit:
+            yield ctx.wait_for_external_event("fail")
+        if mode == "result":
+            return LARGE_PAYLOAD
+        if mode == "status":
+            ctx.set_custom_status(LARGE_PAYLOAD)
+        yield ctx.call_activity("after_timeout", input=LARGE_PAYLOAD if mode == "activity" else None)
+
+    store = FakePayloadStore(threshold_bytes=100, max_stored_payload_bytes=200)
+    stub = MagicMock()
+    with worker.TaskHubGrpcWorker(payload_store=store) as w:
+        w.add_orchestrator(orchestrator)
+        executor = worker._OrchestrationExecutor(w._registry, logging.getLogger("test"), JsonDataConverter())
+        history, section = _timeout_history(executor, "orchestrator")
+        events = [ph.new_event_raised_event("timeout", None)]
+        if replay_exit:
+            exited = executor.execute("owner", history, events)
+            assert len(exited.actions) == 1
+            assert exited.actions[0].id == 3
+            history += events + [ph.new_event_sent_event(3, str(ENTITY_IDS[1]), None)]
+            events = [ph.new_event_raised_event("fail", None)]
+        w._execute_orchestrator(pb.OrchestratorRequest(
+            instanceId="owner", pastEvents=history,
+            newEvents=events,
+        ), stub, "failure-token")
+
+    response = stub.CompleteOrchestratorTask.call_args.args[0]
+    assert response.completionToken == "failure-token"
+    assert len(response.actions) == (2 if replay_exit else 3)
+    if not replay_exit:
+        assert response.actions[0].id == 3
+    releases = [action.sendEntityMessage.entityUnlockSent for action in response.actions[:-1]]
+    expected_targets = [str(ENTITY_IDS[0])] if replay_exit else [str(ENTITY_IDS[1]), str(ENTITY_IDS[0])]
+    assert [release.targetInstanceId.value for release in releases] == expected_targets
+    assert all(release.parentInstanceId.value == "owner" for release in releases)
+    assert all(release.criticalSectionId == section for release in releases)
+    completion = response.actions[-1].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert completion.failureDetails.isNonRetriable
+    assert not response.HasField("customStatus")
+
+
 def test_release_snapshot_retains_pending_locks_after_completed_calls():
     entity_ctx = OrchestrationEntityContext("owner")
     entity_ctx.emit_acquire_message("section", ENTITY_IDS)
