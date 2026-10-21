@@ -19,6 +19,7 @@ class OrchestrationEntityContext:
         self.critical_section_id: str | None = None
         self.critical_section_locks: list[EntityInstanceId] = []
         self.available_locks: list[EntityInstanceId] = []
+        self._lock_release_obligations: list[EntityInstanceId] = []
 
     @property
     def is_inside_critical_section(self) -> bool:
@@ -63,7 +64,13 @@ class OrchestrationEntityContext:
 
     def get_lock_release_messages(self) -> Generator[pb.SendEntityMessageAction, None, None]:
         if self.is_inside_critical_section:
-            for entity_id in self.critical_section_locks:
+            # Preserve the historical shared-list order, then include held
+            # locks removed from that list by calls which are still pending.
+            release_order = self.critical_section_locks + [
+                entity_id for entity_id in self._lock_release_obligations
+                if entity_id not in self.critical_section_locks
+            ]
+            for entity_id in release_order:
                 unlock_event = pb.SendEntityMessageAction(entityUnlockSent=pb.EntityUnlockSentEvent(
                     criticalSectionId=self.critical_section_id,
                     targetInstanceId=get_string_value(str(entity_id)),
@@ -75,6 +82,7 @@ class OrchestrationEntityContext:
         yield from self.get_lock_release_messages()
         self.critical_section_locks = []
         self.available_locks = []
+        self._lock_release_obligations = []
         self.critical_section_id = None
 
     def emit_request_message(self, target: Any, operation_name: str, one_way: bool, operation_id: str,
@@ -108,6 +116,7 @@ class OrchestrationEntityContext:
 
         self.critical_section_id = critical_section_id
         self.critical_section_locks = entity_ids_dedup
+        self._lock_release_obligations = list(entity_ids_dedup)
         self.lock_acquisition_pending = True
 
         return request, target
@@ -115,7 +124,7 @@ class OrchestrationEntityContext:
     def complete_acquire(self, critical_section_id: str) -> None:
         if self.critical_section_id != critical_section_id:
             raise RuntimeError(f"Unexpected lock acquire for critical section ID '{critical_section_id}' (expected '{self.critical_section_id}')")
-        self.available_locks = list(self.critical_section_locks)
+        self.available_locks = self.critical_section_locks
         self.lock_acquisition_pending = False
 
     def adjust_outgoing_message(self, instance_id: str, request_message: Any, capped_time: datetime) -> str:

@@ -4,6 +4,8 @@
 """Permanent payload failures must complete without stranding entity locks."""
 
 import asyncio
+import json
+import logging
 from threading import Event
 from unittest.mock import MagicMock
 
@@ -13,6 +15,7 @@ from durabletask import client, entities, task, worker
 from durabletask.internal import helpers as ph
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.internal.orchestration_entity_context import OrchestrationEntityContext
+from durabletask.serialization import JsonDataConverter
 from durabletask.testing import create_test_backend
 from tests.durabletask._port_utils import find_free_port
 from tests.durabletask.test_large_payload import FakePayloadStore
@@ -45,10 +48,138 @@ def _request(name: str) -> pb.OrchestratorRequest:
     )
 
 
+@pytest.mark.parametrize("call_failed", [False, True])
+def test_legacy_multi_lock_release_history_replays(call_failed):
+    def orchestrator(ctx, _):
+        with (yield ctx.lock_entities(ENTITY_IDS)):
+            try:
+                yield ctx.call_entity(ENTITY_IDS[0], "get")
+            except task.TaskFailedError:
+                pass
+        yield ctx.wait_for_external_event("next")
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, logging.getLogger("test"), JsonDataConverter())
+    started = list(_request(name).newEvents)
+    first = executor.execute("owner", [], started)
+    section = first.actions[0].sendEntityMessage.entityLockRequested.criticalSectionId
+    granted = [
+        ph.new_event_sent_event(1, str(ENTITY_IDS[0]), json.dumps({"id": section})),
+        ph.new_event_raised_event(section, None),
+    ]
+    second = executor.execute("owner", started, granted)
+    request_id = second.actions[0].sendEntityMessage.entityOperationCalled.requestId
+    response = {"result": "42"}
+    if call_failed:
+        response["exceptionType"] = "ValueError"
+    called = [
+        ph.new_event_sent_event(2, str(ENTITY_IDS[0]), json.dumps({"id": request_id})),
+        ph.new_event_raised_event(request_id, json.dumps(response)),
+    ]
+    third = executor.execute("owner", started + granted, called)
+    # Before acquired/available lock tracking was separated, completing a call
+    # moved that entity to the end of the shared list used for releases.
+    legacy_releases = [(3, str(ENTITY_IDS[1])), (4, str(ENTITY_IDS[0]))]
+    assert [
+        (action.id, action.sendEntityMessage.entityUnlockSent.targetInstanceId.value)
+        for action in third.actions
+    ] == legacy_releases
+    released = [ph.new_event_sent_event(action_id, target, None) for action_id, target in legacy_releases]
+    history = started + granted + called + released
+    replay = executor.execute("owner", history, [ph.new_orchestrator_started_event()])
+    assert not replay.actions
+    assert not replay.entity_lock_releases
+    completed = executor.execute("owner", history, [ph.new_event_raised_event("next", None)])
+    assert len(completed.actions) == 1
+    assert completed.actions[0].id == 5
+    assert completed.actions[0].completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert completed.actions[0].completeOrchestration.result.value == '"done"'
+
+
+def test_release_snapshot_retains_pending_locks_after_completed_calls():
+    entity_ctx = OrchestrationEntityContext("owner")
+    entity_ctx.emit_acquire_message("section", ENTITY_IDS)
+    entity_ctx.complete_acquire("section")
+    assert entity_ctx.validate_operation_transition(ENTITY_IDS[0], False) == (True, "")
+    entity_ctx.recover_lock_after_call(ENTITY_IDS[0])
+    assert entity_ctx.validate_operation_transition(ENTITY_IDS[1], False) == (True, "")
+    releases = list(entity_ctx.get_lock_release_messages())
+    assert [release.entityUnlockSent.targetInstanceId.value for release in releases] == [
+        str(ENTITY_IDS[0]), str(ENTITY_IDS[1]),
+    ]
+    assert all(release.entityUnlockSent.parentInstanceId.value == "owner" for release in releases)
+    assert all(release.entityUnlockSent.criticalSectionId == "section" for release in releases)
+    assert entity_ctx.available_locks == [ENTITY_IDS[0]]
+    assert entity_ctx.critical_section_locks == [ENTITY_IDS[0]]
+    assert entity_ctx.is_inside_critical_section
+
+
+@pytest.mark.parametrize("legacy_protocol", [False, True])
+@pytest.mark.parametrize("overlapping_call", [False, True])
+def test_pre_lock_call_can_complete_while_acquisition_is_pending(legacy_protocol, overlapping_call):
+    outside_entity = ENTITY_IDS[0] if overlapping_call else entities.EntityInstanceId("counter", "outside")
+
+    def orchestrator(ctx, _):
+        pending = ctx.call_entity(outside_entity, "get")
+        with (yield ctx.lock_entities(ENTITY_IDS)):
+            result = yield pending
+        yield ctx.wait_for_external_event("next")
+        return result
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    executor = worker._OrchestrationExecutor(registry, logging.getLogger("test"), JsonDataConverter())
+    started = list(_request(name).newEvents)
+    first = executor.execute("owner", [], started)
+    call = first.actions[0].sendEntityMessage.entityOperationCalled
+    lock = first.actions[1].sendEntityMessage.entityLockRequested
+    if legacy_protocol:
+        called = [
+            ph.new_event_sent_event(1, str(outside_entity), json.dumps({"id": call.requestId})),
+            ph.new_event_sent_event(2, str(ENTITY_IDS[0]), json.dumps({"id": lock.criticalSectionId})),
+            ph.new_event_raised_event(call.requestId, json.dumps({"result": "42"})),
+        ]
+        granted = ph.new_event_raised_event(lock.criticalSectionId, None)
+    else:
+        called = [
+            pb.HistoryEvent(eventId=1, entityOperationCalled=call),
+            pb.HistoryEvent(eventId=2, entityLockRequested=lock),
+            pb.HistoryEvent(entityOperationCompleted=pb.EntityOperationCompletedEvent(
+                requestId=call.requestId, output=ph.get_string_value("42"))),
+        ]
+        granted = pb.HistoryEvent(entityLockGranted=pb.EntityLockGrantedEvent(
+            criticalSectionId=lock.criticalSectionId))
+    waiting = executor.execute("owner", started, called)
+    assert not waiting.actions
+    unlocked = executor.execute("owner", started + called, [granted])
+    assert [action.id for action in unlocked.actions] == [3, 4]
+    assert [
+        action.sendEntityMessage.entityUnlockSent.targetInstanceId.value for action in unlocked.actions
+    ] == [str(eid) for eid in ENTITY_IDS]
+    if legacy_protocol:
+        released = [ph.new_event_sent_event(action.id, str(eid), None)
+                    for action, eid in zip(unlocked.actions, ENTITY_IDS)]
+    else:
+        released = [pb.HistoryEvent(eventId=action.id, entityUnlockSent=action.sendEntityMessage.entityUnlockSent)
+                    for action in unlocked.actions]
+    history = started + called + [granted] + released
+    assert not executor.execute("owner", history, [ph.new_orchestrator_started_event()]).actions
+    completed = executor.execute("owner", history, [ph.new_event_raised_event("next", None)])
+    assert len(completed.actions) == 1
+    assert completed.actions[-1].id == 5
+    assert completed.actions[-1].completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert completed.actions[-1].completeOrchestration.result.value == "42"
+
+
 @pytest.mark.parametrize("mode", ["result", "status", "call", "continue"])
-def test_permanent_payload_failure_releases_acquired_locks(mode):
+@pytest.mark.parametrize("completed_call", [False, True])
+def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call):
     def orchestrator(ctx, _):
         with (yield ctx.lock_entities(list(reversed(ENTITY_IDS)))):
+            if completed_call:
+                yield ctx.call_entity(ENTITY_IDS[0], "get")
             return (yield from _fail_payload(ctx, mode))
 
     store = FakePayloadStore(threshold_bytes=100, max_stored_payload_bytes=200)
@@ -75,6 +206,24 @@ def test_permanent_payload_failure_releases_acquired_locks(mode):
                     criticalSectionId=lock_request.criticalSectionId)),
             ],
         )
+        if completed_call:
+            w._execute_orchestrator(req, stub, "call-token")
+            call_action = stub.CompleteOrchestratorTask.call_args.args[0].actions[0]
+            call_message = call_action.sendEntityMessage.entityOperationCalled
+            req = pb.OrchestratorRequest(
+                instanceId="owner",
+                pastEvents=[
+                    *req.pastEvents,
+                    *req.newEvents,
+                    pb.HistoryEvent(eventId=call_action.id, entityOperationCalled=call_message),
+                ],
+                newEvents=[
+                    ph.new_orchestrator_started_event(),
+                    pb.HistoryEvent(entityOperationCompleted=pb.EntityOperationCompletedEvent(
+                        requestId=call_message.requestId, output=ph.get_string_value("42"))),
+                ],
+            )
+            stub.reset_mock()
         w._execute_orchestrator(req, stub, "failure-token")
 
     stub.CompleteOrchestratorTask.assert_called_once()
@@ -86,7 +235,8 @@ def test_permanent_payload_failure_releases_acquired_locks(mode):
     assert response.ByteSize() < 1024
     assert len(response.actions) == 3
     releases = [action.sendEntityMessage.entityUnlockSent for action in response.actions[:-1]]
-    assert [release.targetInstanceId.value for release in releases] == [str(eid) for eid in ENTITY_IDS]
+    release_order = list(reversed(ENTITY_IDS)) if completed_call or mode == "call" else ENTITY_IDS
+    assert [release.targetInstanceId.value for release in releases] == [str(eid) for eid in release_order]
     assert all(release.parentInstanceId.value == "owner" for release in releases)
     assert all(release.criticalSectionId == lock_request.criticalSectionId for release in releases)
     assert [action.id for action in response.actions] == sorted({action.id for action in response.actions})
