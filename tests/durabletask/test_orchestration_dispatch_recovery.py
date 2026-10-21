@@ -200,7 +200,7 @@ def _control_flow_errors() -> list[BaseException]:
     return errors
 
 
-@pytest.mark.parametrize("error", _control_flow_errors(), ids=lambda error: str(error))
+@pytest.mark.parametrize("error", _control_flow_errors(), ids=str)
 @pytest.mark.parametrize("during_teardown", [False, True])
 def test_control_flow_propagates_after_same_token_abandonment(
         error: BaseException, during_teardown: bool):
@@ -299,7 +299,7 @@ def test_recovery_process_control_is_not_swallowed(monkeypatch: pytest.MonkeyPat
     reset.assert_called_once()
 
 
-@pytest.mark.parametrize("reset_error", _control_flow_errors(), ids=lambda error: str(error))
+@pytest.mark.parametrize("reset_error", _control_flow_errors(), ids=str)
 def test_reset_control_flow_is_not_hidden_by_ordinary_abandonment_error(
         reset_error: BaseException, monkeypatch: pytest.MonkeyPatch):
     with worker.TaskHubGrpcWorker(logger=LOGGER) as host:
