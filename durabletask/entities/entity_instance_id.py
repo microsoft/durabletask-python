@@ -21,6 +21,12 @@ class EntityInstanceId:
             return NotImplemented
         return str(self) < str(other)
 
+    def __hash__(self) -> int:
+        return hash((self.entity, self.key))
+
+    def __repr__(self) -> str:
+        return f"EntityInstanceId(entity={self.entity!r}, key={self.key!r})"
+
     @staticmethod
     def parse(entity_id: str) -> "EntityInstanceId":
         """Parse a string representation of an entity ID into an EntityInstanceId object.
