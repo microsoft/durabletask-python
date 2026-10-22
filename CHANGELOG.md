@@ -14,6 +14,7 @@ by one or more task hubs.
 
 FIXED
 
+- Added support for `set` and `frozenset` generic containers in `JsonDataConverter`, enabling typed serialization and deserialization of sets.
 - Large-payload externalization now checks every eligible payload's maximum
 size before uploading or replacing any protobuf values, including carryover
 events and entity payloads, for both synchronous and asynchronous calls.

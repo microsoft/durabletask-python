@@ -571,3 +571,45 @@ def test_resolve_forward_refs_leaves_unresolvable_name_untouched():
     # the parsed JSON rather than raising.
     resolved = resolve_forward_refs(list["DoesNotExist"], {})
     assert get_args(resolved) == ("DoesNotExist",)
+
+
+# ----- set and frozenset container serialization and coercion -----
+
+
+@dataclass(frozen=True)
+class FrozenAddress:
+    street: str
+    city: str
+
+
+def test_from_json_coerces_set_of_primitives():
+    encoded = to_json(["a", "b", "c"])
+    result = from_json(encoded, set[str])
+    assert isinstance(result, set)
+    assert result == {"a", "b", "c"}
+
+
+def test_from_json_coerces_frozenset_of_primitives():
+    encoded = to_json([1, 2, 3])
+    result = from_json(encoded, frozenset[int])
+    assert isinstance(result, frozenset)
+    assert result == frozenset({1, 2, 3})
+
+
+def test_from_json_coerces_set_of_dataclasses():
+    encoded = to_json([
+        {"street": "1 Main St", "city": "Redmond"},
+        {"street": "2 1st Ave", "city": "Seattle"},
+    ])
+    result = from_json(encoded, set[FrozenAddress])
+    assert isinstance(result, set)
+    assert all(isinstance(item, FrozenAddress) for item in result)
+    assert FrozenAddress("1 Main St", "Redmond") in result
+
+
+def test_to_json_serializes_set_and_frozenset():
+    encoded_set = to_json({"b", "a"})
+    assert json.loads(encoded_set) == ["a", "b"]
+
+    encoded_frozenset = to_json(frozenset([2, 1]))
+    assert json.loads(encoded_frozenset) == [1, 2]

@@ -42,7 +42,7 @@ import sys
 import types
 import typing
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set as AbstractSet
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -238,7 +238,7 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             return any(
                 converter.can_reconstruct(a) for a in args if a is not type(None)
             )
-        if origin in (list, Sequence):
+        if origin in (list, Sequence, set, frozenset, AbstractSet, typing.AbstractSet):
             return any(converter.can_reconstruct(a) for a in args)
         return False
     if not isinstance(target_type, type):
@@ -319,6 +319,11 @@ def _encode_custom_object(o: Any) -> Any:
     to_json_hook = getattr(cast(Any, type(o)), "to_json", None)
     if callable(to_json_hook):
         return to_json_hook(o)
+    if isinstance(o, (set, frozenset, AbstractSet)):
+        try:
+            return sorted(o)
+        except Exception:
+            return list(o)
     if isinstance(o, enum.Enum):
         # Emit the member's underlying value (a primitive). Reconstruction is
         # type-directed: passing the enum type to ``deserialize`` rebuilds the
@@ -477,6 +482,14 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
     if origin in (list, Sequence) and isinstance(value, list):
         elem_type = args[0] if args else None
         return [_coerce_to_type(item, elem_type, converter) for item in cast(list[Any], value)]
+    if origin in (set, frozenset, AbstractSet, typing.AbstractSet) and isinstance(
+        value, (list, set, frozenset, AbstractSet)
+    ):
+        elem_type = args[0] if args else None
+        coerced = [_coerce_to_type(item, elem_type, converter) for item in value]
+        if origin is frozenset:
+            return frozenset(coerced)
+        return set(coerced)
     if origin in (dict, Mapping) and isinstance(value, dict):
         # JSON object keys are always strings, so only the values can carry a
         # reconstructable type. Keys are passed through unchanged.

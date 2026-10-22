@@ -375,3 +375,34 @@ def test_custom_converter_is_a_dataconverter_subclass():
     assert conv.serialize("hello") == '"HELLO"'
     assert conv.deserialize('"HELLO"') == "HELLO"
     assert conv.coerce("HELLO") == "HELLO"
+
+
+# ----- set and frozenset container support -----
+
+
+@dataclass(frozen=True)
+class TaggedOrder:
+    item: str
+    tags: set[str]
+    flags: frozenset[int]
+
+
+def test_roundtrip_dataclass_with_sets():
+    converter = JsonDataConverter()
+    original = TaggedOrder(item="laptop", tags={"electronics", "sale"}, flags=frozenset({1, 2}))
+    serialized = converter.serialize(original)
+    assert serialized is not None
+    restored = converter.deserialize(serialized, TaggedOrder)
+    assert isinstance(restored, TaggedOrder)
+    assert restored.item == "laptop"
+    assert isinstance(restored.tags, set)
+    assert restored.tags == {"electronics", "sale"}
+    assert isinstance(restored.flags, frozenset)
+    assert restored.flags == frozenset({1, 2})
+
+
+def test_can_reconstruct_set_and_frozenset():
+    converter = JsonDataConverter()
+    assert converter.can_reconstruct(set[PricedOrder]) is True
+    assert converter.can_reconstruct(frozenset[PricedOrder]) is True
+    assert converter.can_reconstruct(set[int]) is False
