@@ -19,6 +19,8 @@ class OrchestrationEntityContext:
         self.critical_section_id: str | None = None
         self.critical_section_locks: list[EntityInstanceId] = []
         self.available_locks: list[EntityInstanceId] = []
+        self._lock_release_obligations: list[EntityInstanceId] = []
+        self._pending_lock_releases: list[pb.SendEntityMessageAction] = []
 
     @property
     def is_inside_critical_section(self) -> bool:
@@ -61,19 +63,40 @@ class OrchestrationEntityContext:
         if self.is_inside_critical_section:
             self.available_locks.append(target_instance_id)
 
+    def get_lock_release_messages(self) -> Generator[pb.SendEntityMessageAction, None, None]:
+        yield from self._pending_lock_releases
+        if self.is_inside_critical_section:
+            # Preserve the historical shared-list order, then include held
+            # locks removed from that list by calls which are still pending.
+            release_order = self.critical_section_locks + [
+                entity_id for entity_id in self._lock_release_obligations
+                if entity_id not in self.critical_section_locks
+            ]
+            for entity_id in release_order:
+                yield self._new_lock_release_message(entity_id)
+
+    def _new_lock_release_message(self, entity_id: EntityInstanceId) -> pb.SendEntityMessageAction:
+        return pb.SendEntityMessageAction(entityUnlockSent=pb.EntityUnlockSentEvent(
+            criticalSectionId=self.critical_section_id,
+            targetInstanceId=get_string_value(str(entity_id)),
+            parentInstanceId=get_string_value(self.instance_id)
+        ))
+
     def emit_lock_release_messages(self) -> Generator[pb.SendEntityMessageAction, None, None]:
         if self.is_inside_critical_section:
+            # Normal emission must retain historical action IDs. Missing held
+            # locks are kept only for a later terminal-failure snapshot.
+            self._pending_lock_releases.extend(
+                self._new_lock_release_message(entity_id)
+                for entity_id in self._lock_release_obligations
+                if entity_id not in self.critical_section_locks
+            )
             for entity_id in self.critical_section_locks:
-                unlock_event = pb.SendEntityMessageAction(entityUnlockSent=pb.EntityUnlockSentEvent(
-                    criticalSectionId=self.critical_section_id,
-                    targetInstanceId=get_string_value(str(entity_id)),
-                    parentInstanceId=get_string_value(self.instance_id)
-                ))
-                yield unlock_event
-
-            self.critical_section_locks = []
-            self.available_locks = []
-            self.critical_section_id = None
+                yield self._new_lock_release_message(entity_id)
+        self.critical_section_locks = []
+        self.available_locks = []
+        self._lock_release_obligations = []
+        self.critical_section_id = None
 
     def emit_request_message(self, target: Any, operation_name: str, one_way: bool, operation_id: str,
                              scheduled_time_utc: datetime, input: str | None,
@@ -106,6 +129,7 @@ class OrchestrationEntityContext:
 
         self.critical_section_id = critical_section_id
         self.critical_section_locks = entity_ids_dedup
+        self._lock_release_obligations = list(entity_ids_dedup)
         self.lock_acquisition_pending = True
 
         return request, target

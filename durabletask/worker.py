@@ -1179,6 +1179,7 @@ class TaskHubGrpcWorker:
         if (req.HasField("orchestrationTraceContext") and req.orchestrationTraceContext.HasField("spanID") and req.orchestrationTraceContext.spanID.value):
             persisted_orch_span_id = req.orchestrationTraceContext.spanID.value
 
+        result: ExecutionResults | None = None
         try:
             executor = _OrchestrationExecutor(
                 self._registry, self._logger,
@@ -1191,30 +1192,6 @@ class TaskHubGrpcWorker:
                         parent_trace_ctx if not self._emit_trace_spans else None):
                     result = executor.execute(
                         instance_id, req.pastEvents, req.newEvents)
-
-            # Determine completion status for span
-            is_complete = False
-            is_failed = False
-            failure_details = None
-            for action in result.actions:
-                if action.HasField("completeOrchestration"):
-                    is_complete = True
-                    orch_status = action.completeOrchestration.orchestrationStatus
-                    if orch_status == pb.ORCHESTRATION_STATUS_FAILED:
-                        is_failed = True
-                        failure_details = action.completeOrchestration.failureDetails
-
-            if is_complete and self._emit_trace_spans:
-                # Orchestration finished — emit a single span covering its lifetime
-                tracing.emit_orchestration_span(
-                    orchestration_name,
-                    instance_id,
-                    start_time_ns,
-                    is_failed,
-                    failure_details=failure_details,
-                    parent_trace_context=parent_trace_ctx,
-                    orchestration_trace_context=result._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
-                )
 
             # Include the span ID in the orchestration trace context
             # so it persists across dispatches.
@@ -1278,10 +1255,54 @@ class TaskHubGrpcWorker:
 
         try:
             # Externalize any large payloads in the response
-            if self._payload_store is not None:
-                payload_helpers.externalize_payloads(
-                    res, self._payload_store, instance_id=instance_id,
+            try:
+                if self._payload_store is not None:
+                    payload_helpers.externalize_payloads(
+                        res, self._payload_store, instance_id=instance_id,
+                    )
+            except pe.PayloadSizeExceededError as ex:
+                self._logger.warning(
+                    f"Orchestration '{instance_id}' exceeded the payload storage limit: {ex}"
                 )
+                # Use the original actions, not a partially externalized response.
+                releases = [
+                    action for action in result.actions
+                    if action.HasField("sendEntityMessage")
+                    and action.sendEntityMessage.HasField("entityUnlockSent")
+                ] if result is not None else []
+                next_id = max((action.id for action in res.actions), default=0) + 1
+                if result is not None:
+                    for release in result.entity_lock_releases:
+                        releases.append(pb.OrchestratorAction(id=next_id, sendEntityMessage=release))
+                        next_id += 1
+                releases.append(ph.new_complete_orchestration_action(
+                    next_id,
+                    pb.ORCHESTRATION_STATUS_FAILED,
+                    None,
+                    pb.TaskFailureDetails(
+                        errorType=ph.get_qualified_name(type(ex)),
+                        errorMessage=str(ex)[:1024],
+                        isNonRetriable=True,
+                    ),
+                ))
+                res.ClearField("actions")
+                res.actions.extend(releases)
+                res.ClearField("customStatus")
+                # Keep this fallback inline: it must not need the failing store.
+
+            if result is not None and self._emit_trace_spans:
+                for action in res.actions:
+                    if action.HasField("completeOrchestration"):
+                        completion = action.completeOrchestration
+                        tracing.emit_orchestration_span(
+                            orchestration_name,
+                            instance_id,
+                            start_time_ns,
+                            completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED,
+                            failure_details=completion.failureDetails if completion.HasField("failureDetails") else None,
+                            parent_trace_context=parent_trace_ctx,
+                            orchestration_trace_context=result._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
+                        )
             stub.CompleteOrchestratorTask(res)
         except Exception as ex:
             self._logger.exception(
@@ -2194,14 +2215,17 @@ class ExecutionResults:
     actions: list[pb.OrchestratorAction]
     encoded_custom_status: str | None
     _orchestration_trace_context: pb.TraceContext | None
+    entity_lock_releases: list[pb.SendEntityMessageAction]
 
     def __init__(
             self, actions: list[pb.OrchestratorAction], encoded_custom_status: str | None,
             orchestration_trace_context: pb.TraceContext | None = None,
+            entity_lock_releases: list[pb.SendEntityMessageAction] | None = None,
     ):
         self.actions = actions
         self.encoded_custom_status = encoded_custom_status
         self._orchestration_trace_context = orchestration_trace_context
+        self.entity_lock_releases = entity_lock_releases if entity_lock_releases is not None else []
 
 
 class _OrchestrationExecutor:
@@ -2347,6 +2371,8 @@ class _OrchestrationExecutor:
             return ExecutionResults(
                 actions=actions, encoded_custom_status=ctx._encoded_custom_status,  # pyright: ignore[reportPrivateUsage]
                 orchestration_trace_context=ctx._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
+                # Snapshot before generator teardown can exit a critical section.
+                entity_lock_releases=list(ctx._entity_context.get_lock_release_messages()),  # pyright: ignore[reportPrivateUsage]
             )
         finally:
             # Close after building the response, so the orchestrator's finally

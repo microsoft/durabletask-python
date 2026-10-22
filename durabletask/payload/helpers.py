@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import message as proto_message
 from google.protobuf import wrappers_pb2
 
+from durabletask.internal.exceptions import PayloadSizeExceededError
+
 if TYPE_CHECKING:
     from durabletask.payload.store import PayloadStore
 
@@ -150,7 +152,7 @@ def _collect_payloads_to_externalize(
         if len(payload_bytes) <= threshold:
             continue
         if len(payload_bytes) > max_bytes:
-            raise ValueError(
+            raise PayloadSizeExceededError(
                 f"Payload size {len(payload_bytes)} bytes exceeds the maximum "
                 f"allowed size of {max_bytes} bytes."
             )

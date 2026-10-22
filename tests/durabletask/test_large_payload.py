@@ -12,6 +12,7 @@ import pytest
 from google.protobuf import wrappers_pb2
 
 import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask.internal.exceptions import PayloadSizeExceededError
 from durabletask.payload.helpers import (
     deexternalize_payloads,
     deexternalize_payloads_async,
@@ -152,8 +153,9 @@ class TestExternalizePayloads:
             name="MyOrch",
             input=sv(large_data),
         )
-        with pytest.raises(ValueError, match="exceeds the maximum"):
+        with pytest.raises(PayloadSizeExceededError, match="exceeds the maximum") as failure:
             externalize_payloads(req, store, instance_id="test-1")
+        assert isinstance(failure.value, ValueError)
 
     def test_empty_value_not_externalized(self):
         """Empty StringValue should not be externalized."""
@@ -539,6 +541,40 @@ class TestAsyncPayloadHelpers:
 
         await deexternalize_payloads_async(req, store)
         assert req.input.value == original
+
+    @pytest.mark.asyncio
+    async def test_async_cap_failure_is_a_value_error(self):
+        store = FakePayloadStore(threshold_bytes=1, max_stored_payload_bytes=10)
+        req = pb.CreateInstanceRequest(input=sv("x" * 11))
+        with pytest.raises(PayloadSizeExceededError) as failure:
+            await externalize_payloads_async(req, store)
+        assert isinstance(failure.value, ValueError)
+        assert not store._blobs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True])
+    async def test_token_larger_than_cap_is_not_reuploaded(self, use_async):
+        store = FakePayloadStore(threshold_bytes=1, max_stored_payload_bytes=10)
+        token = f"{FakePayloadStore.TOKEN_PREFIX}existing-blob"
+        assert len(token.encode("utf-8")) > store.options.max_stored_payload_bytes
+        req = pb.CreateInstanceRequest(input=sv(token))
+        if use_async:
+            await externalize_payloads_async(req, store)
+        else:
+            externalize_payloads(req, store)
+        assert req.input.value == token
+        assert not store._blobs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", [OSError("unavailable"), ValueError("store error"), asyncio.CancelledError()])
+    async def test_async_store_error_propagates_unchanged(self, error):
+        store = FakePayloadStore(threshold_bytes=1)
+        store.upload_async = AsyncMock(side_effect=error)
+        req = pb.CreateInstanceRequest(input=sv("large enough"))
+        with pytest.raises(type(error)) as failure:
+            await externalize_payloads_async(req, store)
+        assert failure.value is error
+        assert req.input.value == "large enough"
 
 
 # ------------------------------------------------------------------
