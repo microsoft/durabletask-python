@@ -56,6 +56,34 @@ def test_worker_uses_propagate_only_tracing():
     assert worker.emit_trace_spans is False
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_worker_returns_failed_response_for_unexpected_teardown(monkeypatch, use_async):
+    monkeypatch.setattr(payloads, "_payload_store", None)
+
+    class TeardownExit(BaseException):
+        pass
+
+    def orchestrator(context):
+        try:
+            yield context.call_activity("work")
+        finally:
+            raise TeardownExit("deterministic teardown failure")
+
+    worker = DurableFunctionsWorker()
+    request = _encode_orchestrator_request("teardown")
+    if use_async:
+        encoded = await worker.execute_orchestration_request_async(orchestrator, request)
+    else:
+        encoded = worker.execute_orchestration_request(orchestrator, request)
+    response = _decode_orchestrator_response(encoded)
+    completion = _get_completion_action(response)
+
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert completion.failureDetails.errorType.endswith(".TeardownExit")
+    assert completion.failureDetails.errorMessage == "deterministic teardown failure"
+    assert len(response.actions) == 1
+
+
 def test_worker_created_before_configuration_hydrates_and_externalizes(monkeypatch, payload_store_factory):
     monkeypatch.setattr(payloads, "_payload_store", None)
     worker = DurableFunctionsWorker()
