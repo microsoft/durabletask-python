@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, oversized messages fail
+large-payload validation before any uploads or payload replacements. Size
+errors now take precedence over hypothetical earlier storage failures.
+- With the corresponding core `durabletask` SDK fix, orchestrations that exceed
+the configured external payload storage limit fail without retrying and release
+their entity locks. Transient payload-store failures remain retryable.
+- With the corresponding core `durabletask` SDK fix, orchestrator generators
+are closed at the end of each dispatch, including while waiting for durable work.
+See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks)
+for repeated finalizers, discarded teardown actions/status, and yielding restrictions.
+- With the corresponding core `durabletask` SDK fix, async cancellation raised by
+generator teardown no longer replaces dispatch responses or version-rejection abandonment.
+
 ## v1.12.0
 
 ADDED

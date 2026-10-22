@@ -12,6 +12,23 @@ ADDED
 - Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
 by one or more task hubs.
 
+FIXED
+
+- Large-payload externalization now checks every eligible payload's maximum
+size before uploading or replacing any protobuf values, including carryover
+events and entity payloads, for both synchronous and asynchronous calls.
+Oversized messages remain unchanged and cause no uploads; their size error
+now takes precedence over hypothetical earlier storage failures.
+- Orchestrations that exceed the configured external payload storage limit now
+fail without retrying and release their entity locks, allowing other callers to
+progress. Transient payload-store failures remain retryable.
+- Orchestrator generators are now closed at the end of each dispatch, including
+while waiting for durable work, releasing resources held by async bridges.
+`finally` blocks and context-manager exits can run before orchestration completion
+and repeat across dispatches; see [cleanup semantics](docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks).
+- Async cancellation raised by generator teardown no longer replaces dispatch
+responses or version-rejection abandonment.
+
 ## v1.12.0
 
 ADDED

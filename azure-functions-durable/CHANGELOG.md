@@ -19,6 +19,18 @@ CHANGED
 
 - Updated the minimum `azure-functions` dependency to v2.4.0b1.
 
+FIXED
+
+- With the corresponding core `durabletask` SDK fix, oversized messages fail
+large-payload validation before any uploads or payload replacements. Size
+errors now take precedence over hypothetical earlier storage failures.
+- With the corresponding core `durabletask` SDK fix, orchestrator generators
+are closed at the end of each dispatch, including while waiting for durable work.
+See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks)
+for repeated finalizers, discarded teardown actions/status, and yielding restrictions.
+- With the corresponding core `durabletask` SDK fix, async cancellation raised by
+generator teardown no longer replaces dispatch responses or version-rejection abandonment.
+
 ## v2.0.0rc3
 
 ADDED
