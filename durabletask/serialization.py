@@ -42,7 +42,8 @@ import sys
 import types
 import typing
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence, Set as AbstractSet
+from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -68,7 +69,6 @@ class DataConverter(ABC):
     @abstractmethod
     def serialize(self, value: Any) -> str | None:
         """Serialize ``value`` to a string, or ``None`` when ``value`` is ``None``."""
-        pass
 
     @abstractmethod
     def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
@@ -85,7 +85,6 @@ class DataConverter(ABC):
         :class:`JsonDataConverter` is best-effort and falls back; a validating
         converter may instead raise.
         """
-        pass
 
     @abstractmethod
     def coerce(self, value: Any, target_type: type | None = None) -> Any:
@@ -99,7 +98,6 @@ class DataConverter(ABC):
         (strict vs. best-effort) that an implementation applies in
         :meth:`deserialize` should apply here.
         """
-        pass
 
     def can_reconstruct(self, target_type: Any) -> bool:
         """Return True if this converter can rebuild ``target_type`` from a payload.
@@ -167,6 +165,18 @@ class JsonDataConverter(DataConverter):
     > payload; the destination type is always supplied by the caller.
     """
 
+    def __init__(
+        self,
+        *,
+        enable_generic_sets: bool = False,
+        enable_set_coercion: bool = False,
+    ) -> None:
+        self.enable_generic_sets: bool = enable_generic_sets or enable_set_coercion
+
+    @property
+    def enable_set_coercion(self) -> bool:
+        return self.enable_generic_sets
+
     def serialize(self, value: Any) -> str | None:
         if value is None:
             return None
@@ -221,15 +231,40 @@ DEFAULT_DATA_CONVERTER: DataConverter = JsonDataConverter()
 # ---------------------------------------------------------------------------
 
 
+def _is_supported_set_element(converter: DataConverter, elem_type: Any) -> bool:
+    if elem_type is None or elem_type is typing.Any:
+        return True
+    elem_origin = typing.get_origin(elem_type)
+    if elem_origin is not None:
+        if elem_origin in (list, dict, Sequence, Mapping, set, AbstractSet):
+            # Mutable collections are unhashable
+            return False
+        if elem_origin is typing.Union or elem_origin is types.UnionType:
+            non_none = [a for a in typing.get_args(elem_type) if a is not type(None)]
+            return bool(non_none) and all(_is_supported_set_element(converter, a) for a in non_none)
+        if elem_origin is frozenset:
+            args = typing.get_args(elem_type)
+            return not args or _is_supported_set_element(converter, args[0])
+        return False
+    if not isinstance(elem_type, type):
+        return False
+    if issubclass(elem_type, (list, dict, set)):
+        return False
+    return True
+
+
 def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
     """:class:`JsonDataConverter`'s reconstruction policy.
 
     Recognizes dataclasses and ``from_json()``-capable types, plus ``Optional``
     / ``list`` / ``Sequence`` hints wrapping them; builtins and unknown
-    annotations are excluded. Recurses through ``converter.can_reconstruct``
-    (not itself) so a :class:`JsonDataConverter` subclass that overrides
-    ``can_reconstruct`` still participates in the element-type checks of
-    ``Optional`` / ``list`` hints.
+    annotations are excluded. When set support is enabled on the converter
+    (via ``enable_generic_sets=True``), ``set`` / ``frozenset`` / ``Set``
+    containers with supported element types are also recognized. Recurses
+    through ``converter.can_reconstruct`` (not itself) so a
+    :class:`JsonDataConverter` subclass that overrides ``can_reconstruct``
+    still participates in the element-type checks of ``Optional`` / ``list``
+    hints.
     """
     origin = typing.get_origin(target_type)
     if origin is not None:
@@ -238,13 +273,21 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             return any(
                 converter.can_reconstruct(a) for a in args if a is not type(None)
             )
-        if origin in (list, Sequence, set, frozenset, AbstractSet, typing.AbstractSet):
+        if origin in (list, Sequence):
             return any(converter.can_reconstruct(a) for a in args)
+        if origin in (set, frozenset, AbstractSet, typing.AbstractSet):
+            if not getattr(converter, "enable_generic_sets", False):
+                return False
+            if not args:
+                return True
+            return _is_supported_set_element(converter, args[0])
         return False
     if not isinstance(target_type, type):
         return False
     if dataclasses.is_dataclass(target_type):
         return True
+    if target_type in (set, frozenset, AbstractSet):
+        return getattr(converter, "enable_generic_sets", False)
     return callable(getattr(cast(Any, target_type), "from_json", None))
 
 
@@ -320,10 +363,21 @@ def _encode_custom_object(o: Any) -> Any:
     if callable(to_json_hook):
         return to_json_hook(o)
     if isinstance(o, (set, frozenset, AbstractSet)):
+        items: AbstractSet[Any] = cast("AbstractSet[Any]", o)
         try:
-            return sorted(o)
-        except Exception:
-            return list(o)
+            return sorted(items)
+        except TypeError:
+            try:
+                def _set_sort_key(item: Any) -> tuple[str, str, str]:
+                    encoded = json.dumps(item, default=_encode_custom_object, sort_keys=True)
+                    return (encoded, type(item).__qualname__, repr(item))
+
+                return sorted(items, key=_set_sort_key)
+            except Exception as e:
+                raise TypeError(
+                    f"Cannot deterministically serialize set of type '{type(items).__name__}' "
+                    f"because its elements cannot be compared or deterministically encoded: {e}"
+                ) from e
     if isinstance(o, enum.Enum):
         # Emit the member's underlying value (a primitive). Reconstruction is
         # type-directed: passing the enum type to ``deserialize`` rebuilds the
@@ -485,8 +539,13 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
     if origin in (set, frozenset, AbstractSet, typing.AbstractSet) and isinstance(
         value, (list, set, frozenset, AbstractSet)
     ):
+        if not getattr(converter, "enable_generic_sets", False):
+            return cast(Any, value)
         elem_type = args[0] if args else None
-        coerced = [_coerce_to_type(item, elem_type, converter) for item in value]
+        coerced: list[Any] = [
+            _coerce_to_type(item, elem_type, converter)
+            for item in cast("Iterable[Any]", value)
+        ]
         if origin is frozenset:
             return frozenset(coerced)
         return set(coerced)
@@ -608,12 +667,12 @@ def _resolve_forward_refs(tp: Any, globalns: dict[str, Any]) -> Any:
     """
     if isinstance(tp, str):
         try:
-            tp = eval(tp, globalns)  # noqa: S307 - resolves caller-authored annotations
+            tp = eval(tp, globalns)
         except Exception:
             return tp
     elif isinstance(tp, typing.ForwardRef):
         try:
-            tp = eval(tp.__forward_arg__, globalns)  # noqa: S307
+            tp = eval(tp.__forward_arg__, globalns)
         except Exception:
             return tp
 

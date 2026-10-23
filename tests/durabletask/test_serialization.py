@@ -9,19 +9,20 @@ public surface is the ``DataConverter`` abstraction (see
 """
 
 import json
+import subprocess
+import sys
 from collections import namedtuple
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, List, Optional, Union, get_args
 
 import pytest
-
 from durabletask.serialization import _AUTO_SERIALIZED as AUTO_SERIALIZED
+from durabletask.serialization import JsonDataConverter
 from durabletask.serialization import _coerce_to_type as coerce_to_type
 from durabletask.serialization import _from_json as from_json
 from durabletask.serialization import _resolve_forward_refs as resolve_forward_refs
 from durabletask.serialization import _to_json as to_json
-
 
 # ----- Test fixtures -----
 
@@ -548,7 +549,7 @@ def test_from_json_hook_unrelated_second_param_is_not_treated_as_converter():
 def test_resolve_forward_refs_resolves_string_element_type():
     # ``list["Address"]`` evaluates to a generic whose arg is the raw string
     # "Address" -- exactly what 3.10 leaves behind.
-    resolved = resolve_forward_refs(list["Address"], {"Address": Address})
+    resolved = resolve_forward_refs(List["Address"], {"Address": Address})
     assert get_args(resolved) == (Address,)
 
 
@@ -582,34 +583,84 @@ class FrozenAddress:
     city: str
 
 
-def test_from_json_coerces_set_of_primitives():
-    encoded = to_json(["a", "b", "c"])
-    result = from_json(encoded, set[str])
-    assert isinstance(result, set)
-    assert result == {"a", "b", "c"}
-
-
-def test_from_json_coerces_frozenset_of_primitives():
-    encoded = to_json([1, 2, 3])
-    result = from_json(encoded, frozenset[int])
-    assert isinstance(result, frozenset)
-    assert result == frozenset({1, 2, 3})
-
-
-def test_from_json_coerces_set_of_dataclasses():
-    encoded = to_json([
-        {"street": "1 Main St", "city": "Redmond"},
-        {"street": "2 1st Ave", "city": "Seattle"},
-    ])
-    result = from_json(encoded, set[FrozenAddress])
-    assert isinstance(result, set)
-    assert all(isinstance(item, FrozenAddress) for item in result)
-    assert FrozenAddress("1 Main St", "Redmond") in result
-
-
 def test_to_json_serializes_set_and_frozenset():
     encoded_set = to_json({"b", "a"})
     assert json.loads(encoded_set) == ["a", "b"]
 
     encoded_frozenset = to_json(frozenset([2, 1]))
     assert json.loads(encoded_frozenset) == [1, 2]
+
+
+def test_set_serialization_deterministic_across_hash_seeds():
+    """Verify that sets of unorderable custom objects (like frozen dataclasses without order=True)
+    are deterministically serialized across separate processes with differing PYTHONHASHSEED."""
+    code = """
+from dataclasses import dataclass
+from durabletask.serialization import JsonDataConverter
+
+@dataclass(frozen=True)
+class Entry:
+    id: str
+    val: int
+
+s = {Entry("delta", 4), Entry("alpha", 1), Entry("charlie", 3), Entry("bravo", 2)}
+conv = JsonDataConverter()
+print(conv.serialize(s))
+"""
+    res1 = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env={"PYTHONHASHSEED": "1", "PYTHONPATH": r"C:\Users\hardi\durabletask-python-pr310"},
+    ).stdout.strip()
+
+    res2 = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env={"PYTHONHASHSEED": "2", "PYTHONPATH": r"C:\Users\hardi\durabletask-python-pr310"},
+    ).stdout.strip()
+
+    res3 = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env={"PYTHONHASHSEED": "999", "PYTHONPATH": r"C:\Users\hardi\durabletask-python-pr310"},
+    ).stdout.strip()
+
+    assert res1 == res2 == res3
+    expected = '[{"id": "alpha", "val": 1}, {"id": "bravo", "val": 2}, {"id": "charlie", "val": 3}, {"id": "delta", "val": 4}]'
+    assert res1 == expected
+
+
+def test_deserialize_coerces_set_when_opted_in():
+    converter = JsonDataConverter(enable_generic_sets=True)
+    encoded = converter.serialize(["a", "b", "c"])
+    assert encoded is not None
+    result = converter.deserialize(encoded, set[str])
+    assert isinstance(result, set)
+    assert result == {"a", "b", "c"}
+
+    encoded_int = converter.serialize([1, 2, 3])
+    assert encoded_int is not None
+    result_frozen = converter.deserialize(encoded_int, frozenset[int])
+    assert isinstance(result_frozen, frozenset)
+    assert result_frozen == frozenset({1, 2, 3})
+
+    encoded_dc = json.dumps([
+        {"street": "1 Main St", "city": "Redmond"},
+        {"street": "2 1st Ave", "city": "Seattle"},
+    ])
+    result_dc = converter.deserialize(encoded_dc, set[FrozenAddress])
+    assert isinstance(result_dc, set)
+    assert all(isinstance(item, FrozenAddress) for item in result_dc)
+    assert FrozenAddress("1 Main St", "Redmond") in result_dc
+
+
+def test_deserialize_preserves_raw_array_when_opted_out():
+    default_converter = JsonDataConverter()
+    payload = '["b", "a", "b"]'
+    result = default_converter.deserialize(payload, set[str])
+    # Preserves list and duplicates for replay compatibility
+    assert isinstance(result, list)
+    assert result == ["b", "a", "b"]

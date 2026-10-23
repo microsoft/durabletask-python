@@ -545,8 +545,6 @@ def test_multi_member_union_field_is_not_force_coerced(conv):
 @pytest.mark.parametrize("value", [
     datetime(2020, 1, 1, 12, 0, 0),
     Decimal("1.5"),
-    {1, 2, 3},
-    frozenset({1, 2}),
     b"bytes",
 ])
 def test_unsupported_types_raise_clear_typeerror(conv, value):
