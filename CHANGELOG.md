@@ -14,6 +14,7 @@ by one or more task hubs.
 
 FIXED
 
+- Added deterministic serialization for `set`, `frozenset`, and `collections.abc.Set` containers, and enabled opt-in generic set reconstruction (`enable_generic_sets`) in `JsonDataConverter` to preserve existing-instance replay compatibility.
 - Large-payload externalization now checks every eligible payload's maximum
 size before uploading or replacing any protobuf values, including carryover
 events and entity payloads, for both synchronous and asynchronous calls.
