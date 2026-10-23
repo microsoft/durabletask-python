@@ -14,7 +14,7 @@ by one or more task hubs.
 
 FIXED
 
-- Implemented `__hash__` and `__repr__` for `EntityInstanceId`, enabling usage in sets, dict keys, and clear debug representations.
+- Implemented `__hash__` and `__repr__` for `EntityInstanceId`, making identity attributes immutable to guarantee hash stability when used in sets or dict keys.
 - Large-payload externalization now checks every eligible payload's maximum
 size before uploading or replacing any protobuf values, including carryover
 events and entity payloads, for both synchronous and asynchronous calls.

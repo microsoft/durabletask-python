@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import copy
+import pickle
+
 import pytest
 from durabletask.entities import EntityInstanceId
 
@@ -90,3 +93,60 @@ def test_entity_instance_id_repr():
     eid = EntityInstanceId("MyEntity", "InstanceKey")
     expected = "EntityInstanceId(entity='myentity', key='InstanceKey')"
     assert repr(eid) == expected
+
+
+def test_entity_instance_id_immutable():
+    """Verify that entity and key cannot be reassigned or deleted after construction,
+    ensuring hash stability when instances are stored in sets or dicts."""
+    eid = EntityInstanceId("Counter", "key1")
+
+    with pytest.raises(AttributeError):
+        eid.entity = "other"
+
+    with pytest.raises(AttributeError):
+        eid.key = "other_key"
+
+    with pytest.raises(AttributeError):
+        eid.custom_attr = "value"
+
+    with pytest.raises(AttributeError):
+        del eid.entity
+
+    with pytest.raises(AttributeError):
+        del eid.key
+
+    # Verify the original values are unchanged
+    assert eid.entity == "counter"
+    assert eid.key == "key1"
+
+
+def test_entity_instance_id_immutable_dict_stability():
+    """Verify that immutability preserves dict/set lookup integrity."""
+    eid = EntityInstanceId("Counter", "key1")
+    mapping = {eid: "value"}
+    s = {eid}
+
+    # Attempt mutation - should be rejected
+    with pytest.raises(AttributeError):
+        eid.entity = "other"
+
+    # Lookups with an equal instance must still succeed
+    lookup = EntityInstanceId("counter", "key1")
+    assert mapping[lookup] == "value"
+    assert lookup in s
+
+
+def test_entity_instance_id_copy_and_pickle():
+    """Verify that immutable EntityInstanceId instances can be copied and pickled."""
+    eid = EntityInstanceId("Counter", "key1")
+
+    # Copying should preserve identity / immutability
+    assert copy.copy(eid) is eid
+    assert copy.deepcopy(eid) is eid
+
+    # Pickling should preserve equality and hash
+    pickled = pickle.loads(pickle.dumps(eid))
+    assert pickled == eid
+    assert hash(pickled) == hash(eid)
+    assert pickled.entity == "counter"
+    assert pickled.key == "key1"
