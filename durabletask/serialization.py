@@ -340,6 +340,22 @@ def _from_json(
     return _coerce_to_type(raw, expected_type, converter)
 
 
+def _deterministic_set_sort_key(item: Any) -> tuple[int, float | int, str, str, str]:
+    """Return a deterministic, total-ordering sort key for an unordered set element.
+
+    Elements are ordered primarily by category (numbers vs. other JSON-encodable
+    values) and recursively encoded JSON representation, with type qualname and
+    representation as tie-breakers. This ensures deterministic serialization
+    across independent processes regardless of PYTHONHASHSEED or native comparison
+    semantics (such as frozenset partial ordering).
+    """
+    if isinstance(item, (int, float)) and not isinstance(item, bool):
+        encoded = json.dumps(item, default=_encode_custom_object, sort_keys=True)
+        return (0, item, encoded, type(item).__qualname__, repr(item))
+    encoded = json.dumps(item, default=_encode_custom_object, sort_keys=True)
+    return (1, 0, encoded, type(item).__qualname__, repr(item))
+
+
 def _encode_custom_object(o: Any) -> Any:
     """``default`` hook for :func:`json.dumps` that emits plain JSON.
 
@@ -365,19 +381,12 @@ def _encode_custom_object(o: Any) -> Any:
     if isinstance(o, (set, frozenset, AbstractSet)):
         items: AbstractSet[Any] = cast("AbstractSet[Any]", o)
         try:
-            return sorted(items)
-        except TypeError:
-            try:
-                def _set_sort_key(item: Any) -> tuple[str, str, str]:
-                    encoded = json.dumps(item, default=_encode_custom_object, sort_keys=True)
-                    return (encoded, type(item).__qualname__, repr(item))
-
-                return sorted(items, key=_set_sort_key)
-            except Exception as e:
-                raise TypeError(
-                    f"Cannot deterministically serialize set of type '{type(items).__name__}' "
-                    f"because its elements cannot be compared or deterministically encoded: {e}"
-                ) from e
+            return sorted(items, key=_deterministic_set_sort_key)
+        except Exception as e:
+            raise TypeError(
+                f"Cannot deterministically serialize set of type '{type(items).__name__}' "
+                f"because its elements cannot be compared or deterministically encoded: {e}"
+            ) from e
     if isinstance(o, enum.Enum):
         # Emit the member's underlying value (a primitive). Reconstruction is
         # type-directed: passing the enum type to ``deserialize`` rebuilds the

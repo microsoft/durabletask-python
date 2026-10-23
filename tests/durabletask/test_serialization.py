@@ -9,8 +9,10 @@ public surface is the ``DataConverter`` abstraction (see
 """
 
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 from collections import namedtuple
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -590,47 +592,99 @@ def test_to_json_serializes_set_and_frozenset():
     encoded_frozenset = to_json(frozenset([2, 1]))
     assert json.loads(encoded_frozenset) == [1, 2]
 
+    # Verify disjoint and nested frozenset in-process serialization
+    encoded_disjoint = to_json({
+        frozenset({"alpha"}),
+        frozenset({"beta"}),
+        frozenset({"gamma"}),
+    })
+    assert json.loads(encoded_disjoint) == [["alpha"], ["beta"], ["gamma"]]
+
+    encoded_nested = to_json({
+        frozenset({frozenset({"b", "a"}), frozenset({"c"})}),
+        frozenset({frozenset({"d"})}),
+    })
+    assert json.loads(encoded_nested) == [[["a", "b"], ["c"]], [["d"]]]
+
 
 def test_set_serialization_deterministic_across_hash_seeds():
-    """Verify that sets of unorderable custom objects (like frozen dataclasses without order=True)
+    """Verify that sets of disjoint frozensets, nested frozensets, and unorderable custom objects
     are deterministically serialized across separate processes with differing PYTHONHASHSEED."""
+    repo_root = str(Path(__file__).resolve().parents[2])
     code = """
+import json
 from dataclasses import dataclass
 from durabletask.serialization import JsonDataConverter
 
+conv = JsonDataConverter()
+
+# Case A: Disjoint frozensets (exposes frozenset partial-ordering defects)
+case_a = conv.serialize({
+    frozenset({"alpha"}),
+    frozenset({"beta"}),
+    frozenset({"gamma"}),
+})
+
+# Case B: Nested frozensets (multi-element, multi-level nesting)
+case_b = conv.serialize({
+    frozenset({frozenset({"b", "a"}), frozenset({"c"})}),
+    frozenset({frozenset({"d"})}),
+})
+
+# Case C: Non-orderable custom objects (frozen dataclass without order=True)
 @dataclass(frozen=True)
 class Entry:
     id: str
     val: int
 
-s = {Entry("delta", 4), Entry("alpha", 1), Entry("charlie", 3), Entry("bravo", 2)}
-conv = JsonDataConverter()
-print(conv.serialize(s))
+case_c = conv.serialize({
+    Entry("delta", 4),
+    Entry("alpha", 1),
+    Entry("charlie", 3),
+    Entry("bravo", 2),
+})
+
+print(json.dumps({"a": case_a, "b": case_b, "c": case_c}))
 """
-    res1 = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        env={"PYTHONHASHSEED": "1", "PYTHONPATH": r"C:\Users\hardi\durabletask-python-pr310"},
-    ).stdout.strip()
+    seeds = ["0", "1", "2", "42", "999"]
+    outputs: dict[str, dict[str, str]] = {}
 
-    res2 = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        env={"PYTHONHASHSEED": "2", "PYTHONPATH": r"C:\Users\hardi\durabletask-python-pr310"},
-    ).stdout.strip()
+    for seed in seeds:
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = (
+            f"{repo_root}{os.pathsep}{env['PYTHONPATH']}"
+            if "PYTHONPATH" in env
+            else repo_root
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert proc.returncode == 0, (
+            f"Subprocess failed for seed {seed}:\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+        )
+        outputs[seed] = json.loads(proc.stdout.strip())
 
-    res3 = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        env={"PYTHONHASHSEED": "999", "PYTHONPATH": r"C:\Users\hardi\durabletask-python-pr310"},
-    ).stdout.strip()
+    base = outputs[seeds[0]]
+    for seed in seeds[1:]:
+        assert outputs[seed] == base, (
+            f"Deterministic serialization failed between seed {seeds[0]} and {seed}:\n"
+            f"Seed {seeds[0]}: {base}\nSeed {seed}: {outputs[seed]}"
+        )
 
-    assert res1 == res2 == res3
-    expected = '[{"id": "alpha", "val": 1}, {"id": "bravo", "val": 2}, {"id": "charlie", "val": 3}, {"id": "delta", "val": 4}]'
-    assert res1 == expected
+    expected_a = '[["alpha"], ["beta"], ["gamma"]]'
+    expected_b = '[[["a", "b"], ["c"]], [["d"]]]'
+    expected_c = (
+        '[{"id": "alpha", "val": 1}, {"id": "bravo", "val": 2}, '
+        '{"id": "charlie", "val": 3}, {"id": "delta", "val": 4}]'
+    )
+
+    assert base["a"] == expected_a
+    assert base["b"] == expected_b
+    assert base["c"] == expected_c
 
 
 def test_deserialize_coerces_set_when_opted_in():
