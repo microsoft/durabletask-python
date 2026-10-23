@@ -150,3 +150,33 @@ def test_entity_instance_id_copy_and_pickle():
     assert hash(pickled) == hash(eid)
     assert pickled.entity == "counter"
     assert pickled.key == "key1"
+
+
+class _SubclassEntityId(EntityInstanceId):
+    @property
+    def custom_name(self) -> str:
+        return self.entity.upper()
+
+
+def test_entity_instance_id_subclass_pickle():
+    """Verify that unpickling a subclass of EntityInstanceId preserves the concrete type."""
+    custom = _SubclassEntityId("Counter", "key1")
+    assert isinstance(custom, _SubclassEntityId)
+    assert custom.custom_name == "COUNTER"
+
+    restored = pickle.loads(pickle.dumps(custom))
+    assert type(restored) is _SubclassEntityId
+    assert isinstance(restored, _SubclassEntityId)
+    assert restored.custom_name == "COUNTER"
+    assert restored.entity == "counter"
+    assert restored.key == "key1"
+    assert restored == custom
+    assert hash(restored) == hash(custom)
+
+    # Immutability guarantees remain intact after unpickling
+    with pytest.raises(AttributeError):
+        restored.entity = "other"
+    with pytest.raises(AttributeError):
+        restored.key = "other"
+    with pytest.raises(AttributeError):
+        del restored.entity

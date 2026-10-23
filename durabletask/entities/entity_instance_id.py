@@ -36,7 +36,7 @@ class EntityInstanceId:
         return self
 
     def __reduce__(self) -> tuple[type["EntityInstanceId"], tuple[str, str]]:
-        return (EntityInstanceId, (self._entity, self._key))
+        return (type(self), (self._entity, self._key))
 
     def __str__(self) -> str:
         return f"@{self.entity}@{self.key}"
