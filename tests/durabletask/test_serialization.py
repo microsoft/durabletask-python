@@ -592,6 +592,10 @@ def test_to_json_serializes_set_and_frozenset():
     encoded_frozenset = to_json(frozenset([2, 1]))
     assert json.loads(encoded_frozenset) == [1, 2]
 
+    # Numeric sets follow lexical JSON ordering (e.g. "10" < "2")
+    encoded_numeric_lexical = to_json({2, 10})
+    assert json.loads(encoded_numeric_lexical) == [10, 2]
+
     # Verify disjoint and nested frozenset in-process serialization
     encoded_disjoint = to_json({
         frozenset({"alpha"}),
@@ -607,13 +611,60 @@ def test_to_json_serializes_set_and_frozenset():
     assert json.loads(encoded_nested) == [[["a", "b"], ["c"]], [["d"]]]
 
 
+def test_set_serialization_non_finite_numbers():
+    """Verify that sets with non-finite numbers (NaN, Infinity, -Infinity)
+    serialize deterministically with lexical JSON string sorting."""
+    import math
+
+    s = {float("nan"), float("inf"), float("-inf"), 2.0, 10.0}
+    encoded = to_json(s)
+    parsed = json.loads(encoded)
+    # Lexical order of canonical JSON strings:
+    # "-Infinity", "10.0", "2.0", "Infinity", "NaN"
+    assert parsed[0] == float("-inf")
+    assert parsed[1] == 10.0
+    assert parsed[2] == 2.0
+    assert parsed[3] == float("inf")
+    assert math.isnan(parsed[4])
+
+
+def test_set_serialization_equal_canonical_keys_differently_ordered_dicts():
+    """Verify that custom objects with identical canonical JSON but differently ordered
+    dictionaries emit normalized values without order leaks."""
+    class CustomDictObj:
+        def __init__(self, data: dict[str, Any], tag: str):
+            self.data = data
+            self.tag = tag
+
+        def to_json(self) -> dict[str, Any]:
+            return self.data
+
+        def __hash__(self) -> int:
+            return hash(self.tag)
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, CustomDictObj) and self.tag == other.tag
+
+    obj1 = CustomDictObj({"z": 100, "a": 1, "m": 50}, "obj1")
+    obj2 = CustomDictObj({"a": 1, "m": 50, "z": 100}, "obj2")
+    s = {obj1, obj2}
+    encoded = to_json(s)
+    parsed = json.loads(encoded)
+    # Both elements must be normalized to canonical sorted key order: {"a": 1, "m": 50, "z": 100}
+    assert len(parsed) == 2
+    assert parsed[0] == {"a": 1, "m": 50, "z": 100}
+    assert parsed[1] == {"a": 1, "m": 50, "z": 100}
+
+
 def test_set_serialization_deterministic_across_hash_seeds():
-    """Verify that sets of disjoint frozensets, nested frozensets, and unorderable custom objects
+    """Verify that sets of disjoint frozensets, nested frozensets, unorderable custom objects,
+    non-finite numbers, and equal canonical keys with differently ordered dictionaries
     are deterministically serialized across separate processes with differing PYTHONHASHSEED."""
     repo_root = str(Path(__file__).resolve().parents[2])
     code = """
 import json
 from dataclasses import dataclass
+from typing import Any
 from durabletask.serialization import JsonDataConverter
 
 conv = JsonDataConverter()
@@ -644,7 +695,27 @@ case_c = conv.serialize({
     Entry("bravo", 2),
 })
 
-print(json.dumps({"a": case_a, "b": case_b, "c": case_c}))
+# Case D: Numeric sets with lexical JSON ordering and non-finite floats
+case_d = conv.serialize({float("nan"), float("inf"), float("-inf"), 2.0, 10.0})
+
+# Case E: Equal canonical keys with differently ordered dictionaries
+class DictItem:
+    def __init__(self, data: dict[str, Any], tag: str):
+        self.data = data
+        self.tag = tag
+    def to_json(self) -> dict[str, Any]:
+        return self.data
+    def __hash__(self) -> int:
+        return hash(self.tag)
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, DictItem) and self.tag == other.tag
+
+case_e = conv.serialize({
+    DictItem({"z": 10, "a": 1}, "item1"),
+    DictItem({"a": 1, "z": 10}, "item2"),
+})
+
+print(json.dumps({"a": case_a, "b": case_b, "c": case_c, "d": case_d, "e": case_e}))
 """
     seeds = ["0", "1", "2", "42", "999"]
     outputs: dict[str, dict[str, str]] = {}
@@ -681,10 +752,14 @@ print(json.dumps({"a": case_a, "b": case_b, "c": case_c}))
         '[{"id": "alpha", "val": 1}, {"id": "bravo", "val": 2}, '
         '{"id": "charlie", "val": 3}, {"id": "delta", "val": 4}]'
     )
+    expected_d = '[-Infinity, 10.0, 2.0, Infinity, NaN]'
+    expected_e = '[{"a": 1, "z": 10}, {"a": 1, "z": 10}]'
 
     assert base["a"] == expected_a
     assert base["b"] == expected_b
     assert base["c"] == expected_c
+    assert base["d"] == expected_d
+    assert base["e"] == expected_e
 
 
 def test_deserialize_coerces_set_when_opted_in():

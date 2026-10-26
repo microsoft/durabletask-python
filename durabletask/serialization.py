@@ -134,7 +134,9 @@ class JsonDataConverter(DataConverter):
     ``SimpleNamespace`` handling, and nested values are encoded recursively, so
     a dataclass (or any object) with a ``to_json`` hook -- including one nested
     inside another dataclass, ``list``, or ``dict`` -- round-trips through its
-    own hooks.
+    own hooks. Sets and frozensets serialize to JSON arrays ordered
+    deterministically by their canonical JSON representation (using lexical
+    string order, so numeric sets like ``{2, 10}`` serialize as ``[10, 2]``).
 
     Deserialization (and value-level :meth:`coerce`) is **best-effort**: when a
     ``target_type`` is supplied and the value cannot be coerced to it, the raw
@@ -296,9 +298,12 @@ def _to_json(obj: Any) -> str:
 
     Builtins serialize to plain JSON. Objects exposing a ``to_json()`` method,
     dataclasses, and ``SimpleNamespace`` instances are serialized to plain JSON
-    as well (without any type marker), recursively. Custom objects can be
-    reconstructed on the receiving side by passing ``expected_type`` to
-    :func:`_from_json`.
+    as well (without any type marker), recursively. Sets and frozensets are
+    serialized as JSON arrays with elements deterministically ordered by their
+    canonical JSON string representation (note that numeric set elements follow
+    lexical JSON ordering, e.g. ``{2, 10}`` serializes as ``[10, 2]``). Custom
+    objects can be reconstructed on the receiving side by passing ``expected_type``
+    to :func:`_from_json`.
     """
     try:
         return json.dumps(obj, default=_encode_custom_object)
@@ -340,22 +345,6 @@ def _from_json(
     return _coerce_to_type(raw, expected_type, converter)
 
 
-def _deterministic_set_sort_key(item: Any) -> tuple[int, float | int, str, str, str]:
-    """Return a deterministic, total-ordering sort key for an unordered set element.
-
-    Elements are ordered primarily by category (numbers vs. other JSON-encodable
-    values) and recursively encoded JSON representation, with type qualname and
-    representation as tie-breakers. This ensures deterministic serialization
-    across independent processes regardless of PYTHONHASHSEED or native comparison
-    semantics (such as frozenset partial ordering).
-    """
-    if isinstance(item, (int, float)) and not isinstance(item, bool):
-        encoded = json.dumps(item, default=_encode_custom_object, sort_keys=True)
-        return (0, item, encoded, type(item).__qualname__, repr(item))
-    encoded = json.dumps(item, default=_encode_custom_object, sort_keys=True)
-    return (1, 0, encoded, type(item).__qualname__, repr(item))
-
-
 def _encode_custom_object(o: Any) -> Any:
     """``default`` hook for :func:`json.dumps` that emits plain JSON.
 
@@ -380,8 +369,24 @@ def _encode_custom_object(o: Any) -> Any:
         return to_json_hook(o)
     if isinstance(o, (set, frozenset, AbstractSet)):
         items: AbstractSet[Any] = cast("AbstractSet[Any]", o)
+        # Sets and frozensets are unordered collections. To ensure deterministic
+        # serialization across processes, worker replays, and PYTHONHASHSEED
+        # variations, elements are individually encoded to canonical JSON
+        # (with sort_keys=True), sorted lexically by their encoded JSON string,
+        # and emitted as normalized parsed values.
+        #
+        # Emitting the normalized parsed values rather than original objects
+        # guarantees identical order and eliminates leaks from dict insertion
+        # order variations, NaN/non-finite comparison anomalies, or partial
+        # ordering in frozensets. A consequence of sorting canonical JSON strings
+        # is lexical ordering for numeric sets (e.g., {2, 10} serializes as
+        # [10, 2]).
         try:
-            return sorted(items, key=_deterministic_set_sort_key)
+            encoded_items = sorted(
+                json.dumps(item, default=_encode_custom_object, sort_keys=True)
+                for item in items
+            )
+            return [json.loads(encoded) for encoded in encoded_items]
         except Exception as e:
             raise TypeError(
                 f"Cannot deterministically serialize set of type '{type(items).__name__}' "
