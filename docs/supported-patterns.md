@@ -68,6 +68,28 @@ Garbage collection could already trigger finalization; completion-only timing
 was never guaranteed. Explicit dispatch teardown does not guarantee cleanup
 across process failure.
 
+Unexpected non-cancellation `BaseException` exits from orchestration execution,
+result serialization, or forced generator teardown fail the orchestration with the exception's type,
+message, and stack trace. An existing orchestration failure is retained if
+teardown also fails. Outstanding acquired entity locks are released with the
+failed response; durable work and status changes made only by teardown are not
+committed.
+
+The gRPC worker does not turn `asyncio.CancelledError`, `GeneratorExit`,
+`SystemExit`, or `KeyboardInterrupt` into orchestration failures. This also applies
+to nested exception groups containing these signals on Python 3.11 and later.
+The existing warning-only handling of direct `asyncio.CancelledError` during
+forced teardown is unchanged. Other cancellation or process-control exits
+propagate after the worker attempts to abandon the accepted dispatch.
+
+If a completion or abandonment RPC raises, its server-side outcome may be
+unknown. The worker logs the uncertainty and closes the dispatch's originating
+work-item stream so the scheduler can recover ownership. It does not retry an
+uncertain RPC or send a conflicting completion or abandonment. Other work owned
+by that stream can also be redelivered. This is not an exactly-once execution
+guarantee or a bounded recovery-time guarantee. Cancelling an asyncio await of a
+still-running executor thread does not abandon that thread's dispatch.
+
 ## Fan-out/fan-in
 
 An orchestration can fan-out a dynamic number of function calls in parallel and then fan-in the

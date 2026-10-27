@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import json
+import pickle
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -925,6 +926,33 @@ def test_entity_id_maps_to_entity_instance_id():
     assert isinstance(entity_id, EntityInstanceId)
     assert entity_id.name == "counter"
     assert str(entity_id) == "@counter@one"
+
+
+def test_entity_id_pickle_round_trip():
+    with pytest.warns(DeprecationWarning):
+        entity_id = df.EntityId("Counter", "one")
+
+    restored = pickle.loads(pickle.dumps(entity_id))
+    assert type(restored) is df.EntityId
+    assert isinstance(restored, df.EntityId)
+    assert restored.name == "counter"
+    assert restored.entity == "counter"
+    assert restored.key == "one"
+    assert str(restored) == "@counter@one"
+    assert restored == entity_id
+    assert hash(restored) == hash(entity_id)
+
+    # Immutability guarantees remain intact after unpickling
+    with pytest.raises(AttributeError):
+        restored.entity = "other"
+    with pytest.raises(AttributeError):
+        restored.key = "other"
+    with pytest.raises(AttributeError):
+        restored.name = "other"
+    with pytest.raises(AttributeError):
+        del restored.entity
+    with pytest.raises(AttributeError):
+        del restored.key
 
 
 def test_entity_id_url_path():

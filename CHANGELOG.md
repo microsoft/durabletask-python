@@ -14,7 +14,7 @@ by one or more task hubs.
 
 FIXED
 
-- Added deterministic serialization for `set`, `frozenset`, and `collections.abc.Set` containers, and enabled opt-in generic set reconstruction (`enable_generic_sets`) in `JsonDataConverter` to preserve existing-instance replay compatibility.
+- Implemented `__hash__` and `__repr__` for `EntityInstanceId`, making identity attributes immutable to guarantee hash stability when used in sets or dict keys.
 - Large-payload externalization now checks every eligible payload's maximum
 size before uploading or replacing any protobuf values, including carryover
 events and entity payloads, for both synchronous and asynchronous calls.
@@ -23,6 +23,12 @@ now takes precedence over hypothetical earlier storage failures.
 - Orchestrations that exceed the configured external payload storage limit now
 fail without retrying and release their entity locks, allowing other callers to
 progress. Transient payload-store failures remain retryable.
+- Previously unhandled non-cancellation `BaseException` exits, including result
+serialization and generator teardown failures, now fail with a clear reason instead of leaving an accepted dispatch
+unfinished. Cancellation and process-control signals retain their semantics.
+The gRPC worker abandons work that exits before an outcome is sent and resets
+the originating work-item stream after an uncertain completion or abandonment
+RPC, allowing scheduler ownership recovery without retrying an uncertain outcome.
 - Orchestrator generators are now closed at the end of each dispatch, including
 while waiting for durable work, releasing resources held by async bridges.
 `finally` blocks and context-manager exits can run before orchestration completion
