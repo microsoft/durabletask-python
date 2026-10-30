@@ -254,13 +254,20 @@ def new_failure_details(
                         get_qualified_name(type(ex)),
                         exc_info=True)
 
+    if isinstance(ex, BaseExceptionGroup):
+        ex = cast(BaseExceptionGroup[BaseException], ex)
+        # Bound group rendering; the protobuf does not model every child.
+        stack_trace = traceback.TracebackException.from_exception(
+            ex, max_group_width=15, max_group_depth=10).format()
+    elif isinstance(ex, Exception):
+        stack_trace = traceback.format_tb(ex.__traceback__)
+    else:
+        stack_trace = traceback.format_exception(ex)
+
     failure_details = pb.TaskFailureDetails(
         errorType=get_qualified_name(type(ex)),
         errorMessage=str(ex),
-        stackTrace=wrappers_pb2.StringValue(value=''.join(
-            traceback.format_tb(ex.__traceback__)
-            if isinstance(ex, Exception) and not isinstance(ex, BaseExceptionGroup)
-            else traceback.format_exception(ex))),
+        stackTrace=wrappers_pb2.StringValue(value=''.join(stack_trace)),
         innerFailure=(
             new_failure_details(
                 inner, exception_properties_provider, logger, _visited)

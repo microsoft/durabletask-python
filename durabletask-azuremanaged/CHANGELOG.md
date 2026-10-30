@@ -14,12 +14,16 @@ CHANGED
 preserve Azure Managed subclass types in type checkers.
 - With the corresponding core SDK update, multiple task completion callback
 failures raise the built-in `ExceptionGroup`; a single failure is still raised
-directly.
+directly. The first callback error remains the explicit cause and serialized
+inner failure. Branches on the previous aggregate exception type or message
+can change during replay; see the [core upgrade warning](../CHANGELOG.md#unreleased).
 
 FIXED
 
 - With the corresponding core SDK update, grouped failures retain nested
-exception messages, tracebacks, and notes in failure details.
+exception messages, tracebacks, and notes in failure details. Tracebacks are
+limited to 15 children per group and 10 group levels with truncation markers;
+group children are not serialized as a complete structured tree.
 - With the corresponding core `durabletask` SDK fix, oversized messages fail
 large-payload validation before any uploads or payload replacements. Size
 errors now take precedence over hypothetical earlier storage failures.

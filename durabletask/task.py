@@ -654,7 +654,7 @@ class Task(ABC, Generic[T]):
         if len(errors) == 1:
             raise errors[0]
         if errors:
-            raise ExceptionGroup("Multiple task completion callbacks failed", errors)
+            raise ExceptionGroup("Multiple task completion callbacks failed", errors) from errors[0]
 
 
 class CompositeTask(Task[T]):

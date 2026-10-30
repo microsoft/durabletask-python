@@ -613,6 +613,41 @@ def test_only_cancellable_tasks_expose_cancel():
     assert not hasattr(activity_task, "is_cancelled")
 
 
+def test_cancel_callback_group_replays_legacy_first_cause_recovery():
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        timeout = ctx.create_timer(timedelta(hours=1))
+        task.when_all([timeout])
+        task.when_all([timeout])
+        yield ctx.wait_for_external_event("cancel")
+        try:
+            timeout.cancel()
+        except Exception as error:
+            recovery = (
+                "cancellation-recovery"
+                if isinstance(error.__cause__, task.TaskCancelledError)
+                else "other-recovery")
+            return (yield ctx.call_activity(recovery))
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    start_time = datetime(2026, 1, 1)
+    # The previous callback wrapper chained the first TaskCancelledError, so
+    # this history records the cancellation branch, not the aggregate's type.
+    history = [
+        helpers.new_orchestrator_started_event(start_time),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID),
+        helpers.new_timer_created_event(1, start_time + timedelta(hours=1)),
+        helpers.new_event_raised_event("cancel"),
+        helpers.new_task_scheduled_event(2, "cancellation-recovery"),
+    ]
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(
+        TEST_INSTANCE_ID, history, [helpers.new_task_completed_event(2, '"recovered"')])
+    completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert completion.result.value == '"recovered"'
+
+
 def test_cancelled_task_get_result_raises_task_cancelled_error():
     """Tests that cancelled cancellable tasks raise TaskCancelledError from get_result."""
 
