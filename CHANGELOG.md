@@ -11,6 +11,10 @@ ADDED
 
 - Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
 by one or more task hubs.
+- Prototype support for `async def` orchestrators that `await` durable tasks,
+including activities, timers, external events, and `when_all` / `when_any`.
+Generator orchestrators remain supported. This is replay-driven syntax, not
+support for asyncio I/O inside orchestrators.
 
 FIXED
 

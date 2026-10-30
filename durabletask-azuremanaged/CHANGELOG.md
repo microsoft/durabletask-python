@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- With the corresponding core SDK prototype, `DurableTaskSchedulerWorker`
+accepts `async def` orchestrators that await durable tasks alongside generator
+orchestrators. Requires a coordinated release after the core SDK is published;
+dependency minimums are intentionally unchanged in this spike.
+
 FIXED
 
 - With the corresponding core `durabletask` SDK fix, oversized messages fail

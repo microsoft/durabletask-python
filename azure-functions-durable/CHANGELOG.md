@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- With the corresponding core SDK prototype, native and v1-style orchestrators
+can use `async def` and await durable tasks. The
+`orchestrator_generator_wrapper` test helper also accepts coroutines.
+Requires a coordinated release after the core SDK is published; dependency
+minimums are intentionally unchanged in this spike.
 - Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact
 Unicode JSON across durable clients, orchestration and entity workers, activity
 bindings, and registered blueprints. The default remains ASCII-escaped JSON.
