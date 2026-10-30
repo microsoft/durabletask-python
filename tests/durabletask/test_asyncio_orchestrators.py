@@ -347,3 +347,39 @@ def test_unsupported_work_fails_actionably(api: str) -> None:
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert any(text in complete.failureDetails.errorMessage for text in (
         "use an activity", "ordinary activity", "different loop"))
+
+
+@pytest.mark.parametrize("async_generator", [False, True])
+@pytest.mark.parametrize("unexpected", [False, True])
+def test_cleanup_failure_policy_includes_async_generator_tasks(
+        async_generator: bool, unexpected: bool, caplog: pytest.LogCaptureFixture) -> None:
+    class CleanupAbort(BaseException):
+        pass
+
+    error = CleanupAbort("cleanup failed") if unexpected else ValueError("cleanup failed")
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def resource():
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                raise error
+
+        opened = resource()
+        await anext(opened)
+        try:
+            await ctx.call_activity("wait")
+        finally:
+            if not async_generator:
+                await opened.aclose()
+
+    result = _execute(orchestrator, [], _start())
+    if unexpected:
+        complete = _completion(result)
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+        assert complete.failureDetails.errorMessage == "cleanup failed"
+        assert complete.failureDetails.errorType.endswith("CleanupAbort")
+    else:
+        assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+        assert "cleanup failed" in caplog.text

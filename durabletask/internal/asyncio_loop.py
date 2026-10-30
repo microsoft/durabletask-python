@@ -266,7 +266,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._closing = True
         self.ctx._async_cleanup = True  # pyright: ignore[reportPrivateUsage]
         try:
-            pending_at_close = {future for future in self._tasks if not future.done()}
+            completed_at_close = {future for future in self._tasks if future.done()}
             for future in tuple(self._tasks):
                 if not future.done():
                     future.cancel()
@@ -284,7 +284,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                     raise RuntimeError("Async cleanup must finish without waiting for durable or external work.")
                 if not future.cancelled():
                     error = future.exception()
-                    if error is not None and future in pending_at_close:
+                    if error is not None and future not in completed_at_close:
                         if not isinstance(error, Exception):
                             raise error
                         logger = self.ctx._logger or logging.getLogger(__name__)  # pyright: ignore[reportPrivateUsage]
