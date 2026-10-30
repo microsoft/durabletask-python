@@ -12,13 +12,14 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.serialization import (
     DEFAULT_DATA_CONVERTER,
     DataConverter,
     JsonDataConverter,
 )
+from durabletask.internal import type_discovery
+from durabletask.worker import _ActivityExecutor, _Registry
 
 
 @dataclass
@@ -219,7 +220,7 @@ def test_positional_only_receiver_name_can_be_passed_through_kwargs():
             self.self = kwargs.get("self", 0)
 
     converter = JsonDataConverter()
-    encoded = converter.serialize(PositionalReceiver(**{"self": 42}))
+    encoded = converter.serialize(PositionalReceiver(self=42))
     restored = converter.deserialize(encoded, PositionalReceiver)
     assert isinstance(restored, PositionalReceiver)
     assert restored.self == 42
@@ -375,3 +376,102 @@ def test_custom_converter_is_a_dataconverter_subclass():
     assert conv.serialize("hello") == '"HELLO"'
     assert conv.deserialize('"HELLO"') == "HELLO"
     assert conv.coerce("HELLO") == "HELLO"
+
+
+# ----- set and frozenset container support -----
+
+
+@dataclass(frozen=True)
+class TaggedOrder:
+    item: str
+    tags: set[str]
+    flags: frozenset[int]
+
+
+def test_roundtrip_dataclass_with_sets():
+    converter = JsonDataConverter(enable_generic_sets=True)
+    original = TaggedOrder(item="laptop", tags={"electronics", "sale"}, flags=frozenset({1, 2}))
+    serialized = converter.serialize(original)
+    assert serialized is not None
+    restored = converter.deserialize(serialized, TaggedOrder)
+    assert isinstance(restored, TaggedOrder)
+    assert restored.item == "laptop"
+    assert isinstance(restored.tags, set)
+    assert restored.tags == {"electronics", "sale"}
+    assert isinstance(restored.flags, frozenset)
+    assert restored.flags == frozenset({1, 2})
+
+
+def test_can_reconstruct_set_and_frozenset():
+    # By default (enable_generic_sets=False), generic sets are not reconstructed to
+    # preserve backward compatibility and existing-instance replay behavior.
+    default_converter = JsonDataConverter()
+    assert default_converter.can_reconstruct(set[PricedOrder]) is False
+    assert default_converter.can_reconstruct(frozenset[PricedOrder]) is False
+    assert default_converter.can_reconstruct(set[int]) is False
+    assert default_converter.can_reconstruct(set[str]) is False
+
+    # When opted in, supported sets (including primitive elements) return True,
+    # while unsupported unhashable element types return False.
+    opt_in_converter = JsonDataConverter(enable_generic_sets=True)
+    assert opt_in_converter.can_reconstruct(set[PricedOrder]) is True
+    assert opt_in_converter.can_reconstruct(frozenset[PricedOrder]) is True
+    assert opt_in_converter.can_reconstruct(set[int]) is True
+    assert opt_in_converter.can_reconstruct(set[str]) is True
+    assert opt_in_converter.can_reconstruct(frozenset[int]) is True
+    assert opt_in_converter.can_reconstruct(set[list[str]]) is False
+    assert opt_in_converter.can_reconstruct(set[dict[str, int]]) is False
+
+
+def test_existing_instance_replay_compatibility_preserves_list():
+    """Preserve existing-instance replay behavior for recorded arrays under set annotations.
+
+    When generic set coercion is not explicitly enabled, historical JSON arrays
+    containing duplicates and order (e.g. {"tags": ["b", "a", "b"]}) remain raw
+    lists, avoiding NonDeterminismError during orchestration replay.
+    """
+    default_converter = JsonDataConverter()
+    recorded_input = '{"item": "laptop", "tags": ["b", "a", "b"], "flags": [1, 2, 1]}'
+    restored = default_converter.deserialize(recorded_input, TaggedOrder)
+    assert isinstance(restored, TaggedOrder)
+    assert isinstance(restored.tags, list)
+    assert restored.tags == ["b", "a", "b"]
+    assert len(restored.tags) == 3
+    assert isinstance(restored.flags, list)
+    assert restored.flags == [1, 2, 1]
+    assert len(restored.flags) == 3
+
+    # With opt-in enabled, set coercion deduplicates and converts to sets
+    opt_in_converter = JsonDataConverter(enable_generic_sets=True)
+    opt_in_restored = opt_in_converter.deserialize(recorded_input, TaggedOrder)
+    assert isinstance(opt_in_restored, TaggedOrder)
+    assert isinstance(opt_in_restored.tags, set)
+    assert opt_in_restored.tags == {"a", "b"}
+    assert len(opt_in_restored.tags) == 2
+    assert isinstance(opt_in_restored.flags, frozenset)
+    assert opt_in_restored.flags == frozenset({1, 2})
+    assert len(opt_in_restored.flags) == 2
+
+
+def test_type_discovery_and_activity_execution_with_sets():
+    """Verify that type discovery recognizes set annotations when opted in,
+    enabling activities to receive sets rather than raw lists."""
+    def tag_activity(ctx: Any, tags: set[str]) -> int:
+        assert isinstance(tags, set)
+        tags.add("processed")
+        return len(tags)
+
+    reg = _Registry()
+    reg.add_activity(tag_activity)
+    logger = logging.getLogger("test_type_discovery_sets")
+
+    # With opt-in, activity input is discovered as set[str] and executed
+    conv = JsonDataConverter(enable_generic_sets=True)
+    assert type_discovery.activity_input_type(tag_activity, conv) == set[str]
+    executor = _ActivityExecutor(reg, logger, conv)
+    output = executor.execute("orch-1", "tag_activity", 1, '["item1", "item2"]')
+    assert output == "3"
+
+    # Default converter preserves input as None (raw JSON), passing list
+    default_conv = JsonDataConverter()
+    assert type_discovery.activity_input_type(tag_activity, default_conv) is None
