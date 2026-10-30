@@ -4,6 +4,7 @@ protobuf
 pytest
 pytest-asyncio
 anyio
+pydantic-ai-slim==2.60.0; python_version >= "3.11" # Framework proof, no model providers
 pytest-cov
 azure-identity
 azure-functions

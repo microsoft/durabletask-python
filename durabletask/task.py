@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import logging
 import math
+import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Coroutine, Generator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
@@ -631,6 +632,22 @@ class Task(ABC, Generic[T]):
         # Dict insertion order preserves subscription order for shared races.
         self._parents = {}
 
+    def __await__(self) -> Generator[Task[T], Any, T]:
+        """Wait for this task in a replay-driven ``async def`` orchestrator.
+
+        A local asyncio waiter does not own or cancel the durable operation.
+        """
+        from durabletask.internal.asyncio_loop import DurableEventLoop
+
+        loop = asyncio._get_running_loop()
+        if isinstance(loop, DurableEventLoop):
+            return (yield from loop.wait_durable(self).__await__())
+        if loop is not None:
+            raise RuntimeError("Durable tasks can only be awaited inside a durable orchestrator.")
+        if not self.is_complete:
+            yield self
+        return self.get_result()
+
     @property
     def is_complete(self) -> bool:
         """Returns True if the task has completed, False otherwise."""
@@ -961,8 +978,11 @@ class ActivityContext:
         return self._task_id
 
 
-# Orchestrators are generators that yield tasks, receive any type, and return TOutput
-Orchestrator: TypeAlias = Callable[[OrchestrationContext, TInput], Generator[Task[Any], Any, TOutput] | TOutput]
+# Orchestrators yield or await durable tasks, or return an immediate result.
+Orchestrator: TypeAlias = Callable[
+    [OrchestrationContext, TInput],
+    Generator[Task[Any], Any, TOutput] | Coroutine[Any, Any, TOutput] | TOutput,
+]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity: TypeAlias = Callable[[ActivityContext, TInput], TOutput]

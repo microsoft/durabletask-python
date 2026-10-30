@@ -27,6 +27,46 @@ and [Azure Durable Functions](https://learn.microsoft.com/azure/azure-functions/
 
 ## Optional Features
 
+### Async Orchestrators
+
+All three packages support `async def` orchestrators and nested async helpers.
+Existing generator orchestrators continue to work.
+
+```python
+from durabletask import task
+
+
+async def sequence(ctx: task.OrchestrationContext, value: int) -> list[int]:
+    first = await ctx.call_activity("plus_one", input=value, return_type=int)
+    pending: list[task.Task[int]] = [
+        ctx.call_activity("plus_one", input=first, return_type=int),
+        ctx.call_activity("plus_one", input=value, return_type=int),
+    ]
+    return await task.when_all(pending)
+```
+
+Register the function with `TaskHubGrpcWorker`, `DurableTaskSchedulerWorker`,
+or the Azure Functions `orchestration_trigger` decorator as usual. Functions
+also supports single-argument `async def` orchestrators using the compatibility
+context and `await context.task_all(...)`.
+
+> [!WARNING]
+> This is replay-driven await syntax, not general-purpose asyncio execution.
+> Compose durable work with `asyncio.gather`, local tasks/task groups, and
+> durable `asyncio.sleep` / timeouts within the
+> [supported contract](docs/async-orchestrators.md).
+> Perform network, storage, and other nondeterministic I/O in activities.
+> Completed foreign awaitables and synchronous side effects cannot reliably be
+> detected by the replay engine.
+
+An async helper is not a durable sub-orchestration: use
+`await ctx.call_sub_orchestrator(...)` for a separate orchestration instance.
+An `async def` function containing `yield` is an async generator, not a supported
+orchestrator. Converting an existing orchestrator must preserve durable action
+order and payloads for replay compatibility.
+See the contract for cancellation, per-dispatch async cleanup, unsupported
+ordering-sensitive APIs, framework adapters, and coordinated release rules.
+
 ### Large Payload Externalization
 
 Install the `azure-blob-payloads` extra to automatically offload oversized orchestration payloads to

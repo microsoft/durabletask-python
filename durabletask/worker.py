@@ -9,12 +9,12 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Coroutine, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
-from types import GeneratorType
+from types import CoroutineType, GeneratorType
 from enum import Enum
 from functools import partial
 from typing import Any, TypeVar, cast, overload
@@ -51,6 +51,7 @@ from durabletask.internal.grpc_resiliency import (
 from durabletask.payload import helpers as payload_helpers
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+from durabletask.internal.asyncio_loop import DurableEventLoop
 from durabletask.payload.store import PayloadStore
 from durabletask.serialization import DataConverter, JsonDataConverter
 
@@ -1582,7 +1583,7 @@ class TaskHubGrpcWorker:
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
-    _generator: Generator[task.Task[Any], Any, Any] | None
+    _generator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any] | None
     _previous_task: task.Task[Any] | None
 
     def __init__(self,
@@ -1627,22 +1628,36 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._data_converter = data_converter
         self._exception_properties_provider = exception_properties_provider
         self._logger = logger
+        self._async_loop: DurableEventLoop | None = None
+        self._async_cleanup = False
 
-    def run(self, generator: Generator[task.Task[Any], Any, Any]) -> None:
+    def run(self, generator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any]) -> None:
+        if isinstance(generator, CoroutineType):
+            self._async_loop = DurableEventLoop(self)
+            self._async_loop.start(generator)
+            return
         self._generator = generator
-        # TODO: Do something with this task
-        task = next(generator)  # this starts the generator
-        # TODO: Check if the task is null?
-        self._previous_task = task
+        self._set_next_task(generator.send(None))
+
+    def _set_next_task(self, next_task: Any) -> None:
+        if not isinstance(next_task, task.Task):
+            raise TypeError(
+                "Orchestrators must only yield or await durabletask.Task objects. "
+                "Use durable timers and task.when_all/when_any instead of asyncio APIs."
+            )
+        self._previous_task = next_task
 
     def resume(self) -> None:
+        if self._async_loop is not None:
+            self._async_loop.resume()
+            return
         if self._generator is None:
             # This is never expected unless maybe there's an issue with the history
             raise TypeError(
-                "The orchestrator generator is not initialized! Was the orchestration history corrupted?"
+                "The orchestrator is not initialized! Was the orchestration history corrupted?"
             )
 
-        # We can resume the generator only if the previously yielded task
+        # We can resume the generator or coroutine only if the previous task
         # has reached a completed state. The only time this won't be the
         # case is if the user yielded on a WhenAll task and there are still
         # outstanding child tasks that need to be completed.
@@ -1657,9 +1672,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 # This will either return a Task or raise StopIteration if it's done.
                 next_task = self._generator.send(self._previous_task.get_result())
 
-            if not isinstance(next_task, task.Task):
-                raise TypeError("The orchestrator generator yielded a non-Task object")
-            self._previous_task = next_task
+            self._set_next_task(next_task)
 
     def set_complete(
             self,
@@ -1788,6 +1801,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return current_actions
 
     def next_sequence_number(self) -> int:
+        if self._async_cleanup:
+            raise RuntimeError("Dispatch cleanup cannot schedule durable work; use normal orchestrator control flow.")
         self._sequence_number += 1
         return self._sequence_number
 
@@ -2482,9 +2497,10 @@ class _OrchestrationExecutor:
         finally:
             # Close after building the response, so the orchestrator's finally
             # blocks do not change the actions or custom status we return.
-            if ctx._generator is not None:  # pyright: ignore[reportPrivateUsage]
+            closeable = ctx._async_loop or ctx._generator  # pyright: ignore[reportPrivateUsage]
+            if closeable is not None:
                 try:
-                    ctx._generator.close()  # pyright: ignore[reportPrivateUsage]
+                    closeable.close()
                 except (Exception, asyncio.CancelledError):
                     cleanup_name = next(
                         (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),
@@ -2686,10 +2702,15 @@ class _OrchestrationExecutor:
 
                 result = fn(
                     ctx, input
-                )  # this does not execute the generator, only creates it
-                if isinstance(result, GeneratorType):
-                    # Start the orchestrator's generator function
-                    ctx.run(cast(Generator[task.Task[Any], Any, Any], result))
+                )  # this creates the generator or coroutine without executing it
+                if isinstance(result, (GeneratorType, CoroutineType)):
+                    # Both protocols suspend on durable tasks and finish with StopIteration.
+                    ctx.run(cast(Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any], result))
+                elif inspect.isasyncgen(result):
+                    raise TypeError(
+                        "Async generator orchestrators are not supported. "
+                        "Use async def with await, not yield."
+                    )
                 else:
                     # This is an orchestrator that doesn't schedule any tasks
                     ctx.set_complete(result, pb.ORCHESTRATION_STATUS_COMPLETED)
