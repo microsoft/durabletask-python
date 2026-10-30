@@ -249,6 +249,11 @@ def _is_supported_set_element(converter: DataConverter, elem_type: Any) -> bool:
         if elem_origin is frozenset:
             args = typing.get_args(elem_type)
             return not args or _is_supported_set_element(converter, args[0])
+        if elem_origin is tuple:
+            args = typing.get_args(elem_type)
+            if len(args) == 2 and args[1] is Ellipsis:
+                args = args[:1]
+            return all(_is_supported_set_element(converter, arg) for arg in args)
         return False
     if not isinstance(elem_type, type):
         return False
@@ -495,6 +500,10 @@ def _coerce_to_type(value: Any, expected_type: Any, converter: DataConverter | N
     if isinstance(value, expected_type):
         return value
 
+    if (expected_type is AbstractSet and isinstance(value, list)
+            and getattr(converter, "enable_generic_sets", False)):
+        return _coerce_generic(value, expected_type, AbstractSet, converter)
+
     from_json_hook = getattr(expected_type, "from_json", None)
     if callable(from_json_hook):
         return _invoke_from_json(from_json_hook, value, converter)
@@ -508,7 +517,7 @@ def _coerce_to_type(value: Any, expected_type: Any, converter: DataConverter | N
     except Exception as e:
         type_name = getattr(type_ctor, "__name__", None) or str(type_ctor)
         raise TypeError(
-            f"Could not coerce value of type '{type(value).__name__}' to "
+            f"Could not coerce value of type '{type(cast(object, value)).__name__}' to "
             f"'{type_name}'"
         ) from e
 

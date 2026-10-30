@@ -6,9 +6,10 @@
 import inspect
 import json
 import logging
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any
+from typing import AbstractSet as TypingAbstractSet, Any
 from unittest.mock import patch
 
 import pytest
@@ -424,6 +425,60 @@ def test_can_reconstruct_set_and_frozenset():
     assert opt_in_converter.can_reconstruct(frozenset[int]) is True
     assert opt_in_converter.can_reconstruct(set[list[str]]) is False
     assert opt_in_converter.can_reconstruct(set[dict[str, int]]) is False
+
+
+@pytest.mark.parametrize("option", ["enable_generic_sets", "enable_set_coercion"])
+@pytest.mark.parametrize("target_type,payload,expected", [
+    (set[tuple[int, int]], "[[1, 2], [3, 4]]", {(1, 2), (3, 4)}),
+    (frozenset[tuple[int, ...]], "[[1], [2, 3]]", frozenset({(1,), (2, 3)})),
+    (set[tuple[int, frozenset[str]]], '[[1, ["b", "a"]]]', {(1, frozenset({"a", "b"}))}),
+    (frozenset[frozenset[tuple[int, int]]], "[[[1, 2], [3, 4]]]",
+     frozenset({frozenset({(1, 2), (3, 4)})})),
+    (set[tuple[()]], "[[]]", {()}),
+    (set[tuple[int, str | None]], '[[1, null], [2, "x"]]', {(1, None), (2, "x")}),
+    (AbstractSet, "[2, 1, 2]", {1, 2}),
+    (TypingAbstractSet, "[2, 1, 2]", {1, 2}),
+])
+def test_opt_in_set_discovery_matches_reconstruction(
+    option: str, target_type: Any, payload: str, expected: Any,
+):
+    converter = JsonDataConverter(**{option: True})
+
+    def activity(ctx: Any, values: Any) -> Any:
+        assert isinstance(values, type(expected))
+        assert values == expected
+        return values
+
+    activity.__annotations__["values"] = target_type
+    activity.__annotations__["return"] = target_type
+    assert converter.can_reconstruct(target_type)
+    assert converter.deserialize(payload, target_type) == expected
+    assert converter.coerce(json.loads(payload), target_type) == expected
+    assert type_discovery.activity_input_type(activity, converter) == target_type
+    assert type_discovery.orchestrator_input_type(activity, converter) == target_type
+    assert type_discovery.activity_output_type(activity, converter) == target_type
+    registry = _Registry()
+    name = registry.add_activity(activity)
+    executor = _ActivityExecutor(registry, logging.getLogger("test_set_discovery"), converter)
+    output = executor.execute("instance", name, 1, payload)
+    assert converter.deserialize(output, target_type) == expected
+
+    default = JsonDataConverter()
+    assert not default.can_reconstruct(target_type)
+    assert type_discovery.activity_input_type(activity, default) is None
+    assert type_discovery.orchestrator_input_type(activity, default) is None
+    assert type_discovery.activity_output_type(activity, default) is None
+    assert default.deserialize(payload, target_type) == json.loads(payload)
+
+
+@pytest.mark.parametrize("target_type", [
+    set[tuple[list[int], int]],
+    set[tuple[dict[str, int], ...]],
+    set[tuple[frozenset[list[int]], int]],
+    frozenset[tuple[set[int], ...]],
+])
+def test_set_tuple_discovery_rejects_unhashable_elements(target_type: Any):
+    assert not JsonDataConverter(enable_generic_sets=True).can_reconstruct(target_type)
 
 
 def test_existing_instance_replay_compatibility_preserves_list():
