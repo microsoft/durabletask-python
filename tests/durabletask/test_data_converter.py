@@ -6,12 +6,16 @@
 import inspect
 import json
 import logging
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any
+from typing import AbstractSet as TypingAbstractSet, Any
 from unittest.mock import patch
 
 import pytest
+from durabletask import task
+from durabletask.internal import helpers
+from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.serialization import (
     DEFAULT_DATA_CONVERTER,
@@ -19,7 +23,7 @@ from durabletask.serialization import (
     JsonDataConverter,
 )
 from durabletask.internal import type_discovery
-from durabletask.worker import _ActivityExecutor, _Registry
+from durabletask.worker import _ActivityExecutor, _OrchestrationExecutor, _Registry
 
 
 @dataclass
@@ -423,6 +427,60 @@ def test_can_reconstruct_set_and_frozenset():
     assert opt_in_converter.can_reconstruct(set[dict[str, int]]) is False
 
 
+@pytest.mark.parametrize("option", ["enable_generic_sets", "enable_set_coercion"])
+@pytest.mark.parametrize("target_type,payload,expected", [
+    (set[tuple[int, int]], "[[1, 2], [3, 4]]", {(1, 2), (3, 4)}),
+    (frozenset[tuple[int, ...]], "[[1], [2, 3]]", frozenset({(1,), (2, 3)})),
+    (set[tuple[int, frozenset[str]]], '[[1, ["b", "a"]]]', {(1, frozenset({"a", "b"}))}),
+    (frozenset[frozenset[tuple[int, int]]], "[[[1, 2], [3, 4]]]",
+     frozenset({frozenset({(1, 2), (3, 4)})})),
+    (set[tuple[()]], "[[]]", {()}),
+    (set[tuple[int, str | None]], '[[1, null], [2, "x"]]', {(1, None), (2, "x")}),
+    (AbstractSet, "[2, 1, 2]", {1, 2}),
+    (TypingAbstractSet, "[2, 1, 2]", {1, 2}),
+])
+def test_opt_in_set_discovery_matches_reconstruction(
+    option: str, target_type: Any, payload: str, expected: Any,
+):
+    converter = JsonDataConverter(**{option: True})
+
+    def activity(ctx: Any, values: Any) -> Any:
+        assert isinstance(values, type(expected))
+        assert values == expected
+        return values
+
+    activity.__annotations__["values"] = target_type
+    activity.__annotations__["return"] = target_type
+    assert converter.can_reconstruct(target_type)
+    assert converter.deserialize(payload, target_type) == expected
+    assert converter.coerce(json.loads(payload), target_type) == expected
+    assert type_discovery.activity_input_type(activity, converter) == target_type
+    assert type_discovery.orchestrator_input_type(activity, converter) == target_type
+    assert type_discovery.activity_output_type(activity, converter) == target_type
+    registry = _Registry()
+    name = registry.add_activity(activity)
+    executor = _ActivityExecutor(registry, logging.getLogger("test_set_discovery"), converter)
+    output = executor.execute("instance", name, 1, payload)
+    assert converter.deserialize(output, target_type) == expected
+
+    default = JsonDataConverter()
+    assert not default.can_reconstruct(target_type)
+    assert type_discovery.activity_input_type(activity, default) is None
+    assert type_discovery.orchestrator_input_type(activity, default) is None
+    assert type_discovery.activity_output_type(activity, default) is None
+    assert default.deserialize(payload, target_type) == json.loads(payload)
+
+
+@pytest.mark.parametrize("target_type", [
+    set[tuple[list[int], int]],
+    set[tuple[dict[str, int], ...]],
+    set[tuple[frozenset[list[int]], int]],
+    frozenset[tuple[set[int], ...]],
+])
+def test_set_tuple_discovery_rejects_unhashable_elements(target_type: Any):
+    assert not JsonDataConverter(enable_generic_sets=True).can_reconstruct(target_type)
+
+
 def test_existing_instance_replay_compatibility_preserves_list():
     """Preserve existing-instance replay behavior for recorded arrays under set annotations.
 
@@ -451,6 +509,29 @@ def test_existing_instance_replay_compatibility_preserves_list():
     assert isinstance(opt_in_restored.flags, frozenset)
     assert opt_in_restored.flags == frozenset({1, 2})
     assert len(opt_in_restored.flags) == 2
+
+
+def test_default_converter_replays_recorded_arrays_under_set_annotations():
+    def orchestrator(ctx: task.OrchestrationContext, data: TaggedOrder):
+        yield ctx.call_activity(f"count-{len(data.tags)}")
+        return {"tags": data.tags, "flags": data.flags}
+
+    registry = _Registry()
+    name = registry.add_orchestrator(orchestrator)
+    history = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(
+            name, "legacy-sets",
+            encoded_input='{"item": "laptop", "tags": ["b", "a", "b"], "flags": [1, 2, 1]}',
+        ),
+        helpers.new_task_scheduled_event(1, "count-3"),
+    ]
+    executor = _OrchestrationExecutor(registry, logging.getLogger("test_set_replay"), JsonDataConverter())
+    result = executor.execute("legacy-sets", history, [helpers.new_task_completed_event(1, "null")])
+    assert len(result.actions) == 1
+    completion = result.actions[0].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert completion.result.value == '{"tags": ["b", "a", "b"], "flags": [1, 2, 1]}'
 
 
 def test_type_discovery_and_activity_execution_with_sets():
