@@ -9,18 +9,23 @@ public surface is the ``DataConverter`` abstraction (see
 """
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from collections import namedtuple
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, List, Optional, Union
 
 import pytest
-
+from durabletask import serialization
 from durabletask.serialization import _AUTO_SERIALIZED as AUTO_SERIALIZED
+from durabletask.serialization import JsonDataConverter
+from durabletask.serialization import _encode_custom_object
 from durabletask.serialization import _coerce_to_type as coerce_to_type
 from durabletask.serialization import _from_json as from_json
 from durabletask.serialization import _to_json as to_json
-
 
 # ----- Test fixtures -----
 
@@ -558,3 +563,442 @@ def test_dataclass_unresolvable_annotation_preserves_parsed_json():
     result = from_json('{"value": {"street": "a", "city": "b"}}', Container)
     assert isinstance(result, Container)
     assert result.value == {"street": "a", "city": "b"}
+
+# ----- set and frozenset container serialization and coercion -----
+
+
+@dataclass(frozen=True)
+class FrozenAddress:
+    street: str
+    city: str
+
+
+class SetItem:
+    """Identity-hashable value exposing a custom JSON representation."""
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def to_json(self) -> Any:
+        return self.value
+
+
+def test_to_json_serializes_set_and_frozenset():
+    encoded_set = to_json({"b", "a"})
+    assert json.loads(encoded_set) == ["a", "b"]
+
+    encoded_frozenset = to_json(frozenset([2, 1]))
+    assert json.loads(encoded_frozenset) == [1, 2]
+
+    # Numeric sets follow lexical JSON ordering (e.g. "10" < "2")
+    encoded_numeric_lexical = to_json({2, 10})
+    assert json.loads(encoded_numeric_lexical) == [10, 2]
+
+    # Verify disjoint and nested frozenset in-process serialization
+    encoded_disjoint = to_json({
+        frozenset({"alpha"}),
+        frozenset({"beta"}),
+        frozenset({"gamma"}),
+    })
+    assert json.loads(encoded_disjoint) == [["alpha"], ["beta"], ["gamma"]]
+
+    encoded_nested = to_json({
+        frozenset({frozenset({"b", "a"}), frozenset({"c"})}),
+        frozenset({frozenset({"d"})}),
+    })
+    assert json.loads(encoded_nested) == [[["a", "b"], ["c"]], [["d"]]]
+
+
+def test_set_serialization_non_finite_numbers():
+    """Verify that sets with non-finite numbers (NaN, Infinity, -Infinity)
+    serialize deterministically with lexical JSON string sorting."""
+    import math
+
+    s = {float("nan"), float("inf"), float("-inf"), 2.0, 10.0}
+    encoded = to_json(s)
+    parsed = json.loads(encoded)
+    # Lexical order of canonical JSON strings:
+    # "-Infinity", "10.0", "2.0", "Infinity", "NaN"
+    assert parsed[0] == float("-inf")
+    assert parsed[1] == 10.0
+    assert parsed[2] == 2.0
+    assert parsed[3] == float("inf")
+    assert math.isnan(parsed[4])
+
+
+def test_set_serialization_equal_canonical_keys_differently_ordered_dicts():
+    """Verify that custom objects with identical canonical JSON but differently ordered
+    dictionaries emit normalized values without order leaks."""
+    class CustomDictObj:
+        def __init__(self, data: dict[str, Any], tag: str):
+            self.data = data
+            self.tag = tag
+
+        def to_json(self) -> dict[str, Any]:
+            return self.data
+
+        def __hash__(self) -> int:
+            return hash(self.tag)
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, CustomDictObj) and self.tag == other.tag
+
+    obj1 = CustomDictObj({"z": 100, "a": 1, "m": 50}, "obj1")
+    obj2 = CustomDictObj({"a": 1, "m": 50, "z": 100}, "obj2")
+    s = {obj1, obj2}
+    encoded = to_json(s)
+    parsed = json.loads(encoded)
+    # Both elements must be normalized to canonical sorted key order: {"a": 1, "m": 50, "z": 100}
+    assert len(parsed) == 2
+    assert parsed[0] == {"a": 1, "m": 50, "z": 100}
+    assert parsed[1] == {"a": 1, "m": 50, "z": 100}
+
+
+@pytest.mark.parametrize("depth", [0, 1, 10])
+def test_set_serialization_calls_nested_hooks_once(depth: int):
+    class CountingItem:
+        calls = 0
+
+        def to_json(self):
+            self.calls += 1
+            return {"nested": [StaticWidget("value")]}
+
+    item = CountingItem()
+    value: Any = item
+    expected: Any = {"nested": ["value"]}
+    for _ in range(depth):
+        value = frozenset({value})
+        expected = [expected]
+    assert json.loads(to_json({value})) == [expected]
+    assert item.calls == 1
+
+
+def test_set_serialization_does_not_parse_or_encode_singleton_sort_keys(monkeypatch: pytest.MonkeyPatch):
+    dumps = json.dumps
+    encoded_values: list[Any] = []
+
+    def record_dumps(value: Any, **kwargs: Any) -> str:
+        encoded_values.append(value)
+        return dumps(value, **kwargs)
+
+    def unexpected_loads(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Set serialization must not parse intermediate JSON")
+
+    monkeypatch.setattr(serialization.json, "loads", unexpected_loads)
+    monkeypatch.setattr(serialization.json, "dumps", record_dumps)
+    value = frozenset({frozenset({SetItem("x" * 100000)})})
+    assert to_json(value) == dumps([["x" * 100000]])
+    assert encoded_values == [value]
+
+
+def test_set_serialization_sorts_each_normalized_element_once(monkeypatch: pytest.MonkeyPatch):
+    dumps = json.dumps
+    sort_values: list[Any] = []
+
+    def record_dumps(value: Any, **kwargs: Any) -> str:
+        if not kwargs:
+            sort_values.append(value)
+        return dumps(value, **kwargs)
+
+    monkeypatch.setattr(serialization.json, "dumps", record_dumps)
+    assert to_json({SetItem("b"), SetItem("a")}) == '["a", "b"]'
+    assert sorted(sort_values) == ["a", "b"]
+
+
+def test_set_serialization_matches_canonical_json_order():
+    values = [
+        None, True, False, -1, 1, 10, 1.0, 10.0, float("nan"),
+        float("-inf"), float("inf"), "", '"', "\\", "\n", "\u2603",
+        [], [1], [10], [1, 2], [1.0], [{}], [[]],
+        {}, {"a": 1}, {"a": 10}, {"a": 1, "b": []},
+        {"z": [1, {"b": 2, "a": 1}], "a": [[], {}]},
+    ]
+    expected = "[" + ", ".join(sorted(json.dumps(value, sort_keys=True) for value in values)) + "]"
+    assert to_json({SetItem(value) for value in values}) == expected
+
+
+def test_set_serialization_normalizes_json_object_names_before_ordering():
+    # Numeric names become strings on the wire, just like string names.
+    numeric = SetItem({2: "two", 10: "ten"})
+    strings = SetItem({"2": "two", "10": "ten"})
+    expected = '{"10": "ten", "2": "two"}'
+    assert to_json({numeric, strings}) == f"[{expected}, {expected}]"
+    assert to_json({frozenset({numeric}), frozenset({strings})}) == f"[[{expected}], [{expected}]]"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_set_serialization_collapses_equivalent_unicode_object_names(reverse: bool):
+    pairs = [("\ud83d\ude00", 1), ("\U0001f600", 2)]
+    value = dict(reversed(pairs) if reverse else pairs)
+    expected = '[{"\\ud83d\\ude00": 2}]'
+    assert to_json({SetItem(value)}) == expected
+    assert to_json({frozenset({SetItem(value)})}) == f"[{expected}]"
+
+
+@pytest.mark.parametrize("name", [
+    "ascii", "\u2603", "\U0001f600", "\ud83d\ude00", "\ud83d",
+    "\ude00", "\ud83d\ud83d\ude00", "\ude00\ud83d", "\ud83dA\ude00",
+])
+def test_set_serialization_unicode_names_match_json_normalization(name: str):
+    value = {name: 1}
+    expected = json.dumps([json.loads(json.dumps(value, sort_keys=True))])
+    assert to_json({SetItem(value)}) == expected
+
+
+def test_set_serialization_orders_normalized_unicode_names():
+    value = {"\ud83d\ude00": 1, "\ue000": 2}
+    assert to_json({SetItem(value)}) == '[{"\\ue000": 2, "\\ud83d\\ude00": 1}]'
+
+
+@pytest.mark.parametrize("value", [
+    {"\u2603" + str(i): i for i in range(10000)},
+    [{"a": i, "b": i + 1, "c": i + 2} for i in range(1000)],
+])
+def test_set_serialization_dictionary_heavy_payloads(value: Any):
+    class CountingItem(SetItem):
+        calls = 0
+
+        def to_json(self) -> Any:
+            self.calls += 1
+            return self.value
+
+    item = CountingItem(value)
+    assert to_json({item}) == json.dumps([value], sort_keys=True)
+    assert item.calls == 1
+
+
+@pytest.mark.parametrize("path", ["dict", "list", "hook"])
+def test_set_serialization_tracks_dictionary_cycles_through_children(path: str):
+    value: dict[str, Any] = {"a": 1}
+    if path == "dict":
+        value["z"] = value
+    elif path == "list":
+        value["z"] = [value]
+    else:
+        value["z"] = SetItem(value)
+    with pytest.raises(TypeError, match="Circular reference detected"):
+        to_json({SetItem(value)})
+
+
+def test_set_serialization_normalizes_dictionary_children_once_per_occurrence():
+    class CountingItem(SetItem):
+        calls = 0
+
+        def to_json(self) -> Any:
+            self.calls += 1
+            return self.value
+
+    child = CountingItem({"b": 2, "a": 1})
+    value = {"a": 0, "b": child, "c": child}
+    assert to_json({SetItem(value)}) == '[{"a": 0, "b": {"a": 1, "b": 2}, "c": {"a": 1, "b": 2}}]'
+    assert child.calls == 2
+
+
+@pytest.mark.parametrize("shape", ["list", "dict", "hook", "set"])
+def test_set_serialization_rejects_cycles(shape: str):
+    class Item:
+        def to_json(self):
+            return value
+
+    item = Item()
+    value: Any
+    if shape == "list":
+        value = [item]
+    elif shape == "dict":
+        value = {"item": item}
+    elif shape == "hook":
+        value = item
+    else:
+        value = {item}
+    with pytest.raises(TypeError, match="Circular reference detected"):
+        to_json({item})
+
+
+def test_set_serialization_allows_shared_non_circular_values():
+    shared = {"b": 2, "a": 1}
+    assert to_json({SetItem([shared, shared])}) == '[[{"a": 1, "b": 2}, {"a": 1, "b": 2}]]'
+
+
+def test_set_serialization_preserves_native_and_custom_hook_precedence():
+    class HookedTuple(tuple):
+        def to_json(self):
+            pytest.fail("JSON-native containers must not invoke to_json")
+
+    class HookedFrozenSet(frozenset):
+        def to_json(self):
+            return "custom set"
+
+    class Item:
+        def to_json(self):
+            return SimpleNamespace(
+                z=HookedTuple([Temperature(100.0)]),
+                a=HookedFrozenSet({1}),
+            )
+
+    assert to_json({Item()}) == '[{"a": "custom set", "z": [{"fahrenheit": 212.0}]}]'
+
+
+@pytest.mark.parametrize("value", [object(), {object(): 1}, {"a": 1, 2: 3}])
+def test_set_serialization_preserves_encoding_errors(value: Any):
+    class Item:
+        def to_json(self):
+            return value
+
+    with pytest.raises(TypeError, match="Cannot deterministically serialize set") as error:
+        to_json({Item()})
+    assert error.value.__cause__ is not None
+
+
+def test_serialization_outside_sets_matches_legacy_json_encoder():
+    value = {"z": [Temperature(100.0), {"b": 2, "a": 1}], "a": (1, 2)}
+    assert to_json(value) == json.dumps(value, default=_encode_custom_object)
+    assert to_json(value) == '{"z": [{"fahrenheit": 212.0}, {"b": 2, "a": 1}], "a": [1, 2]}'
+    names = {"\ud83d\ude00": 1, "\U0001f600": 2}
+    assert to_json(names) == json.dumps(names)
+
+
+def test_set_serialization_deterministic_across_hash_seeds():
+    """Verify that sets of disjoint frozensets, nested frozensets, unorderable custom objects,
+    non-finite numbers, and equal canonical keys with differently ordered dictionaries
+    are deterministically serialized across separate processes with differing PYTHONHASHSEED."""
+    repo_root = str(Path(__file__).resolve().parents[2])
+    code = """
+import json
+from dataclasses import dataclass
+from typing import Any
+from durabletask.serialization import JsonDataConverter
+
+conv = JsonDataConverter()
+
+# Case A: Disjoint frozensets (exposes frozenset partial-ordering defects)
+case_a = conv.serialize({
+    frozenset({"alpha"}),
+    frozenset({"beta"}),
+    frozenset({"gamma"}),
+})
+
+# Case B: Nested frozensets (multi-element, multi-level nesting)
+case_b = conv.serialize({
+    frozenset({frozenset({"b", "a"}), frozenset({"c"})}),
+    frozenset({frozenset({"d"})}),
+})
+
+# Case C: Non-orderable custom objects (frozen dataclass without order=True)
+@dataclass(frozen=True)
+class Entry:
+    id: str
+    val: int
+
+case_c = conv.serialize({
+    Entry("delta", 4),
+    Entry("alpha", 1),
+    Entry("charlie", 3),
+    Entry("bravo", 2),
+})
+
+# Case D: Numeric sets with lexical JSON ordering and non-finite floats
+case_d = conv.serialize({float("nan"), float("inf"), float("-inf"), 2.0, 10.0})
+
+# Case E: Equal canonical keys with differently ordered dictionaries
+class DictItem:
+    def __init__(self, data: dict[str, Any], tag: str):
+        self.data = data
+        self.tag = tag
+    def to_json(self) -> dict[str, Any]:
+        return self.data
+    def __hash__(self) -> int:
+        return hash(self.tag)
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, DictItem) and self.tag == other.tag
+
+case_e = conv.serialize({
+    DictItem({"z": 10, "a": 1}, "item1"),
+    DictItem({"a": 1, "z": 10}, "item2"),
+})
+
+# Case F: Different Python key types representing identical JSON object names.
+case_f = conv.serialize({
+    DictItem({2: "two", 10: "ten"}, "numeric"),
+    DictItem({"2": "two", "10": "ten"}, "strings"),
+})
+
+print(json.dumps({"a": case_a, "b": case_b, "c": case_c, "d": case_d, "e": case_e, "f": case_f}))
+"""
+    seeds = ["0", "1", "2", "42", "999"]
+    outputs: dict[str, dict[str, str]] = {}
+
+    for seed in seeds:
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = (
+            f"{repo_root}{os.pathsep}{env['PYTHONPATH']}"
+            if "PYTHONPATH" in env
+            else repo_root
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert proc.returncode == 0, (
+            f"Subprocess failed for seed {seed}:\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+        )
+        outputs[seed] = json.loads(proc.stdout.strip())
+
+    base = outputs[seeds[0]]
+    for seed in seeds[1:]:
+        assert outputs[seed] == base, (
+            f"Deterministic serialization failed between seed {seeds[0]} and {seed}:\n"
+            f"Seed {seeds[0]}: {base}\nSeed {seed}: {outputs[seed]}"
+        )
+
+    expected_a = '[["alpha"], ["beta"], ["gamma"]]'
+    expected_b = '[[["a", "b"], ["c"]], [["d"]]]'
+    expected_c = (
+        '[{"id": "alpha", "val": 1}, {"id": "bravo", "val": 2}, '
+        '{"id": "charlie", "val": 3}, {"id": "delta", "val": 4}]'
+    )
+    expected_d = '[-Infinity, 10.0, 2.0, Infinity, NaN]'
+    expected_e = '[{"a": 1, "z": 10}, {"a": 1, "z": 10}]'
+    expected_f = '[{"10": "ten", "2": "two"}, {"10": "ten", "2": "two"}]'
+
+    assert base["a"] == expected_a
+    assert base["b"] == expected_b
+    assert base["c"] == expected_c
+    assert base["d"] == expected_d
+    assert base["e"] == expected_e
+    assert base["f"] == expected_f
+
+
+def test_deserialize_coerces_set_when_opted_in():
+    converter = JsonDataConverter(enable_generic_sets=True)
+    encoded = converter.serialize(["a", "b", "c"])
+    assert encoded is not None
+    result = converter.deserialize(encoded, set[str])
+    assert isinstance(result, set)
+    assert result == {"a", "b", "c"}
+
+    encoded_int = converter.serialize([1, 2, 3])
+    assert encoded_int is not None
+    result_frozen = converter.deserialize(encoded_int, frozenset[int])
+    assert isinstance(result_frozen, frozenset)
+    assert result_frozen == frozenset({1, 2, 3})
+
+    encoded_dc = json.dumps([
+        {"street": "1 Main St", "city": "Redmond"},
+        {"street": "2 1st Ave", "city": "Seattle"},
+    ])
+    result_dc = converter.deserialize(encoded_dc, set[FrozenAddress])
+    assert isinstance(result_dc, set)
+    assert all(isinstance(item, FrozenAddress) for item in result_dc)
+    assert FrozenAddress("1 Main St", "Redmond") in result_dc
+
+
+def test_deserialize_preserves_raw_array_when_opted_out():
+    default_converter = JsonDataConverter()
+    payload = '["b", "a", "b"]'
+    result = default_converter.deserialize(payload, set[str])
+    # Preserves list and duplicates for replay compatibility
+    assert isinstance(result, list)
+    assert result == ["b", "a", "b"]

@@ -38,10 +38,12 @@ import functools
 import inspect
 import json
 import logging
+import re
 import types
 import typing
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -54,6 +56,8 @@ logger = logging.getLogger("durabletask")
 # replay. Internal detail; re-exported from ``durabletask.internal.shared`` only
 # for backwards compatibility.
 _AUTO_SERIALIZED = "__durabletask_autoobject__"
+_SURROGATE_PAIR = re.compile("[\ud800-\udbff][\udc00-\udfff]")
+_JSON_SCALAR_TYPES = (int, str, float, type(None))
 
 
 class DataConverter(ABC):
@@ -67,7 +71,6 @@ class DataConverter(ABC):
     @abstractmethod
     def serialize(self, value: Any) -> str | None:
         """Serialize ``value`` to a string, or ``None`` when ``value`` is ``None``."""
-        pass
 
     @abstractmethod
     def deserialize(self, data: str | None, target_type: type | None = None) -> Any:
@@ -84,7 +87,6 @@ class DataConverter(ABC):
         :class:`JsonDataConverter` is best-effort and falls back; a validating
         converter may instead raise.
         """
-        pass
 
     @abstractmethod
     def coerce(self, value: Any, target_type: type | None = None) -> Any:
@@ -98,7 +100,6 @@ class DataConverter(ABC):
         (strict vs. best-effort) that an implementation applies in
         :meth:`deserialize` should apply here.
         """
-        pass
 
     def can_reconstruct(self, target_type: Any) -> bool:
         """Return True if this converter can rebuild ``target_type`` from a payload.
@@ -135,7 +136,11 @@ class JsonDataConverter(DataConverter):
     ``SimpleNamespace`` handling, and nested values are encoded recursively, so
     a dataclass (or any object) with a ``to_json`` hook -- including one nested
     inside another dataclass, ``list``, or ``dict`` -- round-trips through its
-    own hooks.
+    own hooks. Sets and frozensets serialize to JSON arrays ordered
+    deterministically by their canonical JSON representation (using lexical
+    string order, so numeric sets like ``{2, 10}`` serialize as ``[10, 2]``).
+    Within sets, object keys are normalized to strings and sorted, and custom
+    hooks run once per occurrence. Singleton sets need no ordering key.
 
     Deserialization (and value-level :meth:`coerce`) is **best-effort**: when a
     ``target_type`` is supplied and the value cannot be coerced to it, the raw
@@ -165,6 +170,18 @@ class JsonDataConverter(DataConverter):
     > recursion does not cover. The SDK never infers nested types from the
     > payload; the destination type is always supplied by the caller.
     """
+
+    def __init__(
+        self,
+        *,
+        enable_generic_sets: bool = False,
+        enable_set_coercion: bool = False,
+    ) -> None:
+        self.enable_generic_sets: bool = enable_generic_sets or enable_set_coercion
+
+    @property
+    def enable_set_coercion(self) -> bool:
+        return self.enable_generic_sets
 
     def serialize(self, value: Any) -> str | None:
         if value is None:
@@ -220,15 +237,45 @@ DEFAULT_DATA_CONVERTER: DataConverter = JsonDataConverter()
 # ---------------------------------------------------------------------------
 
 
+def _is_supported_set_element(converter: DataConverter, elem_type: Any) -> bool:
+    if elem_type is None or elem_type is typing.Any:
+        return True
+    elem_origin = typing.get_origin(elem_type)
+    if elem_origin is not None:
+        if elem_origin in (list, dict, Sequence, Mapping, set, AbstractSet):
+            # Mutable collections are unhashable
+            return False
+        if elem_origin is typing.Union or elem_origin is types.UnionType:
+            non_none = [a for a in typing.get_args(elem_type) if a is not type(None)]
+            return bool(non_none) and all(_is_supported_set_element(converter, a) for a in non_none)
+        if elem_origin is frozenset:
+            args = typing.get_args(elem_type)
+            return not args or _is_supported_set_element(converter, args[0])
+        if elem_origin is tuple:
+            args = typing.get_args(elem_type)
+            if len(args) == 2 and args[1] is Ellipsis:
+                args = args[:1]
+            return all(_is_supported_set_element(converter, arg) for arg in args)
+        return False
+    if not isinstance(elem_type, type):
+        return False
+    if issubclass(elem_type, (list, dict, set)):
+        return False
+    return True
+
+
 def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
     """:class:`JsonDataConverter`'s reconstruction policy.
 
     Recognizes dataclasses and ``from_json()``-capable types, plus ``Optional``
     / ``list`` / ``Sequence`` hints wrapping them; builtins and unknown
-    annotations are excluded. Recurses through ``converter.can_reconstruct``
-    (not itself) so a :class:`JsonDataConverter` subclass that overrides
-    ``can_reconstruct`` still participates in the element-type checks of
-    ``Optional`` / ``list`` hints.
+    annotations are excluded. When set support is enabled on the converter
+    (via ``enable_generic_sets=True``), ``set`` / ``frozenset`` / ``Set``
+    containers with supported element types are also recognized. Recurses
+    through ``converter.can_reconstruct`` (not itself) so a
+    :class:`JsonDataConverter` subclass that overrides ``can_reconstruct``
+    still participates in the element-type checks of ``Optional`` / ``list``
+    hints.
     """
     origin = typing.get_origin(target_type)
     if origin is not None:
@@ -239,11 +286,19 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             )
         if origin in (list, Sequence):
             return any(converter.can_reconstruct(a) for a in args)
+        if origin in (set, frozenset, AbstractSet, typing.AbstractSet):
+            if not getattr(converter, "enable_generic_sets", False):
+                return False
+            if not args:
+                return True
+            return _is_supported_set_element(converter, args[0])
         return False
     if not isinstance(target_type, type):
         return False
     if dataclasses.is_dataclass(target_type):
         return True
+    if target_type in (set, frozenset, AbstractSet):
+        return getattr(converter, "enable_generic_sets", False)
     return callable(getattr(cast(Any, target_type), "from_json", None))
 
 
@@ -252,9 +307,12 @@ def _to_json(obj: Any) -> str:
 
     Builtins serialize to plain JSON. Objects exposing a ``to_json()`` method,
     dataclasses, and ``SimpleNamespace`` instances are serialized to plain JSON
-    as well (without any type marker), recursively. Custom objects can be
-    reconstructed on the receiving side by passing ``expected_type`` to
-    :func:`_from_json`.
+    as well (without any type marker), recursively. Sets and frozensets are
+    serialized as JSON arrays with elements deterministically ordered by their
+    canonical JSON string representation (note that numeric set elements follow
+    lexical JSON ordering, e.g. ``{2, 10}`` serializes as ``[10, 2]``). Custom
+    objects can be reconstructed on the receiving side by passing ``expected_type``
+    to :func:`_from_json`.
     """
     try:
         return json.dumps(obj, default=_encode_custom_object)
@@ -318,6 +376,15 @@ def _encode_custom_object(o: Any) -> Any:
     to_json_hook = getattr(cast(Any, type(o)), "to_json", None)
     if callable(to_json_hook):
         return to_json_hook(o)
+    if isinstance(o, (set, frozenset, AbstractSet)):
+        items = cast(AbstractSet[Any], o)
+        try:
+            return _normalize_set_value(items, set())
+        except Exception as e:
+            raise TypeError(
+                f"Cannot deterministically serialize set of type '{type(items).__name__}' "
+                f"because its elements cannot be compared or deterministically encoded: {e}"
+            ) from e
     if isinstance(o, enum.Enum):
         # Emit the member's underlying value (a primitive). Reconstruction is
         # type-directed: passing the enum type to ``deserialize`` rebuilds the
@@ -339,6 +406,66 @@ def _encode_custom_object(o: Any) -> Any:
         return vars(o)
     # This will raise a TypeError describing the unsupported type.
     raise TypeError(f"Object of type '{type(o).__name__}' is not JSON serializable")
+
+
+def _normalize_set_value(value: Any, active: set[int]) -> Any:
+    """Normalize only set subtrees; leave ordinary payload encoding unchanged."""
+    identity = id(value)
+    is_mapping = isinstance(value, dict)
+    if not is_mapping and isinstance(value, _JSON_SCALAR_TYPES):
+        return value
+    if identity in active:
+        raise ValueError("Circular reference detected")
+    if is_mapping:
+        # Match sort_keys=True, including rejection of incomparable keys.
+        # JSON object names are strings; duplicate names keep the last value,
+        # just as the previous dumps/loads normalization did.
+        result: dict[str, Any] = {}
+        string_names = True
+        for key, item in sorted(cast(dict[Any, Any], value).items()):
+            if isinstance(key, str):
+                name = key
+                if not str.isascii(name) and _SURROGATE_PAIR.search(name):
+                    # Ordinary Unicode names and lone surrogates need no codec
+                    # round trip; only a high/low pair changes after decoding.
+                    name = str.encode(name, "utf-16-le", "surrogatepass").decode(
+                        "utf-16-le", "surrogatepass")
+                    string_names = False
+            else:
+                if key is not None and not isinstance(key, (int, float)):
+                    raise TypeError(f"Unsupported JSON object key: {type(key).__name__}")
+                name = json.dumps(key)
+                string_names = False
+            if isinstance(item, _JSON_SCALAR_TYPES):
+                result[name] = item
+            else:
+                # Scalar-only records cannot cycle. Track the parent only
+                # while descending into a child that could refer back to it.
+                active.add(identity)
+                try:
+                    result[name] = _normalize_set_value(item, active)
+                finally:
+                    active.remove(identity)
+        return result if string_names else dict(sorted(result.items()))
+    active.add(identity)
+    try:
+        if isinstance(value, (list, tuple)):
+            return [
+                item if isinstance(item, _JSON_SCALAR_TYPES)
+                else _normalize_set_value(item, active)
+                for item in cast(Sequence[Any], value)
+            ]
+        to_json_hook = getattr(cast(Any, type(value)), "to_json", None)
+        if isinstance(value, AbstractSet) and not callable(to_json_hook):
+            items = [_normalize_set_value(item, active) for item in cast(AbstractSet[Any], value)]
+            if len(items) > 1:
+                # list.sort evaluates each key once and discards the temporary
+                # documents afterwards. Emit these same normalized values.
+                items.sort(key=json.dumps)
+            return items
+        return _normalize_set_value(_encode_custom_object(value), active)
+    finally:
+        active.remove(identity)
 
 
 def _legacy_object_hook(d: dict[str, Any]) -> Any:
@@ -384,6 +511,10 @@ def _coerce_to_type(value: Any, expected_type: Any, converter: DataConverter | N
     if isinstance(value, expected_type):
         return value
 
+    if (expected_type is AbstractSet and isinstance(value, list)
+            and getattr(converter, "enable_generic_sets", False)):
+        return _coerce_generic(value, expected_type, AbstractSet, converter)
+
     from_json_hook = getattr(expected_type, "from_json", None)
     if callable(from_json_hook):
         return _invoke_from_json(from_json_hook, value, converter)
@@ -397,7 +528,7 @@ def _coerce_to_type(value: Any, expected_type: Any, converter: DataConverter | N
     except Exception as e:
         type_name = getattr(type_ctor, "__name__", None) or str(type_ctor)
         raise TypeError(
-            f"Could not coerce value of type '{type(value).__name__}' to "
+            f"Could not coerce value of type '{type(cast(object, value)).__name__}' to "
             f"'{type_name}'"
         ) from e
 
@@ -476,6 +607,19 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
     if origin in (list, Sequence) and isinstance(value, list):
         elem_type = args[0] if args else None
         return [_coerce_to_type(item, elem_type, converter) for item in cast(list[Any], value)]
+    if origin in (set, frozenset, AbstractSet, typing.AbstractSet) and isinstance(
+        value, (list, set, frozenset, AbstractSet)
+    ):
+        if not getattr(converter, "enable_generic_sets", False):
+            return cast(Any, value)
+        elem_type = args[0] if args else None
+        coerced: list[Any] = [
+            _coerce_to_type(item, elem_type, converter)
+            for item in cast("Iterable[Any]", value)
+        ]
+        if origin is frozenset:
+            return frozenset(coerced)
+        return set(coerced)
     if origin in (dict, Mapping) and isinstance(value, dict):
         # JSON object keys are always strings, so only the values can carry a
         # reconstructable type. Keys are passed through unchanged.
