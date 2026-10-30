@@ -627,6 +627,7 @@ def test_cancel_callback_group_replays_legacy_first_cause_recovery():
                 if isinstance(error.__cause__, task.TaskCancelledError)
                 else "other-recovery")
             return (yield ctx.call_activity(recovery))
+        return None
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
