@@ -11,10 +11,13 @@ ADDED
 
 - Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
 by one or more task hubs.
-- Prototype support for `async def` orchestrators that `await` durable tasks,
-including activities, timers, external events, and `when_all` / `when_any`.
-Generator orchestrators remain supported. This is replay-driven syntax, not
-support for asyncio I/O inside orchestrators.
+- Added native `async def` orchestrators and nested async helpers alongside
+existing generator orchestrators. Await durable operations and compose them
+with `asyncio.gather`, local tasks, and structured task groups. Async sleeps and
+timeouts use durable timers and the orchestration clock; `sleep(0)` yields
+locally without a timer. See the [supported contract](docs/async-orchestrators.md)
+for cancellation, per-dispatch cleanup, replay/migration rules, and unsupported
+APIs. External I/O still belongs in ordinary activities.
 
 FIXED
 

@@ -51,6 +51,7 @@ from durabletask.internal.grpc_resiliency import (
 from durabletask.payload import helpers as payload_helpers
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+from durabletask.internal.asyncio_loop import DurableEventLoop
 from durabletask.payload.store import PayloadStore
 from durabletask.serialization import DataConverter, JsonDataConverter
 
@@ -1627,8 +1628,14 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._data_converter = data_converter
         self._exception_properties_provider = exception_properties_provider
         self._logger = logger
+        self._async_loop: DurableEventLoop | None = None
+        self._async_cleanup = False
 
     def run(self, generator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any]) -> None:
+        if isinstance(generator, CoroutineType):
+            self._async_loop = DurableEventLoop(self)
+            self._async_loop.start(generator)
+            return
         self._generator = generator
         self._set_next_task(generator.send(None))
 
@@ -1641,6 +1648,9 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._previous_task = next_task
 
     def resume(self) -> None:
+        if self._async_loop is not None:
+            self._async_loop.resume()
+            return
         if self._generator is None:
             # This is never expected unless maybe there's an issue with the history
             raise TypeError(
@@ -1791,6 +1801,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return current_actions
 
     def next_sequence_number(self) -> int:
+        if self._async_cleanup:
+            raise RuntimeError("Dispatch cleanup cannot schedule durable work; use normal orchestrator control flow.")
         self._sequence_number += 1
         return self._sequence_number
 
@@ -2485,9 +2497,10 @@ class _OrchestrationExecutor:
         finally:
             # Close after building the response, so the orchestrator's finally
             # blocks do not change the actions or custom status we return.
-            if ctx._generator is not None:  # pyright: ignore[reportPrivateUsage]
+            closeable = ctx._async_loop or ctx._generator  # pyright: ignore[reportPrivateUsage]
+            if closeable is not None:
                 try:
-                    ctx._generator.close()  # pyright: ignore[reportPrivateUsage]
+                    closeable.close()
                 except (Exception, asyncio.CancelledError):
                     cleanup_name = next(
                         (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import math
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine, Generator, Sequence
 from dataclasses import dataclass
@@ -634,9 +635,15 @@ class Task(ABC, Generic[T]):
     def __await__(self) -> Generator[Task[T], Any, T]:
         """Wait for this task in a replay-driven ``async def`` orchestrator.
 
-        Durable tasks are not asyncio futures. Only the orchestration replay
-        engine may drive a coroutine that awaits them.
+        A local asyncio waiter does not own or cancel the durable operation.
         """
+        from durabletask.internal.asyncio_loop import DurableEventLoop
+
+        loop = asyncio._get_running_loop()
+        if isinstance(loop, DurableEventLoop):
+            return (yield from loop.wait_durable(self).__await__())
+        if loop is not None:
+            raise RuntimeError("Durable tasks can only be awaited inside a durable orchestrator.")
         if not self.is_complete:
             yield self
         return self.get_result()

@@ -27,9 +27,9 @@ and [Azure Durable Functions](https://learn.microsoft.com/azure/azure-functions/
 
 ## Optional Features
 
-### Async Orchestrators (Prototype)
+### Async Orchestrators
 
-This branch prototypes `async def` orchestrators across all three packages.
+All three packages support `async def` orchestrators and nested async helpers.
 Existing generator orchestrators continue to work.
 
 ```python
@@ -52,9 +52,9 @@ context and `await context.task_all(...)`.
 
 > [!WARNING]
 > This is replay-driven await syntax, not general-purpose asyncio execution.
-> Await only durable tasks or async helpers that themselves await durable tasks.
-> Use durable timers instead of `asyncio.sleep`, and `task.when_all` /
-> `task.when_any` instead of `asyncio.gather`, `create_task`, or `TaskGroup`.
+> Compose durable work with `asyncio.gather`, local tasks/task groups, and
+> durable `asyncio.sleep` / timeouts within the
+> [supported contract](docs/async-orchestrators.md).
 > Perform network, storage, and other nondeterministic I/O in activities.
 > Completed foreign awaitables and synchronous side effects cannot reliably be
 > detected by the replay engine.
@@ -64,6 +64,8 @@ An async helper is not a durable sub-orchestration: use
 An `async def` function containing `yield` is an async generator, not a supported
 orchestrator. Converting an existing orchestrator must preserve durable action
 order and payloads for replay compatibility.
+See the contract for cancellation, per-dispatch async cleanup, unsupported
+ordering-sensitive APIs, framework adapters, and coordinated release rules.
 
 ### Large Payload Externalization
 

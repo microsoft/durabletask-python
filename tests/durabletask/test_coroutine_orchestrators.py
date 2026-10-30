@@ -260,14 +260,14 @@ def test_non_durable_suspension_is_rejected(after_activity: bool) -> None:
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
         if after_activity:
             await ctx.call_activity("work")
-        await asyncio.sleep(0)
+        await asyncio.Future()
 
     old = _start() + [helpers.new_task_scheduled_event(1, "work")] if after_activity else []
     new = [helpers.new_task_completed_event(1, "null")] if after_activity else _start()
     complete = _completion(_execute(orchestrator, old, new))
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete.failureDetails.errorType == "builtins.TypeError"
-    assert "must only yield or await durabletask.Task" in complete.failureDetails.errorMessage
+    assert complete.failureDetails.errorType == "builtins.RuntimeError"
+    assert "blocked without durable work" in complete.failureDetails.errorMessage
 
 
 def test_async_generator_is_rejected() -> None:
