@@ -137,6 +137,8 @@ class JsonDataConverter(DataConverter):
     own hooks. Sets and frozensets serialize to JSON arrays ordered
     deterministically by their canonical JSON representation (using lexical
     string order, so numeric sets like ``{2, 10}`` serialize as ``[10, 2]``).
+    Within sets, object keys are normalized to strings and sorted, and custom
+    hooks run once per occurrence. Singleton sets need no ordering key.
 
     Deserialization (and value-level :meth:`coerce`) is **best-effort**: when a
     ``target_type`` is supplied and the value cannot be coerced to it, the raw
@@ -368,25 +370,9 @@ def _encode_custom_object(o: Any) -> Any:
     if callable(to_json_hook):
         return to_json_hook(o)
     if isinstance(o, (set, frozenset, AbstractSet)):
-        items: AbstractSet[Any] = cast("AbstractSet[Any]", o)
-        # Sets and frozensets are unordered collections. To ensure deterministic
-        # serialization across processes, worker replays, and PYTHONHASHSEED
-        # variations, elements are individually encoded to canonical JSON
-        # (with sort_keys=True), sorted lexically by their encoded JSON string,
-        # and emitted as normalized parsed values.
-        #
-        # Emitting the normalized parsed values rather than original objects
-        # guarantees identical order and eliminates leaks from dict insertion
-        # order variations, NaN/non-finite comparison anomalies, or partial
-        # ordering in frozensets. A consequence of sorting canonical JSON strings
-        # is lexical ordering for numeric sets (e.g., {2, 10} serializes as
-        # [10, 2]).
+        items = cast(AbstractSet[Any], o)
         try:
-            encoded_items = sorted(
-                json.dumps(item, default=_encode_custom_object, sort_keys=True)
-                for item in items
-            )
-            return [json.loads(encoded) for encoded in encoded_items]
+            return _normalize_set_value(items, set())
         except Exception as e:
             raise TypeError(
                 f"Cannot deterministically serialize set of type '{type(items).__name__}' "
@@ -413,6 +399,50 @@ def _encode_custom_object(o: Any) -> Any:
         return vars(o)
     # This will raise a TypeError describing the unsupported type.
     raise TypeError(f"Object of type '{type(o).__name__}' is not JSON serializable")
+
+
+def _normalize_set_value(value: Any, active: set[int]) -> Any:
+    """Normalize only set subtrees; leave ordinary payload encoding unchanged."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    identity = id(value)
+    if identity in active:
+        raise ValueError("Circular reference detected")
+    active.add(identity)
+    try:
+        if isinstance(value, dict):
+            # Match sort_keys=True, including rejection of incomparable keys.
+            # JSON object names are strings; duplicate names keep the last value,
+            # just as the previous dumps/loads normalization did.
+            result: dict[str, Any] = {}
+            string_names = True
+            for key, item in sorted(cast(dict[Any, Any], value).items()):
+                if key is not None and not isinstance(key, (str, int, float, bool)):
+                    raise TypeError(f"Unsupported JSON object key: {type(key).__name__}")
+                if isinstance(key, str):
+                    name = key
+                else:
+                    name = json.dumps(key)
+                    string_names = False
+                result[name] = _normalize_set_value(item, active)
+            return result if string_names else dict(sorted(result.items()))
+        if isinstance(value, (list, tuple)):
+            return [
+                item if item is None or isinstance(item, (str, int, float))
+                else _normalize_set_value(item, active)
+                for item in cast(Sequence[Any], value)
+            ]
+        to_json_hook = getattr(cast(Any, type(value)), "to_json", None)
+        if isinstance(value, AbstractSet) and not callable(to_json_hook):
+            items = [_normalize_set_value(item, active) for item in cast(AbstractSet[Any], value)]
+            if len(items) > 1:
+                # list.sort evaluates each key once and discards the temporary
+                # documents afterwards. Emit these same normalized values.
+                items.sort(key=json.dumps)
+            return items
+        return _normalize_set_value(_encode_custom_object(value), active)
+    finally:
+        active.remove(identity)
 
 
 def _legacy_object_hook(d: dict[str, Any]) -> Any:

@@ -12,6 +12,9 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from durabletask import task
+from durabletask.internal import helpers
+from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.internal.entity_state_shim import StateShim
 from durabletask.serialization import (
     DEFAULT_DATA_CONVERTER,
@@ -19,7 +22,7 @@ from durabletask.serialization import (
     JsonDataConverter,
 )
 from durabletask.internal import type_discovery
-from durabletask.worker import _ActivityExecutor, _Registry
+from durabletask.worker import _ActivityExecutor, _OrchestrationExecutor, _Registry
 
 
 @dataclass
@@ -451,6 +454,29 @@ def test_existing_instance_replay_compatibility_preserves_list():
     assert isinstance(opt_in_restored.flags, frozenset)
     assert opt_in_restored.flags == frozenset({1, 2})
     assert len(opt_in_restored.flags) == 2
+
+
+def test_default_converter_replays_recorded_arrays_under_set_annotations():
+    def orchestrator(ctx: task.OrchestrationContext, data: TaggedOrder):
+        yield ctx.call_activity(f"count-{len(data.tags)}")
+        return {"tags": data.tags, "flags": data.flags}
+
+    registry = _Registry()
+    name = registry.add_orchestrator(orchestrator)
+    history = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(
+            name, "legacy-sets",
+            encoded_input='{"item": "laptop", "tags": ["b", "a", "b"], "flags": [1, 2, 1]}',
+        ),
+        helpers.new_task_scheduled_event(1, "count-3"),
+    ]
+    executor = _OrchestrationExecutor(registry, logging.getLogger("test_set_replay"), JsonDataConverter())
+    result = executor.execute("legacy-sets", history, [helpers.new_task_completed_event(1, "null")])
+    assert len(result.actions) == 1
+    completion = result.actions[0].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert completion.result.value == '{"tags": ["b", "a", "b"], "flags": [1, 2, 1]}'
 
 
 def test_type_discovery_and_activity_execution_with_sets():
