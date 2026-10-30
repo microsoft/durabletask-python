@@ -15,14 +15,19 @@ by one or more task hubs.
 CHANGED
 
 - Dropped Python 3.10 support. Python 3.11 or later is now required.
+- Removed the obsolete PyPI `asyncio` backport dependency; all supported
+Python versions use the standard-library module.
 - Context managers now preserve subclass types in type checkers, including
 Azure Managed clients and workers.
+- Entity ID copy and pickle hooks now preserve subclass types in type checkers.
 - Multiple task completion callback failures now raise the built-in
 `ExceptionGroup`, preserving each exception and its traceback. A single callback
 failure is still raised directly.
 
 FIXED
 
+- Grouped failures now retain nested exception messages, tracebacks, and notes
+in failure details, including `ExceptionGroup` failures from task callbacks.
 - Implemented `__hash__` and `__repr__` for `EntityInstanceId`, making identity attributes immutable to guarantee hash stability when used in sets or dict keys.
 - Large-payload externalization now checks every eligible payload's maximum
 size before uploading or replacing any protobuf values, including carryover

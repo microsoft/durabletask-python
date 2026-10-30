@@ -4,6 +4,7 @@
 """Unit tests for :class:`durabletask.task.FailureDetails` introspection."""
 
 import logging
+import traceback
 from decimal import Decimal
 from typing import cast
 
@@ -63,6 +64,44 @@ def test_new_failure_details_uses_fqn_for_builtin():
 def test_new_failure_details_uses_fqn_for_custom_type():
     details = helpers.new_failure_details(_DerivedError("x"))
     assert details.errorType == helpers.get_qualified_name(_DerivedError)
+
+
+def test_new_failure_details_preserves_ordinary_exception_stack_format():
+    try:
+        raise ValueError("ordinary failure")
+    except ValueError as error:
+        details = helpers.new_failure_details(error)
+        assert details.stackTrace.value == "".join(traceback.format_tb(error.__traceback__))
+        assert details.errorMessage == "ordinary failure"
+
+
+@pytest.mark.parametrize("base_group", [False, True])
+def test_new_failure_details_preserves_grouped_tracebacks_and_notes(base_group: bool):
+    class UnexpectedExit(BaseException):
+        pass
+
+    try:
+        raise ValueError("nested failure")
+    except ValueError as error:
+        error.add_note("nested diagnostic note")
+        nested = ExceptionGroup("inner group", [error])
+    other = UnexpectedExit("unexpected exit") if base_group else RuntimeError("other failure")
+    group = BaseExceptionGroup("outer group", [nested, other])
+    group.add_note("group diagnostic note")
+    try:
+        raise group
+    except BaseExceptionGroup as caught:
+        details = helpers.new_failure_details(caught)
+        assert details.stackTrace.value == "".join(traceback.format_exception(caught))
+
+    assert details.errorType == ("builtins.BaseExceptionGroup" if base_group else "builtins.ExceptionGroup")
+    assert details.errorMessage == str(group)
+    assert "ValueError: nested failure" in details.stackTrace.value
+    assert "nested diagnostic note" in details.stackTrace.value
+    assert "group diagnostic note" in details.stackTrace.value
+    state = client.parse_orchestration_state(pb.OrchestrationState(failureDetails=details))
+    assert state.failure_details is not None
+    assert state.failure_details.stack_trace == details.stackTrace.value
 
 
 # ---------------------------------------------------------------------------

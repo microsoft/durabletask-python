@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from durabletask import task
+from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
 
 
@@ -226,6 +227,9 @@ def test_callback_exception_group_preserves_errors_and_tracebacks() -> None:
     assert value_errors.exceptions == (first_error,)
     assert other_errors is not None
     assert other_errors.exceptions == (second_error,)
+    details = helpers.new_failure_details(raised.value)
+    assert "ValueError: first callback" in details.stackTrace.value
+    assert "RuntimeError: second callback" in details.stackTrace.value
     assert first.get_result() == second.get_result() == healthy.get_result() == ["ok"]
     assert not child._parents
 

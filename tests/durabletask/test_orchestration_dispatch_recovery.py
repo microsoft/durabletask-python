@@ -6,7 +6,6 @@
 import asyncio
 import json
 import logging
-import sys
 from threading import Event
 from typing import Any, Generator
 from unittest.mock import Mock
@@ -430,22 +429,26 @@ def test_caller_exception_state_does_not_suppress_teardown_outcome(error: BaseEx
 
 
 def _control_flow_errors() -> list[BaseException]:
-    errors: list[BaseException] = [
+    return [
         asyncio.CancelledError("cancel"),
         SystemExit("exit"),
         KeyboardInterrupt("interrupt"),
         GeneratorExit("close"),
+        BaseExceptionGroup("grouped cancellation", [asyncio.CancelledError("cancel")]),
+        BaseExceptionGroup("mixed", [ValueError("ordinary"), asyncio.CancelledError("cancel")]),
+        BaseExceptionGroup("nested", [
+            TeardownExit("unexpected"),
+            BaseExceptionGroup("inner", [SystemExit("exit")]),
+        ]),
+        BaseExceptionGroup("nested interrupt", [
+            ExceptionGroup("ordinary", [ValueError("ordinary")]),
+            BaseExceptionGroup("inner", [KeyboardInterrupt("interrupt")]),
+        ]),
+        BaseExceptionGroup("nested generator exit", [
+            BaseExceptionGroup("inner", [GeneratorExit("close")]),
+            TeardownExit("unexpected"),
+        ]),
     ]
-    if sys.version_info >= (3, 11):
-        errors.extend([
-            BaseExceptionGroup("grouped cancellation", [asyncio.CancelledError("cancel")]),
-            BaseExceptionGroup("mixed", [ValueError("ordinary"), asyncio.CancelledError("cancel")]),
-            BaseExceptionGroup("nested", [
-                TeardownExit("unexpected"),
-                BaseExceptionGroup("inner", [SystemExit("exit")]),
-            ]),
-        ])
-    return errors
 
 
 @pytest.mark.parametrize("error", _control_flow_errors(), ids=str)
@@ -591,20 +594,59 @@ def test_failure_details_do_not_pass_base_exception_to_public_properties_provide
     provider.get_exception_properties.assert_not_called()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="Exception groups require Python 3.11+.")
 def test_grouped_unexpected_failure_keeps_nested_reasons():
-    if sys.version_info >= (3, 11):
-        def orchestrator(ctx: task.OrchestrationContext, _: Any):
-            try:
-                yield ctx.wait_for_external_event("ready")
-            finally:
-                raise BaseExceptionGroup("teardown", [TeardownExit("root cause"), ValueError("second cause")])
+    def orchestrator(ctx: task.OrchestrationContext, _: Any):
+        try:
+            yield ctx.wait_for_external_event("ready")
+        finally:
+            raise BaseExceptionGroup("teardown", [TeardownExit("root cause"), ValueError("second cause")])
 
-        result = _executor(orchestrator).execute(INSTANCE_ID, [], _request().newEvents)
-        failure = result.actions[0].completeOrchestration.failureDetails
-        assert failure.errorType.endswith(".BaseExceptionGroup")
-        assert "TeardownExit: root cause" in failure.stackTrace.value
-        assert "ValueError: second cause" in failure.stackTrace.value
+    result = _executor(orchestrator).execute(INSTANCE_ID, [], _request().newEvents)
+    failure = result.actions[0].completeOrchestration.failureDetails
+    assert failure.errorType.endswith(".BaseExceptionGroup")
+    assert "TeardownExit: root cause" in failure.stackTrace.value
+    assert "ValueError: second cause" in failure.stackTrace.value
+
+
+@pytest.mark.parametrize("base_group", [False, True])
+@pytest.mark.parametrize("during_teardown", [False, True])
+def test_grouped_failure_preserves_dispatch_outcome_and_diagnostics(
+        base_group: bool, during_teardown: bool):
+    second = TeardownExit("unexpected exit") if base_group else RuntimeError("ordinary failure")
+    nested = ValueError("nested reason")
+    nested.add_note("nested note")
+    error = BaseExceptionGroup("grouped failure", [ExceptionGroup("inner", [nested]), second])
+
+    def orchestrator(ctx: task.OrchestrationContext, _: Any):
+        if not during_teardown:
+            raise error
+        try:
+            yield ctx.call_activity("work")
+        finally:
+            raise error
+
+    with worker.TaskHubGrpcWorker(logger=LOGGER) as host:
+        host._registry = _executor(orchestrator)._registry
+        stub = Mock()
+        reset = Mock()
+        host._execute_orchestrator(
+            _request(), stub, "original-token", _on_outcome_uncertain=reset)
+
+    stub.CompleteOrchestratorTask.assert_called_once()
+    stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    reset.assert_not_called()
+    response = stub.CompleteOrchestratorTask.call_args.args[0]
+    if during_teardown and not base_group:
+        assert len(response.actions) == 1
+        assert response.actions[0].scheduleTask.name == "work"
+        assert not response.actions[0].HasField("completeOrchestration")
+        return
+    completion = response.actions[-1].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert completion.failureDetails.errorType == helpers.get_qualified_name(type(error))
+    assert "ValueError: nested reason" in completion.failureDetails.stackTrace.value
+    assert "nested note" in completion.failureDetails.stackTrace.value
+    assert f"{type(second).__name__}: {second}" in completion.failureDetails.stackTrace.value
 
 
 @pytest.mark.asyncio

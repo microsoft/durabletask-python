@@ -32,7 +32,6 @@ readme = "README.md"
 dependencies = [
     "grpcio",
     "protobuf",
-    "asyncio",
     "packaging"
 ]
 

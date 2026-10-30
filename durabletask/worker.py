@@ -7,7 +7,6 @@ import itertools
 import json
 import logging
 import os
-import sys
 import time
 from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -64,11 +63,11 @@ _WorkItem = tuple[Callable[..., Any], Callable[..., Any], tuple[Any, ...], dict[
 
 
 def _is_control_flow_exception(error: BaseException) -> bool:
-    if isinstance(error, (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit)):
-        return True
-    if sys.version_info >= (3, 11) and isinstance(error, BaseExceptionGroup):
-        return any(_is_control_flow_exception(inner) for inner in error.exceptions)
-    return False
+    control_flow_types = (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit)
+    if isinstance(error, BaseExceptionGroup):
+        group = cast(BaseExceptionGroup[BaseException], error)
+        return group.subgroup(control_flow_types) is not None
+    return isinstance(error, control_flow_types)
 
 
 class ConcurrencyOptions:

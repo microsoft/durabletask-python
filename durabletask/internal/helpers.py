@@ -258,8 +258,9 @@ def new_failure_details(
         errorType=get_qualified_name(type(ex)),
         errorMessage=str(ex),
         stackTrace=wrappers_pb2.StringValue(value=''.join(
-            traceback.format_tb(ex.__traceback__) if isinstance(ex, Exception)
-            else traceback.format_exception(type(ex), ex, ex.__traceback__))),
+            traceback.format_tb(ex.__traceback__)
+            if isinstance(ex, Exception) and not isinstance(ex, BaseExceptionGroup)
+            else traceback.format_exception(ex))),
         innerFailure=(
             new_failure_details(
                 inner, exception_properties_provider, logger, _visited)

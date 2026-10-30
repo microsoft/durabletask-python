@@ -27,6 +27,8 @@ directly.
 
 FIXED
 
+- With the corresponding core SDK update, grouped failures retain nested
+exception messages, tracebacks, and notes in failure details.
 - With the corresponding core `durabletask` SDK fix, oversized messages fail
 large-payload validation before any uploads or payload replacements. Size
 errors now take precedence over hypothetical earlier storage failures.
