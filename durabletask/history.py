@@ -6,7 +6,7 @@ from __future__ import annotations
 import functools
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from google.protobuf import json_format
@@ -260,7 +260,7 @@ def to_dict(event: HistoryEvent) -> dict[str, Any]:
 def _base_kwargs(event: pb.HistoryEvent) -> dict[str, Any]:
     return {
         'event_id': event.eventId,
-        'timestamp': event.timestamp.ToDatetime(timezone.utc),
+        'timestamp': event.timestamp.ToDatetime(UTC),
     }
 
 
@@ -272,7 +272,7 @@ def _string_value(msg: Message, field_name: str) -> str | None:
 
 def _timestamp_value(msg: Message, field_name: str) -> datetime | None:
     if msg.HasField(field_name):
-        return getattr(msg, field_name).ToDatetime(timezone.utc)
+        return getattr(msg, field_name).ToDatetime(UTC)
     return None
 
 
@@ -510,11 +510,11 @@ _EVENT_CONVERTERS: dict[str, Callable[[pb.HistoryEvent], HistoryEvent]] = {
     ),
     'timerCreated': lambda event: TimerCreatedEvent(
         **_base_kwargs(event),
-        fire_at=event.timerCreated.fireAt.ToDatetime(timezone.utc),
+        fire_at=event.timerCreated.fireAt.ToDatetime(UTC),
     ),
     'timerFired': lambda event: TimerFiredEvent(
         **_base_kwargs(event),
-        fire_at=event.timerFired.fireAt.ToDatetime(timezone.utc),
+        fire_at=event.timerFired.fireAt.ToDatetime(UTC),
         timer_id=event.timerFired.timerId,
     ),
     'orchestratorStarted': lambda event: OrchestratorStartedEvent(**_base_kwargs(event)),

@@ -16,7 +16,7 @@ from pathlib import Path
 from collections import namedtuple
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, List, Optional, Union, get_args
+from typing import Any, FrozenSet, List, Optional, Set, Union
 
 import pytest
 from durabletask import serialization
@@ -25,7 +25,6 @@ from durabletask.serialization import JsonDataConverter
 from durabletask.serialization import _encode_custom_object
 from durabletask.serialization import _coerce_to_type as coerce_to_type
 from durabletask.serialization import _from_json as from_json
-from durabletask.serialization import _resolve_forward_refs as resolve_forward_refs
 from durabletask.serialization import _to_json as to_json
 
 # ----- Test fixtures -----
@@ -541,42 +540,29 @@ def test_from_json_hook_unrelated_second_param_is_not_treated_as_converter():
     assert result == Flagged("ok")
 
 
-# ----- forward-reference resolution (Python 3.10 get_type_hints parity) -----
-#
-# On Python 3.10, ``typing.get_type_hints`` does not deep-resolve forward
-# references nested inside container args (e.g. the element type of
-# ``list["TreeNode"]`` on a self-referential dataclass), leaving a bare string
-# or ``ForwardRef``. ``_resolve_forward_refs`` restores the 3.11+ behavior so
-# nested coercion still fires. These tests run on every supported version.
+def test_dataclass_nested_forward_references_round_trip():
+    @dataclass
+    class Container:
+        items: list["Address"]
+        legacy_items: List["Address"]
+        by_name: dict[str, "Address"]
+        optional: Optional["Address"]
+        pair: tuple["Address", ...]
+
+    address = Address("a", "b")
+    value = Container([address], [address], {"home": address}, address, (address,))
+    assert from_json(to_json(value), Container) == value
 
 
-def test_resolve_forward_refs_resolves_string_element_type():
-    # ``list["Address"]`` evaluates to a generic whose arg is the raw string
-    # "Address" -- exactly what 3.10 leaves behind.
-    resolved = resolve_forward_refs(List["Address"], {"Address": Address})
-    assert get_args(resolved) == (Address,)
+def test_dataclass_unresolvable_annotation_preserves_parsed_json():
+    @dataclass
+    class Container:
+        value: Any
 
-
-def test_resolve_forward_refs_resolves_forwardref_element_type():
-    resolved = resolve_forward_refs(List["Address"], {"Address": Address})
-    assert get_args(resolved) == (Address,)
-
-
-def test_resolve_forward_refs_then_coerce_reconstructs_nested_dataclass():
-    # The full 3.10 path: resolve the unresolved element type, then coerce the
-    # contained dicts into the target dataclass.
-    field_type = resolve_forward_refs(list["Address"], {"Address": Address})
-    result = coerce_to_type([{"street": "a", "city": "b"}], field_type)
-    assert isinstance(result[0], Address)
-    assert result[0].city == "b"
-
-
-def test_resolve_forward_refs_leaves_unresolvable_name_untouched():
-    # An unknown name is left as a string so coercion harmlessly falls back to
-    # the parsed JSON rather than raising.
-    resolved = resolve_forward_refs(list["DoesNotExist"], {})
-    assert get_args(resolved) == ("DoesNotExist",)
-
+    Container.__annotations__["value"] = "DoesNotExist"
+    result = from_json('{"value": {"street": "a", "city": "b"}}', Container)
+    assert isinstance(result, Container)
+    assert result.value == {"street": "a", "city": "b"}
 
 # ----- set and frozenset container serialization and coercion -----
 
@@ -585,6 +571,55 @@ def test_resolve_forward_refs_leaves_unresolvable_name_untouched():
 class FrozenAddress:
     street: str
     city: str
+
+
+@dataclass(frozen=True)
+class FrozenTreeNode:
+    name: str
+    children: frozenset["FrozenTreeNode"] = frozenset()
+
+
+@pytest.mark.parametrize("option", ["enable_generic_sets", "enable_set_coercion"])
+def test_dataclass_nested_set_forward_references_round_trip(option: str):
+    @dataclass
+    class Container:
+        items: set["FrozenAddress"]
+        legacy_items: Set["FrozenAddress"]
+        frozen_items: frozenset["FrozenAddress"]
+        legacy_frozen_items: FrozenSet["FrozenAddress"]
+        nested: dict[str, list[frozenset[tuple["FrozenAddress", ...]]]]
+        optional: frozenset["FrozenAddress"] | None
+
+    address = FrozenAddress("a", "b")
+    value = Container(
+        {address}, {address}, frozenset({address}), frozenset({address}),
+        {"home": [frozenset({(address,)})]}, frozenset({address}),
+    )
+    converter = JsonDataConverter(**{option: True})
+    encoded = converter.serialize(value)
+    restored = converter.deserialize(encoded, Container)
+    assert restored == value
+    assert isinstance(restored.items, set)
+    assert isinstance(restored.legacy_items, set)
+    assert isinstance(restored.frozen_items, frozenset)
+    assert isinstance(restored.legacy_frozen_items, frozenset)
+    assert isinstance(restored.optional, frozenset)
+    assert converter.serialize(restored) == encoded
+
+
+@pytest.mark.parametrize("option", ["enable_generic_sets", "enable_set_coercion"])
+def test_dataclass_self_referential_frozenset_round_trip(option: str):
+    value = FrozenTreeNode("root", frozenset({
+        FrozenTreeNode("branch", frozenset({FrozenTreeNode("leaf")})),
+        FrozenTreeNode("other"),
+    }))
+    converter = JsonDataConverter(**{option: True})
+    encoded = converter.serialize(value)
+    restored = converter.deserialize(encoded, FrozenTreeNode)
+    assert restored == value
+    assert isinstance(restored.children, frozenset)
+    assert all(isinstance(child, FrozenTreeNode) for child in restored.children)
+    assert converter.serialize(restored) == encoded
 
 
 class SetItem:

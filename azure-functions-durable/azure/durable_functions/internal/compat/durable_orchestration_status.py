@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Optional, cast
 
 from durabletask.client import OrchestrationState, OrchestrationStatus
@@ -211,5 +211,5 @@ class DurableOrchestrationStatus:
         consumers that parse with that exact format working.
         """
         if value.tzinfo is not None:
-            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+            value = value.astimezone(UTC).replace(tzinfo=None)
         return value.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, Generator, Optional
 from urllib.parse import urljoin, urlparse
@@ -258,9 +258,9 @@ def _retry_after_seconds(headers: dict[str, str], now: datetime) -> int:
     # header); treat it as UTC. Normalize ``now`` the same way so the
     # subtraction is well-defined regardless of the caller's tz-awareness.
     if retry_at.tzinfo is None:
-        retry_at = retry_at.replace(tzinfo=timezone.utc)
+        retry_at = retry_at.replace(tzinfo=UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     return max(int((retry_at - now).total_seconds()), 0)
 
 

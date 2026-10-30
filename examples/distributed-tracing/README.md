@@ -16,7 +16,7 @@ all produce correlated trace spans:
 ## Prerequisites
 
 - [Docker](https://www.docker.com/) (for the emulator and Jaeger)
-- Python 3.10+
+- Python 3.11+
 
 ## Quick Start
 

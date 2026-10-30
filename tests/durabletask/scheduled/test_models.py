@@ -45,6 +45,24 @@ class TestCreationOptionsValidation:
 
 
 class TestCreationOptionsSerialization:
+    @pytest.mark.parametrize("timestamp, expected", [
+        ("2026-01-01T12:34:56Z", datetime(2026, 1, 1, 12, 34, 56, tzinfo=timezone.utc)),
+        ("2026-01-01T12:34:56+00:00", datetime(2026, 1, 1, 12, 34, 56, tzinfo=timezone.utc)),
+        ("2026-01-01T14:34:56+02:00", datetime(2026, 1, 1, 12, 34, 56, tzinfo=timezone.utc)),
+        ("2026-01-01T12:34:56", datetime(2026, 1, 1, 12, 34, 56)),
+    ])
+    def test_parse_iso_timestamps(self, timestamp: str, expected: datetime) -> None:
+        options = ScheduleCreationOptions.from_json({
+            "schedule_id": "s1",
+            "orchestration_name": "orch",
+            "interval_seconds": 5,
+            "start_at": timestamp,
+            "end_at": timestamp,
+        })
+        assert options.start_at == options.end_at == expected
+        assert options.start_at is not None
+        assert options.start_at.isoformat() == timestamp.replace("Z", "+00:00")
+
     def test_round_trip_through_json(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         end = datetime(2026, 2, 1, tzinfo=timezone.utc)

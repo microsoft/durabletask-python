@@ -3,7 +3,7 @@
 
 import json
 from dataclasses import fields, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from durabletask import history, task
@@ -185,5 +185,5 @@ def _raw_payload(serialized: str) -> Any:
 
 def _format_datetime(value: datetime) -> str:
     if value.tzinfo is not None:
-        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        value = value.astimezone(UTC).replace(tzinfo=None)
     return value.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"

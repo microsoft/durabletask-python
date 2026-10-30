@@ -20,7 +20,7 @@ your orchestrator or activity code.
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - [Docker](https://www.docker.com/) (for the DTS emulator)
 - [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite)
   or an Azure Storage account

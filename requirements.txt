@@ -8,7 +8,6 @@ pytest-cov
 azure-identity
 azure-functions
 typing-extensions
-asyncio
 packaging
 opentelemetry-api
 opentelemetry-sdk

@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from typing import Self
+
 
 class EntityInstanceId:
     __slots__ = ("_entity", "_key")
@@ -29,13 +31,13 @@ class EntityInstanceId:
             f"'{type(self).__name__}' object does not support attribute deletion"
         )
 
-    def __copy__(self) -> "EntityInstanceId":
+    def __copy__(self) -> Self:
         return self
 
-    def __deepcopy__(self, memo: object) -> "EntityInstanceId":
+    def __deepcopy__(self, memo: object) -> Self:
         return self
 
-    def __reduce__(self) -> tuple[type["EntityInstanceId"], tuple[str, str]]:
+    def __reduce__(self) -> tuple[type[Self], tuple[str, str]]:
         return (type(self), (self._entity, self._key))
 
     def __str__(self) -> str:

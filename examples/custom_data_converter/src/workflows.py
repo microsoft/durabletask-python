@@ -14,7 +14,7 @@ types to the converter at every boundary.
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -111,7 +111,7 @@ def sample_order() -> Order:
     """A valid sample order used by both the runnable app and the tests."""
     return Order(
         customer="Contoso",
-        placed_at=datetime.now(timezone.utc),
+        placed_at=datetime.now(UTC),
         items=[
             OrderItem(name="Widget", quantity=3, unit_price=25.0),
             OrderItem(name="Gadget", quantity=1, unit_price=99.99),

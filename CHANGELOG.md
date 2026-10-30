@@ -12,8 +12,33 @@ ADDED
 - Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
 by one or more task hubs.
 
+CHANGED
+
+- Dropped Python 3.10 support. Python 3.11 or later is now required.
+- Removed the obsolete PyPI `asyncio` backport dependency; all supported
+Python versions use the standard-library module.
+- Context managers now preserve subclass types in type checkers, including
+Azure Managed clients and workers.
+- Entity ID copy and pickle hooks now preserve subclass types in type checkers.
+- Multiple task completion callback failures now raise the built-in
+`ExceptionGroup`, preserving each exception and its traceback in memory and
+the first callback error as the explicit cause and serialized inner failure.
+A single callback failure is still raised directly.
+
+> [!WARNING]
+> The aggregate exception type and message have changed. Orchestrations that
+> branch on the old aggregate type or message can take a different path during
+> replay; drain affected instances on the previous SDK or use a separate task
+> hub for new instances. Branches on the aggregate's explicit first-error cause
+> retain their previous behavior.
+
 FIXED
 
+- Grouped failures now retain nested exception messages, tracebacks, and notes
+in failure details, including `ExceptionGroup` failures from task callbacks.
+Traceback rendering is limited to 15 children per group and 10 group levels,
+with truncation markers for omitted diagnostics. Failure details do not
+serialize a complete structured tree of group children.
 - Optimized set and frozenset serialization, particularly for deeply nested
 frozensets and large singleton elements. JSON object names within sets are now
 ordered consistently after conversion to strings, including numeric names.
