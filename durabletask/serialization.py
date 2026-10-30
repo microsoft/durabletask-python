@@ -421,6 +421,13 @@ def _normalize_set_value(value: Any, active: set[int]) -> Any:
                     raise TypeError(f"Unsupported JSON object key: {type(key).__name__}")
                 if isinstance(key, str):
                     name = key
+                    if not str.isascii(name):
+                        # JSON decoding combines UTF-16 surrogate pairs, but
+                        # leaves lone surrogates intact. Match its object names
+                        # without parsing a document or losing duplicate names.
+                        name = str.encode(name, "utf-16-le", "surrogatepass").decode(
+                            "utf-16-le", "surrogatepass")
+                        string_names = string_names and name == key
                 else:
                     name = json.dumps(key)
                     string_names = False

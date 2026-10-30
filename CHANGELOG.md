@@ -17,6 +17,8 @@ FIXED
 - Optimized set and frozenset serialization, particularly for deeply nested
 frozensets and large singleton elements. JSON object names within sets are now
 ordered consistently after conversion to strings, including numeric names.
+Equivalent surrogate-pair and non-BMP object names retain the last value
+rather than emitting duplicate JSON properties.
 Set reconstruction remains opt-in.
 - Implemented `__hash__` and `__repr__` for `EntityInstanceId`, making identity attributes immutable to guarantee hash stability when used in sets or dict keys.
 - Large-payload externalization now checks every eligible payload's maximum

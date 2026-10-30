@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any, List, Optional, Union, get_args
 
 import pytest
+from durabletask import serialization
 from durabletask.serialization import _AUTO_SERIALIZED as AUTO_SERIALIZED
 from durabletask.serialization import JsonDataConverter
 from durabletask.serialization import _encode_custom_object
@@ -687,8 +688,6 @@ def test_set_serialization_calls_nested_hooks_once(depth: int):
 
 
 def test_set_serialization_does_not_parse_or_encode_singleton_sort_keys(monkeypatch: pytest.MonkeyPatch):
-    import durabletask.serialization as serialization
-
     dumps = json.dumps
     encoded_values: list[Any] = []
 
@@ -707,8 +706,6 @@ def test_set_serialization_does_not_parse_or_encode_singleton_sort_keys(monkeypa
 
 
 def test_set_serialization_sorts_each_normalized_element_once(monkeypatch: pytest.MonkeyPatch):
-    import durabletask.serialization as serialization
-
     dumps = json.dumps
     sort_values: list[Any] = []
 
@@ -741,6 +738,30 @@ def test_set_serialization_normalizes_json_object_names_before_ordering():
     expected = '{"10": "ten", "2": "two"}'
     assert to_json({numeric, strings}) == f"[{expected}, {expected}]"
     assert to_json({frozenset({numeric}), frozenset({strings})}) == f"[[{expected}], [{expected}]]"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_set_serialization_collapses_equivalent_unicode_object_names(reverse: bool):
+    pairs = [("\ud83d\ude00", 1), ("\U0001f600", 2)]
+    value = dict(reversed(pairs) if reverse else pairs)
+    expected = '[{"\\ud83d\\ude00": 2}]'
+    assert to_json({SetItem(value)}) == expected
+    assert to_json({frozenset({SetItem(value)})}) == f"[{expected}]"
+
+
+@pytest.mark.parametrize("name", [
+    "ascii", "\u2603", "\U0001f600", "\ud83d\ude00", "\ud83d",
+    "\ude00", "\ud83d\ud83d\ude00", "\ude00\ud83d", "\ud83dA\ude00",
+])
+def test_set_serialization_unicode_names_match_json_normalization(name: str):
+    value = {name: 1}
+    expected = json.dumps([json.loads(json.dumps(value, sort_keys=True))])
+    assert to_json({SetItem(value)}) == expected
+
+
+def test_set_serialization_orders_normalized_unicode_names():
+    value = {"\ud83d\ude00": 1, "\ue000": 2}
+    assert to_json({SetItem(value)}) == '[{"\\ue000": 2, "\\ud83d\\ude00": 1}]'
 
 
 @pytest.mark.parametrize("shape", ["list", "dict", "hook", "set"])
@@ -802,6 +823,8 @@ def test_serialization_outside_sets_matches_legacy_json_encoder():
     value = {"z": [Temperature(100.0), {"b": 2, "a": 1}], "a": (1, 2)}
     assert to_json(value) == json.dumps(value, default=_encode_custom_object)
     assert to_json(value) == '{"z": [{"fahrenheit": 212.0}, {"b": 2, "a": 1}], "a": [1, 2]}'
+    names = {"\ud83d\ude00": 1, "\U0001f600": 2}
+    assert to_json(names) == json.dumps(names)
 
 
 def test_set_serialization_deterministic_across_hash_seeds():
