@@ -32,6 +32,20 @@ Key capabilities include durable orchestrations and sub-orchestrations, durable
 timers, external events, durable entities, retries, versioning, durable HTTP
 calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 
+## Async orchestrators
+
+Both authoring styles accept `async def` and `await` without an adapter loop.
+Await durable operations and compose branches with `asyncio.gather` or task
+groups; `asyncio.sleep` and timeouts use durable timers. Synchronous generator
+orchestrators remain supported, including mixed-style sub-orchestrations.
+
+The [shared async contract](../docs/async-orchestrators.md) defines the supported
+API subset, cancellation, per-dispatch `finally`/async-generator cleanup,
+replay/migration rules, and framework adapter responsibilities. Arbitrary I/O,
+threads, subprocesses, `asyncio.wait`/`as_completed`, and automatic recording of
+ordinary async helpers are not supported. Put nondeterministic work in ordinary
+activities, not orchestrators.
+
 ## Unicode JSON serialization
 
 By default, durable payloads preserve the shared `azure-functions` codec's

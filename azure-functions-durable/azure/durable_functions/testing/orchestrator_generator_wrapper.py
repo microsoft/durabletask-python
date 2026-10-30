@@ -21,6 +21,10 @@ def orchestrator_generator_wrapper(
     back into the orchestrator (mirroring how failed activities, timers, or
     other tasks surface during replay).
 
+    This mock-based helper handles direct durable awaits only. It does not
+    simulate the runtime's asyncio scheduler; use replay/backend tests for
+    gather, task groups, sleeps and timeouts.
+
     Parameters
     ----------
     generator: Generator[Any, Any, Any] | Coroutine[Any, Any, Any]
