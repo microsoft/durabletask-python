@@ -471,6 +471,32 @@ def test_opt_in_set_discovery_matches_reconstruction(
     assert default.deserialize(payload, target_type) == json.loads(payload)
 
 
+@pytest.mark.parametrize("option", ["enable_generic_sets", "enable_set_coercion"])
+def test_activity_set_forward_references_use_native_type_hint_resolution(option: str):
+    def activity(
+        ctx: Any, values: set[tuple["PricedOrder", ...]],
+    ) -> frozenset[tuple["PricedOrder", ...]]:
+        assert values == {(PricedOrder(3, 10),)}
+        return frozenset(values)
+
+    converter = JsonDataConverter(**{option: True})
+    input_type = type_discovery.activity_input_type(activity, converter)
+    output_type = type_discovery.activity_output_type(activity, converter)
+    assert input_type == set[tuple[PricedOrder, ...]]
+    assert output_type == frozenset[tuple[PricedOrder, ...]]
+    assert type_discovery.activity_input_type(activity) is None
+    assert type_discovery.activity_output_type(activity) is None
+
+    registry = _Registry()
+    name = registry.add_activity(activity)
+    executor = _ActivityExecutor(registry, logging.getLogger("test_set_forward_refs"), converter)
+    payload = '[[{"quantity": 3, "unit_price": 10, "total": 999}]]'
+    output = executor.execute("instance", name, 1, payload)
+    restored = converter.deserialize(output, output_type)
+    assert isinstance(restored, frozenset)
+    assert restored == frozenset({(PricedOrder(3, 10),)})
+
+
 @pytest.mark.parametrize("target_type", [
     set[tuple[list[int], int]],
     set[tuple[dict[str, int], ...]],

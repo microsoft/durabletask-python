@@ -16,7 +16,7 @@ from pathlib import Path
 from collections import namedtuple
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, List, Optional, Union
+from typing import Any, FrozenSet, List, Optional, Set, Union
 
 import pytest
 from durabletask import serialization
@@ -571,6 +571,55 @@ def test_dataclass_unresolvable_annotation_preserves_parsed_json():
 class FrozenAddress:
     street: str
     city: str
+
+
+@dataclass(frozen=True)
+class FrozenTreeNode:
+    name: str
+    children: frozenset["FrozenTreeNode"] = frozenset()
+
+
+@pytest.mark.parametrize("option", ["enable_generic_sets", "enable_set_coercion"])
+def test_dataclass_nested_set_forward_references_round_trip(option: str):
+    @dataclass
+    class Container:
+        items: set["FrozenAddress"]
+        legacy_items: Set["FrozenAddress"]
+        frozen_items: frozenset["FrozenAddress"]
+        legacy_frozen_items: FrozenSet["FrozenAddress"]
+        nested: dict[str, list[frozenset[tuple["FrozenAddress", ...]]]]
+        optional: frozenset["FrozenAddress"] | None
+
+    address = FrozenAddress("a", "b")
+    value = Container(
+        {address}, {address}, frozenset({address}), frozenset({address}),
+        {"home": [frozenset({(address,)})]}, frozenset({address}),
+    )
+    converter = JsonDataConverter(**{option: True})
+    encoded = converter.serialize(value)
+    restored = converter.deserialize(encoded, Container)
+    assert restored == value
+    assert isinstance(restored.items, set)
+    assert isinstance(restored.legacy_items, set)
+    assert isinstance(restored.frozen_items, frozenset)
+    assert isinstance(restored.legacy_frozen_items, frozenset)
+    assert isinstance(restored.optional, frozenset)
+    assert converter.serialize(restored) == encoded
+
+
+@pytest.mark.parametrize("option", ["enable_generic_sets", "enable_set_coercion"])
+def test_dataclass_self_referential_frozenset_round_trip(option: str):
+    value = FrozenTreeNode("root", frozenset({
+        FrozenTreeNode("branch", frozenset({FrozenTreeNode("leaf")})),
+        FrozenTreeNode("other"),
+    }))
+    converter = JsonDataConverter(**{option: True})
+    encoded = converter.serialize(value)
+    restored = converter.deserialize(encoded, FrozenTreeNode)
+    assert restored == value
+    assert isinstance(restored.children, frozenset)
+    assert all(isinstance(child, FrozenTreeNode) for child in restored.children)
+    assert converter.serialize(restored) == encoded
 
 
 class SetItem:
