@@ -764,6 +764,50 @@ def test_set_serialization_orders_normalized_unicode_names():
     assert to_json({SetItem(value)}) == '[{"\\ue000": 2, "\\ud83d\\ude00": 1}]'
 
 
+@pytest.mark.parametrize("value", [
+    {"\u2603" + str(i): i for i in range(10000)},
+    [{"a": i, "b": i + 1, "c": i + 2} for i in range(1000)],
+])
+def test_set_serialization_dictionary_heavy_payloads(value: Any):
+    class CountingItem(SetItem):
+        calls = 0
+
+        def to_json(self) -> Any:
+            self.calls += 1
+            return self.value
+
+    item = CountingItem(value)
+    assert to_json({item}) == json.dumps([value], sort_keys=True)
+    assert item.calls == 1
+
+
+@pytest.mark.parametrize("path", ["dict", "list", "hook"])
+def test_set_serialization_tracks_dictionary_cycles_through_children(path: str):
+    value: dict[str, Any] = {"a": 1}
+    if path == "dict":
+        value["z"] = value
+    elif path == "list":
+        value["z"] = [value]
+    else:
+        value["z"] = SetItem(value)
+    with pytest.raises(TypeError, match="Circular reference detected"):
+        to_json({SetItem(value)})
+
+
+def test_set_serialization_normalizes_dictionary_children_once_per_occurrence():
+    class CountingItem(SetItem):
+        calls = 0
+
+        def to_json(self) -> Any:
+            self.calls += 1
+            return self.value
+
+    child = CountingItem({"b": 2, "a": 1})
+    value = {"a": 0, "b": child, "c": child}
+    assert to_json({SetItem(value)}) == '[{"a": 0, "b": {"a": 1, "b": 2}, "c": {"a": 1, "b": 2}}]'
+    assert child.calls == 2
+
+
 @pytest.mark.parametrize("shape", ["list", "dict", "hook", "set"])
 def test_set_serialization_rejects_cycles(shape: str):
     class Item:

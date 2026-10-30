@@ -38,6 +38,7 @@ import functools
 import inspect
 import json
 import logging
+import re
 import sys
 import types
 import typing
@@ -56,6 +57,8 @@ logger = logging.getLogger("durabletask")
 # replay. Internal detail; re-exported from ``durabletask.internal.shared`` only
 # for backwards compatibility.
 _AUTO_SERIALIZED = "__durabletask_autoobject__"
+_SURROGATE_PAIR = re.compile("[\ud800-\udbff][\udc00-\udfff]")
+_JSON_SCALAR_TYPES = (int, str, float, type(None))
 
 
 class DataConverter(ABC):
@@ -408,39 +411,48 @@ def _encode_custom_object(o: Any) -> Any:
 
 def _normalize_set_value(value: Any, active: set[int]) -> Any:
     """Normalize only set subtrees; leave ordinary payload encoding unchanged."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
     identity = id(value)
+    is_mapping = isinstance(value, dict)
+    if not is_mapping and isinstance(value, _JSON_SCALAR_TYPES):
+        return value
     if identity in active:
         raise ValueError("Circular reference detected")
+    if is_mapping:
+        # Match sort_keys=True, including rejection of incomparable keys.
+        # JSON object names are strings; duplicate names keep the last value,
+        # just as the previous dumps/loads normalization did.
+        result: dict[str, Any] = {}
+        string_names = True
+        for key, item in sorted(cast(dict[Any, Any], value).items()):
+            if isinstance(key, str):
+                name = key
+                if not str.isascii(name) and _SURROGATE_PAIR.search(name):
+                    # Ordinary Unicode names and lone surrogates need no codec
+                    # round trip; only a high/low pair changes after decoding.
+                    name = str.encode(name, "utf-16-le", "surrogatepass").decode(
+                        "utf-16-le", "surrogatepass")
+                    string_names = False
+            else:
+                if key is not None and not isinstance(key, (int, float)):
+                    raise TypeError(f"Unsupported JSON object key: {type(key).__name__}")
+                name = json.dumps(key)
+                string_names = False
+            if isinstance(item, _JSON_SCALAR_TYPES):
+                result[name] = item
+            else:
+                # Scalar-only records cannot cycle. Track the parent only
+                # while descending into a child that could refer back to it.
+                active.add(identity)
+                try:
+                    result[name] = _normalize_set_value(item, active)
+                finally:
+                    active.remove(identity)
+        return result if string_names else dict(sorted(result.items()))
     active.add(identity)
     try:
-        if isinstance(value, dict):
-            # Match sort_keys=True, including rejection of incomparable keys.
-            # JSON object names are strings; duplicate names keep the last value,
-            # just as the previous dumps/loads normalization did.
-            result: dict[str, Any] = {}
-            string_names = True
-            for key, item in sorted(cast(dict[Any, Any], value).items()):
-                if key is not None and not isinstance(key, (str, int, float, bool)):
-                    raise TypeError(f"Unsupported JSON object key: {type(key).__name__}")
-                if isinstance(key, str):
-                    name = key
-                    if not str.isascii(name):
-                        # JSON decoding combines UTF-16 surrogate pairs, but
-                        # leaves lone surrogates intact. Match its object names
-                        # without parsing a document or losing duplicate names.
-                        name = str.encode(name, "utf-16-le", "surrogatepass").decode(
-                            "utf-16-le", "surrogatepass")
-                        string_names = string_names and name == key
-                else:
-                    name = json.dumps(key)
-                    string_names = False
-                result[name] = _normalize_set_value(item, active)
-            return result if string_names else dict(sorted(result.items()))
         if isinstance(value, (list, tuple)):
             return [
-                item if item is None or isinstance(item, (str, int, float))
+                item if isinstance(item, _JSON_SCALAR_TYPES)
                 else _normalize_set_value(item, active)
                 for item in cast(Sequence[Any], value)
             ]
