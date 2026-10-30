@@ -1,12 +1,42 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+
 class EntityInstanceId:
+    __slots__ = ("_entity", "_key")
+
     def __init__(self, entity: str, key: str):
         EntityInstanceId.validate_entity_name(entity)
         EntityInstanceId.validate_key(key)
-        self.entity = entity.lower()
-        self.key = key
+        object.__setattr__(self, "_entity", entity.lower())
+        object.__setattr__(self, "_key", key)
+
+    @property
+    def entity(self) -> str:
+        return self._entity
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(
+            f"'{type(self).__name__}' object does not support attribute assignment"
+        )
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(
+            f"'{type(self).__name__}' object does not support attribute deletion"
+        )
+
+    def __copy__(self) -> "EntityInstanceId":
+        return self
+
+    def __deepcopy__(self, memo: object) -> "EntityInstanceId":
+        return self
+
+    def __reduce__(self) -> tuple[type["EntityInstanceId"], tuple[str, str]]:
+        return (type(self), (self._entity, self._key))
 
     def __str__(self) -> str:
         return f"@{self.entity}@{self.key}"
@@ -20,6 +50,12 @@ class EntityInstanceId:
         if not isinstance(other, EntityInstanceId):
             return NotImplemented
         return str(self) < str(other)
+
+    def __hash__(self) -> int:
+        return hash((self.entity, self.key))
+
+    def __repr__(self) -> str:
+        return f"EntityInstanceId(entity={self.entity!r}, key={self.key!r})"
 
     @staticmethod
     def parse(entity_id: str) -> "EntityInstanceId":

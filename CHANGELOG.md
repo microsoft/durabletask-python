@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
+by one or more task hubs.
+
 CHANGED
 
 - Dropped Python 3.10 support. Python 3.11 or later is now required.
@@ -18,9 +23,27 @@ failure is still raised directly.
 
 FIXED
 
-- Orchestrator generators are now closed when a dispatch ends, so cleanup in
-`finally` blocks runs deterministically, including for async bridges that would
-otherwise retain tasks, event loops, and orchestration contexts.
+- Implemented `__hash__` and `__repr__` for `EntityInstanceId`, making identity attributes immutable to guarantee hash stability when used in sets or dict keys.
+- Large-payload externalization now checks every eligible payload's maximum
+size before uploading or replacing any protobuf values, including carryover
+events and entity payloads, for both synchronous and asynchronous calls.
+Oversized messages remain unchanged and cause no uploads; their size error
+now takes precedence over hypothetical earlier storage failures.
+- Orchestrations that exceed the configured external payload storage limit now
+fail without retrying and release their entity locks, allowing other callers to
+progress. Transient payload-store failures remain retryable.
+- Previously unhandled non-cancellation `BaseException` exits, including result
+serialization and generator teardown failures, now fail with a clear reason instead of leaving an accepted dispatch
+unfinished. Cancellation and process-control signals retain their semantics.
+The gRPC worker abandons work that exits before an outcome is sent and resets
+the originating work-item stream after an uncertain completion or abandonment
+RPC, allowing scheduler ownership recovery without retrying an uncertain outcome.
+- Orchestrator generators are now closed at the end of each dispatch, including
+while waiting for durable work, releasing resources held by async bridges.
+`finally` blocks and context-manager exits can run before orchestration completion
+and repeat across dispatches; see [cleanup semantics](docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks).
+- Async cancellation raised by generator teardown no longer replaces dispatch
+responses or version-rejection abandonment.
 
 ## v1.12.0
 

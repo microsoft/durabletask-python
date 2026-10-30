@@ -18,9 +18,23 @@ directly.
 
 FIXED
 
+- With the corresponding core `durabletask` SDK fix, oversized messages fail
+large-payload validation before any uploads or payload replacements. Size
+errors now take precedence over hypothetical earlier storage failures.
+- With the corresponding core `durabletask` SDK fix, orchestrations that exceed
+the configured external payload storage limit fail without retrying and release
+their entity locks. Transient payload-store failures remain retryable.
+- With the corresponding core `durabletask` SDK fix, previously unhandled
+non-cancellation `BaseException` exits, including result serialization failures,
+now fail with a clear reason. Cancellation and process-control
+exits recover dispatch ownership, and uncertain completion or abandonment RPCs
+reset the originating work-item stream rather than retaining unfinished work.
 - With the corresponding core `durabletask` SDK fix, orchestrator generators
-are closed when a dispatch ends, so cleanup in `finally` blocks runs
-deterministically, including for async bridges.
+are closed at the end of each dispatch, including while waiting for durable work.
+See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks)
+for repeated finalizers, discarded teardown actions/status, and yielding restrictions.
+- With the corresponding core `durabletask` SDK fix, async cancellation raised by
+generator teardown no longer replaces dispatch responses or version-rejection abandonment.
 
 ## v1.12.0
 

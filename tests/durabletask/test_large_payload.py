@@ -12,6 +12,7 @@ import pytest
 from google.protobuf import wrappers_pb2
 
 import durabletask.internal.orchestrator_service_pb2 as pb
+from durabletask.internal.exceptions import PayloadSizeExceededError
 from durabletask.payload.helpers import (
     deexternalize_payloads,
     deexternalize_payloads_async,
@@ -82,6 +83,16 @@ def sv(text: str) -> wrappers_pb2.StringValue:
     return wrappers_pb2.StringValue(value=text)
 
 
+@pytest.fixture(params=["sync", "async"])
+def externalize(request):
+    def run(msg, store, *, instance_id=None):
+        if request.param == "async":
+            asyncio.run(externalize_payloads_async(msg, store, instance_id=instance_id))
+        else:
+            externalize_payloads(msg, store, instance_id=instance_id)
+    return run
+
+
 # ------------------------------------------------------------------
 # Tests: externalize_payloads
 # ------------------------------------------------------------------
@@ -142,8 +153,9 @@ class TestExternalizePayloads:
             name="MyOrch",
             input=sv(large_data),
         )
-        with pytest.raises(ValueError, match="exceeds the maximum"):
+        with pytest.raises(PayloadSizeExceededError, match="exceeds the maximum") as failure:
             externalize_payloads(req, store, instance_id="test-1")
+        assert isinstance(failure.value, ValueError)
 
     def test_empty_value_not_externalized(self):
         """Empty StringValue should not be externalized."""
@@ -235,6 +247,178 @@ class TestExternalizePayloads:
         externalize_payloads(res, store, instance_id="test-1")
 
         assert res.result.value.startswith(FakePayloadStore.TOKEN_PREFIX)
+
+
+class TestExternalizePreflight:
+    @pytest.mark.parametrize("message_kind", ["actions", "carryover", "entity-results", "entity-state"])
+    @pytest.mark.parametrize("upload_fails", [False, True])
+    def test_later_oversized_payload_has_no_side_effects(self, externalize, message_kind, upload_fails):
+        store = FakePayloadStore(threshold_bytes=8, max_stored_payload_bytes=32)
+        if message_kind == "actions":
+            response = pb.OrchestratorResponse(
+                instanceId="size-preflight",
+                actions=[
+                    pb.OrchestratorAction(id=1, scheduleTask=pb.ScheduleTaskAction(input=sv("a" * 20))),
+                    pb.OrchestratorAction(id=2, scheduleTask=pb.ScheduleTaskAction(input=sv("b" * 33))),
+                ],
+            )
+        elif message_kind == "carryover":
+            response = pb.OrchestratorResponse(
+                instanceId="size-preflight",
+                actions=[pb.OrchestratorAction(
+                    id=1,
+                    completeOrchestration=pb.CompleteOrchestrationAction(
+                        result=sv("a" * 20),
+                        carryoverEvents=[pb.HistoryEvent(
+                            eventId=2,
+                            eventRaised=pb.EventRaisedEvent(name="event", input=sv("b" * 33)),
+                        )],
+                    ),
+                )],
+            )
+        elif message_kind == "entity-results":
+            response = pb.EntityBatchResult(results=[
+                pb.OperationResult(success=pb.OperationResultSuccess(result=sv("a" * 20))),
+                pb.OperationResult(success=pb.OperationResultSuccess(result=sv("b" * 33))),
+            ])
+        else:
+            response = pb.EntityBatchResult(
+                results=[pb.OperationResult(success=pb.OperationResultSuccess(result=sv("a" * 20)))],
+                actions=[pb.OperationAction(sendSignal=pb.SendSignalAction(input=sv("a" * 20)))],
+                entityState=sv("b" * 33),
+            )
+        before = response.SerializeToString()
+        error = OSError("must not upload") if upload_fails else None
+        store.upload = MagicMock(wraps=store.upload, side_effect=error)
+        store.upload_async = AsyncMock(wraps=store.upload_async, side_effect=error)
+
+        with pytest.raises(ValueError, match="Payload size 33 bytes exceeds the maximum allowed size of 32 bytes"):
+            externalize(response, store, instance_id="size-preflight")
+
+        store.upload.assert_not_called()
+        store.upload_async.assert_not_called()
+        assert not store._blobs
+        assert response.SerializeToString() == before
+
+    @pytest.mark.parametrize("payload", ["a" * 33, "\u00e9" * 16 + "a", "\U0001f600" * 8 + "a"])
+    def test_utf8_maximum_uses_bytes(self, externalize, payload):
+        store = FakePayloadStore(threshold_bytes=8, max_stored_payload_bytes=32)
+        response = pb.OrchestrationState(input=sv("a" * 20), output=sv(payload))
+        before = response.SerializeToString()
+
+        with pytest.raises(ValueError, match="Payload size 33 bytes exceeds the maximum"):
+            externalize(response, store)
+
+        assert not store._blobs
+        assert response.SerializeToString() == before
+
+    @pytest.mark.parametrize("payload", [
+        "a" * 7, "a" * 8, "a" * 9, "a" * 32,
+        "\u00e9" * 4, "\u00e9" * 4 + "a", "\u00e9" * 16, "\U0001f600" * 8,
+    ])
+    def test_valid_utf8_threshold_and_maximum_boundaries(self, externalize, payload):
+        store = FakePayloadStore(threshold_bytes=8, max_stored_payload_bytes=32)
+        response = pb.ActivityResponse(result=sv(payload))
+
+        externalize(response, store)
+
+        if len(payload.encode("utf-8")) > 8:
+            assert store._blobs[response.result.value] == payload.encode("utf-8")
+            assert len(store._blobs) == 1
+        else:
+            assert response.result.value == payload
+            assert not store._blobs
+
+    def test_all_valid_payloads_preserve_order_tokens_and_presence(self, externalize):
+        store = FakePayloadStore(threshold_bytes=8, max_stored_payload_bytes=32)
+        token = f"{FakePayloadStore.TOKEN_PREFIX}existing-blob"
+        response = pb.OrchestratorResponse(actions=[
+            pb.OrchestratorAction(id=1, scheduleTask=pb.ScheduleTaskAction(input=sv("a" * 20))),
+            pb.OrchestratorAction(id=2, scheduleTask=pb.ScheduleTaskAction(input=sv("\u00e9" * 16))),
+            pb.OrchestratorAction(id=3, scheduleTask=pb.ScheduleTaskAction(input=sv(token))),
+            pb.OrchestratorAction(id=4, scheduleTask=pb.ScheduleTaskAction(input=sv(""))),
+            pb.OrchestratorAction(id=5, scheduleTask=pb.ScheduleTaskAction()),
+        ])
+        upload = store.upload = MagicMock(wraps=store.upload)
+
+        externalize(response, store, instance_id="size-preflight")
+
+        assert list(store._blobs.values()) == [b"a" * 20, ("\u00e9" * 16).encode("utf-8")]
+        assert [call.kwargs for call in upload.call_args_list] == [
+            {"instance_id": "size-preflight"}, {"instance_id": "size-preflight"},
+        ]
+        assert response.actions[2].scheduleTask.input.value == token
+        assert response.actions[3].scheduleTask.HasField("input")
+        assert response.actions[3].scheduleTask.input.value == ""
+        assert not response.actions[4].scheduleTask.HasField("input")
+        before = response.SerializeToString()
+        externalize(response, store)
+        assert upload.call_count == 2
+        assert response.SerializeToString() == before
+
+    def test_inline_payload_above_maximum_is_still_ignored(self, externalize):
+        store = FakePayloadStore(threshold_bytes=32, max_stored_payload_bytes=8)
+        response = pb.ActivityResponse(result=sv("a" * 20))
+        before = response.SerializeToString()
+
+        externalize(response, store)
+
+        assert not store._blobs
+        assert response.SerializeToString() == before
+
+    def test_uploads_use_snapshots(self, externalize):
+        store = FakePayloadStore(threshold_bytes=8, max_stored_payload_bytes=32)
+        response = pb.OrchestrationState(input=sv("a" * 20), output=sv("b" * 20))
+        upload = store.upload
+
+        def mutate_later_field(data, *, instance_id=None):
+            response.output.value = "changed during upload"
+            return upload(data, instance_id=instance_id)
+
+        store.upload = MagicMock(side_effect=mutate_later_field)
+
+        externalize(response, store)
+
+        assert list(store._blobs.values()) == [b"a" * 20, b"b" * 20]
+        assert store._blobs[response.output.value] == b"b" * 20
+
+    @pytest.mark.parametrize("error", [OSError("storage failure"), ValueError("custom store failure")])
+    def test_upload_errors_propagate_without_rollback(self, externalize, error):
+        store = FakePayloadStore(threshold_bytes=8, max_stored_payload_bytes=32)
+        response = pb.OrchestrationState(input=sv("a" * 20), output=sv("b" * 20))
+        upload = store.upload
+
+        def upload_or_fail(data, *, instance_id=None):
+            if store._blobs:
+                raise error
+            return upload(data, instance_id=instance_id)
+
+        store.upload = MagicMock(side_effect=upload_or_fail)
+
+        with pytest.raises(type(error)) as raised:
+            externalize(response, store)
+
+        assert raised.value is error
+        assert len(store._blobs) == 1
+        assert store.is_known_token(response.input.value)
+        assert response.output.value == "b" * 20
+        assert store.upload.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_async_cancellation_propagates_without_later_uploads(self):
+        store = FakePayloadStore(threshold_bytes=8, max_stored_payload_bytes=32)
+        response = pb.OrchestrationState(input=sv("a" * 20), output=sv("b" * 20))
+        before = response.SerializeToString()
+        error = asyncio.CancelledError("cancelled upload")
+        store.upload_async = AsyncMock(side_effect=error)
+
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await externalize_payloads_async(response, store)
+
+        assert raised.value is error
+        assert store.upload_async.await_count == 1
+        assert not store._blobs
+        assert response.SerializeToString() == before
 
 
 # ------------------------------------------------------------------
@@ -357,6 +541,40 @@ class TestAsyncPayloadHelpers:
 
         await deexternalize_payloads_async(req, store)
         assert req.input.value == original
+
+    @pytest.mark.asyncio
+    async def test_async_cap_failure_is_a_value_error(self):
+        store = FakePayloadStore(threshold_bytes=1, max_stored_payload_bytes=10)
+        req = pb.CreateInstanceRequest(input=sv("x" * 11))
+        with pytest.raises(PayloadSizeExceededError) as failure:
+            await externalize_payloads_async(req, store)
+        assert isinstance(failure.value, ValueError)
+        assert not store._blobs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True])
+    async def test_token_larger_than_cap_is_not_reuploaded(self, use_async):
+        store = FakePayloadStore(threshold_bytes=1, max_stored_payload_bytes=10)
+        token = f"{FakePayloadStore.TOKEN_PREFIX}existing-blob"
+        assert len(token.encode("utf-8")) > store.options.max_stored_payload_bytes
+        req = pb.CreateInstanceRequest(input=sv(token))
+        if use_async:
+            await externalize_payloads_async(req, store)
+        else:
+            externalize_payloads(req, store)
+        assert req.input.value == token
+        assert not store._blobs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", [OSError("unavailable"), ValueError("store error"), asyncio.CancelledError()])
+    async def test_async_store_error_propagates_unchanged(self, error):
+        store = FakePayloadStore(threshold_bytes=1)
+        store.upload_async = AsyncMock(side_effect=error)
+        req = pb.CreateInstanceRequest(input=sv("large enough"))
+        with pytest.raises(type(error)) as failure:
+            await externalize_payloads_async(req, store)
+        assert failure.value is error
+        assert req.input.value == "large enough"
 
 
 # ------------------------------------------------------------------

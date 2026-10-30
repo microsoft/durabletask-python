@@ -12,3 +12,7 @@ class VersionFailureException(Exception):
 
 class AbandonOrchestrationError(Exception):
     pass
+
+
+class PayloadSizeExceededError(ValueError):
+    """A raw payload exceeds the configured external storage limit."""
