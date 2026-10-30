@@ -120,7 +120,7 @@ def test_durable_timer_and_timeout(kind: str) -> None:
             else:
                 with anyio.fail_after(2):
                     await ctx.wait_for_external_event("never")
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             return "timed out"
         return "slept"
 
@@ -383,3 +383,44 @@ def test_cleanup_failure_policy_includes_async_generator_tasks(
     else:
         assert [action.scheduleTask.name for action in result.actions] == ["wait"]
         assert "cleanup failed" in caplog.text
+
+
+def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(index: int) -> None:
+            try:
+                await ctx.call_activity("work", input=index)
+            finally:
+                # This is real task-group cancellation during replay, not
+                # dispatch teardown: durable compensation is still allowed.
+                with anyio.CancelScope(shield=True):
+                    await ctx.call_activity("compensate", input=index)
+
+        async with anyio.create_task_group() as group:
+            for index in range(4):
+                group.start_soon(branch, index)
+
+    old = _start() + [helpers.new_task_scheduled_event(index, "work") for index in range(1, 5)]
+    failure = [helpers.new_task_failed_event(1, ValueError("boom"))]
+    # The failing branch first enters its durable finally, so deliver that
+    # completion before task-group sibling cancellation starts.
+    first = _execute(orchestrator, old, failure)
+    assert [(a.id, a.scheduleTask.name, json.loads(a.scheduleTask.input.value)) for a in first.actions] == [
+        (5, "compensate", 0)]
+    old += failure + [helpers.new_task_scheduled_event(5, "compensate"),
+                      helpers.new_task_completed_event(5, "null")]
+    expected = [helpers.new_schedule_task_action(index + 6, "compensate", json.dumps(index + 1), None)
+                for index in range(3)]
+    for _ in range(10):
+        assert _execute(orchestrator, [], old).actions == expected
+
+
+def test_cancelling_last_loop_timer_cannot_hide_foreign_wait() -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        handle = asyncio.get_running_loop().call_later(1, lambda: None)
+        handle.cancel()
+        await asyncio.Future()
+
+    complete = _completion(_execute(orchestrator, [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert "blocked without durable work" in complete.failureDetails.errorMessage
