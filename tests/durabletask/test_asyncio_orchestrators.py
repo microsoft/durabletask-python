@@ -424,3 +424,42 @@ def test_cancelling_last_loop_timer_cannot_hide_foreign_wait() -> None:
     complete = _completion(_execute(orchestrator, [], _start()))
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert "blocked without durable work" in complete.failureDetails.errorMessage
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_background_failure_is_reported_unless_observed(
+        observed: bool, caplog: pytest.LogCaptureFixture) -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+        async def fail() -> None:
+            raise ValueError("background failure")
+
+        pending = asyncio.create_task(fail())
+        await asyncio.sleep(0)
+        if observed:
+            await asyncio.gather(pending, return_exceptions=True)
+        return "done"
+
+    assert json.loads(_completion(_execute(orchestrator, [], _start())).result.value) == "done"
+    assert ("background failure" in caplog.text) is not observed
+
+
+def test_unexpected_cleanup_failure_does_not_hide_other_task_errors(
+        caplog: pytest.LogCaptureFixture) -> None:
+    class CleanupAbort(BaseException):
+        pass
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(error: BaseException) -> None:
+            try:
+                await ctx.wait_for_external_event("never")
+            finally:
+                await asyncio.sleep(0)
+                raise error
+
+        asyncio.create_task(branch(CleanupAbort("first cleanup failure")))
+        asyncio.create_task(branch(ValueError("second cleanup failure")))
+        await ctx.call_activity("wait")
+
+    complete = _completion(_execute(orchestrator, [], _start()))
+    assert complete.failureDetails.errorMessage == "first cleanup failure"
+    assert "second cleanup failure" in caplog.text

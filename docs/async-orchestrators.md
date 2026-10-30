@@ -81,6 +81,8 @@ for every durable child before surfacing failure. In contrast,
 `asyncio.gather` with default options reports the first failure without
 cancelling siblings. Retain and await siblings if their results matter.
 `return_exceptions=True` collects their outcomes in input order.
+Unobserved local background-task failures are reported during dispatch cleanup;
+ordinary exceptions are logged, not silently discarded or automatically joined.
 
 Task groups cancel and drain local sibling tasks on failure and use their
 library's normal exception grouping rules. AnyIO uses level cancellation:

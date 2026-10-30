@@ -267,6 +267,8 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self.ctx._async_cleanup = True  # pyright: ignore[reportPrivateUsage]
         try:
             completed_at_close = {future for future in self._tasks if future.done()}
+            unobserved_at_close = {
+                future for future in completed_at_close if getattr(future, "_log_traceback", False)}
             for future in tuple(self._tasks):
                 if not future.done():
                     future.cancel()
@@ -278,18 +280,26 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 if not future.done():
                     future.cancel()
             self._drain()
+            failure: BaseException | None = None
             for future in tuple(self._tasks):
                 if not future.done():
-                    future.get_coro().close()
-                    raise RuntimeError("Async cleanup must finish without waiting for durable or external work.")
-                if not future.cancelled():
+                    try:
+                        future.get_coro().close()
+                    except BaseException as error:
+                        failure = failure or error
+                    failure = failure or RuntimeError(
+                        "Async cleanup must finish without waiting for durable or external work.")
+                elif not future.cancelled():
                     error = future.exception()
-                    if error is not None and future not in completed_at_close:
+                    if error is not None and (future not in completed_at_close or future in unobserved_at_close):
                         if not isinstance(error, Exception):
-                            raise error
+                            failure = failure or error
                         logger = self.ctx._logger or logging.getLogger(__name__)  # pyright: ignore[reportPrivateUsage]
                         logger.warning(
-                            "%s: Async task cleanup failed.", self.ctx.instance_id, exc_info=error)
+                            "%s: Async %s task failed.", self.ctx.instance_id,
+                            "background" if future in completed_at_close else "cleanup", exc_info=error)
+            if failure is not None:
+                raise failure
         finally:
             self._closed = True
             self._ready.clear()
