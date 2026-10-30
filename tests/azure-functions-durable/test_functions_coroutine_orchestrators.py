@@ -4,6 +4,7 @@
 """Coroutine replay through native and compatibility Functions entry points."""
 
 import base64
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Any
@@ -23,17 +24,17 @@ from durabletask.internal import orchestrator_service_pb2 as pb
 @pytest.mark.parametrize("entry", ["worker-sync", "worker-async", "decorator", "v1-handle"])
 async def test_coroutine_replay_through_functions_entry_points(native: bool, entry: str) -> None:
     async def modern(ctx: task.OrchestrationContext, value: int) -> list[Any]:
-        return await task.when_all([
+        return await asyncio.gather(
             ctx.call_activity("work", input=value, return_type=str),
             ctx.call_activity("work", input=value + 1, return_type=str),
-        ])
+        )
 
     async def compatible(ctx: df.DurableOrchestrationContext) -> list[Any]:
         value = ctx.get_input()
-        return await ctx.task_all([
+        return await asyncio.gather(
             ctx.call_activity("work", value),
             ctx.call_activity("work", value + 1),
-        ])
+        )
 
     fn: Callable[..., Any] = modern if native else compatible
     worker = DurableFunctionsWorker()

@@ -4,10 +4,10 @@
 """Exercise both workers over gRPC and optionally against the DTS emulator."""
 
 import json
+import asyncio
 import os
 import socket
 from collections.abc import Generator
-from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -29,17 +29,18 @@ def test_mixed_orchestrators_over_grpc(transport: str, coroutine_parent: bool) -
         return value + 1
 
     async def coroutine_child(ctx: task.OrchestrationContext, value: int) -> int:
-        await ctx.create_timer(timedelta(milliseconds=10))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
         return await ctx.call_activity(increment, input=value, return_type=int)
 
     def generator_child(ctx: task.OrchestrationContext, value: int) -> Generator[task.Task[Any], Any, int]:
         return (yield ctx.call_activity(increment, input=value))
 
     async def coroutine(ctx: task.OrchestrationContext, value: int) -> list[Any]:
-        values = await task.when_all([
+        values = await asyncio.gather(
             ctx.call_sub_orchestrator(coroutine_child, input=value),
             ctx.call_sub_orchestrator(generator_child, input=value + 1),
-        ])
+        )
         event = await ctx.wait_for_external_event("go")
         return values + [event]
 
