@@ -3,7 +3,7 @@
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -970,7 +970,7 @@ def test_retry_policy_respects_non_retriable_failure(
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
-    current_timestamp = datetime.utcnow()
+    current_timestamp = datetime.now(UTC).replace(tzinfo=None)
     old_events = [
         helpers.new_orchestrator_started_event(current_timestamp),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
