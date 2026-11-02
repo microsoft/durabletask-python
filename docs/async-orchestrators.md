@@ -35,8 +35,8 @@ remain awaitable. Generator and coroutine parents/children may call one another
 through durable sub-orchestrations.
 
 The dispatch-local loop supports FIFO ready callbacks, local futures and tasks,
-`asyncio.create_task`, `asyncio.gather`, and `asyncio.sleep`. On Python 3.11+,
-it supports `asyncio.TaskGroup` and `asyncio.timeout` / `timeout_at`.
+`asyncio.create_task`, `asyncio.gather`, `asyncio.sleep`, `asyncio.TaskGroup`,
+and `asyncio.timeout` / `timeout_at`.
 `asyncio.wait_for`, AnyIO's asyncio task groups, cancel scopes, shielded cleanup,
 and `fail_after` use the same task/future scheduling and durable timers.
 AnyIO support is bounded to these paths, not all backends or APIs.

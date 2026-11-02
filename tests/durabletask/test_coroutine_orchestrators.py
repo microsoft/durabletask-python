@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Replay-level coverage for the async/await orchestration prototype."""
+"""Replay-level coverage for coroutine orchestrators and generator history parity."""
 
 import asyncio
 import json
@@ -65,6 +65,22 @@ def test_await_is_concrete_and_completed_tasks_do_not_suspend() -> None:
         return [await completed, await completed]
 
     assert json.loads(_completion(_execute(orchestrator, [], _start())).result.value) == [7, 7]
+
+
+@pytest.mark.parametrize("after_activity", [False, True])
+def test_generator_invalid_yield_recommends_async_authoring(after_activity: bool) -> None:
+    def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[Any, Any, None]:
+        if after_activity:
+            yield ctx.call_activity("work")
+        yield None
+
+    old = _start() + [helpers.new_task_scheduled_event(1, "work")] if after_activity else []
+    new = [helpers.new_task_completed_event(1, "null")] if after_activity else _start()
+    complete = _completion(_execute(orchestrator, old, new))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete.failureDetails.errorType == "builtins.TypeError"
+    assert "Generator orchestrators must yield durabletask.Task objects" in complete.failureDetails.errorMessage
+    assert "Use async def and await for asyncio composition" in complete.failureDetails.errorMessage
 
 
 def test_precompleted_failure_and_cancellation_are_catchable() -> None:

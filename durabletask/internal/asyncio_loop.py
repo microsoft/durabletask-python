@@ -13,12 +13,10 @@ import sys
 from collections import deque
 from collections.abc import Callable, Coroutine, Generator
 from datetime import datetime, timedelta
-from typing import Any, TypeVar, TYPE_CHECKING, cast
+from typing import Any, TypeVar, cast
 
 from durabletask import task
-
-if TYPE_CHECKING:
-    from durabletask.worker import _RuntimeOrchestrationContext  # pyright: ignore[reportPrivateUsage]
+from durabletask.internal.exceptions import is_control_flow_exception
 
 T = TypeVar("T")
 
@@ -76,8 +74,13 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     stepping, gather and structured cancellation; this loop owns their ordering.
     """
 
-    def __init__(self, ctx: _RuntimeOrchestrationContext) -> None:
+    def __init__(
+        self, ctx: task.OrchestrationContext, *, is_complete: Callable[[], bool],
+        logger: logging.Logger | None = None,
+    ) -> None:
         self.ctx = ctx
+        self._is_complete = is_complete
+        self._logger = logger or logging.getLogger(__name__)
         self._ready: deque[asyncio.Handle] = deque()
         self._cancel_ready: list[tuple[int, int, asyncio.Handle]] = []
         self._tasks: dict[asyncio.Task[Any], int] = {}
@@ -122,13 +125,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         if kwargs:
             coro.close()
             raise TypeError("Custom/eager task execution is not supported in durable orchestrators.")
-        if sys.version_info >= (3, 11):
-            future = _DurableAsyncTask(coro, loop=self, name=name, context=context)
-        else:
-            if context is not None:
-                coro.close()
-                raise TypeError("Task contexts require Python 3.11 or later.")
-            future = _DurableAsyncTask(coro, loop=self, name=name)
+        future = _DurableAsyncTask(coro, loop=self, name=name, context=context)
         self._tasks[future] = len(self._tasks)
         return future
 
@@ -228,7 +225,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self.resume()
 
     def resume(self) -> None:
-        if self.ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
+        if self._is_complete():
             return
         self._deliver_completions()
         self._drain()
@@ -278,7 +275,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                     if not self._closing:
                         raise error
                     self._record_cleanup_error(error)
-                if not self._closing and self.ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
+                if not self._closing and self._is_complete():
                     break
                 if not self._closing and self._root is not None and self._root.done():
                     break
@@ -313,16 +310,13 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._fatal = error if isinstance(error, BaseException) else RuntimeError(context["message"])
 
     def _record_cleanup_error(self, error: BaseException, source: str = "cleanup callback") -> None:
-        logger = self.ctx._logger or logging.getLogger(__name__)  # pyright: ignore[reportPrivateUsage]
-        logger.warning("%s: Async %s failed.", self.ctx.instance_id, source, exc_info=error)
+        self._logger.warning("%s: Async %s failed.", self.ctx.instance_id, source, exc_info=error)
         if not isinstance(error, (Exception, asyncio.CancelledError)):
-            from durabletask.worker import _is_control_flow_exception  # pyright: ignore[reportPrivateUsage]
-            if self._cleanup_failure is None or _is_control_flow_exception(error):
+            if self._cleanup_failure is None or is_control_flow_exception(error):
                 self._cleanup_failure = error
 
     def close(self) -> None:
         self._closing = True
-        self.ctx._async_cleanup = True  # pyright: ignore[reportPrivateUsage]
         try:
             completed_at_close = {future for future in self._tasks if future.done()}
             unobserved_at_close = {

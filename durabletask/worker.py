@@ -63,14 +63,6 @@ _STREAM_CLOSED_SENTINEL = object()
 _WorkItem = tuple[Callable[..., Any], Callable[..., Any], tuple[Any, ...], dict[str, Any]]
 
 
-def _is_control_flow_exception(error: BaseException) -> bool:
-    control_flow_types = (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit)
-    if isinstance(error, BaseExceptionGroup):
-        group = cast(BaseExceptionGroup[BaseException], error)
-        return group.subgroup(control_flow_types) is not None
-    return isinstance(error, control_flow_types)
-
-
 class ConcurrencyOptions:
     """Configuration options for controlling concurrency of different work item types and the thread pool size.
 
@@ -1582,7 +1574,7 @@ class TaskHubGrpcWorker:
 
 
 class _RuntimeOrchestrationContext(task.OrchestrationContext):
-    _generator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any] | None
+    _generator: Generator[task.Task[Any], Any, Any] | None
     _previous_task: task.Task[Any] | None
 
     def __init__(self,
@@ -1630,19 +1622,27 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._async_loop: DurableEventLoop | None = None
         self._async_cleanup = False
 
-    def run(self, generator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any]) -> None:
-        if isinstance(generator, CoroutineType):
-            self._async_loop = DurableEventLoop(self)
-            self._async_loop.start(generator)
+    def run(self, orchestrator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any]) -> None:
+        if isinstance(orchestrator, Coroutine):
+            self._async_loop = DurableEventLoop(
+                self, is_complete=lambda: self._is_complete, logger=self._logger)
+            self._async_loop.start(orchestrator)
             return
-        self._generator = generator
-        self._set_next_task(generator.send(None))
+        self._generator = orchestrator
+        self._set_next_task(orchestrator.send(None))
+
+    def close(self) -> None:
+        if self._async_loop is not None:
+            self._async_cleanup = True
+            self._async_loop.close()
+        elif self._generator is not None:
+            self._generator.close()
 
     def _set_next_task(self, next_task: Any) -> None:
         if not isinstance(next_task, task.Task):
             raise TypeError(
-                "Orchestrators must only yield or await durabletask.Task objects. "
-                "Use durable timers and task.when_all/when_any instead of asyncio APIs."
+                "Generator orchestrators must yield durabletask.Task objects. "
+                "Use async def and await for asyncio composition."
             )
         self._previous_task = next_task
 
@@ -1656,7 +1656,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 "The orchestrator is not initialized! Was the orchestration history corrupted?"
             )
 
-        # We can resume the generator or coroutine only if the previous task
+        # We can resume the generator only if the previous task
         # has reached a completed state. The only time this won't be the
         # case is if the user yielded on a WhenAll task and there are still
         # outstanding child tasks that need to be completed.
@@ -2446,7 +2446,7 @@ class _OrchestrationExecutor:
                 ctx.set_failed(ex)
 
             except BaseException as ex:
-                if _is_control_flow_exception(ex):
+                if pe.is_control_flow_exception(ex):
                     raise
                 self._logger.error(
                     f"{instance_id}: Orchestrator {orchestration_name} exited unexpectedly.",
@@ -2480,7 +2480,7 @@ class _OrchestrationExecutor:
             result = ExecutionResults(
                 actions=actions, encoded_custom_status=ctx._encoded_custom_status,  # pyright: ignore[reportPrivateUsage]
                 orchestration_trace_context=ctx._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
-                # Snapshot before generator teardown can exit a critical section.
+                # Snapshot before orchestrator teardown can exit a critical section.
                 entity_lock_releases=list(ctx._entity_context.get_lock_release_messages()),  # pyright: ignore[reportPrivateUsage]
             )
             if unexpected_failure and result.entity_lock_releases:
@@ -2496,35 +2496,33 @@ class _OrchestrationExecutor:
         finally:
             # Close after building the response, so the orchestrator's finally
             # blocks do not change the actions or custom status we return.
-            closeable = ctx._async_loop or ctx._generator  # pyright: ignore[reportPrivateUsage]
-            if closeable is not None:
-                try:
-                    closeable.close()
-                except (Exception, asyncio.CancelledError):
-                    cleanup_name = next(
-                        (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),
-                        orchestration_name,
-                    )
-                    self._logger.warning(
-                        f"{instance_id}: Failed to close orchestrator {cleanup_name} generator.",
-                        exc_info=True,
-                    )
-                except BaseException as ex:
-                    self._logger.error(
-                        f"{instance_id}: Orchestrator {orchestration_name} generator teardown exited unexpectedly.",
-                        exc_info=True,
-                    )
-                    if not dispatch_exited:
-                        if _is_control_flow_exception(ex) or result is None:
-                            raise
-                        # Keep an existing failure rather than mask its cause.
-                        if not any(
-                            action.HasField("completeOrchestration")
-                            and action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-                            for action in result.actions
-                        ):
-                            result = result.as_failed(ph.new_failure_details(
-                                ex, self._exception_properties_provider, self._logger))
+            try:
+                ctx.close()
+            except (Exception, asyncio.CancelledError):
+                cleanup_name = next(
+                    (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),
+                    orchestration_name,
+                )
+                self._logger.warning(
+                    f"{instance_id}: Failed to close orchestrator {cleanup_name}.",
+                    exc_info=True,
+                )
+            except BaseException as ex:
+                self._logger.error(
+                    f"{instance_id}: Orchestrator {orchestration_name} teardown exited unexpectedly.",
+                    exc_info=True,
+                )
+                if not dispatch_exited:
+                    if pe.is_control_flow_exception(ex) or result is None:
+                        raise
+                    # Keep an existing failure rather than mask its cause.
+                    if not any(
+                        action.HasField("completeOrchestration")
+                        and action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+                        for action in result.actions
+                    ):
+                        result = result.as_failed(ph.new_failure_details(
+                            ex, self._exception_properties_provider, self._logger))
         assert result is not None
         return result
 

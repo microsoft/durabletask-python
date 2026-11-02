@@ -625,6 +625,7 @@ class Task(ABC, Generic[T]):
             return (yield from loop.wait_durable(self).__await__())
         if loop is not None:
             raise RuntimeError("Durable tasks can only be awaited inside a durable orchestrator.")
+        # Allow mock-based orchestration drivers to send results without an event loop.
         if not self.is_complete:
             yield self
         return self.get_result()

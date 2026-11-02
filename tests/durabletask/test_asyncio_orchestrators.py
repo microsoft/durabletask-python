@@ -6,7 +6,6 @@
 import asyncio
 import gc
 import json
-import sys
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
@@ -19,7 +18,12 @@ import pytest
 from durabletask import task
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
-from tests.durabletask.test_coroutine_orchestrators import _completion, _execute, _start, NOW
+from tests.durabletask.test_coroutine_orchestrators import (
+    NOW,
+    _completion,  # pyright: ignore[reportPrivateUsage]
+    _execute,  # pyright: ignore[reportPrivateUsage]
+    _start,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @pytest.mark.parametrize("fail_branch", [False, True])
@@ -78,11 +82,11 @@ def test_anyio_branches_inherit_context_and_replay_stable_actions(fail_branch: b
 def test_gather_resumes_each_branch_without_waiting_for_batch() -> None:
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[Any]:
         async def branch(name: str) -> Any:
-            value = await ctx.call_activity(name)
+            value: Any = await ctx.call_activity(name)
             await asyncio.sleep(0)
             return await ctx.call_activity(name + "-next", input=value)
 
-        return await asyncio.gather(branch("a"), branch("b"))
+        return list(await asyncio.gather(branch("a"), branch("b")))
 
     start = _start()
     actions = _execute(orchestrator, [], start).actions
@@ -109,7 +113,8 @@ def test_gather_failure_does_not_cancel_sibling(return_exceptions: bool) -> None
 
         pending = asyncio.create_task(sibling())
         try:
-            values = await asyncio.gather(ctx.call_activity("fail"), pending, return_exceptions=return_exceptions)
+            values = await asyncio.gather(
+                ctx.call_activity("fail", return_type=str), pending, return_exceptions=return_exceptions)
             return [isinstance(values[0], task.TaskFailedError), values[1]]
         except task.TaskFailedError:
             assert not pending.cancelled()
@@ -128,8 +133,6 @@ def test_gather_failure_does_not_cancel_sibling(return_exceptions: bool) -> None
 
 @pytest.mark.parametrize("native", [False, True])
 def test_task_group_failure_cancels_waiters_not_durable_work(native: bool) -> None:
-    if native and sys.version_info < (3, 11):
-        pytest.skip("asyncio.TaskGroup requires Python 3.11")
     cleaned: list[str] = []
 
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
@@ -159,9 +162,6 @@ def test_task_group_failure_cancels_waiters_not_durable_work(native: bool) -> No
 
 @pytest.mark.parametrize("kind", ["sleep", "wait_for", "anyio", "timeout"])
 def test_durable_timer_and_timeout(kind: str) -> None:
-    if kind == "timeout" and sys.version_info < (3, 11):
-        pytest.skip("asyncio.timeout requires Python 3.11")
-
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
         try:
             if kind == "sleep":
@@ -174,7 +174,7 @@ def test_durable_timer_and_timeout(kind: str) -> None:
             else:
                 with anyio.fail_after(2):
                     await ctx.wait_for_external_event("never")
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             return "timed out"
         return "slept"
 
@@ -250,7 +250,7 @@ def test_dispatch_cleanup_unwinds_scopes_contexts_asyncgens(under_loop: bool) ->
 
 def test_shared_operation_survives_local_waiter_cancellation() -> None:
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
-        durable = ctx.call_activity("shared")
+        durable = ctx.call_activity("shared", return_type=str)
 
         async def wait() -> Any:
             return await durable
@@ -579,7 +579,7 @@ def test_fanout_waiter_inspections_scale_linearly(
     def is_complete(durable: task.Task[Any]) -> bool:
         nonlocal inspections
         inspections += 1
-        return durable._is_complete
+        return durable._is_complete  # pyright: ignore[reportPrivateUsage]
 
     monkeypatch.setattr(task.Task, "is_complete", property(is_complete))
 

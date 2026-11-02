@@ -348,7 +348,7 @@ def test_teardown_cancellation_preserves_response(
     assert len(caplog.records) == 1
     record = caplog.records[0]
     assert record.levelno == logging.WARNING
-    assert record.message == f"{TEST_INSTANCE_ID}: Failed to close orchestrator orchestrator generator."
+    assert record.message == f"{TEST_INSTANCE_ID}: Failed to close orchestrator orchestrator."
     assert record.exc_info is not None
     assert record.exc_info[0] is asyncio.CancelledError
 
