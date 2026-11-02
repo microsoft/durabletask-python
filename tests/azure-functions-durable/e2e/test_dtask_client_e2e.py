@@ -9,11 +9,32 @@ Covers ``suspend_orchestration`` / ``resume_orchestration``,
 ``wait_for_orchestration_completion``.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+from uuid import UUID
+
 import pytest
 
 from ._harness import http_request
 
 pytestmark = pytest.mark.functions_e2e
+
+
+@pytest.mark.parametrize("client_type", ["async", "sync"])
+def test_invocation_correlation(dtask_app, client_type):
+    def invoke(_):
+        response = http_request("POST", f"{dtask_app.base_url}/api/correlation/{client_type}")
+        assert response.status == 202
+        return response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(invoke, range(2)))
+    assert results[0]["invocationId"] != results[1]["invocationId"]
+    for result in results:
+        assert str(UUID(result["invocationId"])) == result["invocationId"]
+        log = dtask_app.wait_for_host_log(
+            f"Client operation 'StartOrchestration' received for instance '{result['id']}'.")
+        assert f"FunctionInvocationId: {result['invocationId']}." in log
+        dtask_app.wait_for_completion(result["id"])
 
 
 def test_suspend_and_resume(dtask_app):

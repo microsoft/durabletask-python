@@ -78,7 +78,13 @@ async def run_sync(function: Callable[_Parameters, _Result], *args: _Parameters.
     return await asyncio.get_running_loop().run_in_executor(_executor(), copied_context.run, invoke)
 
 
-def wrap_invocation(function: Callable[..., Any], trigger_name: str,
+def get_invocation_id() -> str | None:
+    """Return the originating Functions invocation ID, if one is available."""
+    context = _invocation_context.get()
+    return context.invocation_id if context is not None else None
+
+
+def wrap_invocation(function: Callable[..., Any], trigger_name: str | None = None,
                     *, registered_trigger_name: str | None = None) -> Callable[..., Any]:
     signature = inspect.signature(function)
     registered_name = registered_trigger_name or trigger_name
@@ -87,7 +93,8 @@ def wrap_invocation(function: Callable[..., Any], trigger_name: str,
         while registered_name in signature.parameters:
             registered_name = "_" + registered_name
     parameters = [
-        parameter.replace(name=registered_name) if parameter.name == trigger_name else parameter
+        parameter.replace(name=registered_name)
+        if parameter.name == trigger_name and registered_name is not None else parameter
         for parameter in signature.parameters.values()
     ]
     inject_context = "context" not in signature.parameters or trigger_name == "context"
@@ -99,27 +106,48 @@ def wrap_invocation(function: Callable[..., Any], trigger_name: str,
         parameters.insert(insertion, context_parameter)
     host_signature = signature.replace(parameters=parameters)
 
-    @wraps(function)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def bind_invocation(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[inspect.BoundArguments, Any]:
         bound = host_signature.bind(*args, **kwargs)
         context = bound.arguments.get("context")
         if inject_context:
             bound.arguments.pop("context", None)
-        if registered_name != trigger_name:
+        if registered_name is not None and trigger_name is not None and registered_name != trigger_name:
             bound.arguments[trigger_name] = bound.arguments.pop(registered_name)
-        token = _invocation_context.set(context)
-        try:
-            original = inspect.BoundArguments(signature, bound.arguments)
-            return await function(*original.args, **original.kwargs)
-        finally:
-            _invocation_context.reset(token)
+        return inspect.BoundArguments(signature, bound.arguments), context
+
+    wrapper: Callable[..., Any]
+    if inspect.iscoroutinefunction(function):
+        @wraps(function)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            original, context = bind_invocation(args, kwargs)
+            token = _invocation_context.set(context)
+            try:
+                return await function(*original.args, **original.kwargs)
+            finally:
+                _invocation_context.reset(token)
+
+        wrapper = async_wrapper
+    else:
+        @wraps(function)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            original, context = bind_invocation(args, kwargs)
+            token = _invocation_context.set(context)
+            try:
+                return function(*original.args, **original.kwargs)
+            finally:
+                _invocation_context.reset(token)
+
+        wrapper = sync_wrapper
 
     annotations = dict(function.__annotations__)
-    if registered_name != trigger_name and trigger_name in annotations:
+    if registered_name is not None and trigger_name is not None and registered_name != trigger_name \
+            and trigger_name in annotations:
         annotations[registered_name] = annotations.pop(trigger_name)
     if inject_context:
         annotations["context"] = func.Context
     wrapper.__annotations__ = annotations
     setattr(wrapper, "__signature__", host_signature)
-    setattr(wrapper, "_df_trigger_name", registered_name)
+    if registered_name is not None:
+        setattr(wrapper, "_df_trigger_name", registered_name)
+    preserve_function_source(wrapper, function)
     return wrapper

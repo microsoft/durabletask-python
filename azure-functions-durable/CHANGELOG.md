@@ -29,6 +29,9 @@ can change during replay; see the [core upgrade warning](../CHANGELOG.md#unrelea
 
 FIXED
 
+- Async and synchronous Functions-bound clients now propagate the calling
+function's invocation ID in gRPC metadata, enabling host client-operation log
+correlation even when synchronous clients are cached across invocations.
 - With the corresponding core SDK update, activity and sub-orchestration retry
 policies, including compatibility `RetryOptions`, honor
 `failureDetails.isNonRetriable` and surface the failure immediately without retrying.

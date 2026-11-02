@@ -479,6 +479,7 @@ class Blueprint(TriggerApi, BindingApi):
                 client_bound = sync_client_bound
 
             set_client_metadata(client_bound)
+            client_bound = wrap_invocation(client_bound)
             if isinstance(user_fn, FunctionBuilder):
                 user_fn._function._func = client_bound  # pyright: ignore[reportPrivateUsage]
                 return wrap(user_fn)
