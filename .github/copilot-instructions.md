@@ -30,6 +30,12 @@ three packages:
 - When in doubt, write the changelog entry in terms of user impact (what users
   can now do or what behavior changed), not implementation mechanism (how it
   was implemented internally).
+- Keep entries focused on the capability or fix, its relevant default, and
+  material compatibility or upgrade risks. Preserve actionable replay and
+  breaking-change warnings, but keep API tutorials, implementation
+  prescriptions, exhaustive edge cases, and workarounds in linked feature or
+  API documentation. Narrow an overly broad claim rather than expanding it
+  into a catalogue of exceptions.
 - Changelogs are not covered by the CI Markdown lint step. Review changes to
   them manually.
 - Use the current unindented changelog style: category labels such as `ADDED`,
