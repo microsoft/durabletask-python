@@ -966,6 +966,7 @@ def test_retry_policy_respects_non_retriable_failure(
             assert error.details.error_type == "builtins.ValueError"
             assert error.details.message == "Permanent failure"
             return "compensated"
+        return None
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
