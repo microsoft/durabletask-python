@@ -34,6 +34,11 @@ A single callback failure is still raised directly.
 
 FIXED
 
+- Activity and sub-orchestration retry policies now honor
+`failureDetails.isNonRetriable`, surfacing the failure immediately without
+scheduling a retry timer or another attempt. Existing histories that already
+retried such failures can replay differently; drain affected instances on the
+previous SDK before upgrading.
 - Grouped failures now retain nested exception messages, tracebacks, and notes
 in failure details, including `ExceptionGroup` failures from task callbacks.
 Traceback rendering is limited to 15 children per group and 10 group levels,

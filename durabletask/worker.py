@@ -2872,7 +2872,10 @@ class _OrchestrationExecutor:
                 activity_task_obj = cast(object, activity_task)
                 if isinstance(activity_task_obj, task.RetryableTask):
                     retryable_activity_task = cast(task.RetryableTask[Any], activity_task_obj)
-                    next_delay = retryable_activity_task.compute_next_delay()
+                    next_delay = (
+                        None if event.taskFailed.failureDetails.isNonRetriable
+                        else retryable_activity_task.compute_next_delay()
+                    )
                     if next_delay is None:
                         retryable_activity_task.fail(
                             f"{ctx.instance_id}: Activity task #{task_id} failed: {event.taskFailed.failureDetails.errorMessage}",
@@ -2983,7 +2986,10 @@ class _OrchestrationExecutor:
                 sub_orch_task_obj = cast(object, sub_orch_task)
                 if isinstance(sub_orch_task_obj, task.RetryableTask):
                     retryable_sub_orch_task = cast(task.RetryableTask[Any], sub_orch_task_obj)
-                    next_delay = retryable_sub_orch_task.compute_next_delay()
+                    next_delay = (
+                        None if failedEvent.failureDetails.isNonRetriable
+                        else retryable_sub_orch_task.compute_next_delay()
+                    )
                     if next_delay is None:
                         retryable_sub_orch_task.fail(
                             f"Sub-orchestration task #{task_id} failed: {failedEvent.failureDetails.errorMessage}",

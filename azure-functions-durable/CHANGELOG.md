@@ -29,6 +29,11 @@ can change during replay; see the [core upgrade warning](../CHANGELOG.md#unrelea
 
 FIXED
 
+- With the corresponding core SDK update, activity and sub-orchestration retry
+policies, including compatibility `RetryOptions`, honor
+`failureDetails.isNonRetriable` and surface the failure immediately without retrying.
+Histories that already retried such failures can replay differently; drain
+affected instances on the previous SDK before upgrading.
 - With the corresponding core SDK update, grouped failures retain nested
 exception messages, tracebacks, and notes in failure details. Tracebacks are
 limited to 15 children per group and 10 group levels with truncation markers;
