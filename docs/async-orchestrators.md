@@ -7,6 +7,10 @@ retry, payload, and entity engine. Register the function normally with
 `orchestration_trigger` decorator. Functions supports both native two-argument
 and compatibility single-argument orchestrators.
 
+Async authoring is an additive option, not yet the preferred programming model.
+Broad conversion of existing examples, documentation, and tests is deferred
+to a future change after the contract has settled.
+
 ```python
 import asyncio
 
@@ -121,7 +125,8 @@ error. Teardown must cooperate with cancellation; a non-quiescent cleanup
 queue is bounded and reported, not allowed to run indefinitely.
 
 Ordinary teardown failures (including `CancelledError`) are logged without
-changing the decided response. Unexpected non-cancellation `BaseException`
+changing the decided response or skipping other cooperative finalizers.
+Unexpected non-cancellation `BaseException`
 exits retain the existing terminal-failure/recovery policy; an existing primary
 failure is preserved. Teardown status/actions do not replace the response.
 Held entity-release obligations are captured before teardown for terminal

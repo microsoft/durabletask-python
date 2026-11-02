@@ -23,6 +23,21 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+class _CompletionObserver(task.CompositeTask[None]):
+    def __init__(self, durable: task.Task[Any], callback: Callable[[], None]) -> None:
+        self._callback = callback
+        super().__init__([durable])
+
+    def on_child_completed(self, task: task.Task[Any]) -> None:
+        if not self._is_complete:
+            self._is_complete = True
+            self._notify_parent()
+            self._callback()
+
+    def detach(self) -> None:
+        self._notify_parent()
+
+
 class _DurableAsyncTask(asyncio.Task[T]):
     def cancel(self, msg: Any = None) -> bool:
         loop = self.get_loop()
@@ -63,11 +78,14 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._tasks: dict[asyncio.Task[Any], int] = {}
         self.cancelling_task: asyncio.Task[Any] | None = None
         self._waits: dict[int, tuple[task.Task[Any], list[asyncio.Future[Any]]]] = {}
-        self._timers: list[_DurableTimerHandle] = []
+        self._observers: dict[int, _CompletionObserver] = {}
+        self._completions: deque[Callable[[], None]] = deque()
+        self._timers: dict[_DurableTimerHandle, _CompletionObserver] = {}
         self._asyncgens: dict[int, Any] = {}
         self._closed = False
         self._closing = False
         self._fatal: BaseException | None = None
+        self._cleanup_failure: BaseException | None = None
         self._root: asyncio.Task[Any] | None = None
 
     def time(self) -> float:
@@ -150,12 +168,21 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             if (deadline - datetime(1970, 1, 1)).total_seconds() < when:
                 deadline += timedelta(microseconds=1)
             handle.durable_timer = self.ctx.create_timer(deadline)
-            self._timers.append(handle)
+            self._timers[handle] = _CompletionObserver(
+                handle.durable_timer,
+                lambda: self._completions.append(lambda: self._complete_timer(handle)))
         return handle
 
     def _timer_handle_cancelled(self, handle: asyncio.TimerHandle) -> None:
-        # No selector heap to maintain; _DurableTimerHandle owns cancellation.
-        pass
+        if isinstance(handle, _DurableTimerHandle):
+            observer = self._timers.pop(handle, None)
+            if observer is not None:
+                observer.detach()
+
+    def _complete_timer(self, handle: _DurableTimerHandle) -> None:
+        self._timers.pop(handle, None)
+        if not handle.cancelled():
+            self._ready.append(handle)
 
     async def wait_durable(self, durable: task.Task[T]) -> T:
         if self._closing:
@@ -165,6 +192,9 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         future = self.create_future()
         entry = self._waits.setdefault(id(durable), (durable, []))
         entry[1].append(future)
+        if id(durable) not in self._observers:
+            self._observers[id(durable)] = _CompletionObserver(
+                durable, lambda: self._completions.append(lambda: self._complete_wait(durable)))
         try:
             return await future
         finally:
@@ -172,22 +202,21 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             entry[1].remove(future)
             if not entry[1]:
                 self._waits.pop(id(durable), None)
+                self._observers.pop(id(durable)).detach()
+
+    def _complete_wait(self, durable: task.Task[Any]) -> None:
+        entry = self._waits.get(id(durable))
+        if entry is not None:
+            for future in tuple(entry[1]):
+                if not future.done():
+                    try:
+                        future.set_result(durable.get_result())
+                    except Exception as error:
+                        future.set_exception(error)
 
     def _deliver_completions(self) -> None:
-        for durable, futures in tuple(self._waits.values()):
-            if durable.is_complete:
-                for future in tuple(futures):
-                    if not future.done():
-                        try:
-                            future.set_result(durable.get_result())
-                        except Exception as error:
-                            future.set_exception(error)
-        for handle in tuple(self._timers):
-            if handle.cancelled():
-                self._timers.remove(handle)
-            elif handle.durable_timer is not None and handle.durable_timer.is_complete:
-                self._timers.remove(handle)
-                self._ready.append(handle)
+        while self._completions:
+            self._completions.popleft()()
 
     def start(self, coro: Coroutine[Any, Any, Any]) -> None:
         self._root = self.create_task(coro, name="durable-orchestrator")
@@ -214,8 +243,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 "Await durable activities, events or timers; external I/O is unsupported.")
 
     def _has_durable_work(self) -> bool:
-        return any(not durable.is_complete for durable, _ in self._waits.values()) or any(
-            not handle.cancelled() for handle in self._timers)
+        return any(not durable.is_complete for durable, _ in self._waits.values()) or bool(self._timers)
 
     def _drain(self) -> None:
         previous_loop = asyncio._get_running_loop()
@@ -227,15 +255,23 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         sys.set_asyncgen_hooks(firstiter=self._asyncgen_firstiter, finalizer=self._asyncgen_finalizer)
         try:
             steps = 0
+            cleanup_limit = max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
             while self._ready or self._cancel_ready:
                 self._ready.extend(handle for _, _, handle in sorted(self._cancel_ready))
                 self._cancel_ready.clear()
                 handle = self._ready.popleft()
                 if not handle.cancelled():
-                    handle._run()
+                    try:
+                        handle._run()
+                    except BaseException as error:
+                        if not self._closing:
+                            raise
+                        self._record_cleanup_error(error)
                 if self._fatal is not None:
                     error, self._fatal = self._fatal, None
-                    raise error
+                    if not self._closing:
+                        raise error
+                    self._record_cleanup_error(error)
                 if not self._closing and self.ctx._is_complete:  # pyright: ignore[reportPrivateUsage]
                     break
                 if not self._closing and self._root is not None and self._root.done():
@@ -243,8 +279,12 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 if not self._closing:
                     self._deliver_completions()
                 steps += 1
-                if self._closing and steps >= 10000:
-                    raise RuntimeError("Async cleanup did not quiesce; cleanup must cooperate with cancellation.")
+                if self._closing and steps >= cleanup_limit:
+                    self._record_cleanup_error(RuntimeError(
+                        "Async cleanup did not quiesce; cleanup must cooperate with cancellation."))
+                    self._ready.clear()
+                    self._cancel_ready.clear()
+                    break
         finally:
             sys.set_asyncgen_hooks(*previous_hooks)
             asyncio._set_running_loop(previous_loop)
@@ -261,6 +301,14 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     def call_exception_handler(self, context: dict[str, Any]) -> None:
         error = context.get("exception")
         self._fatal = error if isinstance(error, BaseException) else RuntimeError(context["message"])
+
+    def _record_cleanup_error(self, error: BaseException) -> None:
+        logger = self.ctx._logger or logging.getLogger(__name__)  # pyright: ignore[reportPrivateUsage]
+        logger.warning("%s: Async cleanup callback failed.", self.ctx.instance_id, exc_info=error)
+        if not isinstance(error, (Exception, asyncio.CancelledError)):
+            from durabletask.worker import _is_control_flow_exception  # pyright: ignore[reportPrivateUsage]
+            if self._cleanup_failure is None or _is_control_flow_exception(error):
+                self._cleanup_failure = error
 
     def close(self) -> None:
         self._closing = True
@@ -280,7 +328,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 if not future.done():
                     future.cancel()
             self._drain()
-            failure: BaseException | None = None
+            failure: BaseException | None = self._cleanup_failure
             for future in tuple(self._tasks):
                 if not future.done():
                     try:
@@ -304,6 +352,10 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             self._closed = True
             self._ready.clear()
             self._cancel_ready.clear()
+            for observer in (*self._observers.values(), *self._timers.values()):
+                observer.detach()
+            self._completions.clear()
+            self._observers.clear()
             self._waits.clear()
             self._timers.clear()
             self._tasks.clear()

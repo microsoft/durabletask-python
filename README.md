@@ -30,7 +30,9 @@ and [Azure Durable Functions](https://learn.microsoft.com/azure/azure-functions/
 ### Async Orchestrators
 
 All three packages support `async def` orchestrators and nested async helpers.
-Existing generator orchestrators continue to work.
+Existing generator orchestrators continue to work. Async authoring is an
+additive option, not yet the preferred programming model; existing examples
+and tests are not being broadly migrated in this feature.
 
 ```python
 from durabletask import task

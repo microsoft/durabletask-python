@@ -463,3 +463,105 @@ def test_unexpected_cleanup_failure_does_not_hide_other_task_errors(
     complete = _completion(_execute(orchestrator, [], _start()))
     assert complete.failureDetails.errorMessage == "first cleanup failure"
     assert "second cleanup failure" in caplog.text
+
+
+@pytest.mark.parametrize("control_flow", [False, True])
+def test_cleanup_callback_failure_still_drains_tasks_and_asyncgens(
+        control_flow: bool, caplog: pytest.LogCaptureFixture) -> None:
+    cleaned: list[str] = []
+    retained: list[asyncio.Task[Any]] = []
+
+    def fail() -> None:
+        raise SystemExit("cleanup exit") if control_flow else ValueError("cleanup callback")
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def resource():
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append("asyncgen")
+
+        async def sibling() -> None:
+            try:
+                await ctx.wait_for_external_event("never")
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append("sibling")
+
+        opened = resource()
+        await anext(opened)
+        retained.append(asyncio.create_task(sibling()))
+        current = asyncio.current_task()
+        assert current is not None
+        retained.append(current)
+        try:
+            await ctx.call_activity("wait")
+        finally:
+            if control_flow:
+                fail()
+            asyncio.get_running_loop().call_soon(fail)
+            await asyncio.sleep(0)
+            cleaned.append("root")
+
+    if control_flow:
+        with pytest.raises(SystemExit, match="cleanup exit"):
+            _execute(orchestrator, [], _start())
+    else:
+        result = _execute(orchestrator, [], _start())
+        assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+        assert "cleanup callback" in caplog.text
+        assert "root" in cleaned
+    assert "sibling" in cleaned
+    assert "asyncgen" in cleaned
+    assert all(pending.done() for pending in retained)
+
+
+@pytest.mark.parametrize("count", [128, 4096])
+def test_fanout_waiter_inspections_scale_linearly(
+        count: int, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    inspections = 0
+
+    def is_complete(durable: task.Task[Any]) -> bool:
+        nonlocal inspections
+        inspections += 1
+        return durable._is_complete
+
+    monkeypatch.setattr(task.Task, "is_complete", property(is_complete))
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[Any]:
+        async def branch(index: int) -> Any:
+            return await ctx.call_activity("work", input=index)
+
+        return await asyncio.gather(*(branch(index) for index in range(count)))
+
+    result = _execute(orchestrator, [], _start())
+    assert [action.id for action in result.actions] == list(range(1, count + 1))
+    assert inspections < count * 20
+    assert not caplog.records
+
+
+def test_nonquiescent_cleanup_does_not_skip_asyncgen_closure(
+        caplog: pytest.LogCaptureFixture) -> None:
+    cleaned: list[str] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def resource():
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append("asyncgen")
+
+        opened = resource()
+        await anext(opened)
+        try:
+            await ctx.call_activity("wait")
+        finally:
+            while True:
+                await asyncio.sleep(0)
+
+    result = _execute(orchestrator, [], _start())
+    assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+    assert cleaned == ["asyncgen"]
+    assert "cleanup did not quiesce" in caplog.text

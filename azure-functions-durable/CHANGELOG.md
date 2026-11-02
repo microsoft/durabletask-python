@@ -12,6 +12,8 @@ ADDED
 - With the corresponding core SDK, native and v1-style orchestrators can use
 `async def`, await durable tasks, and use deterministic asyncio composition and
 durable sleeps/timeouts. See the [async contract](../docs/async-orchestrators.md).
+Async fan-out scales to large batches, and cleanup callback failures do not
+skip other cooperative finalizers.
 The `orchestrator_generator_wrapper` helper accepts direct-await coroutines;
 asyncio scheduling requires replay/backend tests.
 Requires a coordinated release after the core SDK is published; dependency

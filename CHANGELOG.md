@@ -18,6 +18,8 @@ timeouts use durable timers and the orchestration clock; `sleep(0)` yields
 locally without a timer. See the [supported contract](docs/async-orchestrators.md)
 for cancellation, per-dispatch cleanup, replay/migration rules, and unsupported
 APIs. External I/O still belongs in ordinary activities.
+Async fan-out scales to large batches, and cleanup callback failures do not
+skip other cooperative finalizers.
 
 FIXED
 
