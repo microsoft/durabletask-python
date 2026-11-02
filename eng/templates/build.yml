@@ -32,7 +32,7 @@ jobs:
       # the missing dep instead of being silently masked.
       - script: |
           python -m pip install --upgrade pip
-          python -m pip install build flake8 pytest pytest-asyncio
+          python -m pip install build flake8 pytest pytest-asyncio anyio
         displayName: "Install build tooling"
 
       # Lint core SDK
@@ -78,7 +78,7 @@ jobs:
       # intentional: if a wheel ever accidentally drops a declared
       # dependency, this step will surface the missing dependency at install
       # or test time instead of being masked by a preinstalled
-      # requirements.txt. Test-only tools (pytest, pytest-asyncio) are
+      # requirements.txt. Test-only tools (pytest, pytest-asyncio, anyio) are
       # already installed in the "Install build tooling" step above.
       #
       # >>> MAINTENANCE NOTE <<<
