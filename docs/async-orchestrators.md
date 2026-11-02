@@ -7,10 +7,6 @@ retry, payload, and entity engine. Register the function normally with
 `orchestration_trigger` decorator. Functions supports both native two-argument
 and compatibility single-argument orchestrators.
 
-Async authoring is an additive option, not yet the preferred programming model.
-Broad conversion of existing examples, documentation, and tests is deferred
-to a future change after the contract has settled.
-
 ```python
 import asyncio
 
@@ -146,17 +142,12 @@ automatic recording or interception of arbitrary await expressions.
 `is_replaying` is not a substitute for recording results. Activities remain
 at-least-once work: side effects require appropriate idempotency/deduplication.
 
-Pydantic AI's real `Agent.run` / parallel-tool AnyIO path is exercised with a
-deterministic `TestModel` in
-[`test_pydantic_ai_orchestrator.py`](../tests/durabletask/test_pydantic_ai_orchestrator.py).
-The orchestrator directly awaits the agent; no adapter event loop, trampoline,
-or per-batch durable join is needed. The proof adapter still registers ordinary
-model/tool activities, encodes/decodes framework payloads, supplies replay-stable
-IDs and a deadline clock, and explicitly canonicalizes volatile message
-timestamps. These are **adapter responsibilities**, not SDK-wide interception.
-This proof is not a complete production Pydantic adapter or compatibility
-promise for arbitrary agents, model providers, tools, or framework versions.
-No paid model calls are needed.
+Framework adapters can compose supported durable operations using async
+helpers. Adapters remain responsible for registering ordinary model/tool
+activities, encoding/decoding framework payloads, and supplying replay-stable
+IDs, clocks, and message metadata. These responsibilities are not handled by
+SDK-wide interception. Libraries that require unsupported asyncio APIs or
+nondeterministic operations need an appropriate adapter or activity boundary.
 
 Changing an in-flight generator to equivalent coroutine code is safe **only
 if its durable history contract is preserved**: action IDs/order, names,
@@ -169,11 +160,3 @@ The Functions `orchestrator_generator_wrapper` helper supports direct durable
 awaits for mock-based unit tests; it does not simulate the asyncio scheduler.
 Use the real replay executor/provider or the in-memory backend to test task
 groups, gather, and durable timeouts.
-
-## Coordinated delivery
-
-This feature is one draft PR/release unit across all packages. Do not ship a
-limited intermediate contract. Release the core package first; then use a
-dedicated coordinated release PR to update provider dependency minimums,
-versions, and release notes together. Feature development does not change
-package versions or dependency minimums.

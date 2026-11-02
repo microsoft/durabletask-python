@@ -15,8 +15,6 @@ orchestrators, including deterministic asyncio composition and durable sleeps/
 timeouts. See the [async contract](../docs/async-orchestrators.md).
 Async fan-out scales to large batches, and cleanup callback failures do not
 skip other cooperative finalizers.
-Requires a coordinated release after the core SDK is published; dependency
-minimums are intentionally unchanged in this feature PR.
 
 CHANGED
 

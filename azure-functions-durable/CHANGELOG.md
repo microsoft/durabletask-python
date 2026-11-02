@@ -16,8 +16,6 @@ Async fan-out scales to large batches, and cleanup callback failures do not
 skip other cooperative finalizers.
 The `orchestrator_generator_wrapper` helper accepts direct-await coroutines;
 asyncio scheduling requires replay/backend tests.
-Requires a coordinated release after the core SDK is published; dependency
-minimums are intentionally unchanged in this feature PR.
 - Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact
 Unicode JSON across durable clients, orchestration and entity workers, activity
 bindings, and registered blueprints. The default remains ASCII-escaped JSON.

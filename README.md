@@ -35,9 +35,7 @@ The Azure Functions Durable provider requires Python 3.13 or later.
 ### Async Orchestrators
 
 All three packages support `async def` orchestrators and nested async helpers.
-Existing generator orchestrators continue to work. Async authoring is an
-additive option, not yet the preferred programming model; existing examples
-and tests are not being broadly migrated in this feature.
+Existing generator orchestrators continue to work.
 
 ```python
 from durabletask import task
@@ -72,7 +70,7 @@ An `async def` function containing `yield` is an async generator, not a supporte
 orchestrator. Converting an existing orchestrator must preserve durable action
 order and payloads for replay compatibility.
 See the contract for cancellation, per-dispatch async cleanup, unsupported
-ordering-sensitive APIs, framework adapters, and coordinated release rules.
+ordering-sensitive APIs and framework adapters.
 
 ### Large Payload Externalization
 
