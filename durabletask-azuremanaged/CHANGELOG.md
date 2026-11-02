@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- With the corresponding core `durabletask` SDK change, `DurableTaskSchedulerWorker`
+runs `async def` activities without occupying a worker thread while they wait on I/O.
+
 CHANGED
 
 - Dropped Python 3.10 support. Python 3.11 or later is now required.

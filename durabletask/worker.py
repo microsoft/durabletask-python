@@ -10,6 +10,7 @@ import os
 import time
 from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
@@ -830,6 +831,18 @@ class TaskHubGrpcWorker:
                 handler: Callable[..., Any],
                 release: Callable[[], None],
         ) -> Callable[..., Any]:
+            if inspect.iscoroutinefunction(handler):
+                # Keep coroutine handlers recognizable as such, so the worker
+                # manager awaits them on its event loop rather than calling
+                # them from the thread pool.
+                async def wrapped_async(*args: Any, **kwargs: Any) -> Any:
+                    try:
+                        return await handler(*args, **kwargs)
+                    finally:
+                        release()
+
+                return wrapped_async
+
             def wrapped(*args: Any, **kwargs: Any) -> Any:
                 try:
                     return handler(*args, **kwargs)
@@ -1025,7 +1038,7 @@ class TaskHubGrpcWorker:
                         elif work_item.HasField("activityRequest"):
                             submit_work_item(
                                 self._async_worker_manager.submit_activity,
-                                self._execute_activity,
+                                self._get_activity_handler(work_item.activityRequest),
                                 self._cancel_activity,
                                 work_item.activityRequest,
                                 stub,
@@ -1399,53 +1412,129 @@ class TaskHubGrpcWorker:
                 payload_helpers.deexternalize_payloads(req, self._payload_store)
             try:
                 executor = _ActivityExecutor(self._registry, self._logger, self._data_converter)
-                with tracing.suppress_span_emission(not self._emit_trace_spans):
-                    with tracing.start_span(
-                        tracing.create_span_name("activity", req.name),
-                        trace_context=req.parentTraceContext,
-                        kind=tracing.SpanKind.SERVER,
-                        attributes={
-                            tracing.ATTR_TASK_TYPE: "activity",
-                            tracing.ATTR_TASK_INSTANCE_ID: instance_id,
-                            tracing.ATTR_TASK_NAME: req.name,
-                            tracing.ATTR_TASK_TASK_ID: str(req.taskId),
-                        },
-                    ) as span:
-                        try:
-                            result = executor.execute(
-                                instance_id, req.name, req.taskId, req.input.value
-                            )
-                        except Exception as ex:
-                            tracing.set_span_error(span, ex)
-                            raise
-                res = pb.ActivityResponse(
-                    instanceId=instance_id,
-                    taskId=req.taskId,
-                    result=ph.get_string_value(result),
-                    completionToken=completionToken,
-                )
+                with self._start_activity_span(req) as span:
+                    try:
+                        result = executor.execute(
+                            instance_id, req.name, req.taskId, req.input.value
+                        )
+                    except Exception as ex:
+                        tracing.set_span_error(span, ex)
+                        raise
+                res = self._new_activity_response(req, completionToken, result)
             except Exception as ex:
-                res = pb.ActivityResponse(
-                    instanceId=instance_id,
-                    taskId=req.taskId,
-                    failureDetails=ph.new_failure_details(
-                        ex, self._exception_properties_provider, self._logger),
-                    completionToken=completionToken,
-                )
+                res = self._new_activity_failure_response(req, completionToken, ex)
 
-            try:
-                # Externalize any large payloads in the response
-                if self._payload_store is not None:
-                    payload_helpers.externalize_payloads(
-                        res, self._payload_store, instance_id=instance_id,
-                    )
-                stub.CompleteActivityTask(res)
-            except Exception as ex:
-                self._logger.exception(
-                    f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
-                )
+            self._complete_activity_task(req, stub, res)
         finally:
             self._on_activity_execution_completed(req)
+
+    async def _execute_activity_async(
+            self,
+            req: pb.ActivityRequest,
+            stub: Any,
+            completionToken: Any,
+    ) -> None:
+        """Executes an ``async def`` activity on the worker's event loop.
+
+        Mirrors :meth:`_execute_activity`, but awaits the activity instead of
+        occupying a thread-pool worker. The blocking calls around it (payload
+        store access and the gRPC completion) are offloaded to a thread so
+        they don't stall the event loop.
+        """
+        instance_id = req.orchestrationInstance.instanceId
+        self._on_activity_execution_started(req)
+        try:
+            # De-externalize any large-payload tokens in the incoming request
+            if self._payload_store is not None:
+                await asyncio.to_thread(
+                    payload_helpers.deexternalize_payloads, req, self._payload_store
+                )
+            try:
+                executor = _ActivityExecutor(self._registry, self._logger, self._data_converter)
+                with self._start_activity_span(req) as span:
+                    try:
+                        result = await executor.execute_async(
+                            instance_id, req.name, req.taskId, req.input.value
+                        )
+                    except Exception as ex:
+                        tracing.set_span_error(span, ex)
+                        raise
+                res = self._new_activity_response(req, completionToken, result)
+            except Exception as ex:
+                res = self._new_activity_failure_response(req, completionToken, ex)
+
+            await asyncio.to_thread(self._complete_activity_task, req, stub, res)
+        finally:
+            self._on_activity_execution_completed(req)
+
+    def _get_activity_handler(self, req: pb.ActivityRequest) -> Callable[..., Any]:
+        """Returns the handler that executes the activity named by the request."""
+        fn = self._registry.get_activity(req.name)
+        if fn is not None and _is_async_callable(fn):
+            return self._execute_activity_async
+        return self._execute_activity
+
+    @contextmanager
+    def _start_activity_span(self, req: pb.ActivityRequest):
+        with tracing.suppress_span_emission(not self._emit_trace_spans):
+            with tracing.start_span(
+                tracing.create_span_name("activity", req.name),
+                trace_context=req.parentTraceContext,
+                kind=tracing.SpanKind.SERVER,
+                attributes={
+                    tracing.ATTR_TASK_TYPE: "activity",
+                    tracing.ATTR_TASK_INSTANCE_ID: req.orchestrationInstance.instanceId,
+                    tracing.ATTR_TASK_NAME: req.name,
+                    tracing.ATTR_TASK_TASK_ID: str(req.taskId),
+                },
+            ) as span:
+                yield span
+
+    def _new_activity_response(
+            self,
+            req: pb.ActivityRequest,
+            completionToken: Any,
+            result: str | None,
+    ) -> pb.ActivityResponse:
+        return pb.ActivityResponse(
+            instanceId=req.orchestrationInstance.instanceId,
+            taskId=req.taskId,
+            result=ph.get_string_value(result),
+            completionToken=completionToken,
+        )
+
+    def _new_activity_failure_response(
+            self,
+            req: pb.ActivityRequest,
+            completionToken: Any,
+            ex: Exception,
+    ) -> pb.ActivityResponse:
+        return pb.ActivityResponse(
+            instanceId=req.orchestrationInstance.instanceId,
+            taskId=req.taskId,
+            failureDetails=ph.new_failure_details(
+                ex, self._exception_properties_provider, self._logger),
+            completionToken=completionToken,
+        )
+
+    def _complete_activity_task(
+            self,
+            req: pb.ActivityRequest,
+            stub: Any,
+            res: pb.ActivityResponse,
+    ) -> None:
+        instance_id = req.orchestrationInstance.instanceId
+        try:
+            # Externalize any large payloads in the response
+            if self._payload_store is not None:
+                payload_helpers.externalize_payloads(
+                    res, self._payload_store, instance_id=instance_id,
+                )
+            stub.CompleteActivityTask(res)
+        except Exception as ex:
+            self._logger.exception(
+                f"Failed to deliver activity response for '{req.name}#{req.taskId}' of orchestration ID '{instance_id}' to sidecar: {ex}"
+            )
 
     def _cancel_activity(
             self,
@@ -1876,6 +1965,18 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             tags: dict[str, str] | None = ...,
             return_type: type[T],
     ) -> task.CompletableTask[T]:
+        ...
+
+    @overload
+    def call_activity(
+            self,
+            activity: task.AsyncActivity[TInput, TOutput],
+            *,
+            input: TInput | None = ...,
+            retry_policy: task.RetryPolicy | None = ...,
+            tags: dict[str, str] | None = ...,
+            return_type: None = ...,
+    ) -> task.CompletableTask[TOutput]:
         ...
 
     @overload
@@ -3401,6 +3502,13 @@ class _OrchestrationExecutor:
             return (source_version > default_version) - (source_version < default_version)
 
 
+def _is_async_callable(fn: Callable[..., Any]) -> bool:
+    """Returns True for ``async def`` functions and objects with an ``async def __call__``."""
+    return inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(
+        getattr(fn, "__call__", None)
+    )
+
+
 class _ActivityExecutor:
     def __init__(self, registry: _Registry, logger: logging.Logger,
                  data_converter: DataConverter):
@@ -3416,6 +3524,45 @@ class _ActivityExecutor:
             encoded_input: str | None,
     ) -> str | None:
         """Executes an activity function and returns the serialized result, if any."""
+        fn, ctx, activity_input = self._prepare(orchestration_id, name, task_id, encoded_input)
+
+        # Execute the activity function
+        activity_output = fn(ctx, activity_input)
+        if inspect.isawaitable(activity_output):
+            if inspect.iscoroutine(activity_output):
+                activity_output.close()
+            raise TypeError(
+                f"Activity '{name}' returned an awaitable from a synchronous call. "
+                "Declare the activity with 'async def' so the worker awaits it."
+            )
+
+        return self._serialize_output(orchestration_id, name, task_id, activity_output)
+
+    async def execute_async(
+            self,
+            orchestration_id: str,
+            name: str,
+            task_id: int,
+            encoded_input: str | None,
+    ) -> str | None:
+        """Executes an activity function, awaiting its result if it is awaitable,
+        and returns the serialized result, if any."""
+        fn, ctx, activity_input = self._prepare(orchestration_id, name, task_id, encoded_input)
+
+        # Execute the activity function
+        activity_output = fn(ctx, activity_input)
+        if inspect.isawaitable(activity_output):
+            activity_output = await activity_output
+
+        return self._serialize_output(orchestration_id, name, task_id, activity_output)
+
+    def _prepare(
+            self,
+            orchestration_id: str,
+            name: str,
+            task_id: int,
+            encoded_input: str | None,
+    ) -> tuple[task.Activity[Any, Any], task.ActivityContext, Any]:
         self._logger.debug(
             f"{orchestration_id}/{task_id}: Executing activity '{name}'..."
         )
@@ -3428,10 +3575,15 @@ class _ActivityExecutor:
         input_type = type_discovery.activity_input_type(fn, self._data_converter) if encoded_input else None
         activity_input = self._data_converter.deserialize(encoded_input, input_type)
         ctx = task.ActivityContext(orchestration_id, task_id)
+        return fn, ctx, activity_input
 
-        # Execute the activity function
-        activity_output = fn(ctx, activity_input)
-
+    def _serialize_output(
+            self,
+            orchestration_id: str,
+            name: str,
+            task_id: int,
+            activity_output: Any,
+    ) -> str | None:
         encoded_output = self._data_converter.serialize(activity_output)
         chars = len(encoded_output) if encoded_output else 0
         self._logger.debug(

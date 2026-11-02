@@ -11,6 +11,11 @@ ADDED
 
 - Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
 by one or more task hubs.
+- Activities can now be `async def` functions. An async activity no longer
+occupies a worker thread while it waits on I/O; the number running at once is
+bounded by `ConcurrencyOptions.maximum_concurrent_activity_work_items`, and
+`call_activity()` types its task with the awaited result. See
+[activities](docs/features.md#activities).
 
 CHANGED
 
@@ -20,6 +25,8 @@ Python versions use the standard-library module.
 - Context managers now preserve subclass types in type checkers, including
 Azure Managed clients and workers.
 - Entity ID copy and pickle hooks now preserve subclass types in type checkers.
+- A synchronous activity that returns an awaitable now fails with a `TypeError`
+asking for `async def`, instead of a JSON serialization error.
 - Multiple task completion callback failures now raise the built-in
 `ExceptionGroup`, preserving each exception and its traceback in memory and
 the first callback error as the explicit cause and serialized inner failure.

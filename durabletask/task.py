@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
@@ -138,6 +138,14 @@ class OrchestrationContext(ABC):
                       retry_policy: RetryPolicy | None = ...,
                       tags: dict[str, str] | None = ...,
                       return_type: type[T]) -> CompletableTask[T]:
+        ...
+
+    @overload
+    def call_activity(self, activity: AsyncActivity[TInput, TOutput], *,
+                      input: TInput | None = ...,
+                      retry_policy: RetryPolicy | None = ...,
+                      tags: dict[str, str] | None = ...,
+                      return_type: None = ...) -> CompletableTask[TOutput]:
         ...
 
     @overload
@@ -947,6 +955,9 @@ Orchestrator: TypeAlias = Callable[[OrchestrationContext, TInput], Generator[Tas
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity: TypeAlias = Callable[[ActivityContext, TInput], TOutput]
+
+# Async activities are awaited by the worker; their tasks complete with the awaited result
+AsyncActivity: TypeAlias = Callable[[ActivityContext, TInput], Awaitable[TOutput]]
 
 Entity: TypeAlias = Callable[[EntityContext, TInput], TOutput] | type[DurableEntity]
 

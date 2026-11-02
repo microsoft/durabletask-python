@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import asyncio
 import json
 import threading
 import time
@@ -183,6 +184,96 @@ def test_activity_error_handling():
     assert state.failure_details is None
     assert state.serialized_custom_status is None
     assert compensation_counter == 2
+
+
+def test_async_activity_sequence():
+
+    async def plus_one(_: task.ActivityContext, input: int) -> int:
+        await asyncio.sleep(0)
+        return input + 1
+
+    def sequence(ctx: task.OrchestrationContext, start_val: int):
+        numbers = [start_val]
+        current = start_val
+        for _ in range(10):
+            current = yield ctx.call_activity(plus_one, input=current)
+            numbers.append(current)
+        return numbers
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(sequence)
+        w.add_activity(plus_one)
+        w.start()
+
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            id = task_hub_client.schedule_new_orchestration(sequence, input=1)
+            state = task_hub_client.wait_for_orchestration_completion(
+                id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    assert state.serialized_output == json.dumps([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+
+
+def test_async_activity_error_handling():
+
+    async def throw(_: task.ActivityContext, input: int) -> int:
+        await asyncio.sleep(0)
+        raise RuntimeError("Kah-BOOOOM!!!")
+
+    def orchestrator(ctx: task.OrchestrationContext, input: int):
+        try:
+            yield ctx.call_activity(throw, input=input)
+        except task.TaskFailedError as e:
+            return e.details.message
+
+    with worker.TaskHubGrpcWorker(host_address=HOST) as w:
+        w.add_orchestrator(orchestrator)
+        w.add_activity(throw)
+        w.start()
+
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            id = task_hub_client.schedule_new_orchestration(orchestrator, input=1)
+            state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.serialized_output == json.dumps("Kah-BOOOOM!!!")
+
+
+def test_async_activities_do_not_occupy_thread_pool():
+    """Async activities run concurrently on the worker's event loop, even with a single pool thread."""
+    activity_count = 5
+    # Every activity must be in flight at once to pass the barrier: run one after the other on
+    # the single pool thread, the first would wait for the others until its timeout.
+    all_in_flight = asyncio.Barrier(activity_count)
+    activity_threads: set[int] = set()
+
+    async def wait_for_the_others(_: task.ActivityContext, _input) -> None:
+        activity_threads.add(threading.get_ident())
+        await asyncio.wait_for(all_in_flight.wait(), timeout=10)
+
+    def fan_out(ctx: task.OrchestrationContext, _):
+        yield task.when_all([ctx.call_activity(wait_for_the_others) for _ in range(activity_count)])
+
+    options = worker.ConcurrencyOptions(
+        maximum_concurrent_activity_work_items=activity_count,
+        maximum_thread_pool_workers=1,
+    )
+    with worker.TaskHubGrpcWorker(host_address=HOST, concurrency_options=options) as w:
+        w.add_orchestrator(fan_out)
+        w.add_activity(wait_for_the_others)
+        w.start()
+
+        with client.TaskHubGrpcClient(host_address=HOST) as task_hub_client:
+            id = task_hub_client.schedule_new_orchestration(fan_out)
+            state = task_hub_client.wait_for_orchestration_completion(id, timeout=30)
+
+    assert state is not None
+    assert state.runtime_status == client.OrchestrationStatus.COMPLETED
+    assert state.failure_details is None
+    assert len(activity_threads) == 1
 
 
 def test_get_orchestration_history():
