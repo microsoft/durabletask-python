@@ -19,7 +19,8 @@ locally without a timer. See the [supported contract](docs/async-orchestrators.m
 for cancellation, per-dispatch cleanup, replay/migration rules, and unsupported
 APIs. External I/O still belongs in ordinary activities.
 Async fan-out scales to large batches, and cleanup callback failures do not
-skip other cooperative finalizers.
+skip other cooperative finalizers. Process-control exits propagate even when
+another finalizer fails.
 
 CHANGED
 

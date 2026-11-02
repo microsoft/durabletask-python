@@ -565,3 +565,37 @@ def test_nonquiescent_cleanup_does_not_skip_asyncgen_closure(
     assert [action.scheduleTask.name for action in result.actions] == ["wait"]
     assert cleaned == ["asyncgen"]
     assert "cleanup did not quiesce" in caplog.text
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bool) -> None:
+    cleaned: list[str] = []
+    exit_error: BaseException = SystemExit("forced cleanup exit")
+    if grouped:
+        exit_error = BaseExceptionGroup("forced cleanup group", [exit_error, ValueError("nested")])
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(name: str, error: BaseException | None) -> None:
+            try:
+                await ctx.wait_for_external_event(name)
+            finally:
+                try:
+                    while True:
+                        try:
+                            await asyncio.Future()
+                        except asyncio.CancelledError:
+                            pass
+                finally:
+                    cleaned.append(name)
+                    if error is not None:
+                        raise error
+
+        asyncio.create_task(branch("ordinary", ValueError("ordinary cleanup error")))
+        asyncio.create_task(branch("exit", exit_error))
+        asyncio.create_task(branch("last", None))
+        await ctx.call_activity("wait")
+
+    with pytest.raises(type(exit_error)) as caught:
+        _execute(orchestrator, [], _start())
+    assert caught.value is exit_error
+    assert cleaned == ["ordinary", "exit", "last"]

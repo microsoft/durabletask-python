@@ -13,7 +13,8 @@ ADDED
 `async def`, await durable tasks, and use deterministic asyncio composition and
 durable sleeps/timeouts. See the [async contract](../docs/async-orchestrators.md).
 Async fan-out scales to large batches, and cleanup callback failures do not
-skip other cooperative finalizers.
+skip other cooperative finalizers. Process-control exits propagate even when
+another finalizer fails.
 The `orchestrator_generator_wrapper` helper accepts direct-await coroutines;
 asyncio scheduling requires replay/backend tests.
 - Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact

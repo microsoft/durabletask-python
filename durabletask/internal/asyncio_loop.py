@@ -266,6 +266,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                     except BaseException as error:
                         if not self._closing:
                             raise
+                        # Defer all exits until other cleanup tasks have drained.
                         self._record_cleanup_error(error)
                 if self._fatal is not None:
                     error, self._fatal = self._fatal, None
@@ -302,9 +303,9 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         error = context.get("exception")
         self._fatal = error if isinstance(error, BaseException) else RuntimeError(context["message"])
 
-    def _record_cleanup_error(self, error: BaseException) -> None:
+    def _record_cleanup_error(self, error: BaseException, source: str = "cleanup callback") -> None:
         logger = self.ctx._logger or logging.getLogger(__name__)  # pyright: ignore[reportPrivateUsage]
-        logger.warning("%s: Async cleanup callback failed.", self.ctx.instance_id, exc_info=error)
+        logger.warning("%s: Async %s failed.", self.ctx.instance_id, source, exc_info=error)
         if not isinstance(error, (Exception, asyncio.CancelledError)):
             from durabletask.worker import _is_control_flow_exception  # pyright: ignore[reportPrivateUsage]
             if self._cleanup_failure is None or _is_control_flow_exception(error):
@@ -334,18 +335,18 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                     try:
                         future.get_coro().close()
                     except BaseException as error:
+                        # Close siblings before propagating process-control exits.
+                        self._record_cleanup_error(error, "coroutine cleanup")
                         failure = failure or error
                     failure = failure or RuntimeError(
                         "Async cleanup must finish without waiting for durable or external work.")
                 elif not future.cancelled():
                     error = future.exception()
                     if error is not None and (future not in completed_at_close or future in unobserved_at_close):
-                        if not isinstance(error, Exception):
-                            failure = failure or error
-                        logger = self.ctx._logger or logging.getLogger(__name__)  # pyright: ignore[reportPrivateUsage]
-                        logger.warning(
-                            "%s: Async %s task failed.", self.ctx.instance_id,
-                            "background" if future in completed_at_close else "cleanup", exc_info=error)
+                        self._record_cleanup_error(
+                            error, "background task" if future in completed_at_close else "task cleanup")
+            if self._cleanup_failure is not None:
+                raise self._cleanup_failure
             if failure is not None:
                 raise failure
         finally:

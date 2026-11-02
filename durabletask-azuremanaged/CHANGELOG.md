@@ -14,7 +14,8 @@ accepts `async def` orchestrators that await durable tasks alongside generator
 orchestrators, including deterministic asyncio composition and durable sleeps/
 timeouts. See the [async contract](../docs/async-orchestrators.md).
 Async fan-out scales to large batches, and cleanup callback failures do not
-skip other cooperative finalizers.
+skip other cooperative finalizers. Process-control exits propagate even when
+another finalizer fails.
 
 CHANGED
 
