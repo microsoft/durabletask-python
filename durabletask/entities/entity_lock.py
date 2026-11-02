@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ class EntityLock:
     def __init__(self, context: OrchestrationContext):
         self._context = context
 
-    def __enter__(self) -> EntityLock:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:

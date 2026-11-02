@@ -37,7 +37,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from durabletask import client as client_module
@@ -288,7 +288,7 @@ def _dotnet_o_format(dt: datetime) -> str:
     a trailing zero.  Naive datetimes are assumed UTC.
     """
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     base = dt.strftime("%Y-%m-%dT%H:%M:%S")
     fractional = f"{dt.microsecond:06d}0"
     offset = dt.utcoffset()

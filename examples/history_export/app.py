@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Generator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from durabletask import client, task, worker
@@ -99,7 +99,7 @@ def main() -> None:
                 time.sleep(0.5)
 
                 # Create an export job for the seeded window.
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 print("\nCreating export job...")
                 desc = export_client.create_job(
                     ExportJobCreationOptions(

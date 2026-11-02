@@ -12,10 +12,10 @@ nox -s ci
 ```
 
 The `ci` session runs linting, strict type checks, core SDK and Azure Managed
-tests on Python 3.10, Azure Functions unit tests on Python 3.13, and Azure
+tests on Python 3.11, Azure Functions unit tests on Python 3.13, and Azure
 Functions end-to-end tests on Python 3.13. It intentionally runs one
 representative version rather than the complete CI matrix, keeping routine
-local validation fast. To use another supported version (3.10--3.15) for the
+local validation fast. To use another supported version (3.11--3.15) for the
 core SDK and Azure Managed tests, pass it after `--`:
 
 ```sh
@@ -53,8 +53,8 @@ For a focused change, run just the relevant session:
 nox -R -s lint -- durabletask/client.py tests/durabletask/test_client.py
 nox -R -s typecheck_core -- durabletask/client.py durabletask/extensions/history_export
 nox -R -s typecheck_functions -- azure-functions-durable/azure
-nox -R -s core_tests-3.10 -- tests/durabletask/test_client.py::test_get_grpc_channel_insecure
-nox -R -s azuremanaged_tests-3.10 -- tests/durabletask-azuremanaged/test_dts_orchestration_e2e.py
+nox -R -s core_tests-3.11 -- tests/durabletask/test_client.py::test_get_grpc_channel_insecure
+nox -R -s azuremanaged_tests-3.11 -- tests/durabletask-azuremanaged/test_dts_orchestration_e2e.py
 nox -R -s functions_unit-3.13 -- tests/azure-functions-durable/test_client_compat.py
 nox -R -s functions_e2e -- -k "dtask_client"
 ```

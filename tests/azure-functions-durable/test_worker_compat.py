@@ -84,6 +84,31 @@ async def test_worker_returns_failed_response_for_unexpected_teardown(monkeypatc
     assert len(response.actions) == 1
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_worker_preserves_grouped_failure_diagnostics(monkeypatch, use_async):
+    monkeypatch.setattr(payloads, "_payload_store", None)
+
+    def orchestrator(context):
+        error = ValueError("nested failure")
+        error.add_note("nested note")
+        raise ExceptionGroup("activity group", [error, RuntimeError("other failure")])
+
+    worker = DurableFunctionsWorker()
+    request = _encode_orchestrator_request("grouped-failure")
+    if use_async:
+        encoded = await worker.execute_orchestration_request_async(orchestrator, request)
+    else:
+        encoded = worker.execute_orchestration_request(orchestrator, request)
+    response = _decode_orchestrator_response(encoded)
+    completion = _get_completion_action(response)
+
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert completion.failureDetails.errorType == "builtins.ExceptionGroup"
+    assert "ValueError: nested failure" in completion.failureDetails.stackTrace.value
+    assert "RuntimeError: other failure" in completion.failureDetails.stackTrace.value
+    assert "nested note" in completion.failureDetails.stackTrace.value
+
+
 def test_worker_created_before_configuration_hydrates_and_externalizes(monkeypatch, payload_store_factory):
     monkeypatch.setattr(payloads, "_payload_store", None)
     worker = DurableFunctionsWorker()

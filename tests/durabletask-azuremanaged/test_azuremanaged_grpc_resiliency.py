@@ -71,6 +71,32 @@ def test_dts_worker_completes_unexpected_teardown_failure():
     assert response.actions[0].completeOrchestration.failureDetails.errorMessage == "deterministic teardown failure"
 
 
+def test_dts_worker_preserves_grouped_failure_diagnostics():
+    def orchestrator(ctx: task.OrchestrationContext, _: Any):
+        error = ValueError("nested failure")
+        error.add_note("nested note")
+        raise ExceptionGroup("activity group", [error, RuntimeError("other failure")])
+
+    with DurableTaskSchedulerWorker(
+            host_address="localhost:4001", taskhub="hub", token_credential=None) as worker:
+        name = worker.add_orchestrator(orchestrator)
+        request = pb.OrchestratorRequest(instanceId="instance", newEvents=[
+            helpers.new_orchestrator_started_event(),
+            helpers.new_execution_started_event(name, "instance"),
+        ])
+        stub = Mock()
+        worker._execute_orchestrator(request, stub, "original-token")
+
+    stub.CompleteOrchestratorTask.assert_called_once()
+    stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    completion = stub.CompleteOrchestratorTask.call_args.args[0].actions[0].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert completion.failureDetails.errorType == "builtins.ExceptionGroup"
+    assert "ValueError: nested failure" in completion.failureDetails.stackTrace.value
+    assert "RuntimeError: other failure" in completion.failureDetails.stackTrace.value
+    assert "nested note" in completion.failureDetails.stackTrace.value
+
+
 def test_dts_worker_passes_exception_properties_provider_to_base_worker():
     class PropertiesProvider:
         def get_exception_properties(self, exception: Exception) -> Mapping[str, Any] | None:

@@ -11,7 +11,7 @@ from :mod:`durabletask.extensions.history_export.__init__`.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def dt_to_iso(value: datetime | None) -> str | None:
@@ -19,9 +19,9 @@ def dt_to_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=UTC)
     else:
-        value = value.astimezone(timezone.utc)
+        value = value.astimezone(UTC)
     return value.isoformat()
 
 
@@ -31,7 +31,7 @@ def dt_from_iso(value: str | None) -> datetime | None:
         return None
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 

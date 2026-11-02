@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 from durabletask.entities.entity_instance_id import EntityInstanceId
 
@@ -68,7 +68,7 @@ class EntityMetadata:
             entity_state = entity.serializedState.value
         return EntityMetadata(
             id=entity_id,
-            last_modified=entity.lastModifiedTime.ToDatetime(timezone.utc),
+            last_modified=entity.lastModifiedTime.ToDatetime(UTC),
             backlog_queue_size=entity.backlogQueueSize,
             locked_by=entity.lockedBy.value,
             includes_state=includes_state,

@@ -4,6 +4,7 @@
 """Unit tests for :class:`durabletask.task.FailureDetails` introspection."""
 
 import logging
+import traceback
 from decimal import Decimal
 from typing import cast
 
@@ -63,6 +64,100 @@ def test_new_failure_details_uses_fqn_for_builtin():
 def test_new_failure_details_uses_fqn_for_custom_type():
     details = helpers.new_failure_details(_DerivedError("x"))
     assert details.errorType == helpers.get_qualified_name(_DerivedError)
+
+
+def test_new_failure_details_preserves_ordinary_exception_stack_format():
+    try:
+        raise ValueError("ordinary failure")
+    except ValueError as error:
+        details = helpers.new_failure_details(error)
+        assert details.stackTrace.value == "".join(traceback.format_tb(error.__traceback__))
+        assert details.errorMessage == "ordinary failure"
+
+
+@pytest.mark.parametrize("base_group", [False, True])
+def test_new_failure_details_preserves_grouped_tracebacks_and_notes(base_group: bool):
+    class UnexpectedExit(BaseException):
+        pass
+
+    try:
+        raise ValueError("nested failure")
+    except ValueError as error:
+        error.add_note("nested diagnostic note")
+        nested = ExceptionGroup("inner group", [error])
+    other = UnexpectedExit("unexpected exit") if base_group else RuntimeError("other failure")
+    group = BaseExceptionGroup("outer group", [nested, other])
+    group.add_note("group diagnostic note")
+    try:
+        raise group
+    except BaseExceptionGroup as caught:
+        details = helpers.new_failure_details(caught)
+        assert details.stackTrace.value == "".join(traceback.format_exception(caught))
+
+    assert details.errorType == ("builtins.BaseExceptionGroup" if base_group else "builtins.ExceptionGroup")
+    assert details.errorMessage == str(group)
+    assert "ValueError: nested failure" in details.stackTrace.value
+    assert "nested diagnostic note" in details.stackTrace.value
+    assert "group diagnostic note" in details.stackTrace.value
+    state = client.parse_orchestration_state(pb.OrchestrationState(failureDetails=details))
+    assert state.failure_details is not None
+    assert state.failure_details.stack_trace == details.stackTrace.value
+
+
+@pytest.mark.parametrize("base_group", [False, True])
+@pytest.mark.parametrize("child_count", [15, 20])
+def test_grouped_failure_diagnostics_limit_width(base_group: bool, child_count: int):
+    errors: list[BaseException] = [ValueError(f"child-{index:02}") for index in range(child_count)]
+    if base_group:
+        errors[0] = BaseException("child-00")
+    for index, error in enumerate(errors):
+        error.add_note(f"note-{index:02}")
+    group = BaseExceptionGroup("wide group", errors)
+    group.add_note("group note")
+    details = helpers.new_failure_details(group)
+    stack = details.stackTrace.value
+
+    assert len(group.exceptions) == child_count
+    assert "group note" in stack
+    for index in range(15):
+        assert f"child-{index:02}" in stack
+        assert f"note-{index:02}" in stack
+    if child_count > 15:
+        assert "and 5 more exceptions" in stack
+        for index in range(15, child_count):
+            assert f"child-{index:02}" not in stack
+            assert f"note-{index:02}" not in stack
+    else:
+        assert "more exceptions" not in stack
+    assert not details.HasField("innerFailure")
+    assert helpers.failure_details_from_protobuf(details).stack_trace == stack
+
+
+@pytest.mark.parametrize("base_group", [False, True])
+@pytest.mark.parametrize("group_depth", [10, 11, 13])
+def test_grouped_failure_diagnostics_limit_depth(base_group: bool, group_depth: int):
+    error: BaseException = BaseException("deep leaf") if base_group else ValueError("deep leaf")
+    error.add_note("leaf note")
+    for depth in range(group_depth - 1, 0, -1):
+        error = BaseExceptionGroup(f"level-{depth:02}", [error])
+    group = BaseExceptionGroup("deep group", [error])
+    group.add_note("group note")
+    details = helpers.new_failure_details(group)
+    stack = details.stackTrace.value
+
+    assert "group note" in stack
+    assert "level-09" in stack
+    if group_depth > 10:
+        assert "max_group_depth is 10" in stack
+        assert "level-10" not in stack
+        assert "deep leaf" not in stack
+        assert "leaf note" not in stack
+    else:
+        assert "max_group_depth" not in stack
+        assert "deep leaf" in stack
+        assert "leaf note" in stack
+    assert not details.HasField("innerFailure")
+    assert helpers.failure_details_from_protobuf(details).stack_trace == stack
 
 
 # ---------------------------------------------------------------------------

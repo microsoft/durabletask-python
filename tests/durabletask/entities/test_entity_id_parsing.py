@@ -158,6 +158,15 @@ class _SubclassEntityId(EntityInstanceId):
         return self.entity.upper()
 
 
+def test_entity_instance_id_subclass_copy():
+    custom = _SubclassEntityId("Counter", "key1")
+    assert copy.copy(custom) is custom
+    assert copy.deepcopy(custom) is custom
+    constructor, args = custom.__reduce__()
+    assert constructor is _SubclassEntityId
+    assert args == ("counter", "key1")
+
+
 def test_entity_instance_id_subclass_pickle():
     """Verify that unpickling a subclass of EntityInstanceId preserves the concrete type."""
     custom = _SubclassEntityId("Counter", "key1")

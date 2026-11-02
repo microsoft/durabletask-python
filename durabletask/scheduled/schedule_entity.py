@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from durabletask.entities import DurableEntity, EntityInstanceId
@@ -24,7 +24,7 @@ logger = logging.getLogger("durabletask.scheduled")
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Schedule(DurableEntity):

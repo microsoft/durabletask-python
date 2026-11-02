@@ -9,6 +9,7 @@ import asyncio
 import gzip
 import logging
 import uuid
+from typing import Self
 
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient, ContainerClient
@@ -119,13 +120,13 @@ class BlobPayloadStore(PayloadStore):
         """Close the underlying async blob service client."""
         await self._async_blob_service_client.close()
 
-    def __enter__(self) -> BlobPayloadStore:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
 
-    async def __aenter__(self) -> BlobPayloadStore:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:

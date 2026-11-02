@@ -16,6 +16,11 @@ and [Azure Durable Functions](https://learn.microsoft.com/azure/azure-functions/
 - [`azure-functions-durable`](./azure-functions-durable/) is a preview Azure
   Durable Functions provider built on `durabletask`.
 
+## Python Requirements
+
+The core SDK and Azure Managed provider require Python 3.11 or later.
+The Azure Functions Durable provider requires Python 3.13 or later.
+
 ## References
 
 - [Supported Patterns](./docs/supported-patterns.md)

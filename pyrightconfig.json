@@ -2,7 +2,8 @@
   "include": [
     "durabletask",
     "durabletask-azuremanaged",
-    "examples"
+    "examples",
+    "tests/durabletask/typing"
   ],
   "exclude": [
     "**/__pycache__",
@@ -13,6 +14,6 @@
     "**/.venv*",
     ".venv*"
   ],
-  "pythonVersion": "3.10",
+  "pythonVersion": "3.11",
   "typeCheckingMode": "strict"
 }

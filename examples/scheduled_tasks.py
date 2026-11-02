@@ -9,7 +9,7 @@ Durable Task Scheduler worker/client (compatible with the DTS emulator).
 import os
 import time
 from collections.abc import Generator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from azure.identity import DefaultAzureCredential
@@ -53,7 +53,7 @@ with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=secure_cha
         orchestration_name=task.get_name(greet_orchestrator),
         interval=timedelta(seconds=5),
         orchestration_input="world",
-        start_at=datetime.now(timezone.utc),
+        start_at=datetime.now(UTC),
         start_immediately_if_late=True,
     ))
 

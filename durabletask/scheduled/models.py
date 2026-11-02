@@ -33,12 +33,6 @@ def _to_iso(value: datetime | None) -> str | None:
 def _from_iso(value: str | None) -> datetime | None:
     if not value:
         return None
-    # .NET serializes ``DateTimeOffset`` with a numeric offset, but tolerate a
-    # trailing ``Z`` so states written by other producers still parse on the
-    # Python versions that predate ``fromisoformat`` accepting ``Z``. Only the
-    # trailing designator is normalized so an interior ``Z`` is left untouched.
-    if value.endswith("Z"):
-        value = value[:-1] + "+00:00"
     return datetime.fromisoformat(value)
 
 

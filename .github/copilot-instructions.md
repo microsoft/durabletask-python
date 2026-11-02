@@ -43,7 +43,8 @@ Examples:
 
 ## Language and Style
 
-- Python 3.10+ is required.
+- Python 3.11+ is required for the core and Azure Managed packages.
+- Python 3.13+ is required for the Azure Functions Durable package.
 - Use type hints for all public API signatures.
 - Follow PEP 8 conventions.
 - Use `autopep8` for Python formatting.
