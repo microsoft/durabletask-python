@@ -34,6 +34,11 @@ A single callback failure is still raised directly.
 
 FIXED
 
+- Activity and sub-orchestration `retry_timeout` decisions now use replay-safe
+orchestration time, preventing retries from expiring solely because history is
+replayed later. Retry calculations also accept timezone-aware timestamps.
+Histories that recorded timeout failures based on wall-clock time can replay
+differently; drain affected instances on the previous SDK before upgrading.
 - Activity and sub-orchestration retry policies now honor
 `failureDetails.isNonRetriable`, surfacing the failure immediately without
 scheduling a retry timer or another attempt. Existing histories that already

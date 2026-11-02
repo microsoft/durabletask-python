@@ -29,6 +29,10 @@ can change during replay; see the [core upgrade warning](../CHANGELOG.md#unrelea
 
 FIXED
 
+- With the corresponding core SDK update, activity and sub-orchestration
+`retry_timeout` decisions use replay-safe orchestration time rather than
+wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)
+for histories that recorded timeout failures under the previous behavior.
 - With the corresponding core SDK update, activity and sub-orchestration retry
 policies, including compatibility `RetryOptions`, honor
 `failureDetails.isNonRetriable` and surface the failure immediately without retrying.
