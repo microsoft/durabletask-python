@@ -3,6 +3,7 @@
 
 """Tests for distributed tracing utilities and integration."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -1551,6 +1552,54 @@ class TestOrchestrationSpanLifecycle:
 # ---------------------------------------------------------------------------
 # Tests for _parse_traceparent
 # ---------------------------------------------------------------------------
+
+
+def _sync_echo(ctx: task.ActivityContext, value: str) -> str:
+    return value
+
+
+async def _async_echo(ctx: task.ActivityContext, value: str) -> str:
+    return value
+
+
+def _run_sync_activity(w: worker.TaskHubGrpcWorker, req: pb.ActivityRequest, stub: MagicMock) -> None:
+    w._execute_activity(req, stub, "token1")
+
+
+def _run_async_activity(w: worker.TaskHubGrpcWorker, req: pb.ActivityRequest, stub: MagicMock) -> None:
+    asyncio.run(w._execute_activity_async(req, stub, "token1"))
+
+
+class TestActivityServerSpan:
+    """Tests for the activity server span, on the sync and async execution paths."""
+
+    @pytest.mark.parametrize("activity, run", [
+        (_sync_echo, _run_sync_activity),
+        (_async_echo, _run_async_activity),
+    ])
+    @pytest.mark.parametrize("emit_trace_spans, span_count", [(True, 1), (False, 0)])
+    def test_activity_span_follows_emit_trace_spans(
+            self, otel_setup, activity, run, emit_trace_spans, span_count):
+        w = worker.TaskHubGrpcWorker(
+            host_address="localhost:4001",
+            emit_trace_spans=emit_trace_spans,
+        )
+        name = w.add_activity(activity)
+        stub = MagicMock()
+        req = pb.ActivityRequest(
+            name=name,
+            taskId=1,
+            orchestrationInstance=pb.OrchestrationInstance(instanceId=TEST_INSTANCE_ID),
+            input=wrappers_pb2.StringValue(value=json.dumps("hello")),
+            parentTraceContext=_make_parent_trace_ctx(),
+        )
+
+        run(w, req, stub)
+
+        spans = otel_setup.get_finished_spans()
+        assert [span.name for span in spans] == [tracing.create_span_name("activity", name)] * span_count
+        response = stub.CompleteActivityTask.call_args.args[0]
+        assert response.result.value == json.dumps("hello")
 
 
 class TestParseTraceparent:

@@ -76,6 +76,22 @@ guarantees, meaning that they will be executed at least once but may be executed
 the event of a transient failure. Activity functions are where the real "work" of any orchestration
 is done.
 
+Activities can also be `async def` functions. The worker awaits them on its event loop instead of
+running them in its thread pool, so I/O-bound activities (HTTP or database calls, async SDK clients)
+don't each hold a thread while they wait. Their concurrency is bounded by
+`ConcurrencyOptions.maximum_concurrent_activity_work_items`.
+
+```python
+async def fetch_profile(ctx: task.ActivityContext, user_id: str) -> dict:
+    async with httpx.AsyncClient() as http:
+        response = await http.get(f"https://example.com/users/{user_id}")
+        return response.json()
+```
+
+Async activities share the worker's event loop: avoid blocking calls in them (synchronous I/O or
+long CPU-bound work), which would delay every other async activity and the dispatch of new work
+items. Keep such work in ordinary `def` activities. Orchestrators remain generator functions.
+
 ### Durable timers
 
 Orchestrations can schedule durable timers using the `create_timer` API. These timers are durable,
