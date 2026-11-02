@@ -8,6 +8,7 @@ import gc
 import json
 import sys
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any
 from weakref import ref
@@ -19,6 +20,59 @@ from durabletask import task
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
 from tests.durabletask.test_coroutine_orchestrators import _completion, _execute, _start, NOW
+
+
+@pytest.mark.parametrize("fail_branch", [False, True])
+def test_anyio_branches_inherit_context_and_replay_stable_actions(fail_branch: bool) -> None:
+    context: ContextVar[task.OrchestrationContext] = ContextVar("orchestration")
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+        token = context.set(ctx)
+        try:
+            results: dict[str, Any] = {}
+
+            async def branch(name: str) -> None:
+                current = context.get()
+                assert current is ctx
+                results[name] = await current.call_activity(name, input=current.instance_id)
+
+            async with anyio.create_task_group() as group:
+                group.start_soon(branch, "first")
+                group.start_soon(branch, "second")
+            return await context.get().call_activity("finish", input=[results["first"], results["second"]])
+        finally:
+            context.reset(token)
+
+    def replay(old: list[pb.HistoryEvent], new: list[pb.HistoryEvent]):
+        first = _execute(orchestrator, old, new)
+        assert _execute(orchestrator, old, new).actions == first.actions
+        with pytest.raises(LookupError):
+            context.get()
+        return first
+
+    start = _start()
+    initial = replay([], start)
+    assert [action.scheduleTask.name for action in initial.actions] == ["first", "second"]
+    assert all(json.loads(action.scheduleTask.input.value) == "coroutine-test" for action in initial.actions)
+    old = start + [helpers.new_task_scheduled_event(1, "first"),
+                   helpers.new_task_scheduled_event(2, "second")]
+    second_done = [helpers.new_task_completed_event(2, '"second result"')]
+    assert replay(old, second_done).actions == []
+    first_done = [helpers.new_task_failed_event(1, ValueError("recorded branch failure"))] if fail_branch else [
+        helpers.new_task_completed_event(1, '"first result"')]
+    result = replay(old + second_done, first_done)
+    if fail_branch:
+        complete = _completion(result)
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+        assert "recorded branch failure" in str(complete.failureDetails)
+    else:
+        assert len(result.actions) == 1
+        assert result.actions[0].scheduleTask.name == "finish"
+        assert json.loads(result.actions[0].scheduleTask.input.value) == ["first result", "second result"]
+        complete = _completion(replay(old + second_done + first_done, [
+            helpers.new_task_scheduled_event(3, "finish"),
+            helpers.new_task_completed_event(3, '"done"')]))
+        assert json.loads(complete.result.value) == "done"
 
 
 def test_gather_resumes_each_branch_without_waiting_for_batch() -> None:
@@ -568,7 +622,11 @@ def test_nonquiescent_cleanup_does_not_skip_asyncgen_closure(
 
 
 @pytest.mark.parametrize("grouped", [False, True])
-def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bool) -> None:
+@pytest.mark.parametrize("custom_error", [False, True])
+def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bool, custom_error: bool) -> None:
+    class CleanupAbort(BaseException):
+        pass
+
     cleaned: list[str] = []
     exit_error: BaseException = SystemExit("forced cleanup exit")
     if grouped:
@@ -584,13 +642,15 @@ def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bo
                         try:
                             await asyncio.Future()
                         except asyncio.CancelledError:
+                            # Force teardown to close a cancellation-resistant coroutine.
                             pass
                 finally:
                     cleaned.append(name)
                     if error is not None:
                         raise error
 
-        asyncio.create_task(branch("ordinary", ValueError("ordinary cleanup error")))
+        first_error = CleanupAbort("custom cleanup error") if custom_error else ValueError("ordinary cleanup error")
+        asyncio.create_task(branch("ordinary", first_error))
         asyncio.create_task(branch("exit", exit_error))
         asyncio.create_task(branch("last", None))
         await ctx.call_activity("wait")
@@ -599,3 +659,95 @@ def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bo
         _execute(orchestrator, [], _start())
     assert caught.value is exit_error
     assert cleaned == ["ordinary", "exit", "last"]
+
+
+@pytest.mark.parametrize("timer", [False, True])
+def test_callback_stop_iteration_fails_instead_of_completing_orchestrator(timer: bool) -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        def fail() -> None:
+            raise StopIteration("callback stopped")
+
+        loop = asyncio.get_running_loop()
+        if timer:
+            loop.call_later(1, fail)
+        else:
+            loop.call_soon(fail)
+        await ctx.wait_for_external_event("never")
+
+    start = _start()
+    if timer:
+        deadline = NOW + timedelta(seconds=1)
+        old = start + [helpers.new_timer_created_event(1, deadline)]
+        new = [helpers.new_orchestrator_started_event(deadline), helpers.new_timer_fired_event(1, deadline)]
+    else:
+        old, new = [], start
+    complete = _completion(_execute(orchestrator, old, new))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete.failureDetails.errorType == "builtins.RuntimeError"
+    assert complete.failureDetails.innerFailure.errorType == "builtins.StopIteration"
+    assert complete.failureDetails.innerFailure.errorMessage == "callback stopped"
+
+
+@pytest.mark.parametrize("cancelled", [None, 0, 1])
+def test_identical_timer_callbacks_complete_and_cancel_independently(cancelled: int | None) -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> int:
+        loop = asyncio.get_running_loop()
+        result = loop.create_future()
+        completed: list[None] = []
+        expected = 2 if cancelled is None else 1
+
+        def callback() -> None:
+            completed.append(None)
+            if len(completed) == expected:
+                result.set_result(len(completed))
+
+        handles = [loop.call_at(loop.time() + 1, callback) for _ in range(2)]
+        assert handles[0] != handles[1]
+        assert len(set(handles)) == 2
+        if cancelled is not None:
+            handles[cancelled].cancel()
+        return await result
+
+    start = _start()
+    initial = _execute(orchestrator, [], start)
+    remaining = [index + 1 for index in range(2) if index != cancelled]
+    assert [action.id for action in initial.actions] == remaining
+    deadline = NOW + timedelta(seconds=1)
+    old = start + [helpers.new_timer_created_event(index, deadline) for index in remaining]
+    for offset, timer_id in enumerate(remaining):
+        new = [helpers.new_orchestrator_started_event(deadline), helpers.new_timer_fired_event(timer_id, deadline)]
+        result = _execute(orchestrator, old, new)
+        assert _execute(orchestrator, old, new).actions == result.actions
+        if offset < len(remaining) - 1:
+            assert result.actions == []
+        else:
+            assert json.loads(_completion(result).result.value) == len(remaining)
+        old += new
+
+
+def test_cooperative_cleanup_prioritizes_grouped_process_control() -> None:
+    class CleanupAbort(BaseException):
+        pass
+
+    exit_error = BaseExceptionGroup("cleanup exit", [SystemExit("stop"), ValueError("nested")])
+    cleaned: list[str] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(name: str, error: BaseException | None) -> None:
+            try:
+                await ctx.wait_for_external_event(name)
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append(name)
+                if error is not None:
+                    raise error
+
+        asyncio.create_task(branch("custom", CleanupAbort("first failure")))
+        asyncio.create_task(branch("exit", exit_error))
+        asyncio.create_task(branch("last", None))
+        await ctx.call_activity("wait")
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        _execute(orchestrator, [], _start())
+    assert caught.value is exit_error
+    assert cleaned == ["custom", "exit", "last"]

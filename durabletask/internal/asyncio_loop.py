@@ -51,6 +51,11 @@ class _DurableAsyncTask(asyncio.Task[T]):
 
 
 class _DurableTimerHandle(asyncio.TimerHandle):
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    __hash__ = object.__hash__
+
     def __init__(
         self, when: float, callback: Callable[..., Any], args: tuple[Any, ...],
         loop: DurableEventLoop, context: contextvars.Context | None,
@@ -301,6 +306,10 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
 
     def call_exception_handler(self, context: dict[str, Any]) -> None:
         error = context.get("exception")
+        if isinstance(error, StopIteration):
+            failure = RuntimeError("An orchestration callback raised StopIteration.")
+            failure.__cause__ = error
+            error = failure
         self._fatal = error if isinstance(error, BaseException) else RuntimeError(context["message"])
 
     def _record_cleanup_error(self, error: BaseException, source: str = "cleanup callback") -> None:

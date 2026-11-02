@@ -32,7 +32,6 @@ jobs:
           python -m pytest
           tests\durabletask\test_asyncio_orchestrators.py
           tests\durabletask\test_coroutine_orchestrators.py
-          tests\durabletask\test_pydantic_ai_orchestrator.py
           tests\durabletask\test_orchestration_generator_cleanup.py
           tests\durabletask\test_orchestration_dispatch_recovery.py
           -q

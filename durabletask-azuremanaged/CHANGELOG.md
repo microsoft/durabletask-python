@@ -16,6 +16,8 @@ timeouts. See the [async contract](../docs/async-orchestrators.md).
 Async fan-out scales to large batches, and cleanup callback failures do not
 skip other cooperative finalizers. Process-control exits propagate even when
 another finalizer fails.
+Identical timer callback registrations remain independent, and callback
+`StopIteration` errors fail the orchestration rather than completing it.
 
 CHANGED
 
