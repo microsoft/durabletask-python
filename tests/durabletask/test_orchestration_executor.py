@@ -938,6 +938,90 @@ def test_unhandled_activity_failure_preserves_failure_details():
     assert failure.innerFailure.properties["code"].string_value == "VALUE"
 
 
+@pytest.mark.parametrize("is_sub_orch", [False, True], ids=["activity", "sub-orchestration"])
+@pytest.mark.parametrize("is_non_retriable", [None, False, True], ids=["unset", "false", "true"])
+@pytest.mark.parametrize("is_replaying", [False, True], ids=["new-failure", "replayed-failure"])
+@pytest.mark.parametrize("catch_failure", [False, True], ids=["unhandled", "caught"])
+def test_retry_policy_respects_non_retriable_failure(
+    is_sub_orch: bool,
+    is_non_retriable: bool | None,
+    is_replaying: bool,
+    catch_failure: bool,
+):
+    """Non-retriable failures bypass retries and retain their failure details."""
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        retry_policy = task.RetryPolicy(
+            first_retry_interval=timedelta(seconds=1),
+            max_number_of_attempts=3,
+        )
+        try:
+            if is_sub_orch:
+                yield ctx.call_sub_orchestrator("child", retry_policy=retry_policy)
+            else:
+                yield ctx.call_activity("child", retry_policy=retry_policy)
+        except task.TaskFailedError as error:
+            if not catch_failure:
+                raise
+            assert error.details.error_type == "builtins.ValueError"
+            assert error.details.message == "Permanent failure"
+            return "compensated"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+    current_timestamp = datetime.utcnow()
+    old_events = [
+        helpers.new_orchestrator_started_event(current_timestamp),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+    ]
+    if is_sub_orch:
+        old_events.append(helpers.new_sub_orchestration_created_event(1, "child", "child-instance"))
+        failed_event = helpers.new_sub_orchestration_failed_event(1, ValueError("Permanent failure"))
+        failure_details = failed_event.subOrchestrationInstanceFailed.failureDetails
+    else:
+        old_events.append(helpers.new_task_scheduled_event(1, "child"))
+        failed_event = helpers.new_task_failed_event(1, ValueError("Permanent failure"))
+        failure_details = failed_event.taskFailed.failureDetails
+    if is_non_retriable is not None:
+        failure_details.isNonRetriable = is_non_retriable
+
+    new_events = [helpers.new_orchestrator_started_event(current_timestamp)]
+    if is_replaying:
+        old_events.append(failed_event)
+    else:
+        new_events.append(failed_event)
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    if is_non_retriable:
+        completion = get_and_validate_complete_orchestration_action_list(1, result.actions)
+        if catch_failure:
+            assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+            assert completion.result.value == json.dumps("compensated")
+        else:
+            assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+            assert completion.failureDetails.innerFailure == failure_details
+    else:
+        assert len(result.actions) == 1
+        timer = result.actions[0]
+        assert timer.HasField("createTimer")
+        expected_fire_at = current_timestamp + timedelta(seconds=1)
+        assert timer.createTimer.fireAt.ToDatetime() == expected_fire_at
+
+        old_events += new_events
+        executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+        result = executor.execute(TEST_INSTANCE_ID, old_events, [
+            helpers.new_orchestrator_started_event(expected_fire_at),
+            helpers.new_timer_fired_event(timer.id, expected_fire_at),
+        ])
+        retries = [
+            action for action in result.actions
+            if action.HasField("createSubOrchestration" if is_sub_orch else "scheduleTask")
+        ]
+        assert len(retries) == 1
+        assert retries[0].id == 1
+
+
 def test_activity_retry_policies():
     """Tests the retry policy logic for activity tasks"""
 
