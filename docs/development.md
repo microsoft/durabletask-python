@@ -7,9 +7,37 @@ The following is more information about how to develop this project.
 Use Nox to run the representative local correctness checks:
 
 ```sh
-python -m pip install -r dev-requirements.txt
+python -m pip install --upgrade "pip>=25.1"
+python -m pip install --group nox
 nox -s ci
 ```
+
+Development dependencies are defined once in the root `pyproject.toml` under
+`[dependency-groups]` (PEP 735). Installing groups requires pip 25.1 or later.
+Nox installs the groups required by each session; the official build uses the
+same `build`, `lint`, and `test` groups. Add test-only dependencies to `test`
+so local and official test environments stay in sync. Keep runtime dependencies
+and public extras in each package's `[project]` metadata, not in tooling groups:
+the official build resolves them through built wheels to catch missing
+declarations.
+
+For development without Nox, install all tools with `--group dev` and install
+the local packages separately. Use Python 3.13 or later for Azure Functions:
+
+```bash
+python -m pip install --group dev \
+  -e ".[azure-blob-payloads,opentelemetry]" \
+  -e ./durabletask-azuremanaged -e ./azure-functions-durable
+```
+
+```powershell
+python -m pip install --group dev `
+  -e ".[azure-blob-payloads,opentelemetry]" `
+  -e .\durabletask-azuremanaged -e .\azure-functions-durable
+```
+
+Sample and Function app `requirements.txt` files remain deployment inputs, not
+the source of repository development dependencies.
 
 The `ci` session runs linting, strict type checks, core SDK and Azure Managed
 tests on Python 3.11, Azure Functions unit tests on Python 3.13, and Azure
@@ -70,7 +98,8 @@ These commands require `make`. If you're using Windows, you can install `make`
 using [Chocolatey](https://chocolatey.org/) or use WSL.
 
 ```sh
-pip3 install -r dev-requirements.txt
+python -m pip install --upgrade "pip>=25.1"
+python -m pip install --group protobuf
 make gen-proto
 ```
 
