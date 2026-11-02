@@ -51,7 +51,8 @@ Excluded rules do not reject new occurrences until their cleanup is complete;
 they are not recommendations for new code.
 
 The root pytest configuration treats `DeprecationWarning` and
-`PendingDeprecationWarning` as errors. Nox uses Python 3.13 as the representative
+`PendingDeprecationWarning` as errors and explicitly uses function-scoped event
+loops for async fixtures. Nox uses Python 3.13 as the representative
 strict deprecation gate for all three packages. On other supported versions,
 Nox reports these warnings without failing, preserving compatibility coverage
 without requiring APIs unavailable at the package's minimum version.
