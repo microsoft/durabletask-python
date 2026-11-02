@@ -13,7 +13,7 @@ def test_proto_task_hub_shim_is_compatible():
     protocol_attrs = set(get_type_hints(ProtoTaskHubSidecarServiceStub).keys())
 
     # Instantiate TaskHubSidecarServiceStub with a dummy channel to get its attributes
-    class TestChannel():
+    class TestChannel:
         def unary_unary(self, *args, **kwargs):
             pass
 

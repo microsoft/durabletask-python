@@ -137,6 +137,16 @@ def _pytest_arguments(
     return tuple(posargs) if has_target else (default_target, *posargs)
 
 
+def _pytest_warning_arguments(session: nox.Session) -> tuple[str, ...]:
+    """Keep Python 3.13 as the strict deprecation gate across packages."""
+    if session.python == "3.13":
+        return ()
+    return (
+        "-W", "default::DeprecationWarning",
+        "-W", "default::PendingDeprecationWarning",
+    )
+
+
 def _start_azurite(
     session: nox.Session,
     ports: Sequence[int],
@@ -280,8 +290,8 @@ def _stop_dts_emulator(container_name: str) -> None:
 
 @nox.session
 def lint(session: nox.Session) -> None:
-    """Run the Flake8 checks required by the GitHub Actions workflows."""
-    session.install("flake8")
+    """Run Flake8 and Ruff modernization checks without replacing formatting."""
+    session.install("flake8", "ruff")
     targets = session.posargs or (
         "durabletask",
         "durabletask-azuremanaged",
@@ -290,8 +300,10 @@ def lint(session: nox.Session) -> None:
         "tests/durabletask-azuremanaged",
         "tests/azure-functions-durable",
         "examples",
+        "noxfile.py",
     )
     session.run("flake8", *targets)
+    session.run("ruff", "check", *targets)
 
 
 @nox.session(python=["3.11"])
@@ -413,6 +425,7 @@ def core_tests(session: nox.Session) -> None:
         arguments = _pytest_arguments("tests/durabletask", session.posargs)
         session.run(
             "pytest",
+            *_pytest_warning_arguments(session),
             *arguments,
             "-m",
             "not dts",
@@ -441,7 +454,10 @@ def azuremanaged_tests(session: nox.Session) -> None:
             "tests/durabletask-azuremanaged",
             session.posargs,
         )
-        session.run("pytest", *arguments, "-m", "dts", "--verbose")
+        session.run(
+            "pytest", *_pytest_warning_arguments(session),
+            *arguments, "-m", "dts", "--verbose",
+        )
     finally:
         _stop_dts_emulator(container_name)
 
@@ -454,7 +470,7 @@ def functions_unit(session: nox.Session) -> None:
     session.install("pytest")
     arguments = _pytest_arguments("tests/azure-functions-durable", session.posargs)
     session.run(
-        "pytest", *arguments,
+        "pytest", *_pytest_warning_arguments(session), *arguments,
         "-m", "not dts and not azurite and not functions_e2e",
         "--verbose",
     )
@@ -508,7 +524,7 @@ def functions_e2e(session: nox.Session) -> None:
             session.posargs,
         )
         session.run(
-            "pytest", *arguments,
+            "pytest", *_pytest_warning_arguments(session), *arguments,
             "-m", "functions_e2e",
         )
     finally:
