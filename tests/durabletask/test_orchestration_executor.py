@@ -1044,7 +1044,7 @@ def test_activity_retry_policies():
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
-    current_timestamp = datetime.utcnow()
+    current_timestamp = datetime.now(UTC).replace(tzinfo=None)
     # Simulate the task failing for the first time and confirm that a timer is scheduled for 1 second in the future
     old_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
@@ -1222,7 +1222,7 @@ def test_activity_retry_preserves_tags():
 
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
-    current_timestamp = datetime.utcnow()
+    current_timestamp = datetime.now(UTC).replace(tzinfo=None)
     old_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
         helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
@@ -1281,7 +1281,7 @@ def test_activity_retry_without_max_retry_interval():
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
-    current_timestamp = datetime.utcnow()
+    current_timestamp = datetime.now(UTC).replace(tzinfo=None)
 
     # Simulate the task failing for the first time — retry timer should be created at 1 second
     old_events = [
@@ -1370,7 +1370,7 @@ def test_activity_retry_with_default_backoff():
     registry = worker._Registry()
     name = registry.add_orchestrator(orchestrator)
 
-    current_timestamp = datetime.utcnow()
+    current_timestamp = datetime.now(UTC).replace(tzinfo=None)
 
     # First failure — retry timer at 5 seconds (default backoff=1.0, so 5 * 1^0 = 5)
     old_events = [
@@ -1433,7 +1433,7 @@ def test_activity_retry_with_long_timer_preserves_retryable_parent():
     name = registry.add_orchestrator(orchestrator)
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
 
-    start = datetime.utcnow()
+    start = datetime.now(UTC).replace(tzinfo=None)
     t1 = start + timedelta(days=3)
     t2 = start + timedelta(days=6)
     t3 = start + timedelta(days=9)
@@ -1804,7 +1804,7 @@ def test_nondeterminism_expected_sub_orchestration_task_completion_wrong_task_ty
     This variation tests the case where the expected task type is wrong (e.g. the code schedules a timer task
     but the history contains a sub-orchestration completed task)."""
     def orchestrator(ctx: task.OrchestrationContext, _):
-        result = yield ctx.create_timer(datetime.utcnow())  # created timer but history expects sub-orchestration
+        result = yield ctx.create_timer(datetime.now(UTC).replace(tzinfo=None))  # created timer but history expects sub-orchestration
         return result
 
     registry = worker._Registry()
@@ -2084,7 +2084,7 @@ def test_raise_event_buffered():
 
     # Complete the timer task. The orchestration should move to the wait_for_external_event step, which
     # should then complete immediately because the event was buffered in the old event history.
-    timer_due_time = datetime.utcnow() + timedelta(days=1)
+    timer_due_time = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1)
     old_events = new_events + [helpers.new_timer_created_event(1, timer_due_time)]
     new_events = [helpers.new_timer_fired_event(1, timer_due_time)]
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
@@ -2173,9 +2173,9 @@ def test_continue_as_new(save_events: bool, new_version: str | None):
         helpers.new_event_raised_event("my_event", encoded_input="42"),
         helpers.new_event_raised_event("my_event", encoded_input="43"),
         helpers.new_event_raised_event("my_event", encoded_input="44"),
-        helpers.new_timer_created_event(1, datetime.utcnow() + timedelta(days=1))]
+        helpers.new_timer_created_event(1, datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1))]
     new_events = [
-        helpers.new_timer_fired_event(1, datetime.utcnow() + timedelta(days=1))]
+        helpers.new_timer_fired_event(1, datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1))]
 
     # Execute the orchestration. It should be in a running state waiting for the timer to fire
     executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
@@ -3180,7 +3180,7 @@ def test_when_any_with_retry():
     orchestrator_name = registry.add_orchestrator(orchestrator)
     registry.add_activity(dummy_activity)
 
-    current_timestamp = datetime.utcnow()
+    current_timestamp = datetime.now(UTC).replace(tzinfo=None)
     # Simulate the task failing for the first time and confirm that a timer is scheduled for 1 second in the future
     old_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
@@ -3268,7 +3268,7 @@ def test_when_all_with_retry(shared):
     orchestrator_name = registry.add_orchestrator(orchestrator)
     registry.add_activity(dummy_activity)
 
-    current_timestamp = datetime.utcnow()
+    current_timestamp = datetime.now(UTC).replace(tzinfo=None)
     # Simulate the task failing for the first time and confirm that a timer is scheduled for 2 seconds in the future
     old_events = [
         helpers.new_orchestrator_started_event(timestamp=current_timestamp),
