@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -416,7 +417,7 @@ class FunctionApp:
         return self._read_log()
 
     def wait_for_host_log(self, text: str, timeout: float = 30) -> str:
-        """Wait until captured Functions host output contains ``text``."""
+        """Wait for ``text`` and return its host record, not its physical line."""
         deadline = time.time() + timeout
         log = self._read_log()
         while text not in log and time.time() < deadline:
@@ -426,7 +427,16 @@ class FunctionApp:
             raise TimeoutError(
                 f"Functions host log did not contain {text!r} within {timeout}s.\n"
                 f"{log}")
-        return next(line for line in log.splitlines() if text in line)
+        # Host stdout/stderr can concatenate timestamped records without a newline.
+        return next(
+            record
+            for line in log.splitlines()
+            for record in re.split(
+                r"(?=\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\] )",
+                line,
+            )
+            if text in record
+        )
 
     def stop(self) -> None:
         proc = self._process
