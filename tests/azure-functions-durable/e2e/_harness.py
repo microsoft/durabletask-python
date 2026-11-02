@@ -260,7 +260,8 @@ class FunctionApp:
 
     Use as a context manager. On entry it starts the host and blocks until the
     app's ``/api/ping`` route responds; on exit it terminates the whole process
-    group and surfaces the captured host log if startup failed.
+    group and surfaces the captured host log if startup failed. Each instance
+    uses a unique task hub so sample hosts cannot consume each other's work.
     """
 
     # ``func start`` binds the HTTP port itself, some time after we pick a free
@@ -275,6 +276,7 @@ class FunctionApp:
             raise FileNotFoundError(f"Sample app not found: {self.app_dir}")
         self.port = port or find_free_port()
         self.base_url = f"http://127.0.0.1:{self.port}"
+        self._task_hub_name = f"e2e{uuid.uuid4().hex}"
         self._process: Optional[subprocess.Popen[str]] = None
         self._log_path = self.app_dir / "_func_host.log"
 
@@ -332,6 +334,7 @@ class FunctionApp:
 
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
+        env["AzureFunctionsJobHost__extensions__durableTask__hubName"] = self._task_hub_name
         # Start the host exactly as a developer would after activating the
         # app's OWN virtual environment (``<app>/.venv``). The environment MUST
         # live inside the app directory: the Functions Python worker only
