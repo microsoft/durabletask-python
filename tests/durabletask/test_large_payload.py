@@ -5,12 +5,15 @@
 
 import asyncio
 import gzip
+import json
 import threading
+from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from google.protobuf import wrappers_pb2
 
+from durabletask import client, task, worker
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask.internal.exceptions import PayloadSizeExceededError
 from durabletask.payload.helpers import (
@@ -24,6 +27,8 @@ from durabletask.payload.store import (
     LargePayloadStorageOptions,
     PayloadStore,
 )
+from durabletask.testing import create_test_backend
+from tests.durabletask._port_utils import find_free_port
 
 
 # ------------------------------------------------------------------
@@ -647,6 +652,128 @@ class TestBlobPayloadStoreTokenParsing:
         assert store.is_known_token("") is False
         assert store.is_known_token("blob:v1:") is False
         assert store.is_known_token("blob:v1:container:") is False
+
+
+# ------------------------------------------------------------------
+# Tests: worker isolation
+# ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("target", ["orchestration", "activity"])
+def test_missing_payload_download_does_not_interrupt_other_work(
+        monkeypatch: pytest.MonkeyPatch, target: str) -> None:
+    missing_value = "missing" * 100
+    missing_blobs: dict[str, bytes] = {}
+    download_attempted = threading.Event()
+    abandoned = threading.Event()
+    entered = [threading.Event(), threading.Event()]
+    release = threading.Event()
+
+    class MissingPayloadStore(FakePayloadStore):
+        def upload(self, data: bytes, *, instance_id: str | None = None) -> str:
+            token = super().upload(data, instance_id=instance_id)
+            if instance_id == "missing-payload" and not missing_blobs:
+                missing_blobs[token] = self._blobs.pop(token)
+            return token
+
+        def download(self, token: str) -> bytes:
+            if token in missing_blobs and token not in self._blobs:
+                download_attempted.set()
+            return super().download(token)
+
+        def restore(self) -> None:
+            self._blobs.update(missing_blobs)
+
+    store = MissingPayloadStore()
+
+    def echo(ctx: task.ActivityContext, value: Any) -> Any:
+        return value
+
+    def blocked(ctx: task.ActivityContext, value: dict[str, Any]) -> dict[str, Any]:
+        entered[int(value["index"])].set()
+        assert release.wait(10), "Healthy activity was not released"
+        return value
+
+    def healthy(ctx: task.OrchestrationContext, value: dict[str, Any]) -> Generator[task.Task[Any], Any, Any]:
+        return (yield ctx.call_activity(blocked, input=value))
+
+    def roundtrip(ctx: task.OrchestrationContext, value: Any) -> Generator[task.Task[Any], Any, Any]:
+        return (yield ctx.call_activity(echo, input=value))
+
+    def missing_activity(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, Any]:
+        return (yield ctx.call_activity(echo, input=missing_value))
+
+    def passthrough(ctx: task.OrchestrationContext, value: Any) -> Any:
+        return value
+
+    port = find_free_port()
+    address = f"localhost:{port}"
+    backend = create_test_backend(port=port)
+    try:
+        with worker.TaskHubGrpcWorker(
+                host_address=address, payload_store=store,
+                concurrency_options=worker.ConcurrencyOptions(
+                    maximum_concurrent_orchestration_work_items=1,
+                    maximum_concurrent_activity_work_items=3,
+                    maximum_thread_pool_workers=4,
+                )) as host:
+            host.add_orchestrator(healthy)
+            host.add_orchestrator(roundtrip)
+            host.add_orchestrator(missing_activity)
+            host.add_orchestrator(passthrough)
+            host.add_activity(echo)
+            host.add_activity(blocked)
+            cancel_name = "_cancel_orchestrator" if target == "orchestration" else "_cancel_activity"
+            original_cancel = getattr(host, cancel_name)
+
+            def observe_abandon(request: Any, stub: Any, token: Any) -> None:
+                original_cancel(request, stub, token)
+                instance_id = request.instanceId if target == "orchestration" else request.orchestrationInstance.instanceId
+                assert instance_id == "missing-payload"
+                abandoned.set()
+
+            monkeypatch.setattr(host, cancel_name, observe_abandon)
+            host.start()
+            try:
+                with client.TaskHubGrpcClient(host_address=address, payload_store=store) as connection:
+                    inputs = [{"index": index, "data": "healthy" * 100} for index in range(len(entered))]
+                    instance_ids = [
+                        connection.schedule_new_orchestration(healthy, input=value) for value in inputs
+                    ]
+                    for event in entered:
+                        assert event.wait(10), "Healthy activity did not start"
+
+                    connection.schedule_new_orchestration(
+                        passthrough if target == "orchestration" else missing_activity,
+                        instance_id="missing-payload",
+                        input=missing_value if target == "orchestration" else None,
+                    )
+                    assert abandoned.wait(10), "Missing payload work item was not abandoned"
+                    assert download_attempted.is_set()
+                    # Preserve abandonment policy, but stop immediate orchestration
+                    # redelivery from repeatedly reading the deliberately missing blob.
+                    store.restore()
+
+                    # New work must complete while the original healthy activities
+                    # are still blocked, exercising continued polling and free permits.
+                    fresh_payload = "fresh" * 100
+                    fresh_id = connection.schedule_new_orchestration(roundtrip, input=fresh_payload)
+                    completed = connection.wait_for_orchestration_completion(fresh_id, timeout=10)
+                    assert completed is not None
+                    assert completed.runtime_status == client.OrchestrationStatus.COMPLETED
+                    assert json.loads(completed.serialized_output or "null") == fresh_payload
+
+                    release.set()
+                    for instance_id, value in zip(instance_ids, inputs):
+                        completed = connection.wait_for_orchestration_completion(instance_id, timeout=10)
+                        assert completed is not None
+                        assert completed.runtime_status == client.OrchestrationStatus.COMPLETED
+                        assert json.loads(completed.serialized_output or "null") == value
+            finally:
+                store.restore()
+                release.set()
+    finally:
+        backend.stop()
 
 
 # ------------------------------------------------------------------
