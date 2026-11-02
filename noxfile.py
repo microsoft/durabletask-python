@@ -52,13 +52,8 @@ DEFAULT_CI_PYTHON = "3.11"
 
 def _install_groups(session: nox.Session, *groups: str) -> None:
     """Install shared tooling without preinstalling SDK runtime dependencies."""
-    session.install("pip>=25.1")
-    arguments = [
-        argument
-        for group in groups
-        for argument in ("--group", f"{REPO_ROOT / 'pyproject.toml'}:{group}")
-    ]
-    session.install(*arguments)
+    pyproject = nox.project.load_toml(REPO_ROOT / "pyproject.toml")
+    session.install(*nox.project.dependency_groups(pyproject, *groups))
 
 
 def _install_packages(session: nox.Session, editable: bool = False) -> None:

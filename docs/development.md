@@ -13,8 +13,9 @@ nox -s ci
 ```
 
 Development dependencies are defined once in the root `pyproject.toml` under
-`[dependency-groups]` (PEP 735). Installing groups requires pip 25.1 or later.
-Nox installs the groups required by each session; the official build uses the
+`[dependency-groups]` (PEP 735). Installing groups directly with pip requires
+pip 25.1 or later. Nox uses its built-in group resolver to install each session's
+tools without upgrading pip inside the session. The official build uses the
 same `build`, `lint`, and `test` groups. Add test-only dependencies to `test`
 so local and official test environments stay in sync. Keep runtime dependencies
 and public extras in each package's `[project]` metadata, not in tooling groups:

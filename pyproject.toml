@@ -73,7 +73,7 @@ protobuf = [
     "grpcio-tools",
 ]
 nox = [
-    "nox",
+    "nox>=2025.2.9",
 ]
 examples = [
     "pydantic>=2",
