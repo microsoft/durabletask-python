@@ -13,6 +13,7 @@ ADDED
 accepts `async def` orchestrators that await durable tasks alongside generator
 orchestrators, including deterministic asyncio composition and durable sleeps/
 timeouts. See the [async contract](../docs/async-orchestrators.md).
+Sequential async batches release discarded results during replay.
 
 CHANGED
 

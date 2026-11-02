@@ -8,9 +8,10 @@ import gc
 import json
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
-from weakref import ref
+from weakref import ReferenceType, ref
 
 import anyio
 import pytest
@@ -203,6 +204,69 @@ def test_sleep_zero_fifo_without_timer() -> None:
     result = _execute(orchestrator, [], _start())
     assert len(result.actions) == 1
     assert json.loads(_completion(result).result.value) == [0, 1, 2, 3]
+
+
+def test_discarded_gather_batches_release_decoded_results_during_replay() -> None:
+    references: list[ReferenceType[Any]] = []
+
+    @dataclass
+    class Payload:
+        value: int
+
+        def __post_init__(self) -> None:
+            references.append(ref(self))
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+        for batch in range(8):
+            await asyncio.gather(*(ctx.call_activity("work", return_type=Payload) for _ in range(4)))
+            await asyncio.sleep(0)
+            gc.collect()
+            assert len(references) == (batch + 1) * 4
+            # The history handler still holds the most recent decoded result
+            # while resume() drains this batch's callbacks.
+            assert sum(reference() is not None for reference in references) <= 1
+        return "done"
+
+    history = _start()
+    for batch in range(8):
+        ids = range(batch * 4 + 1, batch * 4 + 5)
+        history += [helpers.new_task_scheduled_event(index, "work") for index in ids]
+        history += [helpers.new_task_completed_event(index, json.dumps({"value": index})) for index in ids]
+    complete = _completion(_execute(orchestrator, history[:-1], history[-1:]))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED, complete.failureDetails
+    assert json.loads(complete.result.value) == "done"
+    gc.collect()
+    assert all(reference() is None for reference in references)
+
+
+def test_retired_tasks_do_not_reuse_cancellation_order() -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+        async def completed() -> None:
+            pass
+
+        async def branch(index: int) -> None:
+            try:
+                await ctx.wait_for_external_event(str(index))
+            finally:
+                await ctx.call_activity("compensate", input=index)
+
+        asyncio.create_task(completed())
+        first = asyncio.create_task(branch(0))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        second = asyncio.create_task(branch(1))
+        await asyncio.sleep(0)
+        second.cancel()
+        first.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
+        return "done"
+
+    initial = _execute(orchestrator, [], _start())
+    assert [json.loads(action.scheduleTask.input.value) for action in initial.actions] == [0, 1]
+    assert _execute(orchestrator, [], _start()).actions == initial.actions
+    old = _start() + [helpers.new_task_scheduled_event(index, "compensate") for index in (1, 2)]
+    new = [helpers.new_task_completed_event(index, "null") for index in (1, 2)]
+    assert json.loads(_completion(_execute(orchestrator, old, new)).result.value) == "done"
 
 
 @pytest.mark.parametrize("under_loop", [False, True])
@@ -491,6 +555,9 @@ def test_background_failure_is_reported_unless_observed(
         await asyncio.sleep(0)
         if observed:
             await asyncio.gather(pending, return_exceptions=True)
+        del pending
+        await asyncio.sleep(0)
+        gc.collect()
         return "done"
 
     assert json.loads(_completion(_execute(orchestrator, [], _start())).result.value) == "done"

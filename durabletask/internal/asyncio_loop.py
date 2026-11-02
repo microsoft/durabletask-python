@@ -84,6 +84,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._ready: deque[asyncio.Handle] = deque()
         self._cancel_ready: list[tuple[int, int, asyncio.Handle]] = []
         self._tasks: dict[asyncio.Task[Any], int] = {}
+        self._task_sequence = 0
         self.cancelling_task: asyncio.Task[Any] | None = None
         self._waits: dict[int, tuple[task.Task[Any], list[asyncio.Future[Any]]]] = {}
         self._observers: dict[int, _CompletionObserver] = {}
@@ -126,8 +127,16 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             coro.close()
             raise TypeError("Custom/eager task execution is not supported in durable orchestrators.")
         future = _DurableAsyncTask(coro, loop=self, name=name, context=context)
-        self._tasks[future] = len(self._tasks)
+        self._tasks[future] = self._task_sequence
+        self._task_sequence += 1
+        future.add_done_callback(self._retire_task)
         return future
+
+    def _retire_task(self, future: asyncio.Task[Any]) -> None:
+        # Inspect without retrieving exceptions: unobserved failures must stay
+        # tracked for teardown reporting, including failures during cleanup.
+        if not self._closing and not getattr(future, "_log_traceback", False):
+            self._tasks.pop(future, None)
 
     def call_soon(
         self, callback: Callable[..., Any], *args: Any,

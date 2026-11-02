@@ -157,6 +157,7 @@ change that contract. Test recorded histories and version/drain affected
 instances; basic sequential parity tests are not blanket migration safety.
 
 The Functions `orchestrator_generator_wrapper` helper supports direct durable
-awaits for mock-based unit tests; it does not simulate the asyncio scheduler.
+awaits in synchronous and async mock-based unit tests; it does not simulate the
+asyncio scheduler.
 Use the real replay executor/provider or the in-memory backend to test task
 groups, gather, and durable timeouts.

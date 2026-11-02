@@ -24,17 +24,17 @@ from durabletask.internal import orchestrator_service_pb2 as pb
 @pytest.mark.parametrize("entry", ["worker-sync", "worker-async", "decorator", "v1-handle"])
 async def test_coroutine_replay_through_functions_entry_points(native: bool, entry: str) -> None:
     async def modern(ctx: task.OrchestrationContext, value: int) -> list[Any]:
-        return await asyncio.gather(
+        return list(await asyncio.gather(
             ctx.call_activity("work", input=value, return_type=str),
             ctx.call_activity("work", input=value + 1, return_type=str),
-        )
+        ))
 
     async def compatible(ctx: df.DurableOrchestrationContext) -> list[Any]:
         value = ctx.get_input()
-        return await asyncio.gather(
+        return list(await asyncio.gather(
             ctx.call_activity("work", value),
             ctx.call_activity("work", value + 1),
-        )
+        ))
 
     fn: Callable[..., Any] = modern if native else compatible
     worker = DurableFunctionsWorker()
@@ -105,3 +105,58 @@ def test_testing_wrapper_drives_immediate_coroutine() -> None:
         return "done"
 
     assert list(orchestrator_generator_wrapper(orchestrator())) == ["done"]
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_testing_wrapper_isolates_each_step_from_async_test_loop(fail: bool) -> None:
+    loop = asyncio.get_running_loop()
+    caller = asyncio.current_task()
+    first = task.CompletableTask[str]()
+    second = task.CompletableTask[str]()
+
+    async def orchestrator() -> str:
+        assert asyncio._get_running_loop() is None
+        try:
+            await first
+        except task.TaskFailedError:
+            assert asyncio._get_running_loop() is None
+        assert asyncio._get_running_loop() is None
+        return await second
+
+    values = orchestrator_generator_wrapper(orchestrator())
+    assert next(values) is first
+    assert asyncio.get_running_loop() is loop
+    assert asyncio.current_task() is caller
+    if fail:
+        first.fail("boom", ValueError("boom"))
+    else:
+        first.complete("first")
+    assert next(values) is second
+    assert asyncio.get_running_loop() is loop
+    assert asyncio.current_task() is caller
+    second.complete("done")
+    assert list(values) == ["done"]
+    assert asyncio.get_running_loop() is loop
+    assert asyncio.current_task() is caller
+    await asyncio.sleep(0)
+
+
+@pytest.mark.parametrize("error", [ValueError("test failure"), SystemExit("test exit")])
+async def test_testing_wrapper_restores_async_test_loop_on_exception(error: BaseException) -> None:
+    loop = asyncio.get_running_loop()
+    caller = asyncio.current_task()
+    pending = task.CompletableTask[str]()
+
+    async def orchestrator() -> None:
+        await pending
+        raise error
+
+    values = orchestrator_generator_wrapper(orchestrator())
+    assert next(values) is pending
+    pending.complete("done")
+    with pytest.raises(type(error)) as caught:
+        next(values)
+    assert caught.value is error
+    assert asyncio.get_running_loop() is loop
+    assert asyncio.current_task() is caller
+    await asyncio.sleep(0)

@@ -13,7 +13,9 @@ ADDED
 `async def`, await durable tasks, and use deterministic asyncio composition and
 durable sleeps/timeouts. See the [async contract](../docs/async-orchestrators.md).
 The `orchestrator_generator_wrapper` helper accepts direct-await coroutines;
-asyncio scheduling requires replay/backend tests.
+these work in synchronous and async tests. Asyncio scheduling requires
+replay/backend tests. Sequential async batches release discarded results
+during replay.
 - Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact
 Unicode JSON across durable clients, orchestration and entity workers, activity
 bindings, and registered blueprints. The default remains ASCII-escaped JSON.

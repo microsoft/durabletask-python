@@ -3,6 +3,7 @@
 
 """Replay simulation helper for unit-testing generator or coroutine orchestrators."""
 
+import asyncio
 from collections.abc import Coroutine, Generator
 from typing import Any
 
@@ -21,9 +22,9 @@ def orchestrator_generator_wrapper(
     back into the orchestrator (mirroring how failed activities, timers, or
     other tasks surface during replay).
 
-    This mock-based helper handles direct durable awaits only. It does not
-    simulate the runtime's asyncio scheduler; use replay/backend tests for
-    gather, task groups, sleeps and timeouts.
+    This mock-based helper handles direct durable awaits in synchronous or
+    async tests. It does not simulate the runtime's asyncio scheduler; use
+    replay/backend tests for gather, task groups, sleeps and timeouts.
 
     Parameters
     ----------
@@ -38,8 +39,19 @@ def orchestrator_generator_wrapper(
         Each task object yielded by the orchestrator, followed by the
         orchestrator's final return value.
     """
+    def step(value: Any = None, *, error: Exception | None = None) -> Any:
+        previous_loop = asyncio._get_running_loop()
+        try:
+            if isinstance(generator, Coroutine):
+                # Direct durable awaits belong to this mock driver, not the
+                # caller's asyncio loop (or an enclosing durable dispatch).
+                asyncio._set_running_loop(None)
+            return generator.throw(error) if error is not None else generator.send(value)
+        finally:
+            asyncio._set_running_loop(previous_loop)
+
     try:
-        previous = generator.send(None)
+        previous = step()
     except StopIteration as e:
         # An orchestrator that returns immediately without yielding any task
         # completes right away (mirroring the runtime, which finishes the
@@ -56,9 +68,9 @@ def orchestrator_generator_wrapper(
                 # Simulated activity exceptions, timer-interrupted exceptions,
                 # or any other case where reading a task result would throw:
                 # push the exception back into the orchestrator as replay does.
-                previous = generator.throw(e)
+                previous = step(error=e)
             else:
-                previous = generator.send(previous_result)
+                previous = step(previous_result)
             yield previous
         except StopIteration as e:
             # The orchestrator returned; surface its output as the final value.
