@@ -157,6 +157,8 @@ def test_get_orchestration_state_pagination_succeeds():
             log_records.append(record)
 
     handler = ListHandler()
+    logger = logging.Logger("test.azuremanaged.client.pagination")
+    logger.addHandler(handler)
 
     with DurableTaskSchedulerWorker(host_address=endpoint, secure_channel=True,
                                     taskhub=taskhub_name, token_credential=None) as w:
@@ -165,7 +167,7 @@ def test_get_orchestration_state_pagination_succeeds():
 
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=True,
                                        taskhub=taskhub_name, token_credential=None,
-                                       log_handler=handler)
+                                       logger=logger)
 
         # Create at least 3 orchestrations to test the limit
         ids = []
