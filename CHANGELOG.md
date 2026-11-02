@@ -7,10 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.13.0
+
 ADDED
 
 - Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
 by one or more task hubs.
+- Added deterministic JSON-array serialization for sets and frozensets.
+`JsonDataConverter(enable_generic_sets=True)` (or the `enable_set_coercion`
+alias) enables type-directed reconstruction of annotated sets and frozensets,
+including nested containers. Reconstruction is disabled by default so recorded
+arrays retain their order and duplicates during replay. Enabling it for
+existing orchestrations can change replay behavior.
 
 CHANGED
 
@@ -53,7 +61,9 @@ Set reconstruction remains opt-in.
 - With set reconstruction enabled, annotated sets of typed tuples are now
 recognized during input and activity-result discovery, and bare
 `collections.abc.Set` annotations reconstruct JSON arrays as concrete sets.
-- Implemented `__hash__` and `__repr__` for `EntityInstanceId`, making identity attributes immutable to guarantee hash stability when used in sets or dict keys.
+- `EntityInstanceId` is now hashable and has a diagnostic `repr`, allowing use
+in sets and as dictionary keys. Entity IDs now reject attribute assignment and
+deletion; construct a new ID instead of mutating an existing one.
 - Large-payload externalization now checks every eligible payload's maximum
 size before uploading or replacing any protobuf values, including carryover
 events and entity payloads, for both synchronous and asynchronous calls.

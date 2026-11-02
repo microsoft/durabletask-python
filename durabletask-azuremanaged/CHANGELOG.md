@@ -7,8 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.13.0
+
+ADDED
+
+- Added inherited `OrchestrationQuery.task_hub_names` support to filter
+orchestration instances by one or more task hubs.
+- With the corresponding core SDK update, sets and frozensets serialize as
+deterministically ordered JSON arrays. Pass
+`JsonDataConverter(enable_generic_sets=True)` (or `enable_set_coercion=True`)
+to clients and workers to opt in to type-directed set reconstruction.
+Reconstruction remains disabled by default to preserve recorded array order
+and duplicates; enabling it for existing orchestrations can change replay behavior.
+
 CHANGED
 
+- Updated the minimum `durabletask` dependency to v1.13.0, including the
+`azure-blob-payloads` extra.
 - Dropped Python 3.10 support. Python 3.11 or later is now required.
 - With the corresponding core SDK update, client and worker context managers
 preserve Azure Managed subclass types in type checkers.
@@ -16,10 +31,13 @@ preserve Azure Managed subclass types in type checkers.
 failures raise the built-in `ExceptionGroup`; a single failure is still raised
 directly. The first callback error remains the explicit cause and serialized
 inner failure. Branches on the previous aggregate exception type or message
-can change during replay; see the [core upgrade warning](../CHANGELOG.md#unreleased).
+can change during replay; see the [core upgrade warning](../CHANGELOG.md#v1130).
 
 FIXED
 
+- With the corresponding core SDK update, `EntityInstanceId` is hashable and
+has a diagnostic `repr`, allowing use in sets and as dictionary keys. Entity
+IDs reject attribute assignment and deletion; construct a new ID instead.
 - With the corresponding core SDK update, activity and sub-orchestration retry
 policies honor `failureDetails.isNonRetriable` and surface the failure immediately
 without retrying. Histories that already retried such failures can replay

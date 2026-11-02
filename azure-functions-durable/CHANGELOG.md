@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v2.0.0rc4
+
 ADDED
 
+- Added inherited `OrchestrationQuery.task_hub_names` support to filter
+orchestration instances by one or more task hubs through
+`DurableFunctionsClient` and `SyncDurableFunctionsClient`.
 - Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact
 Unicode JSON across durable clients, orchestration and entity workers, activity
 bindings, and registered blueprints. The default remains ASCII-escaped JSON.
@@ -17,6 +22,7 @@ The opt-in uses the shared codec's `ensure_ascii` option available in
 
 CHANGED
 
+- Updated the minimum `durabletask` dependency to v1.13.0.
 - Updated the minimum `azure-functions` dependency to v2.4.0b1.
 - With the corresponding core SDK update, client and worker context managers
 preserve Functions subclass types in type checkers. Python 3.13 remains the
@@ -25,10 +31,14 @@ minimum supported version for this package.
 failures raise the built-in `ExceptionGroup`; a single failure is still raised
 directly. The first callback error remains the explicit cause and serialized
 inner failure. Branches on the previous aggregate exception type or message
-can change during replay; see the [core upgrade warning](../CHANGELOG.md#unreleased).
+can change during replay; see the [core upgrade warning](../CHANGELOG.md#v1130).
 
 FIXED
 
+- With the corresponding core SDK update, `EntityInstanceId` and the
+compatibility `EntityId` are hashable and have a diagnostic `repr`, allowing
+use in sets and as dictionary keys. Entity IDs reject attribute assignment and
+deletion; construct a new ID instead.
 - With the corresponding core SDK update, activity and sub-orchestration retry
 policies, including compatibility `RetryOptions`, honor
 `failureDetails.isNonRetriable` and surface the failure immediately without retrying.

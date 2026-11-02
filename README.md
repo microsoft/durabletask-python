@@ -32,6 +32,47 @@ The Azure Functions Durable provider requires Python 3.13 or later.
 
 ## Optional Features
 
+### Task Hub Query Filters
+
+Set `OrchestrationQuery.task_hub_names` to filter orchestration queries by one or
+more task hubs. The filter is available through synchronous and asynchronous
+core and Azure Managed clients; filtering support depends on the backend.
+
+```python
+from durabletask.client import OrchestrationQuery
+
+query = OrchestrationQuery(task_hub_names=["orders", "billing"])
+```
+
+### Set Serialization
+
+The default `JsonDataConverter` serializes sets and frozensets as JSON arrays
+ordered by their canonical JSON representation, not numeric order. For example,
+`{2, 10}` serializes as `[10, 2]`. To reconstruct annotated sets and frozensets
+instead of receiving lists, configure the same converter on clients and workers:
+
+```python
+from durabletask.serialization import JsonDataConverter
+
+converter = JsonDataConverter(enable_generic_sets=True)
+```
+
+Pass it using the `data_converter` parameter on core or Azure Managed clients
+and workers. `enable_set_coercion=True` is an alias for the same option.
+Azure Functions uses its own shared codec rather than this converter.
+
+> [!WARNING]
+> Set reconstruction is disabled by default to preserve the order and duplicates
+> of recorded JSON arrays. Enabling it for existing orchestrations can change
+> replay behavior. Iteration over reconstructed sets is not replay-safe; sort
+> values explicitly before using their order to schedule durable work.
+
+### Entity IDs
+
+`EntityInstanceId` values are immutable, hashable, and usable as dictionary keys
+or set elements. Construct a new ID to change an entity name or key; attribute
+assignment and deletion raise `AttributeError`.
+
 ### Large Payload Externalization
 
 Install the `azure-blob-payloads` extra to automatically offload oversized orchestration payloads to
