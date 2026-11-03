@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added opt-in `HttpRetryOptions` on `context.call_http()` for durable initial
+request retries with configurable timing and status selection. Empty or omitted
+status lists select all non-2xx responses; exhausted retries fail the call.
+Subsequent 202 Location polls do not inherit the policy. See
+[usage and upgrade guidance](README.md#durable-http-failure-retries).
+Release coordination requires the corrected core replay-safe retry-timeout
+behavior before this provider feature is published; version and dependency
+minimum updates belong in the dedicated release PR.
+
 FIXED
 
 - With the corresponding core SDK update, activity and sub-orchestration

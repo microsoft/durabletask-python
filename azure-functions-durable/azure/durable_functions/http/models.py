@@ -12,9 +12,74 @@ payload exchanged with that activity.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Optional, cast
 
+from durabletask.task import RetryPolicy
+
 from ..internal.compat.token_source import TokenSource
+
+
+class HttpRetryOptions(RetryPolicy):
+    """Durable failure retries for the initial HTTP request, not Location polls.
+
+    Durations use ``timedelta``, as in :class:`durabletask.task.RetryPolicy`.
+    ``max_number_of_attempts`` includes the initial attempt. Backoff defaults to
+    1, the maximum retry interval to six days, and the retry timeout to unbounded.
+    An omitted or empty ``status_codes_to_retry`` selects every non-2xx
+    response; a nonempty list selects exactly those codes (even 202).
+    Transport and other activity failures are retried regardless of this list.
+    Exhaustion fails ``call_http`` rather than returning a selected response.
+    """
+
+    def __init__(self, *,
+                 first_retry_interval: timedelta,
+                 max_number_of_attempts: int,
+                 backoff_coefficient: float | None = 1.0,
+                 max_retry_interval: timedelta | None = timedelta(days=6),
+                 retry_timeout: timedelta | None = None,
+                 status_codes_to_retry: Optional[list[int]] = None) -> None:
+        super().__init__(
+            first_retry_interval=first_retry_interval,
+            max_number_of_attempts=max_number_of_attempts,
+            backoff_coefficient=backoff_coefficient,
+            max_retry_interval=max_retry_interval,
+            retry_timeout=retry_timeout)
+        self._status_codes_to_retry = (
+            list(status_codes_to_retry) if status_codes_to_retry is not None else None)
+
+    @property
+    def status_codes_to_retry(self) -> Optional[list[int]]:
+        """Return a copy of the selected response codes, or ``None``."""
+        return (list(self._status_codes_to_retry)
+                if self._status_codes_to_retry is not None else None)
+
+    def to_json(self) -> dict[str, Any]:
+        """Snapshot the policy into a JSON-serializable wire payload."""
+        millisecond = timedelta(milliseconds=1)
+        return {
+            "firstRetryIntervalInMilliseconds": self.first_retry_interval / millisecond,
+            "maxNumberOfAttempts": self.max_number_of_attempts,
+            "backoffCoefficient": self.backoff_coefficient,
+            "maxRetryIntervalInMilliseconds": (
+                self.max_retry_interval / millisecond if self.max_retry_interval is not None else None),
+            "retryTimeoutInMilliseconds": (
+                self.retry_timeout / millisecond if self.retry_timeout is not None else None),
+            "statusCodesToRetry": self.status_codes_to_retry,
+        }
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "HttpRetryOptions":
+        """Reconstruct a snapshotted policy from its wire payload."""
+        max_interval = value["maxRetryIntervalInMilliseconds"]
+        timeout = value["retryTimeoutInMilliseconds"]
+        return cls(
+            first_retry_interval=timedelta(milliseconds=value["firstRetryIntervalInMilliseconds"]),
+            max_number_of_attempts=value["maxNumberOfAttempts"],
+            backoff_coefficient=value["backoffCoefficient"],
+            max_retry_interval=timedelta(milliseconds=max_interval) if max_interval is not None else None,
+            retry_timeout=timedelta(milliseconds=timeout) if timeout is not None else None,
+            status_codes_to_retry=value.get("statusCodesToRetry"))
 
 
 class DurableHttpRequest:
@@ -25,12 +90,14 @@ class DurableHttpRequest:
                  uri: str,
                  content: Optional[str] = None,
                  headers: Optional[dict[str, str]] = None,
-                 token_source: Optional[TokenSource] = None):
+                 token_source: Optional[TokenSource] = None,
+                 retry_options: Optional[HttpRetryOptions] = None):
         self._method = method
         self._uri = uri
         self._content = content
         self._headers = headers
         self._token_source = token_source
+        self._retry_options = retry_options.to_json() if retry_options is not None else None
 
     @property
     def method(self) -> str:
@@ -57,6 +124,12 @@ class DurableHttpRequest:
         """Get the source of the OAuth token to add to the request."""
         return self._token_source
 
+    @property
+    def retry_options(self) -> Optional[HttpRetryOptions]:
+        """Get a copy of the policy captured when this request was created."""
+        return (HttpRetryOptions.from_json(self._retry_options)
+                if self._retry_options is not None else None)
+
     def to_json(self) -> dict[str, Any]:
         """Convert this request into a JSON-serializable dictionary."""
         json_dict: dict[str, Any] = {"method": self._method, "uri": self._uri}
@@ -66,6 +139,9 @@ class DurableHttpRequest:
             json_dict["headers"] = dict(self._headers)
         if self._token_source is not None:
             json_dict["tokenSource"] = self._token_source.to_json()
+        retry_options = self.retry_options
+        if retry_options is not None:
+            json_dict["retryOptions"] = retry_options.to_json()
         return json_dict
 
 

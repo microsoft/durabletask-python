@@ -34,7 +34,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Generator, Optional
 from urllib.parse import urljoin, urlparse
 
-from .models import DurableHttpResponse
+from .models import DurableHttpResponse, HttpRetryOptions
 
 # Reserved built-in function names. The v1 host used ``BuiltIn::HttpActivity``;
 # ``::`` is not a valid Azure Functions function name, so ``__`` is used here.
@@ -163,8 +163,10 @@ def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:
 
     ``input`` is the JSON form of a
     :class:`~azure.durable_functions.http.models.DurableHttpRequest`
-    (``method``, ``uri``, ``content``, ``headers``, ``tokenSource``). The
-    return value is the JSON form of a
+    (``method``, ``uri``, ``content``, ``headers``, ``tokenSource``,
+    ``retryOptions``). Selected response statuses raise an activity failure
+    before buffering the body, allowing the core durable retry policy to run.
+    The return value is the JSON form of a
     :class:`~azure.durable_functions.http.models.DurableHttpResponse`.
 
     The parameter and return are declared as ``dict[str, Any]`` for static type
@@ -204,16 +206,24 @@ def builtin_http_activity(input: dict[str, Any]) -> dict[str, Any]:
     req = urllib.request.Request(url=uri, data=data, method=method, headers=headers)
 
     try:
-        with _open_http_request(req) as resp:
-            status = int(resp.status)
-            resp_headers = {k: v for k, v in resp.headers.items()}
-            body = resp.read().decode("utf-8", errors="replace")
+        response = _open_http_request(req)
     except urllib.error.HTTPError as e:
-        # Non-2xx responses (including 202) surface here; capture rather than raise
-        # so the orchestrator can inspect the status code and headers.
-        status = int(e.code)
-        resp_headers = {k: v for k, v in (e.headers or {}).items()}
-        body = e.read().decode("utf-8", errors="replace")
+        # urllib raises for HTTP errors and unfollowed redirects. Treat these
+        # like ordinary responses so excluded statuses still return their body.
+        response = e
+
+    with response as resp:
+        status = int(resp.code if isinstance(resp, urllib.error.HTTPError) else resp.status)
+        retry_options = request.get("retryOptions")
+        if retry_options is not None:
+            codes = retry_options.get("statusCodesToRetry")
+            selected = status in codes if codes else not 200 <= status < 300
+            if selected:
+                # Leaving the context closes the response without reading a
+                # potentially unbounded body before the durable retry begins.
+                raise RuntimeError(f"HTTP request failed with status code {status}.")
+        resp_headers = {k: v for k, v in (resp.headers or {}).items()}
+        body = resp.read().decode("utf-8", errors="replace")
 
     return DurableHttpResponse(
         status_code=status, headers=resp_headers, content=body).to_json()
@@ -287,8 +297,13 @@ def builtin_http_poll_orchestrator(context: Any) -> Generator[Any, Any, DurableH
             "sub-orchestration.")
 
     request: dict[str, Any] = context.get_input() or {}
-    response: dict[str, Any] = yield context.call_activity(
-        BUILTIN_HTTP_ACTIVITY_NAME, request)
+    retry_options = request.get("retryOptions")
+    if retry_options is None:
+        initial_task = context.call_activity(BUILTIN_HTTP_ACTIVITY_NAME, request)
+    else:
+        initial_task = context.call_activity_with_retry(
+            BUILTIN_HTTP_ACTIVITY_NAME, HttpRetryOptions.from_json(retry_options), request)
+    response: dict[str, Any] = yield initial_task
 
     # Track the URI of the most recent request so a relative ``Location`` can be
     # resolved against it.
