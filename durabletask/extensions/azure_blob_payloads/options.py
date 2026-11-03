@@ -21,7 +21,8 @@ class BlobPayloadStoreOptions(LargePayloadStorageOptions):
 
     Attributes:
         container_name: Azure Blob container used to store externalized
-            payloads.  Defaults to ``"durabletask-payloads"``.
+            payloads. Downloads reject references to other containers.
+            Defaults to ``"durabletask-payloads"``.
         connection_string: Azure Storage connection string.  Mutually
             exclusive with *account_url*.
         account_url: Azure Storage account URL (e.g.

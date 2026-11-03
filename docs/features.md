@@ -436,6 +436,10 @@ The blob token format (`blob:v1:<container>:<blobName>`) is compatible with the 
 SDK, enabling interoperability between Python and .NET workers sharing the same task hub and storage
 account. Note that message serialization strategies may differ for complex objects and custom types.
 
+Workers and clients must use the same configured payload container. Downloads reject references
+to other containers with `ValueError` before accessing storage. Blob names and instance ID folders
+must not contain `.` or `..` path segments, which HTTP transports can normalize.
+
 #### Custom payload stores
 
 You can implement a custom payload store by subclassing `PayloadStore` from `durabletask.payload`

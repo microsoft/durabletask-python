@@ -141,12 +141,12 @@ class BlobPayloadStore(PayloadStore):
     # ------------------------------------------------------------------
 
     def upload(self, data: bytes, *, instance_id: str | None = None) -> str:
+        blob_name = self._make_blob_name(instance_id)
         self._ensure_container_sync()
 
         if self._options.enable_compression:
             data = gzip.compress(data)
 
-        blob_name = self._make_blob_name(instance_id)
         container_client: ContainerClient = self._blob_service_client.get_container_client(
             self._container_name
         )
@@ -157,8 +157,10 @@ class BlobPayloadStore(PayloadStore):
         return token
 
     def download(self, token: str) -> bytes:
-        container, blob_name = self._parse_token(token)
-        container_client: ContainerClient = self._blob_service_client.get_container_client(container)
+        blob_name = self._get_download_blob_name(token)
+        container_client: ContainerClient = self._blob_service_client.get_container_client(
+            self._container_name
+        )
         blob_data = container_client.download_blob(blob_name).readall()
 
         if self._options.enable_compression:
@@ -172,12 +174,12 @@ class BlobPayloadStore(PayloadStore):
     # ------------------------------------------------------------------
 
     async def upload_async(self, data: bytes, *, instance_id: str | None = None) -> str:
+        blob_name = self._make_blob_name(instance_id)
         await self._ensure_container_async()
 
         if self._options.enable_compression:
             data = await asyncio.to_thread(gzip.compress, data)
 
-        blob_name = self._make_blob_name(instance_id)
         container_client: AsyncContainerClient = self._async_blob_service_client.get_container_client(
             self._container_name
         )
@@ -188,9 +190,9 @@ class BlobPayloadStore(PayloadStore):
         return token
 
     async def download_async(self, token: str) -> bytes:
-        container, blob_name = self._parse_token(token)
+        blob_name = self._get_download_blob_name(token)
         container_client: AsyncContainerClient = self._async_blob_service_client.get_container_client(
-            container
+            self._container_name
         )
         stream = await container_client.download_blob(blob_name)
         blob_data = await stream.readall()
@@ -223,13 +225,25 @@ class BlobPayloadStore(PayloadStore):
             raise ValueError(f"Invalid blob payload token: {token!r}")
         return parts[0], parts[1]
 
+    def _get_download_blob_name(self, token: str) -> str:
+        container, blob_name = self._parse_token(token)
+        if container != self._container_name:
+            raise ValueError("Blob payload token must reference the configured container.")
+        self._validate_blob_name(blob_name)
+        return blob_name
+
     @staticmethod
-    def _make_blob_name(instance_id: str | None = None) -> str:
+    def _validate_blob_name(blob_name: str) -> None:
+        # HTTP transports can normalize dot segments out of the configured container.
+        if any(part in (".", "..") for part in blob_name.split("/")):
+            raise ValueError("Blob payload names must not contain '.' or '..' path segments.")
+
+    def _make_blob_name(self, instance_id: str | None = None) -> str:
         """Generate a blob name, optionally scoped under an instance ID folder."""
         unique = uuid.uuid4().hex
-        if instance_id:
-            return f"{instance_id}/{unique}"
-        return unique
+        blob_name = f"{instance_id}/{unique}" if instance_id else unique
+        self._validate_blob_name(blob_name)
+        return blob_name
 
     # ------------------------------------------------------------------
     # Container lifecycle

@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Azure Blob payload downloads now require references to the configured container.
+Payload references and instance ID folders containing `.` or `..` path segments
+now raise `ValueError` before accessing storage.
+
 ## v1.13.0
 
 ADDED

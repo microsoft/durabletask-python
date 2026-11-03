@@ -647,11 +647,133 @@ class TestBlobPayloadStoreTokenParsing:
         assert store.is_known_token("") is False
         assert store.is_known_token("blob:v1:") is False
         assert store.is_known_token("blob:v1:container:") is False
+        assert store.is_known_token("blob:v2:https://example.blob.core.windows.net/c/b") is False
 
 
 # ------------------------------------------------------------------
 # Tests: BlobPayloadStore construction and defaults
 # ------------------------------------------------------------------
+
+
+@pytest.fixture(params=["durabletask-payloads", "custom-payloads"])
+def blob_payload_store(request, monkeypatch):
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import blob_payload_store as module
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStoreOptions
+
+    sync_service = MagicMock()
+    async_service = MagicMock()
+    async_service.close = AsyncMock()
+    sync_service.get_container_client.return_value.download_blob.return_value.readall.return_value = gzip.compress(
+        b'"payload"')
+    stream = MagicMock()
+    stream.readall = AsyncMock(return_value=gzip.compress(b'"payload"'))
+    async_container = async_service.get_container_client.return_value
+    async_container.create_container = AsyncMock()
+    async_container.upload_blob = AsyncMock()
+    async_container.download_blob = AsyncMock(return_value=stream)
+    monkeypatch.setattr(module, "BlobServiceClient", MagicMock(return_value=sync_service))
+    monkeypatch.setattr(module, "AsyncBlobServiceClient", MagicMock(return_value=async_service))
+    store = module.BlobPayloadStore(BlobPayloadStoreOptions(
+        account_url="https://example.blob.core.windows.net",
+        container_name=request.param,
+    ))
+    yield store, sync_service, async_service
+    store.close()
+    asyncio.run(store.close_async())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("reference", [
+    "other-container:example",
+    "{container}-other:example",
+    "{container}:../other-container/example",
+    "{container}:folder/../../other-container/example",
+    "{container}:./example",
+])
+async def test_blob_download_rejects_out_of_scope_references(blob_payload_store, use_async, reference):
+    store, sync_service, async_service = blob_payload_store
+    token = "blob:v1:" + reference.format(container=store.options.container_name)
+    assert store.is_known_token(token)
+
+    with pytest.raises(ValueError, match="configured container|path segments"):
+        if use_async:
+            await store.download_async(token)
+        else:
+            store.download(token)
+
+    sync_service.get_container_client.assert_not_called()
+    async_service.get_container_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_blob_resolution_rejects_other_container(blob_payload_store, use_async):
+    store, sync_service, async_service = blob_payload_store
+    token = "blob:v1:other-container:example"
+    request = pb.OrchestratorRequest(
+        instanceId="test-1",
+        newEvents=[pb.HistoryEvent(
+            eventId=1,
+            executionStarted=pb.ExecutionStartedEvent(name="MyOrch", input=sv(token)),
+        )],
+    )
+    with pytest.raises(ValueError, match="configured container"):
+        if use_async:
+            await deexternalize_payloads_async(request, store)
+        else:
+            deexternalize_payloads(request, store)
+
+    assert request.newEvents[0].executionStarted.input.value == token
+    sync_service.get_container_client.assert_not_called()
+    async_service.get_container_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("enable_compression", [False, True])
+@pytest.mark.parametrize("instance_id", [None, "instance/folder", "instance/.hidden/file:version"])
+async def test_blob_configured_container_round_trip(blob_payload_store, use_async, enable_compression, instance_id):
+    store, sync_service, async_service = blob_payload_store
+    store.options.enable_compression = enable_compression
+    data = b'{"value": "payload"}'
+    if use_async:
+        container = async_service.get_container_client.return_value
+        token = await store.upload_async(data, instance_id=instance_id)
+        stream = MagicMock()
+        stream.readall = AsyncMock(return_value=container.upload_blob.call_args.kwargs["data"])
+        container.download_blob = AsyncMock(return_value=stream)
+        result = await store.download_async(token)
+        service = async_service
+    else:
+        container = sync_service.get_container_client.return_value
+        token = store.upload(data, instance_id=instance_id)
+        container.download_blob.return_value.readall.return_value = container.upload_blob.call_args.kwargs["data"]
+        result = store.download(token)
+        service = sync_service
+
+    assert result == data
+    assert store.is_known_token(token)
+    folder = f"{instance_id}/" if instance_id else ""
+    assert token.startswith(f"blob:v1:{store.options.container_name}:{folder}")
+    assert all(call.args == (store.options.container_name,) for call in service.get_container_client.call_args_list)
+    container.download_blob.assert_called_once_with(token.split(":", 3)[3])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("instance_id", ["..", "../other-container", "folder/../../other-container", "."])
+async def test_blob_upload_rejects_dot_segments(blob_payload_store, use_async, instance_id):
+    store, sync_service, async_service = blob_payload_store
+    with pytest.raises(ValueError, match="path segments"):
+        if use_async:
+            await store.upload_async(b"payload", instance_id=instance_id)
+        else:
+            store.upload(b"payload", instance_id=instance_id)
+
+    sync_service.get_container_client.assert_not_called()
+    async_service.get_container_client.assert_not_called()
 
 
 @pytest.mark.asyncio
