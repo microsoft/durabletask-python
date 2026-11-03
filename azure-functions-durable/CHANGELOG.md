@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- Async and synchronous Functions-bound clients now propagate the calling
+function's invocation ID in gRPC metadata, enabling host client-operation log
+correlation even when synchronous clients are cached across invocations.
+
 ## v2.0.0rc4
 
 ADDED
