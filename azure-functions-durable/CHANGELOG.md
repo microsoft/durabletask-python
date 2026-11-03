@@ -14,8 +14,8 @@ ADDED
 durable sleeps/timeouts. See the [async contract](../docs/async-orchestrators.md).
 The `orchestrator_generator_wrapper` helper accepts direct-await coroutines;
 these work in synchronous and async tests. Asyncio scheduling requires
-replay/backend tests. Sequential async batches release discarded results
-during replay.
+replay/backend tests. Sequential async batches release discarded results and
+observed-failure tracebacks during replay.
 
 ## v2.0.0rc4
 

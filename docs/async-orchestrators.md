@@ -83,6 +83,8 @@ cancelling siblings. Retain and await siblings if their results matter.
 `return_exceptions=True` collects their outcomes in input order.
 Unobserved local background-task failures are reported during dispatch cleanup;
 ordinary exceptions are logged, not silently discarded or automatically joined.
+Discarded local-task results and observed-failure tracebacks are released during
+replay rather than retained until dispatch cleanup.
 
 Task groups cancel and drain local sibling tasks on failure and use asyncio's
 normal exception grouping rules. Python-version-specific exception grouping

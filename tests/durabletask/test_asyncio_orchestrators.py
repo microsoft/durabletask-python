@@ -228,6 +228,78 @@ def test_discarded_gather_batches_release_decoded_results_during_replay() -> Non
     assert all(reference() is None for reference in references)
 
 
+@pytest.mark.parametrize("observe", [
+    "await", "gather", "gather-exceptions", "result", "exception", "task-group",
+])
+def test_observed_failures_release_traceback_payloads_during_replay(observe: str) -> None:
+    references: list[ReferenceType[Any]] = []
+
+    @dataclass
+    class Payload:
+        value: int
+
+        def __post_init__(self) -> None:
+            references.append(ref(self))
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+        async def branch() -> None:
+            payload = await ctx.call_activity("work", return_type=Payload)
+            raise ValueError(f"Failed with payload {payload.value}")
+
+        for batch in range(8):
+            if observe == "task-group":
+                group = asyncio.TaskGroup()
+                try:
+                    async with group:
+                        group.create_task(branch())
+                except* ValueError:
+                    pass
+                del group
+            else:
+                pending = asyncio.create_task(branch())
+                await asyncio.sleep(0)
+                # Observe only after the failed task's initial retirement callback.
+                await ctx.call_activity("gate")
+                if observe == "gather-exceptions":
+                    await asyncio.gather(pending, return_exceptions=True)
+                elif observe == "exception":
+                    assert isinstance(pending.exception(), ValueError)
+                else:
+                    try:
+                        if observe == "await":
+                            await pending
+                        elif observe == "gather":
+                            await asyncio.gather(pending)
+                        else:
+                            pending.result()
+                    except ValueError:
+                        pass
+                del pending
+            await asyncio.sleep(0)
+            gc.collect()
+            assert len(references) == batch + 1
+            assert sum(reference() is not None for reference in references) <= 1
+        return "done"
+
+    history = _start()
+    sequence = 0
+    for batch in range(8):
+        sequence += 1
+        work_id = sequence
+        history.append(helpers.new_task_scheduled_event(work_id, "work"))
+        if observe != "task-group":
+            sequence += 1
+            history.append(helpers.new_task_scheduled_event(sequence, "gate"))
+        history.append(helpers.new_task_completed_event(work_id, json.dumps({"value": batch})))
+        if observe != "task-group":
+            history.append(helpers.new_task_completed_event(sequence, "null"))
+    complete = _completion(_execute(orchestrator, history[:-1], history[-1:]))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED, complete.failureDetails
+    assert json.loads(complete.result.value) == "done"
+    gc.collect()
+    assert all(reference() is None for reference in references)
+
+
 def test_retired_tasks_do_not_reuse_cancellation_order() -> None:
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
         async def completed() -> None:
@@ -533,13 +605,19 @@ def test_cancelling_last_loop_timer_cannot_hide_foreign_wait() -> None:
 
 
 @pytest.mark.parametrize("observed", [False, True])
+@pytest.mark.parametrize("probe_pending", [False, True])
 def test_background_failure_is_reported_unless_observed(
-        observed: bool, caplog: pytest.LogCaptureFixture) -> None:
+        observed: bool, probe_pending: bool, caplog: pytest.LogCaptureFixture) -> None:
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
         async def fail() -> None:
             raise ValueError("background failure")
 
         pending = asyncio.create_task(fail())
+        if probe_pending:
+            with pytest.raises(asyncio.InvalidStateError):
+                pending.result()
+            with pytest.raises(asyncio.InvalidStateError):
+                pending.exception()
         await asyncio.sleep(0)
         if observed:
             await asyncio.gather(pending, return_exceptions=True)

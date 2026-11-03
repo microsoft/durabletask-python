@@ -37,6 +37,31 @@ class _CompletionObserver(task.CompositeTask[None]):
 
 
 class _DurableAsyncTask(asyncio.Task[T]):
+    def __await__(self) -> Generator[Any, None, T]:
+        try:
+            return (yield from super().__await__())
+        finally:
+            self._retire_if_observed()
+
+    __iter__ = __await__
+
+    def result(self) -> T:
+        try:
+            return super().result()
+        finally:
+            self._retire_if_observed()
+
+    def exception(self) -> BaseException | None:
+        try:
+            return super().exception()
+        finally:
+            self._retire_if_observed()
+
+    def _retire_if_observed(self) -> None:
+        loop = self.get_loop()
+        assert isinstance(loop, DurableEventLoop)
+        loop.retire_task(self)
+
     def cancel(self, msg: Any = None) -> bool:
         loop = self.get_loop()
         assert isinstance(loop, DurableEventLoop)
@@ -129,13 +154,13 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         future = _DurableAsyncTask(coro, loop=self, name=name, context=context)
         self._tasks[future] = self._task_sequence
         self._task_sequence += 1
-        future.add_done_callback(self._retire_task)
+        future.add_done_callback(self.retire_task)
         return future
 
-    def _retire_task(self, future: asyncio.Task[Any]) -> None:
-        # Inspect without retrieving exceptions: unobserved failures must stay
-        # tracked for teardown reporting, including failures during cleanup.
-        if not self._closing and not getattr(future, "_log_traceback", False):
+    def retire_task(self, future: asyncio.Task[Any]) -> None:
+        # A failed task may be observed after its done callbacks have run.
+        # Inspect without retrieving exceptions so unobserved failures still log.
+        if not self._closing and future.done() and not getattr(future, "_log_traceback", False):
             self._tasks.pop(future, None)
 
     def call_soon(
