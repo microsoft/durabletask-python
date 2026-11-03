@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added inherited `blob:v2` payload reference support through `BlobPayloadStore`,
+preserving Functions-compatible JSON-quoted references and v1 reads within the
+configured payload location. Older Python SDK versions cannot read v2; see the
+[core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
+
 ## v2.0.0rc4
 
 ADDED

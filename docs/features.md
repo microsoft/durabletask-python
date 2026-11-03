@@ -360,7 +360,7 @@ pip install durabletask[azure-blob-payloads]
    compressed (GZip, enabled by default) and uploaded to the
    external store.
 2. The original payload in the gRPC message is replaced with a
-   compact token (e.g. `blob:v1:<container>:<blobName>`).
+   compact token (e.g. `blob:v2:https://<account>.blob.core.windows.net/<container>/<blobName>`).
 3. When the worker or client receives a message containing a token,
    it downloads and decompresses the original payload automatically.
 
@@ -432,13 +432,27 @@ store = BlobPayloadStore(BlobPayloadStoreOptions(
 
 #### Cross-SDK compatibility
 
-The blob token format (`blob:v1:<container>:<blobName>`) is compatible with the .NET Durable Task
-SDK, enabling interoperability between Python and .NET workers sharing the same task hub and storage
-account. Note that message serialization strategies may differ for complex objects and custom types.
+New uploads use the .NET-compatible `blob:v2:<fullBlobUrl>` format. Each reference records the
+Storage endpoint, container, and URL-escaped blob name. DNS-style Azure endpoints and path-style
+Azurite endpoints are supported. SAS query parameters are not included in emitted references;
+downloads use the store's configured credentials, not credentials supplied in a reference.
 
-Workers and clients must use the same configured payload container. Downloads reject references
-to other containers with `ValueError` before accessing storage. Blob names and instance ID folders
-must not contain `.` or `..` path segments, which HTTP transports can normalize.
+Downloads also accept existing `blob:v1:<container>:<blobName>` references, using the configured
+Storage account. Both formats require the configured container; v2 additionally requires the same
+endpoint scheme, host, port, and account path. References to other locations raise `ValueError`
+before accessing storage, even if the configured credentials could read them. Repointing the store
+does not enable automatic reads from the old account or container. V2 URLs must not contain
+userinfo, query parameters, or fragments. Blob names and instance ID folders must not contain
+`.` or `..` path segments, which HTTP transports can normalize.
+
+> [!WARNING]
+> Older Python SDK versions cannot resolve v2 references. Upgrade all payload-reading clients
+> and workers before enabling new writers, and avoid mixing older workers with v2 writers on
+> the same task hub. Existing v1 references remain readable when their original Storage endpoint,
+> container, and compression settings are retained.
+
+Python and .NET workers can exchange references when configured for the same payload location.
+Message serialization strategies may still differ for complex objects and custom types.
 
 #### Custom payload stores
 

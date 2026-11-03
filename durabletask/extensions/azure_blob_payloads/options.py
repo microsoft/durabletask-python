@@ -27,7 +27,8 @@ class BlobPayloadStoreOptions(LargePayloadStorageOptions):
             exclusive with *account_url*.
         account_url: Azure Storage account URL (e.g.
             ``"https://<account>.blob.core.windows.net"``).  Use
-            together with *credential* for token-based auth.
+            together with *credential* for token-based auth. V2 payload
+            downloads must reference this endpoint and its configured container.
         credential: A ``TokenCredential`` instance (e.g.
             ``DefaultAzureCredential``) for authenticating to the
             storage account when using *account_url*.

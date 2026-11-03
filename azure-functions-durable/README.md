@@ -188,7 +188,9 @@ explicit history retrieval continues to hydrate those inputs.
 > With payload storage configured, whole payload strings recognized by the
 > store's `is_known_token()` are reserved references, not literal application
 > data. For `BlobPayloadStore`, this includes strings of the form
-> `blob:v1:<container>:<blobName>`, with nonempty container and blob names.
+> `blob:v1:<container>:<blobName>` and `blob:v2:<fullBlobUrl>`.
+> New uploads use v2; both formats remain readable within the configured
+> Storage endpoint and container.
 > Functions recognizes both raw and JSON-quoted references. A matching string
 > is treated as already externalized on output and downloaded on input, even
 > below the size threshold. Missing or inaccessible references raise errors;
@@ -203,15 +205,15 @@ durable payload boundary; passing its string field alone opts back into referenc
 interpretation. Custom payload stores define their own reserved token syntax.
 
 > [!WARNING]
-> Recognized references are trusted transport inputs, not authorization
-> boundaries. `BlobPayloadStore` reads from the container named in the token
-> using its configured credentials; `container_name` selects the upload
-> container and does not restrict downloads. An account-wide connection string
-> can therefore allow reads outside that container. Use least-privilege
-> credentials scoped to the intended payload storage, and explicitly decide
-> whether external callers may supply references. Reject untrusted references
-> or validate their allowed storage locations before passing them into durable
-> APIs; token recognition alone does not authorize a read.
+> Older Python SDK versions cannot resolve v2 references. Upgrade all readers
+> before enabling v2 writers; see the
+> [core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
+
+`BlobPayloadStore` uses its configured credentials and rejects references to
+other payload locations before accessing storage. This location check does not
+provide per-instance authorization within the payload container. Use
+least-privilege credentials scoped to the intended payload storage, and
+explicitly decide whether external callers may supply references.
 
 ## Unit testing entities
 

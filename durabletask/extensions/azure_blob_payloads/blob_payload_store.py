@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import gzip
 import logging
+import re
 import uuid
 from typing import Self
+from urllib.parse import SplitResult, unquote, urlsplit
 
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient, ContainerClient
@@ -23,17 +25,17 @@ from durabletask.payload.store import PayloadStore
 
 logger = logging.getLogger("durabletask-blobpayloads")
 
-# Token format matching the .NET SDK: blob:v1:<container>:<blobName>
-_TOKEN_PREFIX = "blob:v1:"
+_TOKEN_PREFIX_V1 = "blob:v1:"
+_TOKEN_PREFIX_V2 = "blob:v2:"
 
 
 class BlobPayloadStore(PayloadStore):
     """Stores and retrieves large payloads in Azure Blob Storage.
 
-    This implementation is compatible with the .NET SDK's
-    ``AzureBlobPayloadsSideCarInterceptor`` – both SDKs use the same
-    token format (``blob:v1:<container>:<blobName>``) and the same
-    storage layout, allowing cross-language interoperability.
+    Uploads return self-describing ``blob:v2:<fullBlobUrl>`` references
+    compatible with the .NET SDK. Downloads also accept legacy
+    ``blob:v1:<container>:<blobName>`` references. Both formats are
+    restricted to the configured Storage endpoint and container.
 
     Example::
 
@@ -152,7 +154,7 @@ class BlobPayloadStore(PayloadStore):
         )
         container_client.upload_blob(name=blob_name, data=data, overwrite=True)
 
-        token = f"{_TOKEN_PREFIX}{self._container_name}:{blob_name}"
+        token = self._encode_token(container_client.get_blob_client(blob_name).url)
         logger.debug("Uploaded %d bytes -> %s", len(data), token)
         return token
 
@@ -185,7 +187,7 @@ class BlobPayloadStore(PayloadStore):
         )
         await container_client.upload_blob(name=blob_name, data=data, overwrite=True)
 
-        token = f"{_TOKEN_PREFIX}{self._container_name}:{blob_name}"
+        token = self._encode_token(container_client.get_blob_client(blob_name).url)
         logger.debug("Uploaded %d bytes -> %s", len(data), token)
         return token
 
@@ -209,26 +211,68 @@ class BlobPayloadStore(PayloadStore):
 
     def is_known_token(self, value: str) -> bool:
         try:
-            self._parse_token(value)
+            if value.startswith(_TOKEN_PREFIX_V2):
+                self._parse_v2_url(value)
+            else:
+                self._parse_token(value)
             return True
         except ValueError:
             return False
 
     @staticmethod
+    def _encode_token(blob_url: str) -> str:
+        # References identify the blob, not the credentials used to access it.
+        url = urlsplit(blob_url)
+        url = url._replace(netloc=url.netloc.rsplit("@", 1)[-1], query="", fragment="")
+        return f"{_TOKEN_PREFIX_V2}{url.geturl()}"
+
+    @staticmethod
     def _parse_token(token: str) -> tuple[str, str]:
         """Parse ``blob:v1:<container>:<blobName>`` into (container, blobName)."""
-        if not token.startswith(_TOKEN_PREFIX):
+        if not token.startswith(_TOKEN_PREFIX_V1):
             raise ValueError(f"Invalid blob payload token: {token!r}")
-        rest = token[len(_TOKEN_PREFIX):]
+        rest = token[len(_TOKEN_PREFIX_V1):]
         parts = rest.split(":", 1)
         if len(parts) != 2 or not parts[0] or not parts[1]:
             raise ValueError(f"Invalid blob payload token: {token!r}")
         return parts[0], parts[1]
 
+    @staticmethod
+    def _parse_v2_url(token: str) -> SplitResult:
+        """Parse a v2 URL, decoding its path exactly once."""
+        rest = token[len(_TOKEN_PREFIX_V2):]
+        if any(ord(char) <= 32 or ord(char) == 127 for char in rest) or "?" in rest or "#" in rest:
+            raise ValueError("Invalid blob payload URL.")
+        url = urlsplit(rest)
+        if (url.scheme not in ("https", "http") or not url.hostname
+                or url.username is not None or url.password is not None
+                or url.port == 0 or re.search(r"%(?![0-9a-fA-F]{2})", url.path)):
+            raise ValueError("Invalid blob payload URL.")
+        path = unquote(url.path, errors="strict")
+        parts = path.split("/", 2)
+        if len(parts) != 3 or not parts[1] or not parts[2]:
+            raise ValueError("Invalid blob payload URL.")
+        return url._replace(path=path)
+
     def _get_download_blob_name(self, token: str) -> str:
-        container, blob_name = self._parse_token(token)
-        if container != self._container_name:
-            raise ValueError("Blob payload token must reference the configured container.")
+        if token.startswith(_TOKEN_PREFIX_V2):
+            url = self._parse_v2_url(token)
+            configured = urlsplit(self._blob_service_client.url)
+            origin = (url.scheme, url.hostname, url.port or (443 if url.scheme == "https" else 80))
+            configured_origin = (
+                configured.scheme, configured.hostname,
+                configured.port or (443 if configured.scheme == "https" else 80),
+            )
+            if origin != configured_origin:
+                raise ValueError("Blob payload URL must reference the configured Storage endpoint.")
+            prefix = f"{unquote(configured.path, errors='strict').rstrip('/')}/{self._container_name}/"
+            if not url.path.startswith(prefix) or len(url.path) == len(prefix):
+                raise ValueError("Blob payload URL must reference the configured container.")
+            blob_name = url.path[len(prefix):]
+        else:
+            container, blob_name = self._parse_token(token)
+            if container != self._container_name:
+                raise ValueError("Blob payload token must reference the configured container.")
         self._validate_blob_name(blob_name)
         return blob_name
 

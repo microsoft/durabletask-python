@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added .NET-compatible `blob:v2` payload references containing the full Blob URL.
+New uploads use v2; existing v1 references remain readable. Both formats require
+the configured payload location. Older Python SDK versions cannot read v2;
+see the [upgrade guidance](docs/features.md#cross-sdk-compatibility).
+
 FIXED
 
 - Azure Blob payload downloads now require references to the configured container.
