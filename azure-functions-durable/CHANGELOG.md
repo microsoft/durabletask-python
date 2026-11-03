@@ -9,9 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- Added inherited Blob payload access scopes, including JSON-quoted references,
+with a configured-container default and explicit account-wide and
+additional-account opt-ins; see
+[access scopes](../docs/features.md#blob-payload-access-scopes).
 - Added inherited `blob:v2` payload reference support through `BlobPayloadStore`,
 preserving Functions-compatible JSON-quoted references and v1 reads within the
-configured payload location. Older Python SDK versions cannot read v2; see the
+configured payload access scopes. Older Python SDK versions cannot read v2; see the
 [core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
 
 ## v2.0.0rc4

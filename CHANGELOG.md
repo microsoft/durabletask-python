@@ -9,16 +9,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
+- Added explicit account-wide and additional-account download scopes to
+`BlobPayloadStoreOptions`, retaining the configured endpoint and container as
+the default. Additional accounts require the configured token credential;
+see [access scopes](docs/features.md#blob-payload-access-scopes).
 - Added .NET-compatible `blob:v2` payload references containing the full Blob URL.
-New uploads use v2; existing v1 references remain readable. Both formats require
-the configured payload location. Older Python SDK versions cannot read v2;
+New uploads use v2; existing v1 references remain readable. Legacy v2 query
+parameters and fragments are ignored, retaining configured authentication. Both formats follow
+the configured payload access scopes. Older Python SDK versions cannot read v2;
 see the [upgrade guidance](docs/features.md#cross-sdk-compatibility).
 
 FIXED
 
-- Azure Blob payload downloads now require references to the configured container.
+- Azure Blob payload downloads now default to the configured endpoint and container.
 Payload references and instance ID folders containing `.` or `..` path segments
 now raise `ValueError` before accessing storage.
+- Azure Blob payload operations no longer follow HTTP redirects.
 
 ## v1.13.0
 

@@ -143,28 +143,30 @@ def test_activity_trigger_externalizes_and_hydrates(monkeypatch, payload_store_f
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("quoted", [False, True])
 @pytest.mark.parametrize("version", ["v1", "v2"])
-async def test_blob_payload_references_round_trip_through_functions(monkeypatch, use_async, quoted, version):
+@pytest.mark.parametrize("account_wide", [False, True])
+async def test_blob_payload_references_round_trip_through_functions(
+        monkeypatch, use_async, quoted, version, account_wide):
     pytest.importorskip("azure.storage.blob")
+    from azure.storage.blob import BlobClient
+    from azure.storage.blob.aio import BlobClient as AsyncBlobClient
     from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
 
     store = BlobPayloadStore(BlobPayloadStoreOptions(
         account_url="https://example.blob.core.windows.net",
-        threshold_bytes=10, enable_compression=False,
+        threshold_bytes=10, enable_compression=False, allow_all_containers_in_configured_account=account_wide,
     ))
     store._ensure_container_created = True
     value = json.dumps({"value": "payload" * 100})
-    sync_container = store._blob_service_client.get_container_client(store.options.container_name)
-    async_container = store._async_blob_service_client.get_container_client(store.options.container_name)
     sync_stream = MagicMock()
     sync_stream.readall.return_value = value.encode()
     async_stream = MagicMock()
     async_stream.readall = AsyncMock(return_value=value.encode())
-    monkeypatch.setattr(sync_container, "upload_blob", MagicMock())
-    monkeypatch.setattr(async_container, "upload_blob", AsyncMock())
-    monkeypatch.setattr(sync_container, "download_blob", MagicMock(return_value=sync_stream))
-    monkeypatch.setattr(async_container, "download_blob", AsyncMock(return_value=async_stream))
-    monkeypatch.setattr(store._blob_service_client, "get_container_client", MagicMock(return_value=sync_container))
-    monkeypatch.setattr(store._async_blob_service_client, "get_container_client", MagicMock(return_value=async_container))
+    monkeypatch.setattr(BlobClient, "upload_blob", MagicMock())
+    monkeypatch.setattr(AsyncBlobClient, "upload_blob", AsyncMock())
+    sync_download = MagicMock(return_value=sync_stream)
+    async_download = AsyncMock(return_value=async_stream)
+    monkeypatch.setattr(BlobClient, "download_blob", sync_download)
+    monkeypatch.setattr(AsyncBlobClient, "download_blob", async_download)
     monkeypatch.setattr(payloads, "_payload_store", store)
     try:
         encoded = (await payloads.externalize_activity_output_async(value) if use_async
@@ -172,25 +174,43 @@ async def test_blob_payload_references_round_trip_through_functions(monkeypatch,
         token = json.loads(encoded)
         assert token.startswith("blob:v2:https://example.blob.core.windows.net/durabletask-payloads/")
         if version == "v1":
-            blob_name = (async_container if use_async else sync_container).upload_blob.call_args.kwargs["name"]
+            blob_name = store._get_download_destination(token)[2]
             token = f"blob:v1:durabletask-payloads:{blob_name}"
         reference = json.dumps(token) if quoted else token
         decoded = (await payloads.deexternalize_payload_async(reference) if use_async
                    else payloads.deexternalize_payload(reference))
         assert decoded == value
 
-        sync_container.download_blob.reset_mock()
-        async_container.download_blob.reset_mock()
-        invalid = ("blob:v1:other-container:blob" if version == "v1"
-                   else "blob:v2:https://example.blob.core.windows.net/other-container/blob")
-        reference = json.dumps(invalid) if quoted else invalid
-        with pytest.raises(ValueError, match="configured container"):
+        sync_download.reset_mock()
+        async_download.reset_mock()
+        other_container = ("blob:v1:other-container:blob" if version == "v1"
+                           else "blob:v2:https://example.blob.core.windows.net/other-container/blob")
+        reference = json.dumps(other_container) if quoted else other_container
+        if account_wide:
+            decoded = (await payloads.deexternalize_payload_async(reference) if use_async
+                       else payloads.deexternalize_payload(reference))
+            assert decoded == value
+        else:
+            with pytest.raises(ValueError, match="configured container"):
+                if use_async:
+                    await payloads.deexternalize_payload_async(reference)
+                else:
+                    payloads.deexternalize_payload(reference)
+            sync_download.assert_not_called()
+            async_download.assert_not_called()
+
+        sync_download.reset_mock()
+        async_download.reset_mock()
+        reference = "blob:v2:https://unlisted.blob.core.windows.net/durabletask-payloads/blob"
+        if quoted:
+            reference = json.dumps(reference)
+        with pytest.raises(ValueError, match="Storage endpoint"):
             if use_async:
                 await payloads.deexternalize_payload_async(reference)
             else:
                 payloads.deexternalize_payload(reference)
-        sync_container.download_blob.assert_not_called()
-        async_container.download_blob.assert_not_called()
+        sync_download.assert_not_called()
+        async_download.assert_not_called()
     finally:
         store.close()
         await store.close_async()

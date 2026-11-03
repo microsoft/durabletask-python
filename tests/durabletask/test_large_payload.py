@@ -685,17 +685,27 @@ def blob_payload_store(request, monkeypatch, blob_account_url):
     async_service.close = AsyncMock()
     url_client = module.BlobServiceClient(blob_account_url)
     sync_service.url = async_service.url = url_client.url
+    sync_service.account_name = async_service.account_name = url_client.account_name
     url_container = url_client.get_container_client(request.param)
-    sync_service.get_container_client.return_value.get_blob_client.side_effect = url_container.get_blob_client
-    async_service.get_container_client.return_value.get_blob_client.side_effect = url_container.get_blob_client
-    sync_service.get_container_client.return_value.download_blob.return_value.readall.return_value = gzip.compress(
-        b'"payload"')
-    stream = MagicMock()
-    stream.readall = AsyncMock(return_value=gzip.compress(b'"payload"'))
-    async_container = async_service.get_container_client.return_value
-    async_container.create_container = AsyncMock()
-    async_container.upload_blob = AsyncMock()
-    async_container.download_blob = AsyncMock(return_value=stream)
+    for service, use_async in [(sync_service, False), (async_service, True)]:
+        container = service.get_container_client.return_value
+        container.url, container.container_name = url_container.url, url_container.container_name
+        blob = container.get_blob_client.return_value
+
+        def get_blob_client(name, blob=blob):
+            real = url_container.get_blob_client(name)
+            blob.url, blob.container_name, blob.blob_name = real.url, real.container_name, real.blob_name
+            return blob
+
+        container.get_blob_client.side_effect = get_blob_client
+        if use_async:
+            container.create_container = AsyncMock()
+            blob.upload_blob = AsyncMock()
+            stream = MagicMock()
+            stream.readall = AsyncMock(return_value=gzip.compress(b'"payload"'))
+            blob.download_blob = AsyncMock(return_value=stream)
+        else:
+            blob.download_blob.return_value.readall.return_value = gzip.compress(b'"payload"')
     monkeypatch.setattr(module, "BlobServiceClient", MagicMock(return_value=sync_service))
     monkeypatch.setattr(module, "AsyncBlobServiceClient", MagicMock(return_value=async_service))
     store = module.BlobPayloadStore(BlobPayloadStoreOptions(
@@ -783,18 +793,20 @@ async def test_blob_configured_container_round_trip(
     data = b'{"value": "payload"}'
     if use_async:
         container = async_service.get_container_client.return_value
+        blob = container.get_blob_client.return_value
         token = await store.upload_async(data, instance_id=instance_id)
         stream = MagicMock()
-        stream.readall = AsyncMock(return_value=container.upload_blob.call_args.kwargs["data"])
-        container.download_blob = AsyncMock(return_value=stream)
+        stream.readall = AsyncMock(return_value=blob.upload_blob.call_args.kwargs["data"])
+        blob.download_blob = AsyncMock(return_value=stream)
         service = async_service
     else:
         container = sync_service.get_container_client.return_value
+        blob = container.get_blob_client.return_value
         token = store.upload(data, instance_id=instance_id)
-        container.download_blob.return_value.readall.return_value = container.upload_blob.call_args.kwargs["data"]
+        blob.download_blob.return_value.readall.return_value = blob.upload_blob.call_args.kwargs["data"]
         service = sync_service
 
-    blob_name = container.upload_blob.call_args.kwargs["name"]
+    blob_name = blob.blob_name
     expected_url = f"{sync_service.url.rstrip('/')}/{store.options.container_name}/{quote(blob_name, safe='/')}"
     assert token == f"blob:v2:{expected_url}"
     read_token = f"blob:v1:{store.options.container_name}:{blob_name}" if version == "v1" else token
@@ -804,7 +816,7 @@ async def test_blob_configured_container_round_trip(
     folder = f"{instance_id}/" if instance_id else ""
     assert blob_name.startswith(folder)
     assert all(call.args == (store.options.container_name,) for call in service.get_container_client.call_args_list)
-    container.download_blob.assert_called_once_with(blob_name)
+    blob.download_blob.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -817,10 +829,6 @@ async def test_blob_configured_container_round_trip(
     "https://example.blob.core.windows.net:bad/container/blob",
     "https://example.blob.core.windows.net:65536/container/blob",
     "https://user:password@example.blob.core.windows.net/container/blob",
-    "https://example.blob.core.windows.net/container/blob?sig=synthetic",
-    "https://example.blob.core.windows.net/container/blob?",
-    "https://example.blob.core.windows.net/container/blob#fragment",
-    "https://example.blob.core.windows.net/container/blob#",
     "https://example.blob.core.windows.net/container/a b",
     "https://example.blob.core.windows.net/container/a\nb",
     "https://example.blob.core.windows.net/container/%zz",
@@ -841,6 +849,21 @@ async def test_blob_v2_rejects_invalid_urls(blob_payload_store, use_async, url):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
+async def test_blob_v2_discards_legacy_selectors(blob_payload_store, caplog, use_async):
+    store, sync_service, async_service = blob_payload_store
+    reference = (f"blob:v2:{sync_service.url.rstrip('/')}/{store.options.container_name}/folder/blob"
+                 "?sig=untrusted&snapshot=ignored&versionid=ignored#fragment")
+    assert store.is_known_token(reference)
+    with caplog.at_level("DEBUG", logger="durabletask-blobpayloads"):
+        payload = await store.download_async(reference) if use_async else store.download(reference)
+    assert payload == b'"payload"'
+    assert "untrusted" not in caplog.text and "ignored" not in caplog.text
+    service = async_service if use_async else sync_service
+    service.get_container_client.return_value.get_blob_client.assert_called_once_with("folder/blob")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("connection_string", [False, True])
 async def test_blob_v2_upload_omits_sas(monkeypatch, use_async, connection_string):
     pytest.importorskip("azure.storage.blob")
@@ -855,8 +878,8 @@ async def test_blob_v2_upload_omits_sas(monkeypatch, use_async, connection_strin
     )
     store = module.BlobPayloadStore(options)
     store._ensure_container_created = True
-    monkeypatch.setattr(module.ContainerClient, "upload_blob", MagicMock())
-    monkeypatch.setattr(module.AsyncContainerClient, "upload_blob", AsyncMock())
+    monkeypatch.setattr(module.BlobClient, "upload_blob", MagicMock())
+    monkeypatch.setattr(module.AsyncBlobClient, "upload_blob", AsyncMock())
     try:
         token = await store.upload_async(b"payload") if use_async else store.upload(b"payload")
         url = urlsplit(token.removeprefix("blob:v2:"))
@@ -864,7 +887,7 @@ async def test_blob_v2_upload_omits_sas(monkeypatch, use_async, connection_strin
         assert not url.query and not url.fragment
         assert "synthetic" not in token
         assert store.is_known_token(token)
-        assert store._get_download_blob_name(token)
+        assert store._get_download_destination(token)[2]
     finally:
         store.close()
         await store.close_async()
@@ -883,7 +906,9 @@ async def test_blob_v2_accepts_equivalent_endpoint_spelling(blob_payload_store, 
     data = await store.download_async(token) if use_async else store.download(token)
     assert data == b'"payload"'
     service = async_service if use_async else sync_service
-    service.get_container_client.return_value.download_blob.assert_called_once_with("folder/a b%2Fc")
+    container = service.get_container_client.return_value
+    container.get_blob_client.assert_called_once_with("folder/a b%2Fc")
+    container.get_blob_client.return_value.download_blob.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -936,15 +961,22 @@ async def test_async_blob_compression_yields(monkeypatch, operation, enable_comp
     stream.readall = AsyncMock(side_effect=readall)
     container = MagicMock()
     container.create_container = AsyncMock()
-    container.upload_blob = AsyncMock(side_effect=upload_blob)
-    container.download_blob = AsyncMock(return_value=stream)
     from azure.storage.blob import BlobServiceClient
+    from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
     url_client = BlobServiceClient("https://example.blob.core.windows.net")
-    container.get_blob_client.side_effect = url_client.get_container_client("durabletask-payloads").get_blob_client
+    async_url_client = AsyncBlobServiceClient("https://example.blob.core.windows.net")
+    url_container = async_url_client.get_container_client("durabletask-payloads")
+    container.url, container.container_name = url_container.url, url_container.container_name
+    container.get_blob_client.side_effect = url_container.get_blob_client
+    upload_mock = AsyncMock(side_effect=upload_blob)
+    monkeypatch.setattr(module.AsyncBlobClient, "upload_blob", upload_mock)
+    monkeypatch.setattr(module.AsyncBlobClient, "download_blob", AsyncMock(return_value=stream))
     service = MagicMock()
     service.get_container_client.return_value = container
     service.close = AsyncMock()
-    monkeypatch.setattr(module, "BlobServiceClient", MagicMock())
+    sync_service = MagicMock()
+    sync_service.url = service.url = url_client.url
+    monkeypatch.setattr(module, "BlobServiceClient", MagicMock(return_value=sync_service))
     monkeypatch.setattr(module, "AsyncBlobServiceClient", MagicMock(return_value=service))
     monkeypatch.setattr(gzip, gzip_method, gated_gzip)
     store = module.BlobPayloadStore(BlobPayloadStoreOptions(
@@ -962,9 +994,10 @@ async def test_async_blob_compression_yields(monkeypatch, operation, enable_comp
         finally:
             store.close()
             await store.close_async()
+            await async_url_client.close()
             url_client.close()
     if operation == "upload":
-        uploaded = container.upload_blob.call_args.kwargs["data"]
+        uploaded = upload_mock.call_args.kwargs["data"]
         assert (gzip.decompress(uploaded) if enable_compression else uploaded) == data
         assert store.is_known_token(result)
     else:

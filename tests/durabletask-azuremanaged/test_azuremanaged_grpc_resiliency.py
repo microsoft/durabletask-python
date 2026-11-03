@@ -132,7 +132,8 @@ def test_async_dts_client_passes_resiliency_options_to_base_client():
 
 @pytest.mark.parametrize("version", ["v1", "v2"])
 @pytest.mark.parametrize("container", ["durabletask-payloads", "other-container"])
-def test_dts_worker_resolves_configured_blob_payloads_only(version, container):
+@pytest.mark.parametrize("account_wide", [False, True])
+def test_dts_worker_resolves_blob_payloads_within_scope(version, container, account_wide):
     pytest.importorskip("azure.storage.blob")
     from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
 
@@ -147,7 +148,8 @@ def test_dts_worker_resolves_configured_blob_payloads_only(version, container):
         return value
 
     with BlobPayloadStore(BlobPayloadStoreOptions(
-            account_url="https://example.blob.core.windows.net", enable_compression=False)) as store:
+            account_url="https://example.blob.core.windows.net", enable_compression=False,
+            allow_all_containers_in_configured_account=account_wide)) as store:
         with DurableTaskSchedulerWorker(
                 host_address="localhost:4001", taskhub="hub",
                 token_credential=None, payload_store=store) as worker:
@@ -157,11 +159,11 @@ def test_dts_worker_resolves_configured_blob_payloads_only(version, container):
                 helpers.new_execution_started_event(name, "instance", reference),
             ])
             stub = Mock()
-            with patch("azure.storage.blob.ContainerClient.download_blob", return_value=stream) as download:
+            with patch("azure.storage.blob.BlobClient.download_blob", return_value=stream) as download:
                 worker._execute_orchestrator(request, stub, "token")
 
-    if container == "durabletask-payloads":
-        download.assert_called_once_with("blob")
+    if container == "durabletask-payloads" or account_wide:
+        download.assert_called_once_with()
         assert seen == ["resolved payload"]
         stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
         response = stub.CompleteOrchestratorTask.call_args.args[0]

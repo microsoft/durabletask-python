@@ -411,7 +411,7 @@ class TestAsyncBlobClient:
         token = await async_store.upload_async(payload, instance_id=instance_id)
 
         assert token.startswith("blob:v2:")
-        blob_name = async_store._get_download_blob_name(token)
+        blob_name = async_store._get_download_destination(token)[2]
         assert blob_name.startswith(f"{instance_id}/")
 
         downloaded = await async_store.download_async(token)
