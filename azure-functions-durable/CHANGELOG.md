@@ -7,52 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-ADDED
-
-- Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact
-Unicode JSON across durable clients, orchestration and entity workers, activity
-bindings, and registered blueprints. The default remains ASCII-escaped JSON.
-The opt-in uses the shared codec's `ensure_ascii` option available in
-`azure-functions` v2.4.0b1; unsupported SDKs fail explicitly at configuration time.
-
-CHANGED
-
-- Updated the minimum `azure-functions` dependency to v2.4.0b1.
-- With the corresponding core SDK update, client and worker context managers
-preserve Functions subclass types in type checkers. Python 3.13 remains the
-minimum supported version for this package.
-- With the corresponding core SDK update, multiple task completion callback
-failures raise the built-in `ExceptionGroup`; a single failure is still raised
-directly. The first callback error remains the explicit cause and serialized
-inner failure. Branches on the previous aggregate exception type or message
-can change during replay; see the [core upgrade warning](../CHANGELOG.md#unreleased).
-
 FIXED
 
 - Async and synchronous Functions-bound clients now propagate the calling
 function's invocation ID in gRPC metadata, enabling host client-operation log
 correlation even when synchronous clients are cached across invocations.
-- With the corresponding core SDK update, activity and sub-orchestration retry
-policies, including compatibility `RetryOptions`, honor
-`failureDetails.isNonRetriable` and surface the failure immediately without retrying.
-Histories that already retried such failures can replay differently; drain
-affected instances on the previous SDK before upgrading.
-- With the corresponding core SDK update, grouped failures retain nested
-exception messages, tracebacks, and notes in failure details. Tracebacks are
-limited to 15 children per group and 10 group levels with truncation markers;
-group children are not serialized as a complete structured tree.
-- With the corresponding core `durabletask` SDK fix, oversized messages fail
-large-payload validation before any uploads or payload replacements. Size
-errors now take precedence over hypothetical earlier storage failures.
-- With the corresponding core `durabletask` SDK fix, previously unhandled non-cancellation
-`BaseException` exits from orchestration execution, result serialization, or teardown now produce a failed response
-with the exception's type, message, and stack trace instead of losing the response.
-- With the corresponding core `durabletask` SDK fix, orchestrator generators
-are closed at the end of each dispatch, including while waiting for durable work.
-See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks)
-for repeated finalizers, discarded teardown actions/status, and yielding restrictions.
-- With the corresponding core `durabletask` SDK fix, async cancellation raised by
-generator teardown no longer replaces dispatch responses or version-rejection abandonment.
+
+## v2.0.0rc4
+
+ADDED
+
+- Added inherited `OrchestrationQuery.task_hub_names` support to filter
+orchestration instances by one or more task hubs.
+- Added `DFApp.configure_serialization(ensure_ascii=False)` to opt in to compact
+Unicode JSON for durable payloads. The default remains ASCII-escaped JSON.
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.13.0.
+- Updated the minimum `azure-functions` dependency to v2.4.0b1.
+- Client and worker context managers now preserve Functions subclass types in
+type checkers. Python 3.13 remains the minimum supported version.
+- Multiple task completion callback failures now raise the built-in
+`ExceptionGroup`; a single failure is still raised directly. Branches on the
+previous aggregate type or message can change during replay; see the
+[core upgrade warning](../CHANGELOG.md#v1130).
+
+FIXED
+
+- `EntityInstanceId` and the compatibility `EntityId` are now immutable and
+hashable, with a diagnostic `repr`.
+- Activity and sub-orchestration retry policies, including compatibility
+`RetryOptions`, now honor `failureDetails.isNonRetriable`. Histories that already
+retried such failures can replay differently; drain affected instances on the
+previous SDK before upgrading.
+- Grouped failures now retain nested exception messages, tracebacks, and notes.
+- Oversized payloads now fail validation before any uploads or replacements.
+- Unexpected orchestration execution, result serialization, and teardown
+failures now produce a failed response instead of losing the response.
+- Orchestrator generators are now closed at each dispatch boundary, so
+`finally` blocks and context-manager exits may run repeatedly before completion.
+See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks).
+- Async cancellation during generator teardown no longer replaces dispatch
+responses or version-rejection abandonment.
 
 ## v2.0.0rc3
 
