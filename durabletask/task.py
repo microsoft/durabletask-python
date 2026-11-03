@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
 
+from durabletask.async_context import AsyncOrchestrationContext as AsyncOrchestrationContext
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -23,6 +24,14 @@ TOutput = TypeVar('TOutput')
 
 
 class OrchestrationContext(ABC):
+
+    def as_async(self) -> AsyncOrchestrationContext:
+        """Return a cold, coroutine-native view of this context.
+
+        Existing context methods remain eager and return reusable durable task
+        handles. The async view schedules work only when its coroutines start.
+        """
+        return AsyncOrchestrationContext(self)
 
     @property
     @abstractmethod
@@ -629,6 +638,16 @@ class Task(ABC, Generic[T]):
         if not self.is_complete:
             yield self
         return self.get_result()
+
+    async def wait(self) -> T:
+        """Borrow this operation's result through a fresh native coroutine.
+
+        Suitable for ``asyncio.create_task`` and task groups. Calling this
+        method does not schedule another durable operation. Each call creates
+        an independent waiter; cancelling it does not cancel the underlying
+        operation, timer, or event subscription, or any other waiter.
+        """
+        return await self
 
     @property
     def is_complete(self) -> bool:

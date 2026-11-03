@@ -9,22 +9,72 @@ and compatibility single-argument orchestrators.
 
 ```python
 import asyncio
+from datetime import timedelta
 
 from durabletask import task
 
 
 async def workflow(ctx: task.OrchestrationContext, values: list[int]) -> list[int]:
-    async def branch(value: int) -> int:
-        first = await ctx.call_activity("increment", input=value, return_type=int)
-        await asyncio.sleep(1)
-        return await ctx.call_activity("increment", input=first, return_type=int)
+    ops = ctx.as_async()
 
-    return await asyncio.gather(*(branch(value) for value in values))
+    async def branch(value: int) -> int:
+        first = await ops.call_activity("increment", input=value, return_type=int)
+        await ops.create_timer(timedelta(seconds=1))
+        return await ops.call_activity("increment", input=first, return_type=int)
+
+    async with asyncio.TaskGroup() as group:
+        branches = [group.create_task(branch(value)) for value in values]
+    return [branch.result() for branch in branches]
 ```
 
 Each branch resumes as its own durable operation completes, including when
 multiple completions arrive in one dispatch. It does not wait for an entire
 batch before scheduling its next operation.
+
+> [!WARNING]
+> Python scopes are not persisted workflow resources. `finally` blocks and async
+> context-manager exits can run when an ordinary dispatch suspends, not only
+> when the workflow finishes. Keep durable compensation in normal orchestration
+> control flow; see [dispatch teardown](#dispatch-teardown-is-not-workflow-cancellation).
+
+## Cold operations and reusable handles
+
+`ctx.as_async()` returns an explicit coroutine-native operation facade. It does
+not replace the registered context, change generator behavior, or create a
+second runtime. Functions compatibility contexts expose the same facade using
+native keyword arguments such as `input=` and `data_type=`.
+
+| Expression | Meaning |
+|---|---|
+| `ctx.call_activity(...)` | Schedule eagerly and return a reusable durable handle. |
+| `ops.call_activity(...)` | Create a single-use native coroutine; schedule when it starts. |
+| `handle.wait()` | Create a native coroutine borrowing an existing handle. |
+| `ops.receive_event(...)` | Own an event registration, withdrawing it on cancellation or timeout. |
+| `ops.create_timer(...)` | Own a timer, cancelling its pending local work on cancellation. |
+
+Use the cold facade with `asyncio.create_task`, `TaskGroup.create_task`, and
+ordered `gather`. Constructing a coroutine does not allocate action IDs,
+serialize input, or consume buffered events. Cancelling its local task before
+its first step starts no durable operation. Mutable inputs are read when the
+coroutine executes, and relative timer delays start from that execution point.
+Keep or copy inputs accordingly.
+
+Cold coroutines are single-use, like ordinary Python coroutines. For an
+explicitly started operation with multiple independent waiters, retain its
+durable handle:
+
+```python
+operation = ctx.call_activity("quote", input="order-1", return_type=int)
+first = asyncio.create_task(operation.wait())
+second = asyncio.create_task(operation.wait())
+first.cancel()
+value = await second
+```
+
+Cancelling either borrower does not cancel the underlying operation. Direct
+`await operation` remains supported, but `create_task(operation)` is not valid:
+an awaitable durable handle is not a coroutine. Do not retry that expression
+assuming the eager operation was rolled back.
 
 ## Supported authoring contract
 
@@ -90,11 +140,35 @@ Task groups cancel and drain local sibling tasks on failure and use asyncio's
 normal exception grouping rules. Python-version-specific exception grouping
 and cancel-count behavior remain those of asyncio.
 
-Cancelling a local task or timing out its wait detaches that waiter; it does
-**not** cancel the durable activity, sub-orchestration, entity operation, or
-external-event subscription it was waiting on. Another waiter can still await
-the same durable task. Keep the durable task if you intend to await it again.
-Use explicit SDK cancellation for cancellable durable timers/event waits.
+Cancelling a borrower of an existing durable handle, including `handle.wait()`,
+detaches that waiter; it does **not** cancel the activity, sub-orchestration,
+entity operation, or external-event subscription. Another borrower can still
+await the same handle. Keep the handle if you intend to await it again.
+Use explicit SDK cancellation when abandoning a cancellable shared timer/event
+wait and deliberately affecting every borrower.
+
+The cold facade owns its private timer and event registrations. For an event
+with a deadline, use the owned receive instead of timing out a borrowed handle:
+
+```python
+ops = ctx.as_async()
+try:
+    approval = await ops.receive_event(
+        "approval", timeout=timedelta(seconds=30), data_type=bool)
+except TimeoutError:
+    approval = await ops.receive_event("approval", data_type=bool)
+```
+
+The timed-out registration is withdrawn before the replacement is registered,
+so it cannot consume the next approval. The receive also cancels its own
+deadline timer when the event wins. A nonpositive timeout polls an already
+buffered event and otherwise raises `TimeoutError` without creating a timer.
+This ownership does not extend to an
+activity, sub-orchestration, or entity call: cancellation cannot stop already
+issued remote work. A task-group sibling failure can therefore leave remote
+operations running. Retain and join their handles when completion is required
+before compensation or releasing application-level capacity.
+
 Cancelling a timer callback removes an uncommitted timer when possible, but
 cannot undo a timer already committed to history. Neither local nor durable
 cancellation implies external side effects were undone.
@@ -155,6 +229,15 @@ payloads, retries, timer deadlines/chunks, event consumption, and entity
 release order. Introducing concurrency, a different join, or a new timer may
 change that contract. Test recorded histories and version/drain affected
 instances; basic sequential parity tests are not blanket migration safety.
+Switching from eager handles to cold operations can also change action order:
+construction order is not execution order.
+
+Supporting several Python versions does not guarantee recorded-history
+portability between them. Pin the runtime and dependencies for active
+instances and validate histories before upgrades. In particular, Python 3.11
+and 3.12+ schedule coroutine operands of `asyncio.wait_for()` differently, which
+can change durable action order inside concurrent branches. The cold facade
+does not normalize arbitrary standard-library scheduling.
 
 The Functions `orchestrator_generator_wrapper` helper supports direct durable
 awaits in synchronous and async mock-based unit tests; it does not simulate the

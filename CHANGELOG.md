@@ -18,6 +18,11 @@ for cancellation, per-dispatch cleanup, replay/migration rules, and unsupported
 APIs. External I/O still belongs in ordinary activities.
 Sequential async batches release discarded results and observed-failure
 tracebacks during replay.
+- Added `OrchestrationContext.as_async()` for cold native coroutine operations
+and owned timer/event waits, including event receive timeouts that withdraw
+abandoned subscriptions. Added `Task.wait()` for independently cancellable
+borrowers of existing durable handles. Existing eager and generator APIs are
+unchanged.
 
 ## v1.13.0
 

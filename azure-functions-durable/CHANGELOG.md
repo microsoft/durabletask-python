@@ -16,6 +16,9 @@ The `orchestrator_generator_wrapper` helper accepts direct-await coroutines;
 these work in synchronous and async tests. Asyncio scheduling requires
 replay/backend tests. Sequential async batches release discarded results and
 observed-failure tracebacks during replay.
+- Added `as_async()` to native and compatibility orchestration contexts for
+cold coroutine operations and owned timer/event waits. Event receive timeouts
+withdraw abandoned subscriptions; existing eager APIs remain unchanged.
 
 ## v2.0.0rc4
 

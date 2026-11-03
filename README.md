@@ -38,22 +38,27 @@ All three packages support `async def` orchestrators and nested async helpers.
 Existing generator orchestrators continue to work.
 
 ```python
+import asyncio
+
 from durabletask import task
 
 
 async def sequence(ctx: task.OrchestrationContext, value: int) -> list[int]:
-    first = await ctx.call_activity("plus_one", input=value, return_type=int)
-    pending: list[task.Task[int]] = [
-        ctx.call_activity("plus_one", input=first, return_type=int),
-        ctx.call_activity("plus_one", input=value, return_type=int),
-    ]
-    return await task.when_all(pending)
+    ops = ctx.as_async()
+    first = await ops.call_activity("plus_one", input=value, return_type=int)
+    async with asyncio.TaskGroup() as group:
+        left = group.create_task(ops.call_activity("plus_one", input=first, return_type=int))
+        right = group.create_task(ops.call_activity("plus_one", input=value, return_type=int))
+    return [left.result(), right.result()]
 ```
 
 Register the function with `TaskHubGrpcWorker`, `DurableTaskSchedulerWorker`,
 or the Azure Functions `orchestration_trigger` decorator as usual. Functions
 also supports single-argument `async def` orchestrators using the compatibility
 context and `await context.task_all(...)`.
+Use `ctx.as_async()` for cold native coroutines accepted by `create_task` and
+task groups. Existing context methods still start eager, reusable durable
+handles; `handle.wait()` creates an independently cancellable borrower.
 
 > [!WARNING]
 > This is replay-driven await syntax, not general-purpose asyncio execution.
@@ -63,6 +68,8 @@ context and `await context.task_all(...)`.
 > Perform network, storage, and other nondeterministic I/O in activities.
 > Completed foreign awaitables and synchronous side effects cannot reliably be
 > detected by the replay engine.
+> Python `finally` blocks and async context-manager exits can run at ordinary
+> dispatch suspension; they are not workflow-lifetime compensation scopes.
 
 An async helper is not a durable sub-orchestration: use
 `await ctx.call_sub_orchestrator(...)` for a separate orchestration instance.

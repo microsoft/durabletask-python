@@ -41,6 +41,15 @@ class DurableOrchestrationContext:
         # an empty bag -- matching the common v1 runtime case.
         self._function_context = FunctionContext()
 
+    def as_async(self) -> task.AsyncOrchestrationContext:
+        """Get cold coroutine operations using the native SDK's keyword arguments.
+
+        Existing compatibility methods keep their eager, reusable task handles.
+        The async surface owns its event receives and timers, not remote activity
+        or sub-orchestration execution.
+        """
+        return self._ctx.as_async()
+
     # -- input ---------------------------------------------------------------
     def get_input(self, expected_type: Optional[type] = None) -> Any:
         """Get the orchestration input.

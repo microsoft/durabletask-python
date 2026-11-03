@@ -7,6 +7,7 @@ import base64
 import asyncio
 import json
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -22,8 +23,15 @@ from durabletask.internal import orchestrator_service_pb2 as pb
 
 @pytest.mark.parametrize("native", [False, True], ids=["compat", "native"])
 @pytest.mark.parametrize("entry", ["worker-sync", "worker-async", "decorator", "v1-handle"])
-async def test_coroutine_replay_through_functions_entry_points(native: bool, entry: str) -> None:
+@pytest.mark.parametrize("cold", [False, True], ids=["handles", "cold"])
+async def test_coroutine_replay_through_functions_entry_points(native: bool, entry: str, cold: bool) -> None:
     async def modern(ctx: task.OrchestrationContext, value: int) -> list[Any]:
+        if cold:
+            ops = ctx.as_async()
+            async with asyncio.TaskGroup() as group:
+                first = group.create_task(ops.call_activity("work", input=value, return_type=str))
+                second = group.create_task(ops.call_activity("work", input=value + 1, return_type=str))
+            return [first.result(), second.result()]
         return list(await asyncio.gather(
             ctx.call_activity("work", input=value, return_type=str),
             ctx.call_activity("work", input=value + 1, return_type=str),
@@ -31,6 +39,12 @@ async def test_coroutine_replay_through_functions_entry_points(native: bool, ent
 
     async def compatible(ctx: df.DurableOrchestrationContext) -> list[Any]:
         value = ctx.get_input()
+        if cold:
+            ops = ctx.as_async()
+            async with asyncio.TaskGroup() as group:
+                first = group.create_task(ops.call_activity("work", input=value, return_type=str))
+                second = group.create_task(ops.call_activity("work", input=value + 1, return_type=str))
+            return [first.result(), second.result()]
         return list(await asyncio.gather(
             ctx.call_activity("work", value),
             ctx.call_activity("work", value + 1),
@@ -79,6 +93,52 @@ async def test_coroutine_replay_through_functions_entry_points(native: bool, ent
     complete = response.actions[0].completeOrchestration
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert json.loads(complete.result.value) == ["first", "second"]
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["compat", "native"])
+def test_owned_event_timeout_replacement_through_functions_worker(native: bool) -> None:
+    async def receive(ops: task.AsyncOrchestrationContext) -> str:
+        try:
+            return await ops.receive_event("approval", timeout=timedelta(seconds=1), data_type=str)
+        except TimeoutError:
+            return await ops.receive_event("approval", data_type=str)
+
+    async def modern(ctx: task.OrchestrationContext, _: Any) -> str:
+        return await receive(ctx.as_async())
+
+    async def compatible(ctx: df.DurableOrchestrationContext) -> str:
+        return await receive(ctx.as_async())
+
+    fn: Callable[..., Any] = modern if native else compatible
+    worker = DurableFunctionsWorker()
+    instance_id = "owned-event-functions"
+    now = datetime(2026, 1, 1)
+
+    def invoke(old: list[pb.HistoryEvent], new: list[pb.HistoryEvent]) -> pb.OrchestratorResponse:
+        request = pb.OrchestratorRequest(instanceId=instance_id, pastEvents=old, newEvents=new)
+        encoded = base64.b64encode(request.SerializeToString()).decode()
+        response = pb.OrchestratorResponse()
+        response.ParseFromString(base64.b64decode(worker.execute_orchestration_request(fn, encoded)))
+        return response
+
+    start = [
+        helpers.new_orchestrator_started_event(now),
+        helpers.new_execution_started_event(fn.__name__, instance_id, "null"),
+    ]
+    initial = invoke([], start)
+    assert len(initial.actions) == 1
+    assert initial.actions[0].createTimer.fireAt.ToDatetime() == now + timedelta(seconds=1)
+    old = start + [helpers.new_timer_created_event(1, now + timedelta(seconds=1))]
+    timeout = [
+        helpers.new_orchestrator_started_event(now + timedelta(seconds=1)),
+        helpers.new_timer_fired_event(1, now + timedelta(seconds=1)),
+    ]
+    assert not invoke(old, timeout).actions
+    response = invoke(old + timeout, [helpers.new_event_raised_event("approval", '"approved"')])
+    assert len(response.actions) == 1
+    complete = response.actions[0].completeOrchestration
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED, complete.failureDetails
+    assert json.loads(complete.result.value) == "approved"
 
 
 @pytest.mark.parametrize("fail", [False, True])

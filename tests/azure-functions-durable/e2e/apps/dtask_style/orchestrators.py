@@ -47,6 +47,18 @@ async def async_await_probe(ctx: task.OrchestrationContext, _: Any) -> dict[str,
 
 
 @bp.orchestration_trigger(context_name="context")
+async def async_cold_probe(ctx: task.OrchestrationContext, _: Any) -> dict[str, Any]:
+    ops = ctx.as_async()
+    greeting = await asyncio.create_task(ops.call_activity("say_hello", input="Tokyo", return_type=str))
+    async with asyncio.TaskGroup() as group:
+        first = group.create_task(ops.call_activity("square", input=2, return_type=int))
+        second = group.create_task(ops.call_activity("square", input=3, return_type=int))
+    await ops.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await ops.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
 def logging_filtered(ctx: task.OrchestrationContext, _: Any):
     _LOGGER.info("worker-info-filter-anchor %s", ctx.instance_id)
     _LOGGER.warning("worker-filter-anchor %s", ctx.instance_id)

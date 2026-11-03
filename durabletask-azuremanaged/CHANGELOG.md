@@ -15,6 +15,9 @@ orchestrators, including deterministic asyncio composition and durable sleeps/
 timeouts. See the [async contract](../docs/async-orchestrators.md).
 Sequential async batches release discarded results and observed-failure
 tracebacks during replay.
+- Added inherited `OrchestrationContext.as_async()` cold coroutine operations
+and owned timer/event waits, plus `Task.wait()` for borrowing existing handles.
+Remote operations are not cancelled when a local waiter is cancelled.
 
 ## v1.13.0
 

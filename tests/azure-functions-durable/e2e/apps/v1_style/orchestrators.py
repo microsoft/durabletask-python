@@ -44,6 +44,18 @@ async def async_await_probe(context: df.DurableOrchestrationContext) -> dict[str
 
 
 @bp.orchestration_trigger(context_name="context")
+async def async_cold_probe(context: df.DurableOrchestrationContext) -> dict[str, Any]:
+    ops = context.as_async()
+    greeting = await asyncio.create_task(ops.call_activity("say_hello", input="Tokyo", return_type=str))
+    async with asyncio.TaskGroup() as group:
+        first = group.create_task(ops.call_activity("square", input=2, return_type=int))
+        second = group.create_task(ops.call_activity("square", input=3, return_type=int))
+    await ops.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await ops.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
 def fan_out_fan_in(context: df.DurableOrchestrationContext):
     count = context.get_input() or 5
     tasks = [context.call_activity("square", i) for i in range(1, count + 1)]

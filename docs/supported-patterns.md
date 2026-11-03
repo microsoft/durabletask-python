@@ -5,6 +5,9 @@ The following orchestration patterns are currently supported.
 Generator and native coroutine orchestrators share these durable patterns.
 See the [async orchestrator contract](async-orchestrators.md) for supported
 asyncio composition, durable clocks/timeouts, and dispatch-local cleanup.
+Use `ctx.as_async()` for cold coroutine operations and owned event/timeouts;
+existing eager handles remain available for explicit sharing through
+`handle.wait()`.
 
 ## Function chaining
 
