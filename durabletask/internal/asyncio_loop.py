@@ -144,7 +144,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     ) -> asyncio.Handle:
         handle = asyncio.Handle(callback, args, self, context=context)
         if self.cancelling_task is not None:
-            # TaskGroup and AnyIO cancel sets of tasks. Do not let object hashes
+            # TaskGroup cancels a set of tasks. Do not let object hashes
             # determine the order in which their finally blocks execute.
             owner = getattr(callback, "__self__", None)
             index = self._tasks[self.cancelling_task]

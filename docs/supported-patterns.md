@@ -4,7 +4,7 @@ The following orchestration patterns are currently supported.
 
 Generator and native coroutine orchestrators share these durable patterns.
 See the [async orchestrator contract](async-orchestrators.md) for supported
-asyncio/AnyIO composition, durable clocks/timeouts, and dispatch-local cleanup.
+asyncio composition, durable clocks/timeouts, and dispatch-local cleanup.
 
 ## Function chaining
 

@@ -37,9 +37,9 @@ through durable sub-orchestrations.
 The dispatch-local loop supports FIFO ready callbacks, local futures and tasks,
 `asyncio.create_task`, `asyncio.gather`, `asyncio.sleep`, `asyncio.TaskGroup`,
 and `asyncio.timeout` / `timeout_at`.
-`asyncio.wait_for`, AnyIO's asyncio task groups, cancel scopes, shielded cleanup,
-and `fail_after` use the same task/future scheduling and durable timers.
-AnyIO support is bounded to these paths, not all backends or APIs.
+`asyncio.wait_for` uses the same task/future scheduling and durable timers.
+Third-party async libraries are not part of this compatibility contract, even
+when individual code paths happen to use supported asyncio primitives.
 
 Create branches from ordered inputs. Ready work follows FIFO scheduling;
 history completions are delivered in history order, draining ready work after
@@ -84,11 +84,9 @@ cancelling siblings. Retain and await siblings if their results matter.
 Unobserved local background-task failures are reported during dispatch cleanup;
 ordinary exceptions are logged, not silently discarded or automatically joined.
 
-Task groups cancel and drain local sibling tasks on failure and use their
-library's normal exception grouping rules. AnyIO uses level cancellation:
-awaited cleanup in a cancelled scope may require
-`with anyio.CancelScope(shield=True)`. Python-version-specific exception
-grouping and cancel-count behavior remain those of asyncio/AnyIO.
+Task groups cancel and drain local sibling tasks on failure and use asyncio's
+normal exception grouping rules. Python-version-specific exception grouping
+and cancel-count behavior remain those of asyncio.
 
 Cancelling a local task or timing out its wait detaches that waiter; it does
 **not** cancel the durable activity, sub-orchestration, entity operation, or

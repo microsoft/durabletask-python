@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Deterministic asyncio and AnyIO behavior through the real history executor."""
+"""Deterministic asyncio behavior through the real history executor."""
 
 import asyncio
 import gc
@@ -13,7 +13,6 @@ from datetime import timedelta
 from typing import Any
 from weakref import ReferenceType, ref
 
-import anyio
 import pytest
 
 from durabletask import task
@@ -28,7 +27,7 @@ from tests.durabletask.test_coroutine_orchestrators import (
 
 
 @pytest.mark.parametrize("fail_branch", [False, True])
-def test_anyio_branches_inherit_context_and_replay_stable_actions(fail_branch: bool) -> None:
+def test_task_group_branches_inherit_context_and_replay_stable_actions(fail_branch: bool) -> None:
     context: ContextVar[task.OrchestrationContext] = ContextVar("orchestration")
 
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
@@ -41,9 +40,9 @@ def test_anyio_branches_inherit_context_and_replay_stable_actions(fail_branch: b
                 assert current is ctx
                 results[name] = await current.call_activity(name, input=current.instance_id)
 
-            async with anyio.create_task_group() as group:
-                group.start_soon(branch, "first")
-                group.start_soon(branch, "second")
+            async with asyncio.TaskGroup() as group:
+                group.create_task(branch("first"))
+                group.create_task(branch("second"))
             return await context.get().call_activity("finish", input=[results["first"], results["second"]])
         finally:
             context.reset(token)
@@ -132,8 +131,7 @@ def test_gather_failure_does_not_cancel_sibling(return_exceptions: bool) -> None
     assert json.loads(result.result.value) == ([True, "ok"] if return_exceptions else "ok")
 
 
-@pytest.mark.parametrize("native", [False, True])
-def test_task_group_failure_cancels_waiters_not_durable_work(native: bool) -> None:
+def test_task_group_failure_cancels_waiters_not_durable_work() -> None:
     cleaned: list[str] = []
 
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
@@ -141,18 +139,12 @@ def test_task_group_failure_cancels_waiters_not_durable_work(native: bool) -> No
             try:
                 await ctx.call_activity(name)
             finally:
-                with anyio.CancelScope(shield=True):
-                    await asyncio.sleep(0)
-                    cleaned.append(name)
+                await asyncio.sleep(0)
+                cleaned.append(name)
 
-        if native:
-            async with asyncio.TaskGroup() as group:
-                group.create_task(branch("fail"))
-                group.create_task(branch("slow"))
-        else:
-            async with anyio.create_task_group() as group:
-                group.start_soon(branch, "fail")
-                group.start_soon(branch, "slow")
+        async with asyncio.TaskGroup() as group:
+            group.create_task(branch("fail"))
+            group.create_task(branch("slow"))
 
     old = _start() + [helpers.new_task_scheduled_event(1, "fail"),
                       helpers.new_task_scheduled_event(2, "slow")]
@@ -161,7 +153,7 @@ def test_task_group_failure_cancels_waiters_not_durable_work(native: bool) -> No
     assert cleaned == ["fail", "slow"]
 
 
-@pytest.mark.parametrize("kind", ["sleep", "wait_for", "anyio", "timeout"])
+@pytest.mark.parametrize("kind", ["sleep", "wait_for", "timeout"])
 def test_durable_timer_and_timeout(kind: str) -> None:
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
         try:
@@ -169,11 +161,8 @@ def test_durable_timer_and_timeout(kind: str) -> None:
                 await asyncio.sleep(2)
             elif kind == "wait_for":
                 await asyncio.wait_for(ctx.wait_for_external_event("never"), timeout=2)
-            elif kind == "timeout":
-                async with asyncio.timeout(2):
-                    await ctx.wait_for_external_event("never")
             else:
-                with anyio.fail_after(2):
+                async with asyncio.timeout(2):
                     await ctx.wait_for_external_event("never")
         except TimeoutError:
             return "timed out"
@@ -287,7 +276,7 @@ def test_dispatch_cleanup_unwinds_scopes_contexts_asyncgens(under_loop: bool) ->
         opened = resource()
         await anext(opened)
         try:
-            async with anyio.create_task_group():
+            async with asyncio.TaskGroup():
                 await ctx.call_activity("wait")
         finally:
             await asyncio.sleep(0)
@@ -511,12 +500,11 @@ def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> No
             finally:
                 # This is real task-group cancellation during replay, not
                 # dispatch teardown: durable compensation is still allowed.
-                with anyio.CancelScope(shield=True):
-                    await ctx.call_activity("compensate", input=index)
+                await ctx.call_activity("compensate", input=index)
 
-        async with anyio.create_task_group() as group:
+        async with asyncio.TaskGroup() as group:
             for index in range(4):
-                group.start_soon(branch, index)
+                group.create_task(branch(index))
 
     old = _start() + [helpers.new_task_scheduled_event(index, "work") for index in range(1, 5)]
     failure = [helpers.new_task_failed_event(1, ValueError("boom"))]

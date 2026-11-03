@@ -27,7 +27,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install runtime test dependencies
         run: python -m pip install -r requirements.txt -e .
-      - name: Check asyncio, AnyIO, replay, and dispatch cleanup
+      - name: Check asyncio, replay, and dispatch cleanup
         run: >-
           python -m pytest
           tests\durabletask\test_asyncio_orchestrators.py
