@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Activity and sub-orchestration `retry_timeout` decisions now use replay-safe
+orchestration time, preventing retries from expiring solely because history is
+replayed later. Retry calculations also accept timezone-aware timestamps.
+Histories that recorded timeout failures based on wall-clock time can replay
+differently; drain affected instances on the previous SDK before upgrading.
+
 ## v1.13.0
 
 ADDED

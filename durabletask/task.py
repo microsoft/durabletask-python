@@ -826,28 +826,37 @@ class RetryableTask(CompletableTask[T]):
     def increment_attempt_count(self) -> None:
         self._attempt_count += 1
 
-    def compute_next_delay(self) -> timedelta | None:
+    def compute_next_delay(self, current_time: datetime | None = None) -> timedelta | None:
+        """Compute the retry delay using the supplied orchestration time.
+
+        Naive timestamps are treated as UTC. If omitted, current_time defaults
+        to wall-clock UTC for compatibility with callers outside the executor.
+        """
         if self._attempt_count >= self._retry_policy.max_number_of_attempts:
             return None
 
-        retry_expiration: datetime = datetime.max
-        if self._retry_policy.retry_timeout is not None and self._retry_policy.retry_timeout != datetime.max:
-            retry_expiration = self._start_time + self._retry_policy.retry_timeout
+        if self._retry_policy.retry_timeout is not None:
+            if current_time is None:
+                current_time = datetime.now(tz=UTC)
+            if current_time.utcoffset() is not None:
+                current_time = current_time.astimezone(UTC).replace(tzinfo=None)
+            start_time = self._start_time
+            if start_time.utcoffset() is not None:
+                start_time = start_time.astimezone(UTC).replace(tzinfo=None)
+            if current_time - start_time >= self._retry_policy.retry_timeout:
+                return None
 
         if self._retry_policy.backoff_coefficient is None:
             backoff_coefficient = 1.0
         else:
             backoff_coefficient = self._retry_policy.backoff_coefficient
 
-        if datetime.now(tz=UTC).replace(tzinfo=None) < retry_expiration:
-            next_delay_f = math.pow(backoff_coefficient, self._attempt_count - 1) * self._retry_policy.first_retry_interval.total_seconds()
+        next_delay_f = math.pow(backoff_coefficient, self._attempt_count - 1) * self._retry_policy.first_retry_interval.total_seconds()
 
-            if self._retry_policy.max_retry_interval is not None:
-                next_delay_f = min(next_delay_f, self._retry_policy.max_retry_interval.total_seconds())
+        if self._retry_policy.max_retry_interval is not None:
+            next_delay_f = min(next_delay_f, self._retry_policy.max_retry_interval.total_seconds())
 
-            return timedelta(seconds=next_delay_f)
-
-        return None
+        return timedelta(seconds=next_delay_f)
 
 
 class TimerTask(CancellableTask[None]):
