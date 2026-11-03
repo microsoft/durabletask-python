@@ -9,8 +9,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ADDED
 
-- Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
-by one or more task hubs.
 - Added native `async def` orchestrators and nested async helpers alongside
 existing generator orchestrators. Await durable operations and compose them
 with `asyncio.gather`, local tasks, and structured task groups. Async sleeps and
@@ -20,61 +18,58 @@ for cancellation, per-dispatch cleanup, replay/migration rules, and unsupported
 APIs. External I/O still belongs in ordinary activities.
 Sequential async batches release discarded results during replay.
 
+## v1.13.0
+
+ADDED
+
+- Added `OrchestrationQuery.task_hub_names` to filter orchestration instances
+by one or more task hubs.
+- Added deterministic JSON-array serialization for sets and frozensets.
+Generic set reconstruction is opt-in through `JsonDataConverter`; enabling it
+for existing orchestrations can change replay behavior.
+
 CHANGED
 
 - Dropped Python 3.10 support. Python 3.11 or later is now required.
-- Removed the obsolete PyPI `asyncio` backport dependency; all supported
-Python versions use the standard-library module.
+- Removed the obsolete PyPI `asyncio` backport dependency.
 - Context managers now preserve subclass types in type checkers, including
 Azure Managed clients and workers.
 - Entity ID copy and pickle hooks now preserve subclass types in type checkers.
 - Multiple task completion callback failures now raise the built-in
 `ExceptionGroup`, preserving each exception and its traceback in memory and
-the first callback error as the explicit cause and serialized inner failure.
-A single callback failure is still raised directly.
+the first callback error as the cause. A single callback failure is still
+raised directly.
 
 > [!WARNING]
 > The aggregate exception type and message have changed. Orchestrations that
 > branch on the old aggregate type or message can take a different path during
 > replay; drain affected instances on the previous SDK or use a separate task
-> hub for new instances. Branches on the aggregate's explicit first-error cause
-> retain their previous behavior.
+> hub for new instances.
 
 FIXED
 
+- Activity and sub-orchestration retry policies now honor
+`failureDetails.isNonRetriable`, surfacing the failure immediately without
+retrying. Existing histories that already retried such failures can replay
+differently; drain affected instances on the previous SDK before upgrading.
 - Grouped failures now retain nested exception messages, tracebacks, and notes
 in failure details, including `ExceptionGroup` failures from task callbacks.
-Traceback rendering is limited to 15 children per group and 10 group levels,
-with truncation markers for omitted diagnostics. Failure details do not
-serialize a complete structured tree of group children.
-- Optimized set and frozenset serialization, particularly for deeply nested
-frozensets and large singleton elements. JSON object names within sets are now
-ordered consistently after conversion to strings, including numeric names.
-Equivalent surrogate-pair and non-BMP object names retain the last value
-rather than emitting duplicate JSON properties.
-Set reconstruction remains opt-in.
-- With set reconstruction enabled, annotated sets of typed tuples are now
-recognized during input and activity-result discovery, and bare
-`collections.abc.Set` annotations reconstruct JSON arrays as concrete sets.
-- Implemented `__hash__` and `__repr__` for `EntityInstanceId`, making identity attributes immutable to guarantee hash stability when used in sets or dict keys.
-- Large-payload externalization now checks every eligible payload's maximum
-size before uploading or replacing any protobuf values, including carryover
-events and entity payloads, for both synchronous and asynchronous calls.
-Oversized messages remain unchanged and cause no uploads; their size error
-now takes precedence over hypothetical earlier storage failures.
+- Improved set and frozenset serialization performance and consistent JSON
+object-key handling.
+- `EntityInstanceId` is now hashable and has a diagnostic `repr`, allowing use
+in sets and as dictionary keys. Entity IDs are now immutable.
+- Oversized payloads now fail validation before any payload uploads or
+replacements occur.
 - Orchestrations that exceed the configured external payload storage limit now
 fail without retrying and release their entity locks, allowing other callers to
 progress. Transient payload-store failures remain retryable.
-- Previously unhandled non-cancellation `BaseException` exits, including result
-serialization and generator teardown failures, now fail with a clear reason instead of leaving an accepted dispatch
-unfinished. Cancellation and process-control signals retain their semantics.
-The gRPC worker abandons work that exits before an outcome is sent and resets
-the originating work-item stream after an uncertain completion or abandonment
-RPC, allowing scheduler ownership recovery without retrying an uncertain outcome.
+- Unexpected orchestration execution, result serialization, and teardown
+failures no longer leave accepted work unfinished. Cancellation and
+process-control signals retain their semantics.
 - Orchestrator generators are now closed at the end of each dispatch, including
-while waiting for durable work, releasing resources held by async bridges.
-`finally` blocks and context-manager exits can run before orchestration completion
-and repeat across dispatches; see [cleanup semantics](docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks).
+while waiting for durable work. `finally` blocks and context-manager exits can
+run before orchestration completion and repeat across dispatches; see
+[cleanup semantics](docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks).
 - Async cancellation raised by generator teardown no longer replaces dispatch
 responses or version-rejection abandonment.
 

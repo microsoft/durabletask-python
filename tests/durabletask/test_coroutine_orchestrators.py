@@ -226,6 +226,49 @@ def test_retry_timer_resumes_same_coroutine() -> None:
     assert json.loads(complete.result.value) == "success"
 
 
+@pytest.mark.parametrize("sub_orchestration", [False, True])
+@pytest.mark.parametrize("replayed", [False, True])
+@pytest.mark.parametrize("caught", [False, True])
+def test_coroutine_non_retriable_failure(
+        sub_orchestration: bool, replayed: bool, caught: bool) -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+        retry = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=3)
+        try:
+            if sub_orchestration:
+                return await ctx.call_sub_orchestrator("child", retry_policy=retry)
+            return await ctx.call_activity("child", retry_policy=retry)
+        except task.TaskFailedError as error:
+            if not caught:
+                raise
+            assert error.details.message == "permanent"
+            return "caught"
+
+    old = _start()
+    if sub_orchestration:
+        old.append(helpers.new_sub_orchestration_created_event(1, "child", "child-instance"))
+        failed = helpers.new_sub_orchestration_failed_event(1, ValueError("permanent"))
+        details = failed.subOrchestrationInstanceFailed.failureDetails
+    else:
+        old.append(helpers.new_task_scheduled_event(1, "child"))
+        failed = helpers.new_task_failed_event(1, ValueError("permanent"))
+        details = failed.taskFailed.failureDetails
+    details.isNonRetriable = True
+    new = [helpers.new_orchestrator_started_event(NOW)]
+    if replayed:
+        old.append(failed)
+    else:
+        new.append(failed)
+    result = _execute(orchestrator, old, new)
+    assert len(result.actions) == 1
+    complete = _completion(result)
+    if caught:
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+        assert json.loads(complete.result.value) == "caught"
+    else:
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+        assert complete.failureDetails.innerFailure == details
+
+
 def test_entity_lock_and_call_suspend_coroutine() -> None:
     entity = entities.EntityInstanceId("counter", "one")
 
