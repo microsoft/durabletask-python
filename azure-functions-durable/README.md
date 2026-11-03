@@ -32,6 +32,14 @@ Key capabilities include durable orchestrations and sub-orchestrations, durable
 timers, external events, durable entities, retries, versioning, durable HTTP
 calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 
+`DurableFunctionsClient` and `SyncDurableFunctionsClient` inherit
+`OrchestrationQuery.task_hub_names` for filtering orchestration queries by one
+or more task hubs. Filtering support depends on the backend.
+
+`EntityInstanceId` and the compatibility `EntityId` are immutable and hashable,
+so they can be used as dictionary keys or set elements. Construct a new ID
+instead of assigning or deleting attributes on an existing ID.
+
 ## Unicode JSON serialization
 
 By default, durable payloads preserve the shared `azure-functions` codec's

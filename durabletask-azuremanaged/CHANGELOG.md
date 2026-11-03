@@ -7,44 +7,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.13.0
+
+ADDED
+
+- Added inherited `OrchestrationQuery.task_hub_names` support to filter
+orchestration instances by one or more task hubs.
+- Added inherited deterministic set and frozenset serialization.
+Generic set reconstruction is opt-in through `JsonDataConverter`; enabling it
+for existing orchestrations can change replay behavior.
+
 CHANGED
 
+- Updated the minimum `durabletask` dependency to v1.13.0, including the
+`azure-blob-payloads` extra.
 - Dropped Python 3.10 support. Python 3.11 or later is now required.
-- With the corresponding core SDK update, client and worker context managers
-preserve Azure Managed subclass types in type checkers.
-- With the corresponding core SDK update, multiple task completion callback
-failures raise the built-in `ExceptionGroup`; a single failure is still raised
-directly. The first callback error remains the explicit cause and serialized
-inner failure. Branches on the previous aggregate exception type or message
-can change during replay; see the [core upgrade warning](../CHANGELOG.md#unreleased).
+- Client and worker context managers now preserve Azure Managed subclass types
+in type checkers.
+- Multiple task completion callback failures now raise the built-in
+`ExceptionGroup`; a single failure is still raised directly. Branches on the
+previous aggregate type or message can change during replay; see the
+[core upgrade warning](../CHANGELOG.md#v1130).
 
 FIXED
 
-- With the corresponding core SDK update, activity and sub-orchestration retry
-policies honor `failureDetails.isNonRetriable` and surface the failure immediately
-without retrying. Histories that already retried such failures can replay
-differently; drain affected instances on the previous SDK before upgrading.
-- With the corresponding core SDK update, grouped failures retain nested
-exception messages, tracebacks, and notes in failure details. Tracebacks are
-limited to 15 children per group and 10 group levels with truncation markers;
-group children are not serialized as a complete structured tree.
-- With the corresponding core `durabletask` SDK fix, oversized messages fail
-large-payload validation before any uploads or payload replacements. Size
-errors now take precedence over hypothetical earlier storage failures.
-- With the corresponding core `durabletask` SDK fix, orchestrations that exceed
-the configured external payload storage limit fail without retrying and release
-their entity locks. Transient payload-store failures remain retryable.
-- With the corresponding core `durabletask` SDK fix, previously unhandled
-non-cancellation `BaseException` exits, including result serialization failures,
-now fail with a clear reason. Cancellation and process-control
-exits recover dispatch ownership, and uncertain completion or abandonment RPCs
-reset the originating work-item stream rather than retaining unfinished work.
-- With the corresponding core `durabletask` SDK fix, orchestrator generators
-are closed at the end of each dispatch, including while waiting for durable work.
-See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks)
-for repeated finalizers, discarded teardown actions/status, and yielding restrictions.
-- With the corresponding core `durabletask` SDK fix, async cancellation raised by
-generator teardown no longer replaces dispatch responses or version-rejection abandonment.
+- `EntityInstanceId` is now immutable and hashable, with a diagnostic `repr`.
+- Activity and sub-orchestration retry policies now honor
+`failureDetails.isNonRetriable`. Histories that already retried such failures
+can replay differently; drain affected instances on the previous SDK before
+upgrading.
+- Grouped failures now retain nested exception messages, tracebacks, and notes.
+- Oversized payloads now fail validation before any uploads or replacements.
+Orchestrations exceeding the external payload storage limit fail without
+retrying and release entity locks; transient payload-store failures remain
+retryable.
+- Unexpected orchestration failures no longer leave accepted work unfinished.
+- Orchestrator generators are now closed at each dispatch boundary, so
+`finally` blocks and context-manager exits may run repeatedly before completion.
+See [cleanup semantics](../docs/supported-patterns.md#cleanup-in-orchestrator-finally-blocks).
+- Async cancellation during generator teardown no longer replaces dispatch
+responses or version-rejection abandonment.
 
 ## v1.12.0
 

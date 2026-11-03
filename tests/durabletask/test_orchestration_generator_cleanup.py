@@ -10,7 +10,6 @@ from typing import Any, Generator
 from unittest.mock import Mock
 from weakref import ReferenceType, ref
 
-import anyio
 import pytest
 
 from durabletask import task, worker
@@ -428,7 +427,7 @@ def test_async_bridge_resources_are_released(thread_pool: bool):
             await anext(opened_resource)
             references["asyncgen"] = ref(opened_resource)
             try:
-                async with anyio.create_task_group():
+                async with asyncio.TaskGroup():
                     await asyncio.Future()
             finally:
                 await asyncio.sleep(0)

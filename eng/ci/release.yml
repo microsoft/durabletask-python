@@ -36,7 +36,7 @@ extends:
                   targetPath: $(System.DefaultWorkingDirectory)/drop
 
             steps:
-              - task: SFP.release-tasks.custom-build-release-task.EsrpRelease@9
+              - task: SFP.release-tasks.custom-build-release-task.EsrpRelease@14
                 displayName: "ESRP Release durabletask"
                 inputs:
                   connectedservicename: "dtfx-internal-esrp-prod"
@@ -80,7 +80,7 @@ extends:
                   targetPath: $(System.DefaultWorkingDirectory)/drop
 
             steps:
-              - task: SFP.release-tasks.custom-build-release-task.EsrpRelease@9
+              - task: SFP.release-tasks.custom-build-release-task.EsrpRelease@14
                 displayName: "ESRP Release durabletask-azuremanaged"
                 inputs:
                   connectedservicename: "dtfx-internal-esrp-prod"
@@ -120,7 +120,7 @@ extends:
                   targetPath: $(System.DefaultWorkingDirectory)/drop
 
             steps:
-              - task: SFP.release-tasks.custom-build-release-task.EsrpRelease@9
+              - task: SFP.release-tasks.custom-build-release-task.EsrpRelease@14
                 displayName: "ESRP Release azure-functions-durable"
                 inputs:
                   connectedservicename: "dtfx-internal-esrp-prod"
