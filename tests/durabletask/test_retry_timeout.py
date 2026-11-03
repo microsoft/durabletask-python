@@ -49,6 +49,39 @@ def test_retry_timeout_uses_supplied_time(
     assert retry.compute_next_delay(current) == (timedelta(seconds=1) if elapsed < 10 else None)
 
 
+@pytest.mark.parametrize("undefined_start", [False, True])
+@pytest.mark.parametrize("undefined_current", [False, True])
+@pytest.mark.parametrize("elapsed", [1, 10, 11])
+def test_retry_timeout_treats_undefined_offsets_as_naive(
+    undefined_start: bool, undefined_current: bool, elapsed: int,
+) -> None:
+    class UndefinedOffset(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> None:
+            return None
+
+        def dst(self, dt: datetime | None) -> None:
+            return None
+
+    class NaiveDateTime(datetime):
+        def astimezone(self, tz: tzinfo | None = None) -> datetime:
+            raise AssertionError("Naive timestamps must not be converted using the host timezone")
+
+    start = NaiveDateTime(2020, 1, 1, tzinfo=UndefinedOffset() if undefined_start else None)
+    current = NaiveDateTime(2020, 1, 1, 0, 0, elapsed, tzinfo=UndefinedOffset() if undefined_current else None)
+    retry = task.RetryableTask[Any](
+        task.RetryPolicy(
+            first_retry_interval=timedelta(seconds=1),
+            max_number_of_attempts=3,
+            retry_timeout=timedelta(seconds=10),
+        ),
+        pb.OrchestratorAction(),
+        start,
+        is_sub_orch=False,
+    )
+
+    assert retry.compute_next_delay(current) == (timedelta(seconds=1) if elapsed < 10 else None)
+
+
 @pytest.mark.parametrize("timeout", [None, timedelta(seconds=10)])
 @pytest.mark.parametrize("aware_start", [False, True])
 @pytest.mark.parametrize("elapsed", [1, 10])

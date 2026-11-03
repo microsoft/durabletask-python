@@ -838,10 +838,10 @@ class RetryableTask(CompletableTask[T]):
         if self._retry_policy.retry_timeout is not None:
             if current_time is None:
                 current_time = datetime.now(tz=UTC)
-            if current_time.tzinfo is not None:
+            if current_time.utcoffset() is not None:
                 current_time = current_time.astimezone(UTC).replace(tzinfo=None)
             start_time = self._start_time
-            if start_time.tzinfo is not None:
+            if start_time.utcoffset() is not None:
                 start_time = start_time.astimezone(UTC).replace(tzinfo=None)
             if current_time - start_time >= self._retry_policy.retry_timeout:
                 return None
