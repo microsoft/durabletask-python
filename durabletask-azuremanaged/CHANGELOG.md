@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- With the corresponding core SDK, `DurableTaskSchedulerWorker`
+accepts `async def` orchestrators that await durable tasks alongside generator
+orchestrators, including deterministic asyncio composition and durable sleeps/
+timeouts. See the [async contract](../docs/async-orchestrators.md).
+Sequential async batches release discarded results and observed-failure
+tracebacks during replay.
+- Added inherited `OrchestrationContext.as_async()` cold coroutine operations
+and owned timer/event waits, plus `Task.wait()` for borrowing existing handles.
+Remote operations are not cancelled when a local waiter is cancelled.
+
 ## v1.13.0
 
 ADDED

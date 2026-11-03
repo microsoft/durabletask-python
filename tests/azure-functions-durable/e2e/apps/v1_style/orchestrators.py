@@ -13,6 +13,8 @@ retries, and the ``histories`` NotImplementedError).
 """
 
 from datetime import timedelta
+import asyncio
+from typing import Any
 
 import azure.durable_functions as df
 
@@ -29,6 +31,28 @@ def activity_chain(context: df.DurableOrchestrationContext):
     second = yield context.call_activity("say_hello", "Seattle")
     third = yield context.call_activity("say_hello", "London")
     return [first, second, third]
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_await_probe(context: df.DurableOrchestrationContext) -> dict[str, Any]:
+    greeting = await context.call_activity("say_hello", "Tokyo")
+    values = await asyncio.gather(*(context.call_activity("square", i) for i in (2, 3)))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+    child = await context.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": sum(values), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_cold_probe(context: df.DurableOrchestrationContext) -> dict[str, Any]:
+    ops = context.as_async()
+    greeting = await asyncio.create_task(ops.call_activity("say_hello", input="Tokyo", return_type=str))
+    async with asyncio.TaskGroup() as group:
+        first = group.create_task(ops.call_activity("square", input=2, return_type=int))
+        second = group.create_task(ops.call_activity("square", input=3, return_type=int))
+    await ops.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await ops.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
 
 
 @bp.orchestration_trigger(context_name="context")

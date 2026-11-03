@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- With the corresponding core SDK, native and v1-style orchestrators can use
+`async def`, await durable tasks, and use deterministic asyncio composition and
+durable sleeps/timeouts. See the [async contract](../docs/async-orchestrators.md).
+The `orchestrator_generator_wrapper` helper accepts direct-await coroutines;
+these work in synchronous and async tests. Asyncio scheduling requires
+replay/backend tests. Sequential async batches release discarded results and
+observed-failure tracebacks during replay.
+- Added `as_async()` to native and compatibility orchestration contexts for
+cold coroutine operations and owned timer/event waits. Event receive timeouts
+withdraw abandoned subscriptions; existing eager APIs remain unchanged.
+
 ## v2.0.0rc4
 
 ADDED

@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import logging
 import math
+import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Coroutine, Generator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
 
+from durabletask.async_context import AsyncOrchestrationContext as AsyncOrchestrationContext
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -22,6 +24,14 @@ TOutput = TypeVar('TOutput')
 
 
 class OrchestrationContext(ABC):
+
+    def as_async(self) -> AsyncOrchestrationContext:
+        """Return a cold, coroutine-native view of this context.
+
+        Existing context methods remain eager and return reusable durable task
+        handles. The async view schedules work only when its coroutines start.
+        """
+        return AsyncOrchestrationContext(self)
 
     @property
     @abstractmethod
@@ -612,6 +622,33 @@ class Task(ABC, Generic[T]):
         # Dict insertion order preserves subscription order for shared races.
         self._parents = {}
 
+    def __await__(self) -> Generator[Task[T], Any, T]:
+        """Wait for this task in a replay-driven ``async def`` orchestrator.
+
+        A local asyncio waiter does not own or cancel the durable operation.
+        """
+        from durabletask.internal.asyncio_loop import DurableEventLoop
+
+        loop = asyncio._get_running_loop()
+        if isinstance(loop, DurableEventLoop):
+            return (yield from loop.wait_durable(self).__await__())
+        if loop is not None:
+            raise RuntimeError("Durable tasks can only be awaited inside a durable orchestrator.")
+        # Allow mock-based orchestration drivers to send results without an event loop.
+        if not self.is_complete:
+            yield self
+        return self.get_result()
+
+    async def wait(self) -> T:
+        """Borrow this operation's result through a fresh native coroutine.
+
+        Suitable for ``asyncio.create_task`` and task groups. Calling this
+        method does not schedule another durable operation. Each call creates
+        an independent waiter; cancelling it does not cancel the underlying
+        operation, timer, or event subscription, or any other waiter.
+        """
+        return await self
+
     @property
     def is_complete(self) -> bool:
         """Returns True if the task has completed, False otherwise."""
@@ -942,8 +979,11 @@ class ActivityContext:
         return self._task_id
 
 
-# Orchestrators are generators that yield tasks, receive any type, and return TOutput
-Orchestrator: TypeAlias = Callable[[OrchestrationContext, TInput], Generator[Task[Any], Any, TOutput] | TOutput]
+# Orchestrators yield or await durable tasks, or return an immediate result.
+Orchestrator: TypeAlias = Callable[
+    [OrchestrationContext, TInput],
+    Generator[Task[Any], Any, TOutput] | Coroutine[Any, Any, TOutput] | TOutput,
+]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity: TypeAlias = Callable[[ActivityContext, TInput], TOutput]
