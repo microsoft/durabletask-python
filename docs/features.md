@@ -458,6 +458,11 @@ this includes IPv6 path-style endpoints not recognized by the current Python Azu
 URL paths are decoded once and blob names are re-escaped through the configured Azure Blob client.
 Dot path segments are rejected, and HTTP redirects are not followed.
 
+When orchestration response externalization encounters an invalid Blob upload path, core and
+Azure Managed workers complete the orchestration as failed with non-retriable failure details
+and release acquired entity locks. Transient Storage errors and incoming-reference resolution
+failures retain the existing dispatch retry behavior.
+
 For example, to read references from all containers in one **additional** account while retaining
 the default container restriction in the primary account:
 
@@ -500,6 +505,14 @@ account-wide access can retain reads of the old container. Legacy v1 references 
 account: they always use the currently configured account, so an additional-account list cannot
 recover their original account automatically. Keep the original account configuration when reading
 those references, or migrate them separately. Retain the original compression settings as well.
+
+> [!WARNING]
+> Review retained references before upgrading. Existing histories with references outside the
+> configured access scopes, or blob names containing `.` or `..` path segments, now fail during
+> replay and retrieval. Aligning current clients and workers does not rewrite persisted tokens.
+> Explicit broader scopes can retain reads of authorized older locations, but do not permit
+> dot-segment paths; migrate affected references separately or finish affected instances on the
+> previous SDK before switching.
 
 The policy is shared by core clients and workers, history retrieval, Azure Managed clients and
 workers, and Functions payload handling (including JSON-quoted references and entity envelopes).

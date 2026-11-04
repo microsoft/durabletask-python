@@ -173,3 +173,41 @@ def test_dts_worker_resolves_blob_payloads_within_scope(version, container, acco
         assert not seen
         stub.CompleteOrchestratorTask.assert_not_called()
         stub.AbandonTaskOrchestratorWorkItem.assert_called_once()
+
+
+@pytest.mark.parametrize("instance_id", [".", "folder/../child"])
+def test_dts_worker_completes_invalid_blob_upload_path(instance_id):
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+
+    seen = []
+
+    def echo(ctx, value):
+        seen.append(value)
+        return "x" * 1024
+
+    with BlobPayloadStore(BlobPayloadStoreOptions(
+            account_url="https://example.blob.core.windows.net", threshold_bytes=100)) as store:
+        with DurableTaskSchedulerWorker(
+                host_address="localhost:4001", taskhub="hub",
+                token_credential=None, payload_store=store) as worker:
+            name = worker.add_orchestrator(echo)
+            request = pb.OrchestratorRequest(instanceId=instance_id, newEvents=[
+                helpers.new_orchestrator_started_event(),
+                helpers.new_execution_started_event(name, instance_id, '"small"'),
+            ])
+            stub = Mock()
+            with patch("azure.core.pipeline.transport.RequestsTransport.send") as send:
+                worker._execute_orchestrator(request, stub, "token")
+
+    assert seen == ["small"]
+    send.assert_not_called()
+    stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    stub.CompleteOrchestratorTask.assert_called_once()
+    response = stub.CompleteOrchestratorTask.call_args.args[0]
+    assert response.completionToken == "token"
+    completion = response.actions[-1].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert not completion.HasField("result")
+    assert completion.failureDetails.isNonRetriable
+    assert completion.failureDetails.errorType == "durabletask.internal.exceptions.PayloadValidationError"

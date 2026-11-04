@@ -1320,9 +1320,9 @@ class TaskHubGrpcWorker:
                 payload_helpers.externalize_payloads(
                     res, self._payload_store, instance_id=instance_id,
                 )
-        except pe.PayloadSizeExceededError as ex:
+        except (pe.PayloadSizeExceededError, pe.PayloadValidationError) as ex:
             self._logger.warning(
-                f"Orchestration '{instance_id}' exceeded the payload storage limit: {ex}"
+                f"Orchestration '{instance_id}' failed payload validation: {ex}"
             )
             # Use the original actions, not a partially externalized response.
             original = result if result is not None else ExecutionResults(list(res.actions), None)

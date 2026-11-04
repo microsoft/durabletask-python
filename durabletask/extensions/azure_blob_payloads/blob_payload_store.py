@@ -24,6 +24,7 @@ from azure.storage.blob.aio import (
 )
 
 from durabletask.extensions.azure_blob_payloads.options import BlobPayloadStoreOptions
+from durabletask.internal.exceptions import PayloadValidationError
 from durabletask.payload.store import PayloadStore
 
 logger = logging.getLogger("durabletask-blobpayloads")
@@ -449,7 +450,7 @@ class BlobPayloadStore(PayloadStore):
     def _validate_blob_name(blob_name: str) -> None:
         # HTTP transports can normalize dot segments out of the configured container.
         if any(part in (".", "..") for part in blob_name.split("/")):
-            raise ValueError("Blob payload names must not contain '.' or '..' path segments.")
+            raise PayloadValidationError("Blob payload names must not contain '.' or '..' path segments.")
 
     def _make_blob_name(self, instance_id: str | None = None) -> str:
         """Generate a blob name, optionally scoped under an instance ID folder."""

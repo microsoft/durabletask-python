@@ -25,6 +25,16 @@ FIXED
 Payload references and instance ID folders containing `.` or `..` path segments
 now raise `ValueError` before accessing storage.
 - Azure Blob payload operations no longer follow HTTP redirects.
+- Orchestration response externalization now reports invalid Blob upload paths
+as non-retriable failures instead of repeatedly abandoning the dispatch,
+preserving entity lock release and retries for transient Storage errors.
+
+> [!WARNING]
+> Existing histories may contain references outside the configured payload
+> access scopes or names with `.` or `..` path segments. These references now
+> fail during replay and retrieval; aligning current configuration does not
+> rewrite persisted tokens. Review retained references before upgrading; see
+> the [migration guidance](docs/features.md#blob-payload-access-scopes).
 
 ## v1.13.0
 

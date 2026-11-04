@@ -4,8 +4,10 @@
 """Offline tests of payload destinations through the real Azure Storage pipeline."""
 
 import asyncio
+import gzip
 import time
 from unittest.mock import Mock
+from urllib.parse import quote, urlsplit
 
 import pytest
 
@@ -17,6 +19,7 @@ from azure.core.pipeline.transport import (  # noqa: E402
     AioHttpTransport, AsyncHttpResponse, HttpResponse, RequestsTransport,
 )
 from requests import Request  # noqa: E402
+from requests.structures import CaseInsensitiveDict  # noqa: E402
 
 from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions  # noqa: E402
 from durabletask.internal import history_helpers  # noqa: E402
@@ -500,6 +503,114 @@ class AsyncRedirectResponse(AsyncHttpResponse):
 
     async def close(self):
         pass
+
+
+class PayloadResponseStream:
+    def __init__(self, response):
+        self.response = response
+        self.content_length = int(response.headers["content-length"])
+
+    def __iter__(self):
+        yield self.response.body()
+
+    async def __aiter__(self):
+        yield self.response.body()
+
+
+class PayloadResponse(RedirectResponse):
+    def body(self):
+        return self.internal_response
+
+    def stream_download(self, pipeline, **kwargs):
+        return PayloadResponseStream(self)
+
+
+class AsyncPayloadResponse(AsyncRedirectResponse):
+    def body(self):
+        return self.internal_response
+
+    def stream_download(self, pipeline, **kwargs):
+        return PayloadResponseStream(self)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("compression", [False, True])
+@pytest.mark.parametrize("endpoint", [PRIMARY, "https://localhost:10443/primary"])
+@pytest.mark.parametrize("instance_id", [
+    "folder/nested",
+    "folder/a b?query#fragment/\u96ea",
+    "folder/%2e%2e/%2F/%252e%252e",
+])
+async def test_real_sdk_payload_round_trip(
+        store_factory, monkeypatch, use_async, compression, endpoint, instance_id):
+    requests = []
+    stored = {}
+    payload = b'{"value":"' + b"payload" * 100 + b'"}'
+
+    def response(request, cls):
+        prepared = Request(request.method, request.url, data=request.body).prepare()
+        requests.append(prepared)
+        if request.method == "PUT":
+            stored[prepared.url] = prepared.body
+            content, status = b"", 201
+        else:
+            assert request.method == "GET"
+            content, status = stored[prepared.url], 206
+        result = cls(request)
+        result.internal_response = content
+        result.status_code = status
+        result.reason = "Created" if status == 201 else "Partial Content"
+        result.headers = CaseInsensitiveDict({
+            "etag": '"synthetic"', "content-length": str(len(content)),
+            "x-ms-blob-type": "BlockBlob",
+            "last-modified": "Tue, 03 Nov 2026 19:00:00 GMT",
+        })
+        if status == 206:
+            result.headers["content-range"] = f"bytes 0-{len(content) - 1}/{len(content)}"
+        return result
+
+    def send(self, request, **kwargs):
+        return response(request, PayloadResponse)
+
+    async def send_async(self, request, **kwargs):
+        return response(request, AsyncPayloadResponse)
+
+    monkeypatch.setattr(RequestsTransport, "send", send)
+    monkeypatch.setattr(AioHttpTransport, "send", send_async)
+    store = store_factory(account_url=endpoint, enable_compression=compression)
+    store._ensure_container_created = True
+    token = (await store.upload_async(payload, instance_id=instance_id) if use_async
+             else store.upload(payload, instance_id=instance_id))
+    location = token.removeprefix("blob:v2:")
+    blob_name = store._get_download_destination(token)[2]
+    assert blob_name.startswith(instance_id + "/")
+    assert location == f"{endpoint}/durabletask-payloads/{quote(blob_name, safe='/')}"
+    assert (gzip.decompress(stored[location]) if compression else stored[location]) == payload
+    for reference in (token, f"blob:v1:durabletask-payloads:{blob_name}"):
+        actual = await store.download_async(reference) if use_async else store.download(reference)
+        assert actual == payload
+    assert [request.method for request in requests] == ["PUT", "GET", "GET"]
+    assert all(request.url == location for request in requests)
+    expected_path = f"{urlsplit(endpoint).path}/durabletask-payloads/{quote(blob_name, safe='/')}"
+    assert all(urlsplit(request.url).path == expected_path for request in requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("instance_id", [".", "..", "folder/../child", "folder/./child"])
+async def test_invalid_upload_paths_fail_before_credentials_and_http(
+        offline_storage, store_factory, use_async, instance_id):
+    from durabletask.internal.exceptions import PayloadValidationError
+
+    store = store_factory()
+    with pytest.raises(PayloadValidationError, match="path segments") as failure:
+        if use_async:
+            await store.upload_async(b"payload", instance_id=instance_id)
+        else:
+            store.upload(b"payload", instance_id=instance_id)
+    assert isinstance(failure.value, ValueError)
+    assert not offline_storage and not store.options.credential.calls
 
 
 @pytest.mark.asyncio

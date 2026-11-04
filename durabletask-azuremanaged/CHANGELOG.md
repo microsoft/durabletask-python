@@ -17,6 +17,12 @@ including v2 uploads and v1-compatible reads within the configured payload
 access scopes. Older Python SDK versions cannot read v2; see the
 [core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
 
+FIXED
+
+- Orchestration response externalization now reports invalid Blob upload paths
+without repeated dispatch abandonment, preserving entity lock release and
+transient Storage retries through the inherited core worker handling.
+
 ## v1.13.0
 
 ADDED
