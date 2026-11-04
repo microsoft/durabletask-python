@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.13.1
+
 ADDED
 
 - Added inherited Blob payload access scopes with a configured-container default
@@ -16,6 +18,11 @@ and explicit account-wide and additional-account opt-ins; see
 including v2 uploads and v1-compatible reads within the configured payload
 access scopes. Older Python SDK versions cannot read v2; see the
 [core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.13.1, including the
+`azure-blob-payloads` extra.
 
 FIXED
 
