@@ -360,7 +360,7 @@ pip install durabletask[azure-blob-payloads]
    compressed (GZip, enabled by default) and uploaded to the
    external store.
 2. The original payload in the gRPC message is replaced with a
-   compact token (e.g. `blob:v1:<container>:<blobName>`).
+   compact token (e.g. `blob:v2:https://<account>.blob.core.windows.net/<container>/<blobName>`).
 3. When the worker or client receives a message containing a token,
    it downloads and decompresses the original payload automatically.
 
@@ -428,13 +428,146 @@ store = BlobPayloadStore(BlobPayloadStoreOptions(
 | `container_name` | `"durabletask-payloads"` | Azure Blob container name |
 | `connection_string` | `None` | Azure Storage connection string |
 | `account_url` | `None` | Azure Storage account URL (use with `credential`) |
-| `credential` | `None` | `TokenCredential` for token-based auth |
+| `credential` | `None` | Storage credential; see supported modes below |
+| `allow_all_containers_in_configured_account` | `False` | Read all primary-account containers |
+| `additional_account_urls` | `[]` | Additional exact account endpoints for reads |
+
+#### Blob payload access scopes
+
+By default, `BlobPayloadStore` reads only from the configured account endpoint **and** configured
+container, even if its credentials have broader Storage permissions. Token recognition identifies a
+reference's format; knowing a Blob URL does not authorize its destination.
+
+Two independent options can broaden reads:
+
+- `allow_all_containers_in_configured_account=True` permits all containers in the configured
+  account, without allowing other account endpoints.
+- `additional_account_urls` permits all containers within each explicitly listed additional
+  account endpoint. It does not broaden access to the primary account's other containers.
+
+Both options affect downloads only. Uploads still use `account_url` (or the connection string)
+and `container_name`. Account endpoints are compared by scheme, case-insensitive hostname,
+effective port (443 for HTTPS, 80 for HTTP), and the complete case-sensitive account path for
+path-style endpoints. These are exact endpoint scopes, not hostname-only allowlists. Listing
+`https://account.blob.core.windows.net` does not permit HTTP, another port, or another account.
+For Azurite, `/devstoreaccount1` and `/anotheraccount` are different account paths on the same host.
+IP-address and `localhost` account endpoints must include one account-path segment recognized
+by the Azure Blob SDK. Arbitrary custom-host path prefixes and container/blob endpoint URLs
+are not account endpoints. Paths that the SDK rewrites or does not recognize are rejected;
+this includes IPv6 path-style endpoints not recognized by the current Python Azure Blob SDK.
+URL paths are decoded once and blob names are re-escaped through the configured Azure Blob client.
+Dot path segments are rejected, and HTTP redirects are not followed.
+
+When response externalization encounters an invalid Blob upload path or exceeds the stored-payload
+size limit, core and Azure Managed workers report non-retriable failures for orchestrations,
+activities, and entity operations. Orchestration failures release acquired entity locks. Entity
+batches discard their new state and outgoing actions, retain the original state (including an
+existing payload reference), and fail the previously successful operations; existing operation
+failures are preserved. This completes the work item without redelivering those operations.
+Transient Storage errors and incoming-reference resolution failures retain the existing retry behavior.
+
+For example, to read references from all containers in one **additional** account while retaining
+the default container restriction in the primary account:
+
+```python
+store = BlobPayloadStore(BlobPayloadStoreOptions(
+    account_url="https://primary.blob.core.windows.net",
+    container_name="durabletask-payloads",
+    credential=DefaultAzureCredential(),
+    additional_account_urls=["https://archive.blob.core.windows.net"],
+))
+```
+
+Set `allow_all_containers_in_configured_account=True` separately only when all containers in the
+primary account should be readable. Do not list the primary account as an additional endpoint;
+construction rejects that configuration. Additional endpoints must be complete HTTPS account
+service URLs without credentials, query parameters, or fragments. Equivalent entries are deduplicated.
+
+| Authentication | Default container and account-wide primary reads | Additional-account reads |
+|---|---|---|
+| `account_url` with `TokenCredential` | Supported | Supported with an explicit endpoint list |
+| Connection string / account key | Supported within the configured account | Not supported |
+| SAS (URL, connection string, or credential) | Original SAS permissions only | Not supported |
+| Anonymous | Supported for publicly readable blobs | Not supported |
+
+Additional-account scope requires `account_url` and a token credential; unsupported combinations
+raise `ValueError` during store construction, before credential acquisition or HTTP requests.
+The same configured identity is used for every allowed account, and Azure Storage permissions still
+apply. A container-scoped SAS is not upgraded to account-wide permissions by the account-wide
+option. Storage authentication and permission errors propagate; the store never switches to
+another identity, a different authentication mode, or anonymous access. Use a credential compatible
+with the operations being called: synchronous token credentials work with both SDK call styles;
+async-only credentials require asynchronous operations.
+
+Scopes are captured at store construction. Create a new store after changing scope configuration.
+Removing an allowed account or disabling account-wide access makes affected references fail with
+`ValueError` before Storage access; their tokens are not rewritten or treated as successful reads.
+For v2 references retained across an account migration, list the old endpoint explicitly and ensure
+the configured token identity can still read it. For a container change within the same account,
+account-wide access can retain reads of the old container. Legacy v1 references do not record an
+account: they always use the currently configured account, so an additional-account list cannot
+recover their original account automatically. Keep the original account configuration when reading
+those references, or migrate them separately. Retain the original compression settings as well.
+
+> [!WARNING]
+> Review retained references before upgrading. Existing histories with references outside the
+> configured access scopes, or blob names containing `.` or `..` path segments, now fail during
+> replay and retrieval. Aligning current clients and workers does not rewrite persisted tokens.
+> Explicit broader scopes can retain reads of authorized older locations, but do not permit
+> dot-segment paths; migrate affected references separately or finish affected instances on the
+> previous SDK before switching.
+
+The policy is shared by core clients and workers, history retrieval, Azure Managed clients and
+workers, and Functions payload handling (including JSON-quoted references and entity envelopes).
+Custom `PayloadStore` implementations define their own policy. This repository implements no
+external-payload Blob deletion or purge cleanup; orchestration purge submits a backend RPC and
+does not delete payload blobs here. It also implements no dashboard Blob-read service. Dashboard
+reads performed elsewhere with the signed-in user's delegated Storage identity remain independent;
+this SDK does not provide fallback to worker or service credentials.
 
 #### Cross-SDK compatibility
 
-The blob token format (`blob:v1:<container>:<blobName>`) is compatible with the .NET Durable Task
-SDK, enabling interoperability between Python and .NET workers sharing the same task hub and storage
-account. Note that message serialization strategies may differ for complex objects and custom types.
+New uploads use the .NET-compatible `blob:v2:<fullBlobUrl>` format. Each reference records the
+Storage endpoint, container, and URL-escaped blob name. DNS-style Azure endpoints and path-style
+Azurite endpoints are supported. SAS query parameters are not included in emitted references;
+downloads use the store's configured credentials, not credentials supplied in a reference.
+
+Downloads also accept existing `blob:v1:<container>:<blobName>` references, using the configured
+Storage account. Both formats follow the [configured access scopes](#blob-payload-access-scopes):
+the default is the configured endpoint and container only. References outside those scopes raise
+`ValueError` before accessing storage, even if the configured credentials could read them.
+Repointing the store does not automatically allow the old account or container. V2 URLs must not
+contain userinfo. For compatibility, query parameters and fragments in older v2 references are
+discarded before selecting a destination or creating a client. Token SAS credentials, snapshots,
+and version selectors are never used; configured credentials (including a configured SAS) still apply.
+Blob names and instance ID folders must not contain `.` or `..` path segments, which HTTP transports
+can normalize. Escaped separators cannot change the selected account or container.
+
+> [!WARNING]
+> Older Python SDK versions cannot resolve v2 references. Upgrade all payload-reading clients
+> and workers before enabling new writers, and avoid mixing older workers with v2 writers on
+> the same task hub. Existing v1 references remain readable when their original Storage endpoint,
+> container, and compression settings are retained.
+
+Python and .NET workers can exchange references when configured for the same payload location.
+New compressed uploads set the Blob's `Content-Encoding: gzip` property, as the .NET and Go stores
+do. Python downloads disable transport decompression and explicitly decompress marked GZIP blobs,
+including when `enable_compression=False`. This avoids decoding the same body twice. Invalid GZIP
+raises an error rather than falling back to plain data.
+
+Headerless blobs retain Python's previous behavior: `enable_compression=True` expects GZIP bytes,
+and `False` expects uncompressed bytes. Keep the original setting when reading those blobs.
+Existing Python-compressed blobs without the encoding property are **not** automatically
+interoperable with .NET or Go; those readers rely on the header. Uncompressed v2 payloads with
+compression disabled on the Python reader can be exchanged without that limitation.
+
+> [!WARNING]
+> Upgrade all Python payload readers before enabling new writers. Older Python readers may
+> transparently decode header-marked GZIP and then attempt a second decompression, even if they
+> understand the token format. Existing headerless blobs are not rewritten; retaining their
+> original compression setting remains necessary.
+
+Message serialization strategies may still differ for complex objects and custom types.
 
 #### Custom payload stores
 

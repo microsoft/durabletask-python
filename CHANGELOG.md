@@ -7,6 +7,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added explicit account-wide and additional-account download scopes to
+`BlobPayloadStoreOptions`, retaining the configured endpoint and container as
+the default. Additional accounts require the configured token credential;
+see [access scopes](docs/features.md#blob-payload-access-scopes).
+- Added .NET-compatible `blob:v2` payload references containing the full Blob URL.
+New uploads use v2; existing v1 references remain readable. Legacy v2 query
+parameters and fragments are ignored, retaining configured authentication. Both formats follow
+the configured payload access scopes. Older Python SDK versions cannot read v2;
+see the [upgrade guidance](docs/features.md#cross-sdk-compatibility).
+
+FIXED
+
+- Azure Blob payload downloads now default to the configured endpoint and container.
+Payload references and instance ID folders containing `.` or `..` path segments
+now raise `ValueError` before accessing storage.
+- Azure Blob payload operations no longer follow HTTP redirects.
+- Worker response externalization now reports invalid Blob upload paths and
+payload-size violations as non-retriable failures for orchestrations, activities,
+and entity operations, preserving entity lock release and transient Storage
+retries. Failed entity batches retain their original state and discard new actions.
+- Compressed Blob payload uploads now set `Content-Encoding: gzip` for .NET/Go
+interoperability. Downloads decode marked GZIP explicitly; legacy headerless
+blobs retain their original compression-setting requirement. Upgrade all Python
+readers before enabling new writers to avoid double decompression in older
+readers; see the [compatibility guidance](docs/features.md#cross-sdk-compatibility).
+
+> [!WARNING]
+> Existing histories may contain references outside the configured payload
+> access scopes or names with `.` or `..` path segments. These references now
+> fail during replay and retrieval; aligning current configuration does not
+> rewrite persisted tokens. Review retained references before upgrading; see
+> the [migration guidance](docs/features.md#blob-payload-access-scopes).
+
 ## v1.13.0
 
 ADDED

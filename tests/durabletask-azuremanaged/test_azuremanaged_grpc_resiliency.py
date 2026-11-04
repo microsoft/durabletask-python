@@ -5,6 +5,8 @@ from unittest.mock import Mock, patch
 from collections.abc import Mapping
 from typing import Any
 
+import pytest
+
 from durabletask import task
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
@@ -126,3 +128,86 @@ def test_async_dts_client_passes_resiliency_options_to_base_client():
             resiliency_options=resiliency,
         )
     assert mock_init.call_args.kwargs["resiliency_options"] is resiliency
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+@pytest.mark.parametrize("container", ["durabletask-payloads", "other-container"])
+@pytest.mark.parametrize("account_wide", [False, True])
+def test_dts_worker_resolves_blob_payloads_within_scope(version, container, account_wide):
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+
+    reference = (f"blob:v1:{container}:blob" if version == "v1"
+                 else f"blob:v2:https://example.blob.core.windows.net/{container}/blob")
+    stream = Mock()
+    stream.readall.return_value = b'"resolved payload"'
+    seen = []
+
+    def echo(ctx, value):
+        seen.append(value)
+        return value
+
+    with BlobPayloadStore(BlobPayloadStoreOptions(
+            account_url="https://example.blob.core.windows.net", enable_compression=False,
+            allow_all_containers_in_configured_account=account_wide)) as store:
+        with DurableTaskSchedulerWorker(
+                host_address="localhost:4001", taskhub="hub",
+                token_credential=None, payload_store=store) as worker:
+            name = worker.add_orchestrator(echo)
+            request = pb.OrchestratorRequest(instanceId="instance", newEvents=[
+                helpers.new_orchestrator_started_event(),
+                helpers.new_execution_started_event(name, "instance", reference),
+            ])
+            stub = Mock()
+            with patch("azure.storage.blob.BlobClient.download_blob", return_value=stream) as download:
+                worker._execute_orchestrator(request, stub, "token")
+
+    if container == "durabletask-payloads" or account_wide:
+        download.assert_called_once_with(decompress=False)
+        assert seen == ["resolved payload"]
+        stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+        response = stub.CompleteOrchestratorTask.call_args.args[0]
+        assert response.actions[0].completeOrchestration.result.value == '"resolved payload"'
+    else:
+        download.assert_not_called()
+        assert not seen
+        stub.CompleteOrchestratorTask.assert_not_called()
+        stub.AbandonTaskOrchestratorWorkItem.assert_called_once()
+
+
+@pytest.mark.parametrize("instance_id", [".", "folder/../child"])
+def test_dts_worker_completes_invalid_blob_upload_path(instance_id):
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+
+    seen = []
+
+    def echo(ctx, value):
+        seen.append(value)
+        return "x" * 1024
+
+    with BlobPayloadStore(BlobPayloadStoreOptions(
+            account_url="https://example.blob.core.windows.net", threshold_bytes=100)) as store:
+        with DurableTaskSchedulerWorker(
+                host_address="localhost:4001", taskhub="hub",
+                token_credential=None, payload_store=store) as worker:
+            name = worker.add_orchestrator(echo)
+            request = pb.OrchestratorRequest(instanceId=instance_id, newEvents=[
+                helpers.new_orchestrator_started_event(),
+                helpers.new_execution_started_event(name, instance_id, '"small"'),
+            ])
+            stub = Mock()
+            with patch("azure.core.pipeline.transport.RequestsTransport.send") as send:
+                worker._execute_orchestrator(request, stub, "token")
+
+    assert seen == ["small"]
+    send.assert_not_called()
+    stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
+    stub.CompleteOrchestratorTask.assert_called_once()
+    response = stub.CompleteOrchestratorTask.call_args.args[0]
+    assert response.completionToken == "token"
+    completion = response.actions[-1].completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert not completion.HasField("result")
+    assert completion.failureDetails.isNonRetriable
+    assert completion.failureDetails.errorType == "durabletask.internal.exceptions.PayloadValidationError"

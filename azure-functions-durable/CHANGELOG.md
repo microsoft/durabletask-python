@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added inherited Blob payload access scopes, including JSON-quoted references,
+with a configured-container default and explicit account-wide and
+additional-account opt-ins; see
+[access scopes](../docs/features.md#blob-payload-access-scopes).
+- Added inherited `blob:v2` payload reference support through `BlobPayloadStore`,
+preserving Functions-compatible JSON-quoted references and v1 reads within the
+configured payload access scopes. Older Python SDK versions cannot read v2; see the
+[core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
+
+FIXED
+
+- Compressed Blob payload uploads now set the GZIP encoding property through
+the core store, and marked downloads decode explicitly. Upgrade all Python
+readers before enabling new writers; existing headerless blobs still require
+their original compression setting. See the
+[core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
+
 ## v2.0.0rc4
 
 ADDED

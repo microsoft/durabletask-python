@@ -188,7 +188,9 @@ explicit history retrieval continues to hydrate those inputs.
 > With payload storage configured, whole payload strings recognized by the
 > store's `is_known_token()` are reserved references, not literal application
 > data. For `BlobPayloadStore`, this includes strings of the form
-> `blob:v1:<container>:<blobName>`, with nonempty container and blob names.
+> `blob:v1:<container>:<blobName>` and `blob:v2:<fullBlobUrl>`.
+> New uploads use v2; both formats default to reads within the configured
+> Storage endpoint and container.
 > Functions recognizes both raw and JSON-quoted references. A matching string
 > is treated as already externalized on output and downloaded on input, even
 > below the size threshold. Missing or inaccessible references raise errors;
@@ -203,15 +205,23 @@ durable payload boundary; passing its string field alone opts back into referenc
 interpretation. Custom payload stores define their own reserved token syntax.
 
 > [!WARNING]
-> Recognized references are trusted transport inputs, not authorization
-> boundaries. `BlobPayloadStore` reads from the container named in the token
-> using its configured credentials; `container_name` selects the upload
-> container and does not restrict downloads. An account-wide connection string
-> can therefore allow reads outside that container. Use least-privilege
-> credentials scoped to the intended payload storage, and explicitly decide
-> whether external callers may supply references. Reject untrusted references
-> or validate their allowed storage locations before passing them into durable
-> APIs; token recognition alone does not authorize a read.
+> Older Python SDK versions cannot resolve v2 references. Upgrade all readers
+> before enabling v2 writers; see the
+> [core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
+> New compressed uploads also set `Content-Encoding: gzip`; older Python
+> readers may decode them twice. Existing headerless blobs retain their
+> original compression-setting requirement.
+
+`BlobPayloadStore` uses its configured credentials and defaults to reads within
+the configured account endpoint and container. Explicit account-wide and
+additional-account scopes are available; see
+[Blob payload access scopes](../docs/features.md#blob-payload-access-scopes).
+References outside the configured scopes fail before Storage access.
+Legacy v2 query parameters and fragments are ignored; only the store's configured
+credentials are used. This location check does not provide per-instance
+authorization within the payload container. Use
+least-privilege credentials scoped to the intended payload storage, and
+explicitly decide whether external callers may supply references.
 
 ## Unit testing entities
 
