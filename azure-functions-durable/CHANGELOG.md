@@ -18,6 +18,14 @@ preserving Functions-compatible JSON-quoted references and v1 reads within the
 configured payload access scopes. Older Python SDK versions cannot read v2; see the
 [core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
 
+FIXED
+
+- Compressed Blob payload uploads now set the GZIP encoding property through
+the core store, and marked downloads decode explicitly. Upgrade all Python
+readers before enabling new writers; existing headerless blobs still require
+their original compression setting. See the
+[core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
+
 ## v2.0.0rc4
 
 ADDED

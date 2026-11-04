@@ -522,6 +522,7 @@ class PayloadResponse(RedirectResponse):
         return self.internal_response
 
     def stream_download(self, pipeline, **kwargs):
+        assert kwargs["decompress"] is False
         return PayloadResponseStream(self)
 
 
@@ -530,6 +531,7 @@ class AsyncPayloadResponse(AsyncRedirectResponse):
         return self.internal_response
 
     def stream_download(self, pipeline, **kwargs):
+        assert kwargs["decompress"] is False
         return PayloadResponseStream(self)
 
 
@@ -549,7 +551,7 @@ async def test_real_sdk_payload_round_trip(
     payload = b'{"value":"' + b"payload" * 100 + b'"}'
 
     def response(request, cls):
-        prepared = Request(request.method, request.url, data=request.body).prepare()
+        prepared = Request(request.method, request.url, headers=dict(request.headers), data=request.body).prepare()
         requests.append(prepared)
         if request.method == "PUT":
             stored[prepared.url] = prepared.body
@@ -568,6 +570,8 @@ async def test_real_sdk_payload_round_trip(
         })
         if status == 206:
             result.headers["content-range"] = f"bytes 0-{len(content) - 1}/{len(content)}"
+            if compression:
+                result.headers["content-encoding"] = "gzip"
         return result
 
     def send(self, request, **kwargs):
@@ -587,6 +591,7 @@ async def test_real_sdk_payload_round_trip(
     assert blob_name.startswith(instance_id + "/")
     assert location == f"{endpoint}/durabletask-payloads/{quote(blob_name, safe='/')}"
     assert (gzip.decompress(stored[location]) if compression else stored[location]) == payload
+    assert requests[0].headers.get("x-ms-blob-content-encoding") == ("gzip" if compression else None)
     for reference in (token, f"blob:v1:durabletask-payloads:{blob_name}"):
         actual = await store.download_async(reference) if use_async else store.download(reference)
         assert actual == payload
@@ -594,6 +599,43 @@ async def test_real_sdk_payload_round_trip(
     assert all(request.url == location for request in requests)
     expected_path = f"{urlsplit(endpoint).path}/durabletask-payloads/{quote(blob_name, safe='/')}"
     assert all(urlsplit(request.url).path == expected_path for request in requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("compression", [False, True])
+async def test_marked_gzip_from_additional_account_uses_explicit_decoding(
+        store_factory, monkeypatch, use_async, compression):
+    payload = b'{"value":"payload"}'
+    compressed = gzip.compress(payload)
+    requests = []
+
+    def response(request, cls):
+        requests.append(request.url)
+        result = cls(request)
+        result.internal_response = compressed
+        result.status_code, result.reason = 206, "Partial Content"
+        result.headers = CaseInsensitiveDict({
+            "content-length": str(len(compressed)), "content-encoding": "gzip",
+            "content-range": f"bytes 0-{len(compressed) - 1}/{len(compressed)}",
+            "x-ms-blob-type": "BlockBlob", "etag": '"synthetic"',
+        })
+        return result
+
+    def send(self, request, **kwargs):
+        return response(request, PayloadResponse)
+
+    async def send_async(self, request, **kwargs):
+        return response(request, AsyncPayloadResponse)
+
+    monkeypatch.setattr(RequestsTransport, "send", send)
+    monkeypatch.setattr(AioHttpTransport, "send", send_async)
+    store = store_factory(enable_compression=compression, additional_account_urls=[ADDITIONAL])
+    reference = f"blob:v2:{ADDITIONAL}/other-container/blob"
+    actual = await store.download_async(reference) if use_async else store.download(reference)
+    assert actual == payload
+    assert requests == [reference.removeprefix("blob:v2:")]
+    assert len(store.options.credential.calls) == 1
 
 
 @pytest.mark.asyncio

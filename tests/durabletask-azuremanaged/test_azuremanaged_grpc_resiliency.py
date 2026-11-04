@@ -163,7 +163,7 @@ def test_dts_worker_resolves_blob_payloads_within_scope(version, container, acco
                 worker._execute_orchestrator(request, stub, "token")
 
     if container == "durabletask-payloads" or account_wide:
-        download.assert_called_once_with()
+        download.assert_called_once_with(decompress=False)
         assert seen == ["resolved payload"]
         stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
         response = stub.CompleteOrchestratorTask.call_args.args[0]

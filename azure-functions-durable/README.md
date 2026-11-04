@@ -208,6 +208,9 @@ interpretation. Custom payload stores define their own reserved token syntax.
 > Older Python SDK versions cannot resolve v2 references. Upgrade all readers
 > before enabling v2 writers; see the
 > [core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
+> New compressed uploads also set `Content-Encoding: gzip`; older Python
+> readers may decode them twice. Existing headerless blobs retain their
+> original compression-setting requirement.
 
 `BlobPayloadStore` uses its configured credentials and defaults to reads within
 the configured account endpoint and container. Explicit account-wide and

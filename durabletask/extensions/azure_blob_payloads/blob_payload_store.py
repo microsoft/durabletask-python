@@ -16,7 +16,7 @@ from urllib.parse import SplitResult, quote, unquote, urlsplit
 
 from azure.core.credentials import TokenCredential
 from azure.core.exceptions import ResourceExistsError
-from azure.storage.blob import BlobClient, BlobServiceClient, ContainerClient
+from azure.storage.blob import BlobClient, BlobServiceClient, ContainerClient, ContentSettings
 from azure.storage.blob.aio import (
     BlobClient as AsyncBlobClient,
     BlobServiceClient as AsyncBlobServiceClient,
@@ -231,10 +231,14 @@ class BlobPayloadStore(PayloadStore):
         self._validate_blob_client(blob, self._configured_endpoint, self._container_name, blob_name)
         self._ensure_container_sync()
 
+        content_settings = None
         if self._options.enable_compression:
             data = gzip.compress(data)
+            content_settings = ContentSettings(content_encoding="gzip")
 
-        blob.upload_blob(data=data, overwrite=True)
+        blob.upload_blob(
+            data=data, overwrite=True, content_settings=content_settings,
+        )
 
         token = self._encode_token(blob.url)
         logger.debug("Uploaded %d bytes -> %s", len(data), token)
@@ -247,9 +251,11 @@ class BlobPayloadStore(PayloadStore):
         )
         blob = container_client.get_blob_client(blob_name)
         self._validate_blob_client(blob, endpoint, container, blob_name)
-        blob_data = blob.download_blob().readall()
+        stream = blob.download_blob(decompress=False)
+        blob_data = stream.readall()
 
-        if self._options.enable_compression:
+        encoding = stream.properties.content_settings.content_encoding
+        if self._options.enable_compression or encoding is not None and encoding.lower() == "gzip":
             blob_data = gzip.decompress(blob_data)
 
         logger.debug("Downloaded %d bytes <- %s", len(blob_data), self._encode_token(blob.url))
@@ -268,10 +274,14 @@ class BlobPayloadStore(PayloadStore):
         self._validate_blob_client(blob, self._configured_endpoint, self._container_name, blob_name)
         await self._ensure_container_async()
 
+        content_settings = None
         if self._options.enable_compression:
             data = await asyncio.to_thread(gzip.compress, data)
+            content_settings = ContentSettings(content_encoding="gzip")
 
-        await blob.upload_blob(data=data, overwrite=True)
+        await blob.upload_blob(
+            data=data, overwrite=True, content_settings=content_settings,
+        )
 
         token = self._encode_token(blob.url)
         logger.debug("Uploaded %d bytes -> %s", len(data), token)
@@ -284,10 +294,11 @@ class BlobPayloadStore(PayloadStore):
         )
         blob = container_client.get_blob_client(blob_name)
         self._validate_blob_client(blob, endpoint, container, blob_name)
-        stream = await blob.download_blob()
+        stream = await blob.download_blob(decompress=False)
         blob_data = await stream.readall()
 
-        if self._options.enable_compression:
+        encoding = stream.properties.content_settings.content_encoding
+        if self._options.enable_compression or encoding is not None and encoding.lower() == "gzip":
             blob_data = await asyncio.to_thread(gzip.decompress, blob_data)
 
         logger.debug("Downloaded %d bytes <- %s", len(blob_data), self._encode_token(blob.url))

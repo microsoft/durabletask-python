@@ -1435,9 +1435,25 @@ class TaskHubGrpcWorker:
 
             try:
                 # Externalize any large payloads in the response
-                if self._payload_store is not None:
-                    payload_helpers.externalize_payloads(
-                        res, self._payload_store, instance_id=instance_id,
+                try:
+                    if self._payload_store is not None:
+                        payload_helpers.externalize_payloads(
+                            res, self._payload_store, instance_id=instance_id,
+                        )
+                except (pe.PayloadSizeExceededError, pe.PayloadValidationError) as ex:
+                    self._logger.warning(
+                        f"Activity '{req.name}#{req.taskId}' of orchestration '{instance_id}' "
+                        f"failed payload validation: {ex}"
+                    )
+                    res = pb.ActivityResponse(
+                        instanceId=instance_id,
+                        taskId=req.taskId,
+                        completionToken=completionToken,
+                        failureDetails=pb.TaskFailureDetails(
+                            errorType=ph.get_qualified_name(type(ex)),
+                            errorMessage=str(ex)[:1024],
+                            isNonRetriable=True,
+                        ),
                     )
                 stub.CompleteActivityTask(res)
             except Exception as ex:
@@ -1470,6 +1486,7 @@ class TaskHubGrpcWorker:
         if isinstance(req, pb.EntityRequest):
             req, operation_infos = helpers.convert_to_entity_batch_request(req)
 
+        original_state = req.entityState.value if req.HasField("entityState") else None
         # De-externalize any large-payload tokens in the incoming request
         if self._payload_store is not None:
             payload_helpers.deexternalize_payloads(req, self._payload_store)
@@ -1553,9 +1570,35 @@ class TaskHubGrpcWorker:
 
         try:
             # Externalize any large payloads in the response
-            if self._payload_store is not None:
-                payload_helpers.externalize_payloads(
-                    batch_result, self._payload_store, instance_id=instance_id,
+            try:
+                if self._payload_store is not None:
+                    payload_helpers.externalize_payloads(
+                        batch_result, self._payload_store, instance_id=instance_id,
+                    )
+            except (pe.PayloadSizeExceededError, pe.PayloadValidationError) as ex:
+                self._logger.warning(
+                    f"Entity '{instance_id}' failed payload validation: {ex}"
+                )
+                failure_details = pb.TaskFailureDetails(
+                    errorType=ph.get_qualified_name(type(ex)),
+                    errorMessage=str(ex)[:1024],
+                    isNonRetriable=True,
+                )
+                # Discard this batch's state/actions and any partial externalization.
+                # A batch-level failure would cause the operations to be redelivered.
+                failed_results = [
+                    pb.OperationResult(failure=pb.OperationResultFailure(
+                        failureDetails=failure_details,
+                        startTimeUtc=result.success.startTimeUtc,
+                        endTimeUtc=result.success.endTimeUtc,
+                    )) if result.HasField("success") else result
+                    for result in results
+                ]
+                batch_result = pb.EntityBatchResult(
+                    results=failed_results,
+                    entityState=ph.get_string_value(original_state),
+                    completionToken=completionToken,
+                    operationInfos=operation_infos,
                 )
             stub.CompleteEntityTask(batch_result)
         except Exception as ex:

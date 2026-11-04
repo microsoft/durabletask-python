@@ -19,9 +19,14 @@ access scopes. Older Python SDK versions cannot read v2; see the
 
 FIXED
 
-- Orchestration response externalization now reports invalid Blob upload paths
-without repeated dispatch abandonment, preserving entity lock release and
-transient Storage retries through the inherited core worker handling.
+- Worker response externalization now reports invalid Blob upload paths and
+payload-size violations as non-retriable orchestration, activity, and entity
+operation failures, preserving entity lock release and transient Storage retries.
+Failed entity batches retain their original state and discard new actions.
+- Compressed Blob uploads now set the GZIP encoding property, and marked
+downloads decode explicitly through the core store. Upgrade all Python readers
+before enabling new writers; headerless blobs still require their original
+compression setting. See the [core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
 
 ## v1.13.0
 

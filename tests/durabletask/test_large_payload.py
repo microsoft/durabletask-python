@@ -816,7 +816,7 @@ async def test_blob_configured_container_round_trip(
     folder = f"{instance_id}/" if instance_id else ""
     assert blob_name.startswith(folder)
     assert all(call.args == (store.options.container_name,) for call in service.get_container_client.call_args_list)
-    blob.download_blob.assert_called_once_with()
+    blob.download_blob.assert_called_once_with(decompress=False)
 
 
 @pytest.mark.asyncio
@@ -908,7 +908,7 @@ async def test_blob_v2_accepts_equivalent_endpoint_spelling(blob_payload_store, 
     service = async_service if use_async else sync_service
     container = service.get_container_client.return_value
     container.get_blob_client.assert_called_once_with("folder/a b%2Fc")
-    container.get_blob_client.return_value.download_blob.assert_called_once_with()
+    container.get_blob_client.return_value.download_blob.assert_called_once_with(decompress=False)
 
 
 @pytest.mark.asyncio

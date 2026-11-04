@@ -458,10 +458,13 @@ this includes IPv6 path-style endpoints not recognized by the current Python Azu
 URL paths are decoded once and blob names are re-escaped through the configured Azure Blob client.
 Dot path segments are rejected, and HTTP redirects are not followed.
 
-When orchestration response externalization encounters an invalid Blob upload path, core and
-Azure Managed workers complete the orchestration as failed with non-retriable failure details
-and release acquired entity locks. Transient Storage errors and incoming-reference resolution
-failures retain the existing dispatch retry behavior.
+When response externalization encounters an invalid Blob upload path or exceeds the stored-payload
+size limit, core and Azure Managed workers report non-retriable failures for orchestrations,
+activities, and entity operations. Orchestration failures release acquired entity locks. Entity
+batches discard their new state and outgoing actions, retain the original state (including an
+existing payload reference), and fail the previously successful operations; existing operation
+failures are preserved. This completes the work item without redelivering those operations.
+Transient Storage errors and incoming-reference resolution failures retain the existing retry behavior.
 
 For example, to read references from all containers in one **additional** account while retaining
 the default container restriction in the primary account:
@@ -547,6 +550,23 @@ can normalize. Escaped separators cannot change the selected account or containe
 > container, and compression settings are retained.
 
 Python and .NET workers can exchange references when configured for the same payload location.
+New compressed uploads set the Blob's `Content-Encoding: gzip` property, as the .NET and Go stores
+do. Python downloads disable transport decompression and explicitly decompress marked GZIP blobs,
+including when `enable_compression=False`. This avoids decoding the same body twice. Invalid GZIP
+raises an error rather than falling back to plain data.
+
+Headerless blobs retain Python's previous behavior: `enable_compression=True` expects GZIP bytes,
+and `False` expects uncompressed bytes. Keep the original setting when reading those blobs.
+Existing Python-compressed blobs without the encoding property are **not** automatically
+interoperable with .NET or Go; those readers rely on the header. Uncompressed v2 payloads with
+compression disabled on the Python reader can be exchanged without that limitation.
+
+> [!WARNING]
+> Upgrade all Python payload readers before enabling new writers. Older Python readers may
+> transparently decode header-marked GZIP and then attempt a second decompression, even if they
+> understand the token format. Existing headerless blobs are not rewritten; retaining their
+> original compression setting remains necessary.
+
 Message serialization strategies may still differ for complex objects and custom types.
 
 #### Custom payload stores

@@ -25,9 +25,15 @@ FIXED
 Payload references and instance ID folders containing `.` or `..` path segments
 now raise `ValueError` before accessing storage.
 - Azure Blob payload operations no longer follow HTTP redirects.
-- Orchestration response externalization now reports invalid Blob upload paths
-as non-retriable failures instead of repeatedly abandoning the dispatch,
-preserving entity lock release and retries for transient Storage errors.
+- Worker response externalization now reports invalid Blob upload paths and
+payload-size violations as non-retriable failures for orchestrations, activities,
+and entity operations, preserving entity lock release and transient Storage
+retries. Failed entity batches retain their original state and discard new actions.
+- Compressed Blob payload uploads now set `Content-Encoding: gzip` for .NET/Go
+interoperability. Downloads decode marked GZIP explicitly; legacy headerless
+blobs retain their original compression-setting requirement. Upgrade all Python
+readers before enabling new writers to avoid double decompression in older
+readers; see the [compatibility guidance](docs/features.md#cross-sdk-compatibility).
 
 > [!WARNING]
 > Existing histories may contain references outside the configured payload

@@ -47,6 +47,11 @@ class BlobPayloadStoreOptions(LargePayloadStorageOptions):
 
     Access scopes are captured when the store is constructed. Create a new
     store to change them. Azure Storage permissions still apply to every read.
+
+    Compressed uploads set ``Content-Encoding: gzip``. Downloads explicitly
+    decompress blobs with that property regardless of *enable_compression*.
+    For older headerless blobs, *enable_compression* retains its original
+    meaning: ``True`` expects GZIP bytes and ``False`` expects plain bytes.
     """
     container_name: str = "durabletask-payloads"
     connection_string: str | None = None
