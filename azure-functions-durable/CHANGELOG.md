@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- Functions clients now remove HTTP URL paths from the host RPC address before
+they connect through gRPC. Both async and sync clients keep the host and port.
+- Functions orchestration queries now request at most 1000 instances per page
+to support Azure Table Storage. Smaller explicit page sizes are kept. Queries
+still return all matching instances, including results after an empty page
+with a continuation token.
+
 ## v2.0.0rc4
 
 ADDED
