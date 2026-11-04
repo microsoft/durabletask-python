@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v1.13.1
+
 ADDED
 
 - Added explicit account-wide and additional-account download scopes to

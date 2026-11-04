@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v2.0.0rc5
+
 ADDED
 
 - Added inherited Blob payload access scopes, including JSON-quoted references,
@@ -17,6 +19,10 @@ additional-account opt-ins; see
 preserving Functions-compatible JSON-quoted references and v1 reads within the
 configured payload access scopes. Older Python SDK versions cannot read v2; see the
 [core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.13.1.
 
 FIXED
 
