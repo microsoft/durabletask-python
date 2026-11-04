@@ -307,7 +307,9 @@ class TestBlobStorageVerification:
         assert len(blobs) > 0, "Expected at least one blob in the container"
         # All blobs should contain compressed data (GZip header: 1f 8b)
         for blob in blobs:
-            data = container_client.download_blob(blob.name).readall()
+            stream = container_client.download_blob(blob.name, decompress=False)
+            assert stream.properties.content_settings.content_encoding == "gzip"
+            data = stream.readall()
             assert data[:2] == b"\x1f\x8b", f"Blob {blob.name} is not GZip-compressed"
 
 
