@@ -307,7 +307,9 @@ class TestBlobStorageVerification:
         assert len(blobs) > 0, "Expected at least one blob in the container"
         # All blobs should contain compressed data (GZip header: 1f 8b)
         for blob in blobs:
-            data = container_client.download_blob(blob.name).readall()
+            stream = container_client.download_blob(blob.name, decompress=False)
+            assert stream.properties.content_settings.content_encoding == "gzip"
+            data = stream.readall()
             assert data[:2] == b"\x1f\x8b", f"Blob {blob.name} is not GZip-compressed"
 
 
@@ -404,14 +406,18 @@ class TestAsyncBlobClient:
         assert downloaded == payload
 
     @pytest.mark.asyncio
-    async def test_async_upload_instance_id_scopes_blob(self, async_store):
+    @pytest.mark.parametrize("instance_id", ["inst-42", "space %/#?caf\u00e9", "literal/%2e%2e/name"])
+    async def test_async_upload_instance_id_scopes_blob(self, async_store, instance_id):
         """Blobs uploaded with instance_id are scoped under that prefix."""
         payload = b"scoped payload"
-        token = await async_store.upload_async(payload, instance_id="inst-42")
+        token = await async_store.upload_async(payload, instance_id=instance_id)
 
-        # Token format: blob:v1:<container>:<instance_id>/<uuid>
-        _, blob_name = BlobPayloadStore._parse_token(token)
-        assert blob_name.startswith("inst-42/")
+        assert token.startswith("blob:v2:")
+        blob_name = async_store._get_download_destination(token)[2]
+        assert blob_name.startswith(f"{instance_id}/")
 
         downloaded = await async_store.download_async(token)
         assert downloaded == payload
+
+        legacy = f"blob:v1:{async_store.options.container_name}:{blob_name}"
+        assert await async_store.download_async(legacy) == payload

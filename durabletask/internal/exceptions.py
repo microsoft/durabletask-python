@@ -16,3 +16,7 @@ class AbandonOrchestrationError(Exception):
 
 class PayloadSizeExceededError(ValueError):
     """A raw payload exceeds the configured external storage limit."""
+
+
+class PayloadValidationError(ValueError):
+    """A payload path would change its selected storage destination."""
