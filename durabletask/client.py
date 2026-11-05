@@ -644,9 +644,9 @@ class TaskHubGrpcClient:
                 name, resolved_instance_id, version=resolved_version,
             ):
                 req = build_schedule_new_orchestration_req(
-                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    orchestrator, input=input, instance_id=resolved_instance_id, start_at=start_at,
                     reuse_id_policy=reuse_id_policy, tags=tags,
-                    version=version if version else self.default_version,
+                    version=resolved_version,
                     data_converter=self._data_converter)
 
                 # Inject the active PRODUCER span context, or the ambient context
@@ -1192,9 +1192,9 @@ class AsyncTaskHubGrpcClient:
                 name, resolved_instance_id, version=resolved_version,
             ):
                 req = build_schedule_new_orchestration_req(
-                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    orchestrator, input=input, instance_id=resolved_instance_id, start_at=start_at,
                     reuse_id_policy=reuse_id_policy, tags=tags,
-                    version=version if version else self.default_version,
+                    version=resolved_version,
                     data_converter=self._data_converter)
 
                 parent_trace_ctx = tracing.get_current_trace_context()
