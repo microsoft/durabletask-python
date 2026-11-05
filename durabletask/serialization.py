@@ -292,6 +292,8 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             if not args:
                 return True
             return _is_supported_set_element(converter, args[0])
+        if origin in (dict, Mapping):
+            return len(args) == 2 and converter.can_reconstruct(args[1])
         return False
     if not isinstance(target_type, type):
         return False
