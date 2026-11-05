@@ -432,6 +432,47 @@ def test_activity_input_coerced_via_from_json():
     assert json.loads(result) == 50
 
 
+def test_activity_input_coerced_for_dict_of_dataclass():
+    seen: dict[str, Any] = {}
+
+    def handle(ctx: task.ActivityContext, orders: dict[str, Order]):
+        seen["orders"] = orders
+        return sum(o.quantity for o in orders.values())
+
+    executor, name = _activity_executor(handle)
+    payload = json.dumps({"o1": {"item": "widget", "quantity": 3}, "o2": {"item": "gadget", "quantity": 7}})
+    result = executor.execute("orch1", name, 1, payload)
+
+    orders = seen["orders"]
+    assert isinstance(orders, dict)
+    assert isinstance(orders["o1"], Order)
+    assert isinstance(orders["o2"], Order)
+    assert orders["o1"].item == "widget"
+    assert orders["o2"].quantity == 7
+    assert json.loads(result) == 10
+
+
+def test_activity_input_coerced_for_tuple_of_dataclass():
+    seen: dict[str, Any] = {}
+
+    def handle(ctx: task.ActivityContext, orders: tuple[Order, ...]):
+        seen["orders"] = orders
+        return len(orders)
+
+    executor, name = _activity_executor(handle)
+    payload = json.dumps([{"item": "widget", "quantity": 3}, {"item": "gadget", "quantity": 7}])
+    result = executor.execute("orch1", name, 1, payload)
+
+    orders = seen["orders"]
+    assert isinstance(orders, tuple)
+    assert len(orders) == 2
+    assert isinstance(orders[0], Order)
+    assert isinstance(orders[1], Order)
+    assert orders[0].item == "widget"
+    assert orders[1].quantity == 7
+    assert json.loads(result) == 2
+
+
 def test_activity_builtin_input_unchanged():
     seen: dict[str, Any] = {}
 
