@@ -634,7 +634,11 @@ class TaskHubGrpcClient:
                                    reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
                                    tags: dict[str, str] | None = None,
                                    version: str | None = None) -> str:
+        """Schedule a new orchestration instance for execution.
 
+        If instance_id is not specified, a random UUID hex string is generated upfront
+        and shared across both the OpenTelemetry producer span and the CreateInstanceRequest.
+        """
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
@@ -1182,7 +1186,11 @@ class AsyncTaskHubGrpcClient:
                                          reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
                                          tags: dict[str, str] | None = None,
                                          version: str | None = None) -> str:
+        """Schedule a new orchestration instance for execution asynchronously.
 
+        If instance_id is not specified, a random UUID hex string is generated upfront
+        and shared across both the OpenTelemetry producer span and the CreateInstanceRequest.
+        """
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
