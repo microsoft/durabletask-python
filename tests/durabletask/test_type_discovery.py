@@ -6,6 +6,7 @@
 import inspect
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Optional
 from unittest.mock import patch
@@ -71,6 +72,23 @@ class TestIsReconstructable:
 
     def test_list_of_builtin_is_not_reconstructable(self):
         assert self.conv.can_reconstruct(list[int]) is False
+
+    def test_dict_and_mapping_of_dataclass_is_reconstructable(self):
+        assert self.conv.can_reconstruct(dict[str, Order]) is True
+        assert self.conv.can_reconstruct(Mapping[str, Order]) is True
+        assert self.conv.can_reconstruct(dict[str, int]) is False
+
+    def test_tuple_of_dataclass_is_reconstructable(self):
+        assert self.conv.can_reconstruct(tuple[Order, ...]) is True
+        assert self.conv.can_reconstruct(tuple[Order, int]) is True
+        assert self.conv.can_reconstruct(tuple[int, str]) is False
+        assert self.conv.can_reconstruct(tuple) is False
+
+    def test_nested_container_reconstructability(self):
+        assert self.conv.can_reconstruct(dict[str, list[Order]]) is True
+        assert self.conv.can_reconstruct(tuple[dict[str, Order], ...]) is True
+        assert self.conv.can_reconstruct(list[dict[str, Order]]) is True
+        assert self.conv.can_reconstruct(dict[str, list[int]]) is False
 
 
 class TestCustomConverterReconstructable:
