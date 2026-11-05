@@ -267,15 +267,14 @@ def _is_supported_set_element(converter: DataConverter, elem_type: Any) -> bool:
 def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
     """:class:`JsonDataConverter`'s reconstruction policy.
 
-    Recognizes dataclasses and ``from_json()``-capable types, plus ``Optional``
-    / ``list`` / ``Sequence`` hints wrapping them; builtins and unknown
-    annotations are excluded. When set support is enabled on the converter
-    (via ``enable_generic_sets=True``), ``set`` / ``frozenset`` / ``Set``
-    containers with supported element types are also recognized. Recurses
-    through ``converter.can_reconstruct`` (not itself) so a
+    Recognizes dataclasses and ``from_json()``-capable types, plus ``Optional``,
+    ``list`` / ``Sequence``, ``dict`` / ``Mapping``, and ``tuple`` hints wrapping
+    them; builtins and unknown annotations are excluded. When set support is
+    enabled on the converter (via ``enable_generic_sets=True``), ``set`` /
+    ``frozenset`` / ``Set`` containers with supported element types are also
+    recognized. Recurses through ``converter.can_reconstruct`` (not itself) so a
     :class:`JsonDataConverter` subclass that overrides ``can_reconstruct``
-    still participates in the element-type checks of ``Optional`` / ``list``
-    hints.
+    still participates in the element-type checks of wrapped hints.
     """
     origin = typing.get_origin(target_type)
     if origin is not None:
