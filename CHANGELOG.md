@@ -7,6 +7,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Type discovery now recognizes `dict` / `Mapping` and `tuple` containers wrapping
+reconstructable types (such as dataclasses and `from_json()`-capable types) via
+`JsonDataConverter.can_reconstruct()`. Inbound activity and orchestrator inputs as
+well as inferred activity return types annotated with these containers are now
+automatically reconstructed into typed model instances without requiring an explicit
+`return_type` override.
+
+> [!WARNING]
+> **Replay-breaking bug fix:** Replaying existing orchestration histories can reconstruct
+> recorded inputs and activity results differently. Inbound parameters and inferred activity
+> return types annotated with `dict[K, V]`, `Mapping[K, V]`, homogeneous `tuple[T, ...]`, or
+> heterogeneous `tuple[T1, T2, ...]` (where element types are reconstructable) previously
+> evaluated as not reconstructable, causing recorded payloads to be yielded as raw
+> dictionaries and lists/tuples. During replay with the updated SDK, these recorded payloads
+> are now reconstructed into typed dataclass or model instances.
+>
+> If an existing orchestration relied on dictionary subscripting (e.g., `payload["key"]["prop"]`)
+> or branched on raw types (e.g., `isinstance(..., dict)`), replay can fail with `TypeError` or
+> `NonDeterminismError`. This does not mean every affected orchestration was already failing;
+> workflows that successfully processed uncoerced payloads will now receive typed instances.
+> Unaffected annotations (including builtins, `list`, and `Optional`), explicit `return_type`
+> overrides, custom converter policies, and Azure Functions (which overrides `can_reconstruct()`
+> to always return `True`) remain unchanged.
+>
+> Drain or isolate in-flight orchestration instances on the previous SDK before upgrading,
+> or use a separate task hub or version for new instances.
+
 ## v1.13.1
 
 ADDED
