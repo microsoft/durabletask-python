@@ -36,6 +36,14 @@ calls (`context.call_http(...)`), recurring scheduled tasks, and history export.
 `OrchestrationQuery.task_hub_names` for filtering orchestration queries by one
 or more task hubs. Filtering support depends on the backend.
 
+For both Functions clients, `get_all_orchestration_states()` requests at most
+1000 instances per page to support Azure Table Storage. An explicit
+`OrchestrationQuery.max_instance_count` below 1000 keeps that page size.
+The method follows continuation tokens and returns all matching instances;
+the page size is not a total result limit. The `get_status_all()` compatibility
+method uses the same limit. Core SDK and Durable Task Scheduler clients keep
+their existing page sizes.
+
 `EntityInstanceId` and the compatibility `EntityId` are immutable and hashable,
 so they can be used as dictionary keys or set elements. Construct a new ID
 instead of assigning or deleting attributes on an existing ID.

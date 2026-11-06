@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Union, cast, override
 from warnings import deprecated
@@ -17,6 +18,7 @@ from durabletask import history
 from durabletask.client import (
     AsyncTaskHubGrpcClient,
     OrchestrationQuery,
+    OrchestrationState,
     OrchestrationStatus,
     TaskHubGrpcClient,
 )
@@ -43,6 +45,24 @@ from .internal.compat.purge_history_result import PurgeHistoryResult
 _sync_client_cache: dict[str, "SyncDurableFunctionsClient"] = {}
 _sync_client_cache_lock = threading.Lock()
 _LOGGER = logging.getLogger(__name__)
+
+
+def _get_functions_grpc_address(rpc_base_url: str) -> str:
+    if not rpc_base_url.lower().startswith(("http://", "https://")):
+        return rpc_base_url
+    address = urlparse(rpc_base_url)
+    return f"{address.scheme}://{address.netloc}"
+
+
+def _get_functions_orchestration_query(
+        query: OrchestrationQuery | None) -> OrchestrationQuery:
+    if query is None:
+        query = OrchestrationQuery()
+    # The host maps max_instance_count to a page size, not a total result limit.
+    # Azure Table Storage accepts at most 1000 instances per page.
+    if query.max_instance_count is None or query.max_instance_count > 1000:
+        return replace(query, max_instance_count=1000)
+    return query
 
 
 def _first_forwarded_value(value: str) -> str:
@@ -178,7 +198,7 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         # We pass in None for the metadata so we don't construct an additional interceptor in the parent class
         # Since the parent class doesn't use anything metadata for anything else, we can set it as None
         super().__init__(
-            host_address=self.rpcBaseUrl,
+            host_address=_get_functions_grpc_address(self.rpcBaseUrl),
             secure_channel=False,
             metadata=None,
             interceptors=interceptors,
@@ -199,6 +219,18 @@ class DurableFunctionsClient(AsyncTaskHubGrpcClient):
         except RuntimeError:
             self._creation_loop = None
         self._close_scheduled = False
+
+    @override
+    async def get_all_orchestration_states(
+            self, orchestration_query: OrchestrationQuery | None = None
+    ) -> list[OrchestrationState]:
+        """Get all matching instances, with at most 1000 instances per page.
+
+        Smaller explicit ``max_instance_count`` values are kept. The page size
+        does not limit the total number of instances returned.
+        """
+        return await super().get_all_orchestration_states(
+            _get_functions_orchestration_query(orchestration_query))
 
     @override
     async def get_orchestration_history(
@@ -675,7 +707,7 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
                 max_receive_message_length=self.maxGrpcMessageSizeInBytes,
                 max_send_message_length=self.maxGrpcMessageSizeInBytes)
         super().__init__(
-            host_address=self.rpcBaseUrl,
+            host_address=_get_functions_grpc_address(self.rpcBaseUrl),
             secure_channel=False,
             metadata=None,
             interceptors=interceptors,
@@ -684,6 +716,18 @@ class SyncDurableFunctionsClient(TaskHubGrpcClient):
             payload_store=get_transport_payload_store(),
             emit_trace_spans=False,
             logger=_LOGGER)
+
+    @override
+    def get_all_orchestration_states(
+            self, orchestration_query: OrchestrationQuery | None = None
+    ) -> list[OrchestrationState]:
+        """Get all matching instances, with at most 1000 instances per page.
+
+        Smaller explicit ``max_instance_count`` values are kept. The page size
+        does not limit the total number of instances returned.
+        """
+        return super().get_all_orchestration_states(
+            _get_functions_orchestration_query(orchestration_query))
 
     @override
     def get_orchestration_history(
