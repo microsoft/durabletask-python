@@ -591,6 +591,28 @@ class TestClientSpanEmission:
         assert [span.name for span in otel_setup.get_finished_spans()] == [
             "host-request"]
 
+    def test_sync_client_schedule_new_orchestration_matches_span_instance_id_when_auto_generated(
+            self, otel_setup: InMemorySpanExporter):
+        """When instance_id is omitted, request.instanceId must match the producer span instance ID."""
+        stub = MagicMock()
+        stub.StartInstance.side_effect = lambda req: pb.CreateInstanceResponse(instanceId=req.instanceId)
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=stub):
+            grpc_client = client.TaskHubGrpcClient(channel=MagicMock(), emit_trace_spans=True)
+
+        returned_instance_id = grpc_client.schedule_new_orchestration("MyOrchestrator")
+
+        start_request = stub.StartInstance.call_args.args[0]
+        assert start_request.instanceId == returned_instance_id
+        assert start_request.instanceId != ""
+
+        spans = otel_setup.get_finished_spans()
+        create_spans = [s for s in spans if s.name == "create_orchestration:MyOrchestrator"]
+        assert len(create_spans) == 1
+        assert create_spans[0].attributes[tracing.ATTR_TASK_INSTANCE_ID] == returned_instance_id
+        assert create_spans[0].attributes[tracing.ATTR_TASK_INSTANCE_ID] == start_request.instanceId
+
     @pytest.mark.asyncio
     async def test_async_client_propagates_ambient_context_without_lifecycle_spans(
             self, otel_setup: InMemorySpanExporter):
@@ -615,6 +637,29 @@ class TestClientSpanEmission:
         assert start_request.parentTraceContext.spanID == host_span_id
         assert [span.name for span in otel_setup.get_finished_spans()] == [
             "host-request"]
+
+    @pytest.mark.asyncio
+    async def test_async_client_schedule_new_orchestration_matches_span_instance_id_when_auto_generated(
+            self, otel_setup: InMemorySpanExporter):
+        """When instance_id is omitted, async request.instanceId must match the producer span instance ID."""
+        stub = MagicMock()
+        stub.StartInstance = AsyncMock(side_effect=lambda req: pb.CreateInstanceResponse(instanceId=req.instanceId))
+        with patch(
+                "durabletask.client.stubs.TaskHubSidecarServiceStub",
+                return_value=stub):
+            grpc_client = client.AsyncTaskHubGrpcClient(channel=MagicMock(), emit_trace_spans=True)
+
+        returned_instance_id = await grpc_client.schedule_new_orchestration("MyAsyncOrchestrator")
+
+        start_request = stub.StartInstance.call_args.args[0]
+        assert start_request.instanceId == returned_instance_id
+        assert start_request.instanceId != ""
+
+        spans = otel_setup.get_finished_spans()
+        create_spans = [s for s in spans if s.name == "create_orchestration:MyAsyncOrchestrator"]
+        assert len(create_spans) == 1
+        assert create_spans[0].attributes[tracing.ATTR_TASK_INSTANCE_ID] == returned_instance_id
+        assert create_spans[0].attributes[tracing.ATTR_TASK_INSTANCE_ID] == start_request.instanceId
 
 
 class TestOrchestrationServerSpan:
