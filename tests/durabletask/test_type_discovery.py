@@ -8,7 +8,7 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, get_origin
 from unittest.mock import patch
 
 import pytest
@@ -113,6 +113,48 @@ class TestCustomConverterReconstructable:
         assert conv.can_reconstruct(Optional[Widget]) is True
         # Builtins remain excluded.
         assert conv.can_reconstruct(int) is False
+        # The override is also consulted for elements inside dict and tuple hints.
+        assert conv.can_reconstruct(dict[str, Widget]) is True
+        assert conv.can_reconstruct(tuple[Widget, ...]) is True
+        assert conv.can_reconstruct(tuple[Widget, int]) is True
+
+    def test_override_can_enforce_custom_container_policy(self):
+        class SelectiveConverter(JsonDataConverter):
+            def can_reconstruct(self, target_type: Any) -> bool:
+                # Custom policy: reject all tuple hints even with supported elements
+                if get_origin(target_type) is tuple:
+                    return False
+                return super().can_reconstruct(target_type)
+
+        conv = SelectiveConverter()
+        assert conv.can_reconstruct(dict[str, Order]) is True
+        assert conv.can_reconstruct(tuple[Order, ...]) is False
+        assert conv.can_reconstruct(tuple[Order, int]) is False
+
+        def tuple_activity(ctx, items: tuple[Order, ...]) -> tuple[Order, ...]:
+            pass
+
+        assert type_discovery.activity_input_type(tuple_activity, conv) is None
+        assert type_discovery.activity_output_type(tuple_activity, conv) is None
+
+    def test_permissive_converter_discovery_policy_unaffected(self):
+        """A converter that overrides can_reconstruct to return True (like Azure Functions)
+        remains unaffected and continues to surface all container annotations."""
+        class PermissiveConverter(JsonDataConverter):
+            def can_reconstruct(self, target_type: Any) -> bool:
+                return True
+
+        conv = PermissiveConverter()
+        assert conv.can_reconstruct(dict[str, Order]) is True
+        assert conv.can_reconstruct(tuple[Order, ...]) is True
+        assert conv.can_reconstruct(dict[str, int]) is True
+        assert conv.can_reconstruct(tuple[int, str]) is True
+
+        def sample_act(ctx, d: dict[str, int]) -> tuple[int, ...]:
+            pass
+
+        assert type_discovery.activity_input_type(sample_act, conv) == dict[str, int]
+        assert type_discovery.activity_output_type(sample_act, conv) == tuple[int, ...]
 
     def test_discovery_uses_supplied_converter(self):
         class Widget:
