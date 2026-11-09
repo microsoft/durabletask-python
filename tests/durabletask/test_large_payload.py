@@ -7,6 +7,7 @@ import asyncio
 import gzip
 import threading
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import quote, urlsplit
 
 import pytest
 from google.protobuf import wrappers_pb2
@@ -608,6 +609,14 @@ class TestWorkerCapabilityFlag:
 
 
 class TestBlobPayloadStoreTokenParsing:
+    def test_v2_encoding_contains_location_only(self):
+        pytest.importorskip("azure.storage.blob")
+        from durabletask.extensions.azure_blob_payloads.blob_payload_store import BlobPayloadStore
+
+        assert BlobPayloadStore._encode_token(
+            "https://user:password@example.blob.core.windows.net/container/folder/a%20b?sig=synthetic#fragment"
+        ) == "blob:v2:https://example.blob.core.windows.net/container/folder/a%20b"
+
     def test_valid_token_is_known(self):
         """Valid blob:v1:... tokens should be recognized."""
         pytest.importorskip("azure.storage.blob")
@@ -641,17 +650,280 @@ class TestBlobPayloadStoreTokenParsing:
         store = MagicMock(spec=BlobPayloadStore)
         store.is_known_token = BlobPayloadStore.is_known_token.__get__(store)
         store._parse_token = BlobPayloadStore._parse_token
+        store._parse_v2_url = BlobPayloadStore._parse_v2_url
 
         assert store.is_known_token("blob:v1:c:b") is True
         assert store.is_known_token("not-a-token") is False
         assert store.is_known_token("") is False
         assert store.is_known_token("blob:v1:") is False
         assert store.is_known_token("blob:v1:container:") is False
+        assert store.is_known_token("blob:v2:https://example.blob.core.windows.net/c/b") is True
+        assert store.is_known_token("blob:v3:https://example.blob.core.windows.net/c/b") is False
 
 
 # ------------------------------------------------------------------
 # Tests: BlobPayloadStore construction and defaults
 # ------------------------------------------------------------------
+
+
+@pytest.fixture(params=[
+    "https://example.blob.core.windows.net",
+    "http://127.0.0.1:10000/devstoreaccount1",
+])
+def blob_account_url(request):
+    return request.param
+
+
+@pytest.fixture(params=["durabletask-payloads", "custom-payloads"])
+def blob_payload_store(request, monkeypatch, blob_account_url):
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import blob_payload_store as module
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStoreOptions
+
+    sync_service = MagicMock()
+    async_service = MagicMock()
+    async_service.close = AsyncMock()
+    url_client = module.BlobServiceClient(blob_account_url)
+    sync_service.url = async_service.url = url_client.url
+    sync_service.account_name = async_service.account_name = url_client.account_name
+    url_container = url_client.get_container_client(request.param)
+    for service, use_async in [(sync_service, False), (async_service, True)]:
+        container = service.get_container_client.return_value
+        container.url, container.container_name = url_container.url, url_container.container_name
+        blob = container.get_blob_client.return_value
+
+        def get_blob_client(name, blob=blob):
+            real = url_container.get_blob_client(name)
+            blob.url, blob.container_name, blob.blob_name = real.url, real.container_name, real.blob_name
+            return blob
+
+        container.get_blob_client.side_effect = get_blob_client
+        if use_async:
+            container.create_container = AsyncMock()
+            blob.upload_blob = AsyncMock()
+            stream = MagicMock()
+            stream.readall = AsyncMock(return_value=gzip.compress(b'"payload"'))
+            blob.download_blob = AsyncMock(return_value=stream)
+        else:
+            blob.download_blob.return_value.readall.return_value = gzip.compress(b'"payload"')
+    monkeypatch.setattr(module, "BlobServiceClient", MagicMock(return_value=sync_service))
+    monkeypatch.setattr(module, "AsyncBlobServiceClient", MagicMock(return_value=async_service))
+    store = module.BlobPayloadStore(BlobPayloadStoreOptions(
+        account_url=blob_account_url,
+        container_name=request.param,
+    ))
+    yield store, sync_service, async_service
+    store.close()
+    asyncio.run(store.close_async())
+    url_client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("reference", [
+    "blob:v1:other-container:example",
+    "blob:v1:{container}-other:example",
+    "blob:v1:{container}:../other-container/example",
+    "blob:v1:{container}:folder/../../other-container/example",
+    "blob:v1:{container}:./example",
+    "blob:v2:{account}/other-container/example",
+    "blob:v2:{account}/{container}-other/example",
+    "blob:v2:https://other.blob.core.windows.net/{container}/example",
+    "blob:v2:http://example.blob.core.windows.net/{container}/example",
+    "blob:v2:https://example.blob.core.windows.net:444/{container}/example",
+    "blob:v2:http://127.0.0.1:10000/other-account/{container}/example",
+    "blob:v2:{account}/{container}/../other-container/example",
+    "blob:v2:{account}/{container}/folder/../../other-container/example",
+    "blob:v2:{account}/{container}/%2e%2e/other-container/example",
+    "blob:v2:{account}/{container}/folder/%2E%2E%2F%2E%2E/other-container/example",
+    "blob:v2:{account}/{container}/./example",
+])
+async def test_blob_download_rejects_out_of_scope_references(blob_payload_store, use_async, reference):
+    store, sync_service, async_service = blob_payload_store
+    token = reference.format(container=store.options.container_name, account=sync_service.url.rstrip("/"))
+    assert store.is_known_token(token)
+
+    with pytest.raises(ValueError, match="configured container|configured Storage endpoint|path segments"):
+        if use_async:
+            await store.download_async(token)
+        else:
+            store.download(token)
+
+    sync_service.get_container_client.assert_not_called()
+    async_service.get_container_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("version", ["v1", "v2"])
+async def test_blob_resolution_rejects_other_container(blob_payload_store, use_async, version):
+    store, sync_service, async_service = blob_payload_store
+    token = ("blob:v1:other-container:example" if version == "v1"
+             else f"blob:v2:{sync_service.url.rstrip('/')}/other-container/example")
+    request = pb.OrchestratorRequest(
+        instanceId="test-1",
+        newEvents=[pb.HistoryEvent(
+            eventId=1,
+            executionStarted=pb.ExecutionStartedEvent(name="MyOrch", input=sv(token)),
+        )],
+    )
+    with pytest.raises(ValueError, match="configured container"):
+        if use_async:
+            await deexternalize_payloads_async(request, store)
+        else:
+            deexternalize_payloads(request, store)
+
+    assert request.newEvents[0].executionStarted.input.value == token
+    sync_service.get_container_client.assert_not_called()
+    async_service.get_container_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("enable_compression", [False, True])
+@pytest.mark.parametrize("version", ["v1", "v2"])
+@pytest.mark.parametrize("instance_id", [
+    None, "instance/folder", "instance/.hidden/file:version",
+    "space %2F/#?caf\u00e9", "literal/%2e%2e/name",
+])
+async def test_blob_configured_container_round_trip(
+        blob_payload_store, use_async, enable_compression, version, instance_id):
+    store, sync_service, async_service = blob_payload_store
+    store.options.enable_compression = enable_compression
+    data = b'{"value": "payload"}'
+    if use_async:
+        container = async_service.get_container_client.return_value
+        blob = container.get_blob_client.return_value
+        token = await store.upload_async(data, instance_id=instance_id)
+        stream = MagicMock()
+        stream.readall = AsyncMock(return_value=blob.upload_blob.call_args.kwargs["data"])
+        blob.download_blob = AsyncMock(return_value=stream)
+        service = async_service
+    else:
+        container = sync_service.get_container_client.return_value
+        blob = container.get_blob_client.return_value
+        token = store.upload(data, instance_id=instance_id)
+        blob.download_blob.return_value.readall.return_value = blob.upload_blob.call_args.kwargs["data"]
+        service = sync_service
+
+    blob_name = blob.blob_name
+    expected_url = f"{sync_service.url.rstrip('/')}/{store.options.container_name}/{quote(blob_name, safe='/')}"
+    assert token == f"blob:v2:{expected_url}"
+    read_token = f"blob:v1:{store.options.container_name}:{blob_name}" if version == "v1" else token
+    result = await store.download_async(read_token) if use_async else store.download(read_token)
+    assert result == data
+    assert store.is_known_token(token)
+    folder = f"{instance_id}/" if instance_id else ""
+    assert blob_name.startswith(folder)
+    assert all(call.args == (store.options.container_name,) for call in service.get_container_client.call_args_list)
+    blob.download_blob.assert_called_once_with(decompress=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("url", [
+    "", "/container/blob", "//example.blob.core.windows.net/container/blob",
+    "file:///container/blob", "ftp://example.blob.core.windows.net/container/blob",
+    "https://example.blob.core.windows.net/container",
+    "https://example.blob.core.windows.net/container/",
+    "https://example.blob.core.windows.net:bad/container/blob",
+    "https://example.blob.core.windows.net:65536/container/blob",
+    "https://user:password@example.blob.core.windows.net/container/blob",
+    "https://example.blob.core.windows.net/container/a b",
+    "https://example.blob.core.windows.net/container/a\nb",
+    "https://example.blob.core.windows.net/container/%zz",
+    "https://example.blob.core.windows.net/container/%FF",
+])
+async def test_blob_v2_rejects_invalid_urls(blob_payload_store, use_async, url):
+    store, sync_service, async_service = blob_payload_store
+    token = f"blob:v2:{url}"
+    assert not store.is_known_token(token)
+    with pytest.raises(ValueError):
+        if use_async:
+            await store.download_async(token)
+        else:
+            store.download(token)
+    sync_service.get_container_client.assert_not_called()
+    async_service.get_container_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_blob_v2_discards_legacy_selectors(blob_payload_store, caplog, use_async):
+    store, sync_service, async_service = blob_payload_store
+    reference = (f"blob:v2:{sync_service.url.rstrip('/')}/{store.options.container_name}/folder/blob"
+                 "?sig=untrusted&snapshot=ignored&versionid=ignored#fragment")
+    assert store.is_known_token(reference)
+    with caplog.at_level("DEBUG", logger="durabletask-blobpayloads"):
+        payload = await store.download_async(reference) if use_async else store.download(reference)
+    assert payload == b'"payload"'
+    assert "untrusted" not in caplog.text and "ignored" not in caplog.text
+    service = async_service if use_async else sync_service
+    service.get_container_client.return_value.get_blob_client.assert_called_once_with("folder/blob")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("connection_string", [False, True])
+async def test_blob_v2_upload_omits_sas(monkeypatch, use_async, connection_string):
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import blob_payload_store as module
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStoreOptions
+
+    sas = "sv=2025-01-05&sig=synthetic&sp=rw"
+    options = BlobPayloadStoreOptions(
+        connection_string=(f"BlobEndpoint=https://example.blob.core.windows.net;SharedAccessSignature={sas}"
+                           if connection_string else None),
+        account_url=None if connection_string else f"https://example.blob.core.windows.net?{sas}",
+    )
+    store = module.BlobPayloadStore(options)
+    store._ensure_container_created = True
+    monkeypatch.setattr(module.BlobClient, "upload_blob", MagicMock())
+    monkeypatch.setattr(module.AsyncBlobClient, "upload_blob", AsyncMock())
+    try:
+        token = await store.upload_async(b"payload") if use_async else store.upload(b"payload")
+        url = urlsplit(token.removeprefix("blob:v2:"))
+        assert url.netloc == "example.blob.core.windows.net"
+        assert not url.query and not url.fragment
+        assert "synthetic" not in token
+        assert store.is_known_token(token)
+        assert store._get_download_destination(token)[2]
+    finally:
+        store.close()
+        await store.close_async()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_blob_v2_accepts_equivalent_endpoint_spelling(blob_payload_store, use_async):
+    store, sync_service, async_service = blob_payload_store
+    account = urlsplit(sync_service.url)
+    authority = account.netloc.upper()
+    if account.port is None:
+        authority += ":443" if account.scheme == "https" else ":80"
+    account = account._replace(netloc=authority)
+    token = f"blob:v2:{account.geturl().rstrip('/')}/{store.options.container_name}/folder/a%20b%252Fc"
+    data = await store.download_async(token) if use_async else store.download(token)
+    assert data == b'"payload"'
+    service = async_service if use_async else sync_service
+    container = service.get_container_client.return_value
+    container.get_blob_client.assert_called_once_with("folder/a b%2Fc")
+    container.get_blob_client.return_value.download_blob.assert_called_once_with(decompress=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("instance_id", ["..", "../other-container", "folder/../../other-container", "."])
+async def test_blob_upload_rejects_dot_segments(blob_payload_store, use_async, instance_id):
+    store, sync_service, async_service = blob_payload_store
+    with pytest.raises(ValueError, match="path segments"):
+        if use_async:
+            await store.upload_async(b"payload", instance_id=instance_id)
+        else:
+            store.upload(b"payload", instance_id=instance_id)
+
+    sync_service.get_container_client.assert_not_called()
+    async_service.get_container_client.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -689,12 +961,22 @@ async def test_async_blob_compression_yields(monkeypatch, operation, enable_comp
     stream.readall = AsyncMock(side_effect=readall)
     container = MagicMock()
     container.create_container = AsyncMock()
-    container.upload_blob = AsyncMock(side_effect=upload_blob)
-    container.download_blob = AsyncMock(return_value=stream)
+    from azure.storage.blob import BlobServiceClient
+    from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
+    url_client = BlobServiceClient("https://example.blob.core.windows.net")
+    async_url_client = AsyncBlobServiceClient("https://example.blob.core.windows.net")
+    url_container = async_url_client.get_container_client("durabletask-payloads")
+    container.url, container.container_name = url_container.url, url_container.container_name
+    container.get_blob_client.side_effect = url_container.get_blob_client
+    upload_mock = AsyncMock(side_effect=upload_blob)
+    monkeypatch.setattr(module.AsyncBlobClient, "upload_blob", upload_mock)
+    monkeypatch.setattr(module.AsyncBlobClient, "download_blob", AsyncMock(return_value=stream))
     service = MagicMock()
     service.get_container_client.return_value = container
     service.close = AsyncMock()
-    monkeypatch.setattr(module, "BlobServiceClient", MagicMock())
+    sync_service = MagicMock()
+    sync_service.url = service.url = url_client.url
+    monkeypatch.setattr(module, "BlobServiceClient", MagicMock(return_value=sync_service))
     monkeypatch.setattr(module, "AsyncBlobServiceClient", MagicMock(return_value=service))
     monkeypatch.setattr(gzip, gzip_method, gated_gzip)
     store = module.BlobPayloadStore(BlobPayloadStoreOptions(
@@ -712,8 +994,10 @@ async def test_async_blob_compression_yields(monkeypatch, operation, enable_comp
         finally:
             store.close()
             await store.close_async()
+            await async_url_client.close()
+            url_client.close()
     if operation == "upload":
-        uploaded = container.upload_blob.call_args.kwargs["data"]
+        uploaded = upload_mock.call_args.kwargs["data"]
         assert (gzip.decompress(uploaded) if enable_compression else uploaded) == data
         assert store.is_known_token(result)
     else:

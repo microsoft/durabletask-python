@@ -38,14 +38,32 @@ def _fail_payload(ctx: task.OrchestrationContext, mode: str):
     return LARGE_PAYLOAD if mode == "result" else "done"
 
 
-def _request(name: str) -> pb.OrchestratorRequest:
+def _request(name: str, instance_id: str = "owner") -> pb.OrchestratorRequest:
     return pb.OrchestratorRequest(
-        instanceId="owner",
+        instanceId=instance_id,
         newEvents=[
             ph.new_orchestrator_started_event(),
-            ph.new_execution_started_event(name, "owner"),
+            ph.new_execution_started_event(name, instance_id),
         ],
     )
+
+
+@pytest.fixture(params=["size", "path"])
+def permanent_payload_failure(request):
+    if request.param == "size":
+        yield (FakePayloadStore(threshold_bytes=100, max_stored_payload_bytes=200),
+               "owner", "PayloadSizeExceededError", "exceeds the maximum")
+    else:
+        pytest.importorskip("azure.storage.blob")
+        from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+
+        store = BlobPayloadStore(BlobPayloadStoreOptions(
+            account_url="https://example.blob.core.windows.net", threshold_bytes=100))
+        try:
+            yield store, ".", "PayloadValidationError", "path segments"
+        finally:
+            store.close()
+            asyncio.run(store.close_async())
 
 
 @pytest.mark.parametrize("call_failed", [False, True])
@@ -276,19 +294,19 @@ def test_pre_lock_call_can_complete_while_acquisition_is_pending(legacy_protocol
 
 @pytest.mark.parametrize("mode", ["result", "status", "call", "continue"])
 @pytest.mark.parametrize("completed_call", [False, True])
-def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call):
+def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call, permanent_payload_failure):
     def orchestrator(ctx, _):
         with (yield ctx.lock_entities(list(reversed(ENTITY_IDS)))):
             if completed_call:
                 yield ctx.call_entity(ENTITY_IDS[0], "get")
             return (yield from _fail_payload(ctx, mode))
 
-    store = FakePayloadStore(threshold_bytes=100, max_stored_payload_bytes=200)
+    store, instance_id, error_type, error_message = permanent_payload_failure
     provider = MagicMock()
     stub = MagicMock()
     with worker.TaskHubGrpcWorker(payload_store=store, exception_properties_provider=provider) as w:
         w.add_orchestrator(orchestrator)
-        first = _request("orchestrator")
+        first = _request("orchestrator", instance_id)
         w._execute_orchestrator(first, stub, "first-token")
         first_response = stub.CompleteOrchestratorTask.call_args.args[0]
         lock_action = first_response.actions[0]
@@ -296,7 +314,7 @@ def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call)
         stub.reset_mock()
 
         req = pb.OrchestratorRequest(
-            instanceId="owner",
+            instanceId=instance_id,
             pastEvents=[
                 *first.newEvents,
                 pb.HistoryEvent(eventId=lock_action.id, entityLockRequested=lock_request),
@@ -312,7 +330,7 @@ def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call)
             call_action = stub.CompleteOrchestratorTask.call_args.args[0].actions[0]
             call_message = call_action.sendEntityMessage.entityOperationCalled
             req = pb.OrchestratorRequest(
-                instanceId="owner",
+                instanceId=instance_id,
                 pastEvents=[
                     *req.pastEvents,
                     *req.newEvents,
@@ -330,7 +348,7 @@ def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call)
     stub.CompleteOrchestratorTask.assert_called_once()
     stub.AbandonTaskOrchestratorWorkItem.assert_not_called()
     response = stub.CompleteOrchestratorTask.call_args.args[0]
-    assert response.instanceId == "owner"
+    assert response.instanceId == instance_id
     assert response.completionToken == "failure-token"
     assert not response.HasField("customStatus")
     assert response.ByteSize() < 1024
@@ -338,7 +356,7 @@ def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call)
     releases = [action.sendEntityMessage.entityUnlockSent for action in response.actions[:-1]]
     release_order = list(reversed(ENTITY_IDS)) if completed_call or mode == "call" else ENTITY_IDS
     assert [release.targetInstanceId.value for release in releases] == [str(eid) for eid in release_order]
-    assert all(release.parentInstanceId.value == "owner" for release in releases)
+    assert all(release.parentInstanceId.value == instance_id for release in releases)
     assert all(release.criticalSectionId == lock_request.criticalSectionId for release in releases)
     assert [action.id for action in response.actions] == sorted({action.id for action in response.actions})
     completion = response.actions[-1].completeOrchestration
@@ -346,8 +364,8 @@ def test_permanent_payload_failure_releases_acquired_locks(mode, completed_call)
     assert not completion.HasField("result")
     failure = completion.failureDetails
     assert failure.isNonRetriable
-    assert failure.errorType == "durabletask.internal.exceptions.PayloadSizeExceededError"
-    assert "exceeds the maximum" in failure.errorMessage
+    assert failure.errorType == f"durabletask.internal.exceptions.{error_type}"
+    assert error_message in failure.errorMessage
     assert not failure.HasField("stackTrace")
     assert not failure.HasField("innerFailure")
     assert not failure.properties
@@ -372,6 +390,7 @@ def test_storage_failure_and_cancellation_do_not_become_permanent(error):
         else:
             w._execute_orchestrator(req, stub, "token")
         stub.CompleteOrchestratorTask.assert_not_called()
+        stub.AbandonTaskOrchestratorWorkItem.assert_called_once()
 
         store.upload = original_upload
         w._execute_orchestrator(req, stub, "retry-token")
@@ -379,6 +398,35 @@ def test_storage_failure_and_cancellation_do_not_become_permanent(error):
     completion = stub.CompleteOrchestratorTask.call_args.args[0].actions[-1].completeOrchestration
     assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
     assert not completion.HasField("failureDetails")
+
+
+def test_referenced_path_failure_remains_retryable():
+    pytest.importorskip("azure.storage.blob")
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+
+    seen = []
+
+    def echo(ctx, value):
+        seen.append(value)
+        return value
+
+    with BlobPayloadStore(BlobPayloadStoreOptions(
+            account_url="https://example.blob.core.windows.net")) as store:
+        with worker.TaskHubGrpcWorker(payload_store=store) as host:
+            name = host.add_orchestrator(echo)
+            req = pb.OrchestratorRequest(instanceId="owner", newEvents=[
+                ph.new_orchestrator_started_event(),
+                ph.new_execution_started_event(
+                    name, "owner", "blob:v1:durabletask-payloads:folder/../blob"),
+            ])
+            original = req.SerializeToString()
+            stub = MagicMock()
+            host._execute_orchestrator(req, stub, "first-token")
+            host._execute_orchestrator(req, stub, "retry-token")
+    assert not seen
+    assert req.SerializeToString() == original
+    stub.CompleteOrchestratorTask.assert_not_called()
+    assert stub.AbandonTaskOrchestratorWorkItem.call_count == 2
 
 
 def test_failure_preserves_emitted_releases_before_outstanding_releases(monkeypatch):
@@ -417,7 +465,7 @@ def test_failure_preserves_emitted_releases_before_outstanding_releases(monkeypa
 
 
 @pytest.mark.parametrize("mode", ["result", "status", "call"])
-def test_next_lock_caller_progresses_after_permanent_payload_failure(monkeypatch, mode):
+def test_next_lock_caller_progresses_after_permanent_payload_failure(monkeypatch, mode, permanent_payload_failure):
     locked = Event()
     second_queued = Event()
 
@@ -446,7 +494,7 @@ def test_next_lock_caller_progresses_after_permanent_payload_failure(monkeypatch
         return granted
 
     monkeypatch.setattr(backend, "_try_grant_lock", observe_grant)
-    store = FakePayloadStore(threshold_bytes=100, max_stored_payload_bytes=200)
+    store, instance_id, error_type, _ = permanent_payload_failure
     try:
         with worker.TaskHubGrpcWorker(host_address=host, payload_store=store) as w:
             w.add_orchestrator(failing)
@@ -454,18 +502,18 @@ def test_next_lock_caller_progresses_after_permanent_payload_failure(monkeypatch
             w.add_entity(counter)
             w.start()
             with client.TaskHubGrpcClient(host_address=host) as c:
-                c.schedule_new_orchestration(failing, instance_id="first")
+                c.schedule_new_orchestration(failing, instance_id=instance_id, input="small")
                 assert locked.wait(10), "First orchestration did not acquire both locks"
                 c.schedule_new_orchestration(next_caller, instance_id="second")
                 assert second_queued.wait(10), "Second caller was not blocked by the first"
-                c.raise_orchestration_event("first", "fail")
-                failed = c.wait_for_orchestration_completion("first", timeout=10)
+                c.raise_orchestration_event(instance_id, "fail")
+                failed = c.wait_for_orchestration_completion(instance_id, timeout=10)
                 completed = c.wait_for_orchestration_completion("second", timeout=10)
 
         assert failed is not None
         assert failed.runtime_status == client.OrchestrationStatus.FAILED
         assert failed.failure_details is not None
-        assert failed.failure_details.error_type == "durabletask.internal.exceptions.PayloadSizeExceededError"
+        assert failed.failure_details.error_type == f"durabletask.internal.exceptions.{error_type}"
         assert completed is not None
         assert completed.runtime_status == client.OrchestrationStatus.COMPLETED
         assert completed.serialized_output == "42"

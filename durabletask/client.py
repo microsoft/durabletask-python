@@ -634,7 +634,11 @@ class TaskHubGrpcClient:
                                    reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
                                    tags: dict[str, str] | None = None,
                                    version: str | None = None) -> str:
+        """Schedule a new orchestration instance for execution.
 
+        If instance_id is not specified, a random UUID hex string is generated upfront
+        and shared across both the OpenTelemetry producer span and the CreateInstanceRequest.
+        """
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
@@ -644,9 +648,9 @@ class TaskHubGrpcClient:
                 name, resolved_instance_id, version=resolved_version,
             ):
                 req = build_schedule_new_orchestration_req(
-                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    orchestrator, input=input, instance_id=resolved_instance_id, start_at=start_at,
                     reuse_id_policy=reuse_id_policy, tags=tags,
-                    version=version if version else self.default_version,
+                    version=resolved_version,
                     data_converter=self._data_converter)
 
                 # Inject the active PRODUCER span context, or the ambient context
@@ -1182,7 +1186,11 @@ class AsyncTaskHubGrpcClient:
                                          reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
                                          tags: dict[str, str] | None = None,
                                          version: str | None = None) -> str:
+        """Schedule a new orchestration instance for execution asynchronously.
 
+        If instance_id is not specified, a random UUID hex string is generated upfront
+        and shared across both the OpenTelemetry producer span and the CreateInstanceRequest.
+        """
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
         resolved_version = version if version else self.default_version
@@ -1192,9 +1200,9 @@ class AsyncTaskHubGrpcClient:
                 name, resolved_instance_id, version=resolved_version,
             ):
                 req = build_schedule_new_orchestration_req(
-                    orchestrator, input=input, instance_id=instance_id, start_at=start_at,
+                    orchestrator, input=input, instance_id=resolved_instance_id, start_at=start_at,
                     reuse_id_policy=reuse_id_policy, tags=tags,
-                    version=version if version else self.default_version,
+                    version=resolved_version,
                     data_converter=self._data_converter)
 
                 parent_trace_ctx = tracing.get_current_trace_context()
