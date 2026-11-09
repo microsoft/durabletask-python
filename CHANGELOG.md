@@ -17,24 +17,15 @@ automatically reconstructed into typed model instances without requiring an expl
 `return_type` override.
 
 > [!WARNING]
-> **Replay-breaking bug fix:** Replaying existing orchestration histories can reconstruct
-> recorded inputs and activity results differently. Inbound parameters and inferred activity
-> return types annotated with `dict[K, V]`, `Mapping[K, V]`, homogeneous `tuple[T, ...]`, or
-> heterogeneous `tuple[T1, T2, ...]` (where element types are reconstructable) previously
-> evaluated as not reconstructable, causing recorded payloads to be yielded as raw
-> dictionaries and lists/tuples. During replay with the updated SDK, these recorded payloads
-> are now reconstructed into typed dataclass or model instances.
+> **Replay-breaking bug fix:** Container annotations involving `dict`, `Mapping`,
+> or `tuple` wrapping reconstructable types, including nested annotations, now
+> reconstruct orchestration inputs and inferred activity results by default.
+> Existing instances that relied on raw dictionaries or lists can change behavior
+> or fail replay with `NonDeterminismError`.
 >
-> If an existing orchestration relied on dictionary subscripting (e.g., `payload["key"]["prop"]`)
-> or branched on raw types (e.g., `isinstance(..., dict)`), replay can fail with `TypeError` or
-> `NonDeterminismError`. This does not mean every affected orchestration was already failing;
-> workflows that successfully processed uncoerced payloads will now receive typed instances.
-> Unaffected annotations (including builtins, `list`, and `Optional`), explicit `return_type`
-> overrides, custom converter policies, and Azure Functions (which overrides `can_reconstruct()`
-> to always return `True`) remain unchanged.
->
-> Drain or isolate in-flight orchestration instances on the previous SDK before upgrading,
-> or use a separate task hub or version for new instances.
+> Drain affected instances on the previous SDK, or keep their task hub on the
+> previous SDK and use a separate task hub for new instances. Pin or lock the core
+> `durabletask` dependency, including when using the Azure Managed provider.
 
 ## v1.13.1
 

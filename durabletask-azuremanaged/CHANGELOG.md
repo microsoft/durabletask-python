@@ -12,22 +12,8 @@ FIXED
 - With the corresponding core `durabletask` SDK update, type discovery now recognizes
 `dict`, `Mapping`, and `tuple` container annotations wrapping reconstructable types,
 automatically reconstructing recorded inputs and inferred activity results into typed model
-instances.
-
-> [!WARNING]
-> **Replay-breaking bug fix:** Existing orchestration instances that recorded inputs or
-> activity results under `dict`, `Mapping`, or `tuple` container annotations previously
-> received raw dictionaries or lists. During replay under the updated core SDK, recorded
-> payloads are reconstructed into typed model instances, which can cause replay failures
-> or behavioral changes (such as `NonDeterminismError` when branching on raw types). See the
-> [core changelog](../CHANGELOG.md) for affected scenarios and guidance on draining or
-> isolating existing instances before upgrading.
->
-> Pinning `durabletask.azuremanaged` alone does not pin the core SDK. Its
-> open-ended `durabletask` dependency allows a fresh dependency resolution to
-> select a newer core SDK containing this fix even when the provider version is
-> unchanged. Pin or lock `durabletask` as well to control when this behavior
-> change is adopted.
+instances. See the [core upgrade warning](../CHANGELOG.md#unreleased) for replay-breaking
+guidance and dependency pinning recommendations.
 
 ## v1.13.1
 
