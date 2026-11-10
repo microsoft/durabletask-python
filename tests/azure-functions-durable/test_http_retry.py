@@ -436,3 +436,21 @@ def test_call_http_schedules_snapshot_and_observes_child_result(succeed):
         completion = parent.only_action("completeOrchestration").completeOrchestration
         assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
         assert "status code 503" in str(completion.failureDetails)
+
+
+def test_poll_orchestrator_accepts_partial_retry_options_payload():
+    payload = {
+        "method": "POST",
+        "uri": "https://example.com/start",
+        "retryOptions": {
+            "firstRetryIntervalInMilliseconds": 2000,
+            "maxNumberOfAttempts": 2,
+        },
+    }
+    history = _History(builtin_http_poll_orchestrator, payload, parent="caller")
+    history.run_activity(status=503)
+    history.fire_timer(timedelta(seconds=2))
+    history.run_activity()
+    assert history.result().status_code == 200
+    assert history.result().content == "body"
+
