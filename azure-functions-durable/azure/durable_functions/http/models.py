@@ -71,12 +71,17 @@ class HttpRetryOptions(RetryPolicy):
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "HttpRetryOptions":
         """Reconstruct a snapshotted policy from its wire payload."""
-        max_interval = value["maxRetryIntervalInMilliseconds"]
-        timeout = value["retryTimeoutInMilliseconds"]
+        max_interval = (
+            value["maxRetryIntervalInMilliseconds"]
+            if "maxRetryIntervalInMilliseconds" in value
+            else 518400000
+        )
+        timeout = value.get("retryTimeoutInMilliseconds")
+        backoff = value.get("backoffCoefficient", 1.0)
         return cls(
             first_retry_interval=timedelta(milliseconds=value["firstRetryIntervalInMilliseconds"]),
             max_number_of_attempts=value["maxNumberOfAttempts"],
-            backoff_coefficient=value["backoffCoefficient"],
+            backoff_coefficient=backoff if backoff is not None else 1.0,
             max_retry_interval=timedelta(milliseconds=max_interval) if max_interval is not None else None,
             retry_timeout=timedelta(milliseconds=timeout) if timeout is not None else None,
             status_codes_to_retry=value.get("statusCodesToRetry"))
