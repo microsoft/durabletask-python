@@ -48,6 +48,28 @@ their existing page sizes.
 so they can be used as dictionary keys or set elements. Construct a new ID
 instead of assigning or deleting attributes on an existing ID.
 
+## Async orchestrators
+
+Both authoring styles accept `async def` and `await` without an adapter loop.
+Await durable operations and compose branches with `asyncio.gather` or task
+groups; `asyncio.sleep` and timeouts use durable timers. Synchronous generator
+orchestrators remain supported, including mixed-style sub-orchestrations.
+
+Both native and compatibility contexts expose `as_async()` for cold native
+coroutines accepted by `create_task` and task groups. This facade uses the
+native SDK's keyword arguments (`input=`, `return_type=`, and `data_type=`),
+not compatibility positional arguments. Its `receive_event()` owns its
+registration and optional durable timeout, so an abandoned receive cannot
+consume the next event. Existing compatibility methods still return eager,
+reusable durable handles; use `handle.wait()` to create a borrowed coroutine.
+
+The [shared async contract](../docs/async-orchestrators.md) defines the supported
+API subset, cancellation, per-dispatch `finally`/async-generator cleanup,
+replay/migration rules, and framework adapter responsibilities. Arbitrary I/O,
+threads, subprocesses, `asyncio.wait`/`as_completed`, and automatic recording of
+ordinary async helpers are not supported. Put nondeterministic work in ordinary
+activities, not orchestrators.
+
 ## Unicode JSON serialization
 
 By default, durable payloads preserve the shared `azure-functions` codec's
