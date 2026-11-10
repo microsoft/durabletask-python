@@ -72,6 +72,80 @@ threads, subprocesses, `asyncio.wait`/`as_completed`, and automatic recording of
 ordinary async helpers are not supported. Put nondeterministic work in ordinary
 activities, not orchestrators.
 
+## Durable HTTP failure retries
+
+Opt in to durable retries for the **initial** `context.call_http()` request with
+`HttpRetryOptions`. It uses the core activity retry engine and durable timers,
+not an in-process HTTP retry loop:
+
+```python
+from datetime import timedelta
+
+import azure.durable_functions as df
+
+
+def orchestrator(context: df.DurableOrchestrationContext):
+    response = yield context.call_http(
+        "GET",
+        "https://example.com/data",
+        retry_options=df.HttpRetryOptions(
+            first_retry_interval=timedelta(seconds=2),
+            max_number_of_attempts=4,
+            backoff_coefficient=2,
+            max_retry_interval=timedelta(seconds=30),
+            retry_timeout=timedelta(minutes=2),
+            status_codes_to_retry=[429, 503],
+        ),
+    )
+    return response.content
+```
+
+Durations use `timedelta`, matching `RetryPolicy`, rather than the deprecated
+millisecond-based `RetryOptions`. The attempt limit includes the initial
+attempt. Backoff defaults to 1 (constant delay), the maximum retry interval
+defaults to six days, and the retry timeout defaults to unbounded. Set
+`max_retry_interval=None` to remove the interval cap.
+
+With a policy, an omitted, `None`, or empty `status_codes_to_retry` selects
+**all non-2xx responses**, including unfollowed redirects, matching .NET
+`EnsureSuccessStatusCode` semantics, not just 4xx/5xx. A nonempty list selects
+exactly those statuses: selecting 202 retries it instead of starting polling.
+Excluded statuses return the full `DurableHttpResponse` unchanged. Selected
+responses are closed without reading their bodies and become activity
+failures; exhaustion fails `call_http` with `durabletask.task.TaskFailedError`
+rather than returning the last selected response. Transport and other activity
+failures also use the policy regardless of the status list.
+
+The policy and status list are snapshotted when the request is scheduled.
+For async orchestrators, scheduling occurs when the coroutine starts.
+Omitting `retry_options` preserves the existing request payload and behavior.
+Automatic 202/Location polling remains separate: subsequent GET polls inherit
+neither the failure retry policy nor its status classification. Poll HTTP
+errors return normally, and a poll activity/transport failure fails the call
+without these retries. `Retry-After` controls polling delays, not failure retry
+delays.
+
+`retry_timeout` uses replay-safe orchestration time from the initial activity
+scheduling. It stops retrying when a failure is handled at or beyond the
+timeout. It does **not** cancel or time-limit an in-flight HTTP request, and
+the next retry delay may cross the timeout. Unlike the JavaScript core engine,
+Python does not reject a retry solely because its next delay would exceed the
+remaining timeout.
+
+> [!WARNING]
+> Repeating requests can duplicate side effects, including when a server
+> processes a request but its response is lost. Enable retries only for safe
+> operations or use server-enforced idempotency keys. Adding or changing retry
+> options changes durable scheduling and failure handling. Keep policies
+> deterministic; version new caller orchestrations or drain affected in-flight
+> instances on the old code before changing their policy.
+
+This feature requires the corrected core replay-safe retry-timeout behavior in
+[#326](https://github.com/microsoft/durabletask-python/pull/326). Release the core
+fix before publishing this provider feature, then coordinate the provider
+version and core dependency minimum in a dedicated release PR. This feature
+does not itself change package versions or dependency minimums.
+
 ## Unicode JSON serialization
 
 By default, durable payloads preserve the shared `azure-functions` codec's

@@ -59,6 +59,11 @@ async def check_cold_operations(
     assert_type(context.as_task_context(), df.DurableOrchestrationContext)
     assert_type(await context.task_all([pending, pending]), list[int])
     assert_type(await context.task_any([pending]), asyncio.Future[int])
+    assert_type(await context.call_http(
+        "GET", "https://example.com",
+        retry_options=df.HttpRetryOptions(
+            first_retry_interval=timedelta(seconds=1), max_number_of_attempts=3),
+    ), df.DurableHttpResponse)
     operation = native.as_task_context().call_activity("shared", return_type=int)
     borrower = asyncio.create_task(operation.wait())
     assert_type(borrower, asyncio.Task[int])

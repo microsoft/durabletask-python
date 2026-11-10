@@ -612,3 +612,45 @@ def test_durable_http_is_cold_and_decodes_response() -> None:
     assert _completed(_execute(
         orchestrator, history, [helpers.new_sub_orchestration_completed_event(1, result)])) == [
             201, {"reply": "yes"}, "ok"]
+
+
+def test_durable_http_retries_are_snapshotted_when_coroutine_starts() -> None:
+    from azure.durable_functions.http.builtin import BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
+
+    class CountingPolicy(df.HttpRetryOptions):
+        def __init__(self) -> None:
+            super().__init__(
+                first_retry_interval=timedelta(seconds=2), max_number_of_attempts=3,
+                status_codes_to_retry=[503])
+            self.snapshots = 0
+
+        def to_json(self) -> dict[str, Any]:
+            self.snapshots += 1
+            return super().to_json()
+
+    async def orchestrator(ctx: df.AsyncDurableOrchestrationContext) -> str | None:
+        headers = {"stage": "before"}
+        policy = CountingPolicy()
+        request = ctx.call_http("GET", "https://example.com", headers=headers, retry_options=policy)
+        assert policy.snapshots == 0
+        headers["stage"] = "after"
+        response = await request
+        assert policy.snapshots > 0
+        return response.content
+
+    start = _start()
+    initial = _execute(orchestrator, [], start)
+    assert len(initial.actions) == 1
+    action = initial.actions[0].createSubOrchestration
+    assert action.name == BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
+    request = json.loads(action.input.value)
+    assert request["headers"] == {"stage": "after"}
+    assert request["retryOptions"] == df.HttpRetryOptions(
+        first_retry_interval=timedelta(seconds=2), max_number_of_attempts=3,
+        status_codes_to_retry=[503]).to_json()
+    history = start + [helpers.new_sub_orchestration_created_event(
+        1, action.name, action.instanceId)]
+    response = DEFAULT_FUNCTIONS_DATA_CONVERTER.serialize(df.DurableHttpResponse(200, content="ok"))
+    assert response is not None
+    assert _completed(_execute(
+        orchestrator, history, [helpers.new_sub_orchestration_completed_event(1, response)])) == "ok"

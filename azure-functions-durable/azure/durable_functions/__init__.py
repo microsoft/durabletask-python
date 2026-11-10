@@ -8,7 +8,7 @@ from durabletask.task import RetryPolicy
 
 from .decorators.durable_app import Blueprint, DFApp
 from .client import DurableFunctionsClient, SyncDurableFunctionsClient
-from .http.models import DurableHttpRequest, DurableHttpResponse
+from .http.models import DurableHttpRequest, DurableHttpResponse, HttpRetryOptions
 from .orchestrator import Orchestrator
 from .internal.compat.retry_options import RetryOptions
 from .internal.compat.orchestration_runtime_status import OrchestrationRuntimeStatus
@@ -55,6 +55,7 @@ __all__ = [
     "Entity",
     "EntityId",
     "EntityStateResponse",
+    "HttpRetryOptions",
     "ManagedIdentityTokenSource",
     "Orchestrator",
     "OrchestrationRuntimeStatus",
