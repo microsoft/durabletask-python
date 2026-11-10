@@ -71,20 +71,43 @@ class HttpRetryOptions(RetryPolicy):
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "HttpRetryOptions":
         """Reconstruct a snapshotted policy from its wire payload."""
+        first_interval = (
+            value["firstRetryIntervalInMilliseconds"]
+            if "firstRetryIntervalInMilliseconds" in value
+            else value.get("first_retry_interval_in_milliseconds", 0)
+        )
+        max_attempts = (
+            value["maxNumberOfAttempts"]
+            if "maxNumberOfAttempts" in value
+            else value.get("max_number_of_attempts", 1)
+        )
+        backoff = (
+            value["backoffCoefficient"]
+            if "backoffCoefficient" in value
+            else value.get("backoff_coefficient", 1.0)
+        )
         max_interval = (
             value["maxRetryIntervalInMilliseconds"]
             if "maxRetryIntervalInMilliseconds" in value
-            else 518400000
+            else value.get("max_retry_interval_in_milliseconds", 518400000)
         )
-        timeout = value.get("retryTimeoutInMilliseconds")
-        backoff = value.get("backoffCoefficient", 1.0)
+        timeout = (
+            value["retryTimeoutInMilliseconds"]
+            if "retryTimeoutInMilliseconds" in value
+            else value.get("retry_timeout_in_milliseconds")
+        )
+        status_codes = (
+            value["statusCodesToRetry"]
+            if "statusCodesToRetry" in value
+            else value.get("status_codes_to_retry")
+        )
         return cls(
-            first_retry_interval=timedelta(milliseconds=value["firstRetryIntervalInMilliseconds"]),
-            max_number_of_attempts=value["maxNumberOfAttempts"],
+            first_retry_interval=timedelta(milliseconds=first_interval),
+            max_number_of_attempts=max_attempts,
             backoff_coefficient=backoff if backoff is not None else 1.0,
             max_retry_interval=timedelta(milliseconds=max_interval) if max_interval is not None else None,
             retry_timeout=timedelta(milliseconds=timeout) if timeout is not None else None,
-            status_codes_to_retry=value.get("statusCodesToRetry"))
+            status_codes_to_retry=status_codes)
 
 
 class DurableHttpRequest:
