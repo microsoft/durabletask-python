@@ -20,6 +20,11 @@ minimum updates belong in the dedicated release PR.
 
 FIXED
 
+- Reconstructing `HttpRetryOptions` from JSON via `from_json()` now defensively
+handles missing optional fields (`maxRetryIntervalInMilliseconds`,
+`retryTimeoutInMilliseconds`, `backoffCoefficient`, and `statusCodesToRetry`) and
+accepts `snake_case` keys, preventing unexpected `KeyError` exceptions when parsing
+minimal or cross-platform wire payloads.
 - With the corresponding core SDK update, activity and sub-orchestration
 `retry_timeout` decisions use replay-safe orchestration time rather than
 wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)

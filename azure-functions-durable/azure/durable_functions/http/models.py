@@ -70,7 +70,12 @@ class HttpRetryOptions(RetryPolicy):
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "HttpRetryOptions":
-        """Reconstruct a snapshotted policy from its wire payload."""
+        """Reconstruct a snapshotted policy from its wire payload.
+
+        Accepts both camelCase and snake_case key naming defensively, and handles
+        missing optional fields (max retry interval, retry timeout, backoff
+        coefficient, and status codes) using their class defaults.
+        """
         first_interval = (
             value["firstRetryIntervalInMilliseconds"]
             if "firstRetryIntervalInMilliseconds" in value
