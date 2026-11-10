@@ -509,9 +509,6 @@ def functions_e2e(session: nox.Session) -> None:
         ),
     )
     try:
-        session.env[
-            "AzureFunctionsJobHost__extensions__durableTask__hubName"
-        ] = _new_test_namespace("nox")
         session.env["E2E_PAYLOAD_CONTAINER"] = _new_test_namespace("payloads")
         session.install("-r", "requirements.txt")
         _install_packages(session, editable=True)

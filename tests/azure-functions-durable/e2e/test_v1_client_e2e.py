@@ -6,8 +6,7 @@
 Covers ``suspend``/``resume``, ``restart``, ``get_status_all``,
 ``get_status_by``, ``purge_instance_history_by``,
 ``create_http_management_payload`` / ``get_client_response_links``,
-``wait_for_completion_or_create_check_status_response``, and the ``rewind``
-NotImplementedError stub.
+``wait_for_completion_or_create_check_status_response``, and ``rewind``.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -110,6 +109,7 @@ def test_rewind(v1_app):
     instance_id = v1_app.start_orchestration("rewind_target")
     failed = v1_app.wait_for_completion(instance_id)
     assert failed["runtimeStatus"] == "Failed"
+    assert "failing on first attempt (rewind to retry)" in failed["output"]
 
     result = http_request("POST", f"{v1_app.base_url}/api/rewind/{instance_id}")
     assert result.status == 202
