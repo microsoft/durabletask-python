@@ -6,7 +6,7 @@
 import inspect
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import Any, Optional, get_origin
 from unittest.mock import patch
@@ -76,7 +76,9 @@ class TestIsReconstructable:
     def test_dict_and_mapping_of_dataclass_is_reconstructable(self):
         assert self.conv.can_reconstruct(dict[str, Order]) is True
         assert self.conv.can_reconstruct(Mapping[str, Order]) is True
+        assert self.conv.can_reconstruct(MutableMapping[str, Order]) is True
         assert self.conv.can_reconstruct(dict[str, int]) is False
+        assert self.conv.can_reconstruct(MutableMapping[str, int]) is False
 
     def test_tuple_of_dataclass_is_reconstructable(self):
         assert self.conv.can_reconstruct(tuple[Order, ...]) is True
@@ -115,6 +117,7 @@ class TestCustomConverterReconstructable:
         assert conv.can_reconstruct(int) is False
         # The override is also consulted for elements inside dict and tuple hints.
         assert conv.can_reconstruct(dict[str, Widget]) is True
+        assert conv.can_reconstruct(MutableMapping[str, Widget]) is True
         assert conv.can_reconstruct(tuple[Widget, ...]) is True
         assert conv.can_reconstruct(tuple[Widget, int]) is True
 
