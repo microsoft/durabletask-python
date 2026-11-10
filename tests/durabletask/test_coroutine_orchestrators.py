@@ -4,10 +4,12 @@
 """Replay-level coverage for coroutine orchestrators and generator history parity."""
 
 import asyncio
+import inspect
 import json
 import logging
 from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timedelta
+from functools import partial, wraps
 from typing import Any
 
 import pytest
@@ -48,7 +50,7 @@ def _completion(result: worker.ExecutionResults) -> pb.CompleteOrchestrationActi
 
 
 def test_coroutine_immediate_return() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, value: int) -> int:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, value: int) -> int:
         return value
 
     complete = _completion(_execute(orchestrator, [], _start()))
@@ -56,10 +58,137 @@ def test_coroutine_immediate_return() -> None:
     assert json.loads(complete.result.value) == 3
 
 
+@pytest.mark.parametrize("shape", ["function", "wrapped", "partial", "object", "partial-object"])
+def test_async_context_is_selected_for_supported_callable_shapes(shape: str) -> None:
+    async def plain(ctx: task.AsyncOrchestrationContext, value: int) -> int:
+        assert isinstance(ctx, task.AsyncOrchestrationContext)
+        return value + 1
+
+    @wraps(plain)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        return plain(*args, **kwargs)
+
+    async def with_prefix(prefix: int, ctx: task.AsyncOrchestrationContext, value: int) -> int:
+        assert isinstance(ctx, task.AsyncOrchestrationContext)
+        return value + prefix
+
+    class AsyncCallable:
+        async def __call__(self, ctx: task.AsyncOrchestrationContext, value: int) -> int:
+            assert isinstance(ctx, task.AsyncOrchestrationContext)
+            return value + 1
+
+    class AsyncPartialCallable:
+        async def __call__(
+            self, prefix: int, ctx: task.AsyncOrchestrationContext, value: int,
+        ) -> int:
+            assert isinstance(ctx, task.AsyncOrchestrationContext)
+            return value + prefix
+
+    variants = {
+        "function": plain,
+        "wrapped": wrapped,
+        "partial": partial(with_prefix, 1),
+        "object": AsyncCallable(),
+        "partial-object": partial(AsyncPartialCallable(), 1),
+    }
+    complete = _completion(_execute(variants[shape], [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert json.loads(complete.result.value) == 4
+
+
+def test_unmarked_synchronous_wrapper_returning_coroutine_is_rejected_and_closed() -> None:
+    created: list[Any] = []
+
+    async def async_orchestrator(ctx: task.AsyncOrchestrationContext, value: int) -> int:
+        return value
+
+    def wrapper(ctx: task.OrchestrationContext, value: int) -> Any:
+        coroutine = async_orchestrator(ctx, value)  # type: ignore[arg-type]
+        created.append(coroutine)
+        return coroutine
+
+    complete = _completion(_execute(wrapper, [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert "synchronous orchestrator returned a coroutine" in complete.failureDetails.errorMessage
+    assert inspect.getcoroutinestate(created[0]) == inspect.CORO_CLOSED
+
+
+def test_async_classified_wrapper_returning_non_coroutine_is_rejected() -> None:
+    async def async_orchestrator(ctx: task.AsyncOrchestrationContext, value: int) -> int:
+        return value
+
+    @wraps(async_orchestrator)
+    def wrapper(*args: Any, **kwargs: Any) -> int:
+        return 42
+
+    complete = _completion(_execute(wrapper, [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert "async orchestrator must return a coroutine" in complete.failureDetails.errorMessage
+
+
+def test_async_classified_wrapper_closes_returned_generator() -> None:
+    created: list[Generator[int, None, None]] = []
+
+    async def async_orchestrator(ctx: task.AsyncOrchestrationContext, value: int) -> int:
+        return value
+
+    @wraps(async_orchestrator)
+    def wrapper(*args: Any, **kwargs: Any) -> Generator[int, None, None]:
+        generator = (value for value in [42])
+        created.append(generator)
+        return generator
+
+    complete = _completion(_execute(wrapper, [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert "async orchestrator must return a coroutine" in complete.failureDetails.errorMessage
+    assert inspect.getgeneratorstate(created[0]) == inspect.GEN_CLOSED
+
+
+def test_cyclic_async_wrapper_fails_instead_of_hanging() -> None:
+    def wrapper(ctx: task.OrchestrationContext, value: int) -> int:
+        return value
+
+    wrapper.__wrapped__ = wrapper  # type: ignore[attr-defined]
+    complete = _completion(_execute(wrapper, [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert "wrapper loop" in complete.failureDetails.errorMessage
+
+
+def test_async_context_metadata_and_commands_match_sync_context() -> None:
+    entity = entities.EntityInstanceId("counter", "one")
+
+    def use_context(ctx: task.OrchestrationContext | task.AsyncOrchestrationContext) -> list[Any]:
+        ctx.set_custom_status({"state": "running"})
+        ctx.send_event("other", "ping", data=3)
+        ctx.signal_entity(entity, "add", 1)
+        return [
+            ctx.instance_id, ctx.parent_instance_id, ctx.version,
+            ctx.current_utc_datetime.isoformat(), ctx.is_replaying, ctx.new_uuid(),
+        ]
+
+    async def async_orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[Any]:
+        return use_context(ctx)
+
+    def sync_orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[Any]:
+        return use_context(ctx)
+
+    started = helpers.new_execution_started_event("test", INSTANCE_ID, "null", version="v1")
+    started.executionStarted.parentInstance.CopyFrom(pb.ParentInstanceInfo(
+        taskScheduledId=1,
+        orchestrationInstance=pb.OrchestrationInstance(instanceId="parent")))
+    new = [helpers.new_orchestrator_started_event(NOW), started]
+    async_result = _execute(async_orchestrator, [], new)
+    sync_result = _execute(sync_orchestrator, [], new)
+    assert async_result.actions == sync_result.actions
+    assert async_result.encoded_custom_status == sync_result.encoded_custom_status == '{"state": "running"}'
+    assert json.loads(_completion(async_result).result.value)[:5] == [
+        INSTANCE_ID, "parent", "v1", NOW.isoformat(), False]
+
+
 def test_await_is_concrete_and_completed_tasks_do_not_suspend() -> None:
     assert "__await__" not in task.Task.__abstractmethods__
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[int]:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[int]:
         completed = task.CompletableTask[int]()
         completed.complete(7)
         return [await completed, await completed]
@@ -84,7 +213,7 @@ def test_generator_invalid_yield_recommends_async_authoring(after_activity: bool
 
 
 def test_precompleted_failure_and_cancellation_are_catchable() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[str]:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[str]:
         failed = task.CompletableTask[int]()
         failed.fail("failed", ValueError("boom"))
         cancelled = task.TimerTask()
@@ -105,10 +234,10 @@ def test_precompleted_failure_and_cancellation_are_catchable() -> None:
 
 
 def test_nested_async_helpers_replay_with_generator_action_parity() -> None:
-    async def helper(ctx: task.OrchestrationContext, value: int) -> int:
+    async def helper(ctx: task.AsyncOrchestrationContext, value: int) -> int:
         return await ctx.call_activity("increment", input=value, return_type=int)
 
-    async def coroutine(ctx: task.OrchestrationContext, value: int) -> int:
+    async def coroutine(ctx: task.AsyncOrchestrationContext, value: int) -> int:
         first = await helper(ctx, value)
         return await helper(ctx, first)
 
@@ -134,9 +263,9 @@ def test_nested_async_helpers_replay_with_generator_action_parity() -> None:
 
 
 def test_fan_out_waits_for_all_and_preserves_input_order() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[str]:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[str]:
         pending: list[task.Task[str]] = [
-            ctx.call_activity("work", input=i, return_type=str) for i in range(2)]
+            ctx.as_task_context().call_activity("work", input=i, return_type=str) for i in range(2)]
         return await task.when_all(pending)
 
     old = _start()
@@ -151,7 +280,7 @@ def test_fan_out_waits_for_all_and_preserves_input_order() -> None:
 
 @pytest.mark.parametrize("caught", [False, True])
 def test_activity_failure_is_thrown_into_coroutine(caught: bool) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         try:
             await ctx.call_activity("boom")
         except task.TaskFailedError:
@@ -173,9 +302,9 @@ def test_activity_failure_is_thrown_into_coroutine(caught: bool) -> None:
 
 @pytest.mark.parametrize("event_wins", [False, True])
 def test_when_any_timer_and_external_event(event_wins: bool) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
-        event = ctx.wait_for_external_event("approval")
-        timer = ctx.create_timer(timedelta(seconds=1))
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
+        event = ctx.as_task_context().wait_for_external_event("approval")
+        timer = ctx.as_task_context().create_timer(timedelta(seconds=1))
         winner = await task.when_any([event, timer])
         if winner is event:
             timer.cancel()
@@ -191,7 +320,7 @@ def test_when_any_timer_and_external_event(event_wins: bool) -> None:
 
 
 def test_sub_orchestration_and_replay_flags() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[Any]:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[Any]:
         before = ctx.is_replaying
         value = await ctx.call_sub_orchestrator("child", instance_id="child-test", return_type=str)
         return [value, before, ctx.is_replaying]
@@ -203,7 +332,7 @@ def test_sub_orchestration_and_replay_flags() -> None:
 
 
 def test_retry_timer_resumes_same_coroutine() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
         return await ctx.call_activity(
             "retry", retry_policy=task.RetryPolicy(
                 first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2))
@@ -231,7 +360,7 @@ def test_retry_timer_resumes_same_coroutine() -> None:
 @pytest.mark.parametrize("caught", [False, True])
 def test_coroutine_non_retriable_failure(
         sub_orchestration: bool, replayed: bool, caught: bool) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
         retry = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=3)
         try:
             if sub_orchestration:
@@ -272,7 +401,7 @@ def test_coroutine_non_retriable_failure(
 def test_entity_lock_and_call_suspend_coroutine() -> None:
     entity = entities.EntityInstanceId("counter", "one")
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
         with await ctx.lock_entities([entity]):
             return await ctx.call_entity(entity, "get")
 
@@ -294,7 +423,7 @@ def test_entity_lock_and_call_suspend_coroutine() -> None:
 
 
 def test_continue_as_new_from_coroutine() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, value: int) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, value: int) -> None:
         await ctx.wait_for_external_event("next")
         ctx.continue_as_new(value + 1)
 
@@ -305,7 +434,7 @@ def test_continue_as_new_from_coroutine() -> None:
 
 
 def test_nondeterminism_still_detected_for_coroutines() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
         return await ctx.call_activity("changed")
 
     complete = _completion(_execute(
@@ -316,7 +445,7 @@ def test_nondeterminism_still_detected_for_coroutines() -> None:
 
 @pytest.mark.parametrize("after_activity", [False, True])
 def test_non_durable_suspension_is_rejected(after_activity: bool) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         if after_activity:
             await ctx.call_activity("work")
         await asyncio.Future()

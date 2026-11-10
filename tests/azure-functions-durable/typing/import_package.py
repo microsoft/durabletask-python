@@ -2,12 +2,14 @@
 # Licensed under the MIT License.
 
 import asyncio
+from collections.abc import Generator
 from datetime import timedelta
-from typing import assert_type
+from typing import Any, assert_type
 
 import azure.durable_functions as df
 from azure.durable_functions.client import DurableFunctionsClient, SyncDurableFunctionsClient
 from azure.durable_functions.worker import DurableFunctionsWorker
+from azure.functions.decorators.function_app import FunctionBuilder
 from durabletask import task
 
 
@@ -44,18 +46,37 @@ async def check_async_context_manager(client: DurableFunctionsClient) -> None:
 
 
 async def check_cold_operations(
-    context: df.DurableOrchestrationContext,
-    native: task.OrchestrationContext,
+    context: df.AsyncDurableOrchestrationContext,
+    native: task.AsyncOrchestrationContext,
 ) -> None:
-    ops = context.as_async()
-    assert_type(ops, task.AsyncOrchestrationContext)
-    assert_type(native.as_async(), task.AsyncOrchestrationContext)
-    pending = asyncio.create_task(ops.call_activity("activity", return_type=int))
+    pending = asyncio.create_task(native.call_activity("activity", return_type=int))
     assert_type(pending, asyncio.Task[int])
     assert_type(await pending, int)
-    event = asyncio.create_task(ops.receive_event(
+    event = asyncio.create_task(native.wait_for_external_event(
         "approval", timeout=timedelta(seconds=1), data_type=str))
     assert_type(await event, str)
-    operation = native.call_activity("shared", return_type=int)
+    assert_type(await context.wait_for_external_event("approval", str), str)
+    assert_type(context.as_task_context(), df.DurableOrchestrationContext)
+    assert_type(await context.task_all([pending, pending]), list[int])
+    assert_type(await context.task_any([pending]), asyncio.Future[int])
+    operation = native.as_task_context().call_activity("shared", return_type=int)
     borrower = asyncio.create_task(operation.wait())
     assert_type(borrower, asyncio.Task[int])
+
+
+def register_orchestrators(app: df.DFApp, worker: DurableFunctionsWorker) -> None:
+    def generator(context: df.DurableOrchestrationContext) -> Generator[task.Task[Any], Any, int]:
+        return (yield context.call_activity("activity"))
+
+    async def compatible(context: df.AsyncDurableOrchestrationContext) -> int:
+        return await context.call_activity("activity")
+
+    async def native(context: task.AsyncOrchestrationContext, value: int) -> int:
+        return await context.call_activity("activity", input=value, return_type=int)
+
+    assert_type(app.orchestration_trigger("context")(generator), FunctionBuilder)
+    assert_type(app.orchestration_trigger("context")(compatible), FunctionBuilder)
+    assert_type(app.orchestration_trigger("context")(native), FunctionBuilder)
+    assert_type(worker.execute_orchestration_request(generator, ""), str)
+    assert_type(worker.execute_orchestration_request(compatible, ""), str)
+    assert_type(worker.execute_orchestration_request(native, ""), str)

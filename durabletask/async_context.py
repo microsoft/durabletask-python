@@ -1,18 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Cold coroutine operations over an existing durable orchestration context."""
+"""Coroutine-native orchestration context backed by the durable replay engine."""
 
 from __future__ import annotations
 
 import math
+import logging
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import Any, TypeVar, overload
 
 from durabletask.entities import EntityInstanceId, EntityLock
-
-if TYPE_CHECKING:
-    from durabletask import task
 
 T = TypeVar("T")
 TInput = TypeVar("TInput")
@@ -20,14 +18,12 @@ TOutput = TypeVar("TOutput")
 
 
 class AsyncOrchestrationContext:
-    """A coroutine-native operation surface returned by ``ctx.as_async()``.
+    """Context supplied automatically to ``async def`` orchestrators.
 
-    Every operation returns a single-use native coroutine. Constructing it
-    schedules nothing: validation, input serialization, event consumption,
-    and relative deadline evaluation occur only when execution starts. Inputs
-    are not copied at construction; mutations before execution are observed.
-    Use the original context for properties, synchronous commands, and eager,
-    reusable durable handles; use ``handle.wait()`` for borrowed coroutine waits.
+    Durable operations return single-use native coroutines. Constructing one
+    schedules nothing: validation, input serialization, event consumption, and
+    relative deadline evaluation occur when it starts. Inputs are not copied
+    at construction; mutations before execution are observed.
 
     Cancelling activity, sub-orchestration, entity, or lock waiters does not
     cancel remote work. Timers and event receives own their private local
@@ -37,6 +33,69 @@ class AsyncOrchestrationContext:
 
     def __init__(self, context: task.OrchestrationContext) -> None:
         self._context = context
+
+    @property
+    def instance_id(self) -> str:
+        """Get the current orchestration instance ID."""
+        return self._context.instance_id
+
+    @property
+    def parent_instance_id(self) -> str | None:
+        """Get the parent orchestration instance ID, if any."""
+        return self._context.parent_instance_id
+
+    @property
+    def version(self) -> str | None:
+        """Get the orchestration instance version, if any."""
+        return self._context.version
+
+    @property
+    def current_utc_datetime(self) -> datetime:
+        """Get the replay-safe current UTC time."""
+        return self._context.current_utc_datetime
+
+    @property
+    def is_replaying(self) -> bool:
+        """Get whether the orchestration is replaying its history."""
+        return self._context.is_replaying
+
+    def set_custom_status(self, custom_status: Any) -> None:
+        """Set the orchestration's custom status."""
+        self._context.set_custom_status(custom_status)
+
+    def signal_entity(
+        self, entity_id: EntityInstanceId, operation_name: str,
+        input: Any = None, signal_time: datetime | None = None,
+    ) -> None:
+        """Send a one-way entity operation."""
+        self._context.signal_entity(entity_id, operation_name, input, signal_time)
+
+    def send_event(self, instance_id: str, event_name: str, *, data: Any | None = None) -> None:
+        """Send a one-way event to another orchestration."""
+        self._context.send_event(instance_id, event_name, data=data)
+
+    def continue_as_new(
+        self, new_input: Any, *, save_events: bool = False, new_version: str | None = None,
+    ) -> None:
+        """Continue the orchestration with new input."""
+        self._context.continue_as_new(new_input, save_events=save_events, new_version=new_version)
+
+    def new_uuid(self) -> str:
+        """Create a replay-safe UUID."""
+        return self._context.new_uuid()
+
+    def create_replay_safe_logger(self, logger: logging.Logger) -> task.ReplaySafeLogger:
+        """Create a logger that suppresses messages during replay."""
+        return self._context.create_replay_safe_logger(logger)
+
+    def as_task_context(self) -> task.OrchestrationContext:
+        """Return the eager task-handle context for advanced interoperability.
+
+        Its operations schedule immediately and return reusable durable handles.
+        Await a handle directly or use ``handle.wait()`` for an independent
+        coroutine waiter whose cancellation does not cancel the underlying work.
+        """
+        return self._context
 
     @overload
     async def call_activity(
@@ -147,11 +206,15 @@ class AsyncOrchestrationContext:
             entity, operation, input, return_type=return_type)
 
     async def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLock:
-        """Acquire locks, for use as ``with await ops.lock_entities(ids):``.
+        """Acquire locks, for use as ``with await ctx.lock_entities(ids):``.
 
         The returned synchronous context manager releases the locks. This
         preserves the original context's entity locking and replay rules;
-        cancellation does not withdraw an already-issued lock request.
+        cancellation does not withdraw an already-issued lock request. An
+        abandoned request can still acquire locks, which remain held until
+        released or the orchestration ends. Retain and shield the acquisition
+        task if a timeout or another local cancellation might interrupt it,
+        then await it and exit the returned lock when it is safe to do so.
         """
         return await self._context.lock_entities(entities)
 
@@ -169,20 +232,20 @@ class AsyncOrchestrationContext:
             timer.cancel()
 
     @overload
-    async def receive_event(
+    async def wait_for_external_event(
         self, name: str, *, timeout: timedelta | None = ...,
         data_type: type[T],
     ) -> T:
         ...
 
     @overload
-    async def receive_event(
+    async def wait_for_external_event(
         self, name: str, *, timeout: timedelta | None = ...,
         data_type: None = ...,
     ) -> Any:
         ...
 
-    async def receive_event(
+    async def wait_for_external_event(
         self, name: str, *, timeout: timedelta | None = None,
         data_type: type | None = None,
     ) -> Any:
@@ -196,8 +259,8 @@ class AsyncOrchestrationContext:
         and any outstanding timeout timer are withdrawn locally, so a later
         receive cannot lose an event to this abandoned subscription.
 
-        For a shared subscription use the original context's
-        ``wait_for_external_event()`` and borrowed ``Task.wait()`` instead.
+        For a shared subscription use ``as_task_context().wait_for_external_event()``
+        and borrowed ``Task.wait()`` instead.
         """
         from durabletask.task import when_any
 
@@ -221,3 +284,8 @@ class AsyncOrchestrationContext:
             event.cancel()
             if timer is not None:
                 timer.cancel()
+
+
+# Resolve public annotations at runtime without importing task before this
+# module has defined the context that task re-exports.
+from durabletask import task  # noqa: E402

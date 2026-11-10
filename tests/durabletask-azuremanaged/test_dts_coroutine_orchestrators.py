@@ -25,33 +25,32 @@ from durabletask.testing import create_test_backend
     pytest.param("dts", marks=pytest.mark.dts),
 ])
 @pytest.mark.parametrize("coroutine_parent", [False, True], ids=["generator-parent", "coroutine-parent"])
-@pytest.mark.parametrize("cold", [False, True], ids=["handles", "cold"])
-def test_mixed_orchestrators_over_grpc(transport: str, coroutine_parent: bool, cold: bool) -> None:
+@pytest.mark.parametrize("borrowed", [False, True], ids=["coroutines", "borrowed-handles"])
+def test_mixed_orchestrators_over_grpc(transport: str, coroutine_parent: bool, borrowed: bool) -> None:
     def increment(ctx: task.ActivityContext, value: int) -> int:
         return value + 1
 
-    async def coroutine_child(ctx: task.OrchestrationContext, value: int) -> int:
-        if cold:
-            ops = ctx.as_async()
-            await ops.create_timer(timedelta(milliseconds=10))
-            return await ops.call_activity(increment, input=value, return_type=int)
+    async def coroutine_child(ctx: task.AsyncOrchestrationContext, value: int) -> int:
+        if not borrowed:
+            await ctx.create_timer(timedelta(milliseconds=10))
+            return await ctx.call_activity(increment, input=value, return_type=int)
         await asyncio.sleep(0)
         await asyncio.sleep(0.01)
-        return await ctx.call_activity(increment, input=value, return_type=int)
+        return await ctx.as_task_context().call_activity(increment, input=value, return_type=int)
 
     def generator_child(ctx: task.OrchestrationContext, value: int) -> Generator[task.Task[Any], Any, int]:
         return (yield ctx.call_activity(increment, input=value))
 
-    async def coroutine(ctx: task.OrchestrationContext, value: int) -> list[Any]:
-        if cold:
-            ops = ctx.as_async()
+    async def coroutine(ctx: task.AsyncOrchestrationContext, value: int) -> list[Any]:
+        if not borrowed:
             async with asyncio.TaskGroup() as group:
-                first = group.create_task(ops.call_sub_orchestrator(coroutine_child, input=value))
-                second = group.create_task(ops.call_sub_orchestrator(generator_child, input=value + 1))
-            return [first.result(), second.result(), await ops.receive_event("go")]
+                first = group.create_task(ctx.call_sub_orchestrator(coroutine_child, input=value))
+                second = group.create_task(ctx.call_sub_orchestrator(generator_child, input=value + 1))
+            return [first.result(), second.result(), await ctx.wait_for_external_event("go")]
+        handles = ctx.as_task_context()
         values = list(await asyncio.gather(
-            ctx.call_sub_orchestrator(coroutine_child, input=value),
-            ctx.call_sub_orchestrator(generator_child, input=value + 1),
+            handles.call_sub_orchestrator(coroutine_child, input=value),
+            handles.call_sub_orchestrator(generator_child, input=value + 1),
         ))
         event = await ctx.wait_for_external_event("go")
         return values + [event]

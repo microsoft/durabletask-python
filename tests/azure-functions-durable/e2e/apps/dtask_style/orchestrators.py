@@ -37,7 +37,7 @@ def activity_chain(ctx: task.OrchestrationContext, _: Any):
 
 
 @bp.orchestration_trigger(context_name="context")
-async def async_await_probe(ctx: task.OrchestrationContext, _: Any) -> dict[str, Any]:
+async def async_await_probe(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
     greeting = await ctx.call_activity("say_hello", input="Tokyo", return_type=str)
     values = await asyncio.gather(*(ctx.call_activity("square", input=i, return_type=int) for i in (2, 3)))
     await asyncio.sleep(0)
@@ -47,14 +47,13 @@ async def async_await_probe(ctx: task.OrchestrationContext, _: Any) -> dict[str,
 
 
 @bp.orchestration_trigger(context_name="context")
-async def async_cold_probe(ctx: task.OrchestrationContext, _: Any) -> dict[str, Any]:
-    ops = ctx.as_async()
-    greeting = await asyncio.create_task(ops.call_activity("say_hello", input="Tokyo", return_type=str))
+async def async_cold_probe(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
+    greeting = await asyncio.create_task(ctx.call_activity("say_hello", input="Tokyo", return_type=str))
     async with asyncio.TaskGroup() as group:
-        first = group.create_task(ops.call_activity("square", input=2, return_type=int))
-        second = group.create_task(ops.call_activity("square", input=3, return_type=int))
-    await ops.create_timer(timedelta(milliseconds=10))
-    child: list[str] = await ops.call_sub_orchestrator("activity_chain")
+        first = group.create_task(ctx.call_activity("square", input=2, return_type=int))
+        second = group.create_task(ctx.call_activity("square", input=3, return_type=int))
+    await ctx.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await ctx.call_sub_orchestrator("activity_chain")
     return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
 
 

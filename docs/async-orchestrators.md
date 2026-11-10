@@ -14,13 +14,11 @@ from datetime import timedelta
 from durabletask import task
 
 
-async def workflow(ctx: task.OrchestrationContext, values: list[int]) -> list[int]:
-    ops = ctx.as_async()
-
+async def workflow(ctx: task.AsyncOrchestrationContext, values: list[int]) -> list[int]:
     async def branch(value: int) -> int:
-        first = await ops.call_activity("increment", input=value, return_type=int)
-        await ops.create_timer(timedelta(seconds=1))
-        return await ops.call_activity("increment", input=first, return_type=int)
+        first = await ctx.call_activity("increment", input=value, return_type=int)
+        await ctx.create_timer(timedelta(seconds=1))
+        return await ctx.call_activity("increment", input=first, return_type=int)
 
     async with asyncio.TaskGroup() as group:
         branches = [group.create_task(branch(value)) for value in values]
@@ -39,20 +37,20 @@ batch before scheduling its next operation.
 
 ## Cold operations and reusable handles
 
-`ctx.as_async()` returns an explicit coroutine-native operation facade. It does
-not replace the registered context, change generator behavior, or create a
-second runtime. Functions compatibility contexts expose the same facade using
-native keyword arguments such as `input=` and `data_type=`.
+An `async def` orchestrator automatically receives an
+`AsyncOrchestrationContext`. Its durable operations return native coroutines.
+Generator orchestrators still receive `OrchestrationContext` and keep their
+eager durable task handles. Both contexts use the same replay engine.
 
 | Expression | Meaning |
 |---|---|
-| `ctx.call_activity(...)` | Schedule eagerly and return a reusable durable handle. |
-| `ops.call_activity(...)` | Create a single-use native coroutine; schedule when it starts. |
+| `ctx.call_activity(...)` | Create a single-use native coroutine; schedule when it starts. |
+| `ctx.as_task_context().call_activity(...)` | Schedule eagerly and return a durable handle. |
 | `handle.wait()` | Create a native coroutine borrowing an existing handle. |
-| `ops.receive_event(...)` | Own an event registration, withdrawing it on cancellation or timeout. |
-| `ops.create_timer(...)` | Own a timer, cancelling its pending local work on cancellation. |
+| `ctx.wait_for_external_event(...)` | Withdraw an owned event wait on cancellation or timeout. |
+| `ctx.create_timer(...)` | Own a timer, cancelling its pending local work on cancellation. |
 
-Use the cold facade with `asyncio.create_task`, `TaskGroup.create_task`, and
+Use the async context with `asyncio.create_task`, `TaskGroup.create_task`, and
 ordered `gather`. Constructing a coroutine does not allocate action IDs,
 serialize input, or consume buffered events. Cancelling its local task before
 its first step starts no durable operation. Mutable inputs are read when the
@@ -64,7 +62,7 @@ explicitly started operation with multiple independent waiters, retain its
 durable handle:
 
 ```python
-operation = ctx.call_activity("quote", input="order-1", return_type=int)
+operation = ctx.as_task_context().call_activity("quote", input="order-1", return_type=int)
 first = asyncio.create_task(operation.wait())
 second = asyncio.create_task(operation.wait())
 first.cancel()
@@ -76,13 +74,54 @@ Cancelling either borrower does not cancel the underlying operation. Direct
 an awaitable durable handle is not a coroutine. Do not retry that expression
 assuming the eager operation was rolled back.
 
+Async function detection also recognizes `functools.wraps`, partials, and
+callable instances; existing registration naming requirements still apply.
+Use `functools.wraps` when a synchronous decorator wraps an async orchestrator;
+an unmarked synchronous wrapper returning a coroutine is rejected because it
+would have received the generator context.
+
+## Azure Functions compatibility
+
+Single-argument async Functions orchestrators receive
+`df.AsyncDurableOrchestrationContext`, with the v1-style method and argument
+names. Two-argument native orchestrators receive `task.AsyncOrchestrationContext`.
+
+```python
+import azure.durable_functions as df
+
+app = df.DFApp()
+
+
+@app.orchestration_trigger(context_name="context")
+async def greetings(context: df.AsyncDurableOrchestrationContext) -> list[str]:
+    names = context.get_input()
+    return await context.task_all([
+        context.call_activity("say_hello", name) for name in names
+    ])
+```
+
+`task_all` starts its inputs, waits for all of them, and returns results in
+input order, including duplicate references. If an operation fails, the first
+observed failure is raised after all have finished. `task_any` returns the
+winning `asyncio.Future`, whether it succeeded, failed, or was cancelled,
+without cancelling the losers. Await the winner to obtain its result or failure.
+An existing future keeps its identity; a coroutine is wrapped in a new task.
+Create tasks yourself when you need to identify the winner or later await the
+losers. Repeated references within a group are scheduled only once.
+
+On group cancellation, coroutines started by that group are cancelled and
+drained, while supplied futures are borrowed and continue running. Remote work
+already issued by either kind of operation is not cancelled. The compatibility
+context's `as_task_context()` returns its eager v1-style counterpart when
+explicit durable handles are needed.
+
 ## Supported authoring contract
 
 Await activities, timers, external events, sub-orchestrations, durable
-`task.when_all` / `task.when_any`, and entity calls/locks where supported by the
-provider. Functions compatibility operations such as `context.task_all()`
-remain awaitable. Generator and coroutine parents/children may call one another
-through durable sub-orchestrations.
+operations via eager `task.when_all` / `task.when_any`, and entity calls/locks
+where supported by the provider. Functions compatibility contexts also provide
+async `task_all` / `task_any`. Generator and coroutine parents/children may call
+one another through durable sub-orchestrations.
 
 The dispatch-local loop supports FIFO ready callbacks, local futures and tasks,
 `asyncio.create_task`, `asyncio.gather`, `asyncio.sleep`, `asyncio.TaskGroup`,
@@ -147,16 +186,15 @@ await the same handle. Keep the handle if you intend to await it again.
 Use explicit SDK cancellation when abandoning a cancellable shared timer/event
 wait and deliberately affecting every borrower.
 
-The cold facade owns its private timer and event registrations. For an event
+The async context owns its private timer and event registrations. For an event
 with a deadline, use the owned receive instead of timing out a borrowed handle:
 
 ```python
-ops = ctx.as_async()
 try:
-    approval = await ops.receive_event(
+    approval = await ctx.wait_for_external_event(
         "approval", timeout=timedelta(seconds=30), data_type=bool)
 except TimeoutError:
-    approval = await ops.receive_event("approval", data_type=bool)
+    approval = await ctx.wait_for_external_event("approval", data_type=bool)
 ```
 
 The timed-out registration is withdrawn before the replacement is registered,
@@ -168,6 +206,13 @@ activity, sub-orchestration, or entity call: cancellation cannot stop already
 issued remote work. A task-group sibling failure can therefore leave remote
 operations running. Retain and join their handles when completion is required
 before compensation or releasing application-level capacity.
+
+An entity lock request can still be granted after its local waiter is cancelled.
+Abandoning that waiter can leave locks held until the orchestration ends and
+block subsequent critical sections and some entity operations. If a timeout is
+needed, retain an acquisition task and shield it from the timeout; later await
+it and exit the returned lock to release it. Do not start another critical
+section while acquisition is pending.
 
 Cancelling a timer callback removes an uncommitted timer when possible, but
 cannot undo a timer already committed to history. Neither local nor durable
@@ -184,8 +229,8 @@ to follow the existing worker recovery policy.
 Every dispatch reconstructs the coroutine and its local tasks from history.
 After the response and entity-release obligations are snapshotted, teardown
 cancels remaining local tasks, drains cooperative cleanup, closes tracked async
-generators, and disposes the loop. This also happens on suspension, termination,
-continue-as-new, history failure, and version rejection.
+generators, and disposes the loop. This includes dispatches that suspend,
+continue as new, encounter a history failure, or reject a version.
 
 Nested `finally` blocks and async context-manager exits may run at **every
 dispatch boundary**, before workflow completion. Local cleanup can await ready
@@ -236,7 +281,7 @@ Supporting several Python versions does not guarantee recorded-history
 portability between them. Pin the runtime and dependencies for active
 instances and validate histories before upgrades. In particular, Python 3.11
 and 3.12+ schedule coroutine operands of `asyncio.wait_for()` differently, which
-can change durable action order inside concurrent branches. The cold facade
+can change durable action order inside concurrent branches. The async context
 does not normalize arbitrary standard-library scheduling.
 
 The Functions `orchestrator_generator_wrapper` helper supports direct durable

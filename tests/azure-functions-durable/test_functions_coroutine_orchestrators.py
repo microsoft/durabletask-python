@@ -23,31 +23,31 @@ from durabletask.internal import orchestrator_service_pb2 as pb
 
 @pytest.mark.parametrize("native", [False, True], ids=["compat", "native"])
 @pytest.mark.parametrize("entry", ["worker-sync", "worker-async", "decorator", "v1-handle"])
-@pytest.mark.parametrize("cold", [False, True], ids=["handles", "cold"])
-async def test_coroutine_replay_through_functions_entry_points(native: bool, entry: str, cold: bool) -> None:
-    async def modern(ctx: task.OrchestrationContext, value: int) -> list[Any]:
-        if cold:
-            ops = ctx.as_async()
+@pytest.mark.parametrize("borrowed", [False, True], ids=["coroutines", "borrowed-handles"])
+async def test_coroutine_replay_through_functions_entry_points(native: bool, entry: str, borrowed: bool) -> None:
+    async def modern(ctx: task.AsyncOrchestrationContext, value: int) -> list[Any]:
+        if not borrowed:
             async with asyncio.TaskGroup() as group:
-                first = group.create_task(ops.call_activity("work", input=value, return_type=str))
-                second = group.create_task(ops.call_activity("work", input=value + 1, return_type=str))
+                first = group.create_task(ctx.call_activity("work", input=value, return_type=str))
+                second = group.create_task(ctx.call_activity("work", input=value + 1, return_type=str))
             return [first.result(), second.result()]
+        handles = ctx.as_task_context()
         return list(await asyncio.gather(
-            ctx.call_activity("work", input=value, return_type=str),
-            ctx.call_activity("work", input=value + 1, return_type=str),
+            handles.call_activity("work", input=value, return_type=str),
+            handles.call_activity("work", input=value + 1, return_type=str),
         ))
 
-    async def compatible(ctx: df.DurableOrchestrationContext) -> list[Any]:
+    async def compatible(ctx: df.AsyncDurableOrchestrationContext) -> list[Any]:
         value = ctx.get_input()
-        if cold:
-            ops = ctx.as_async()
+        if not borrowed:
             async with asyncio.TaskGroup() as group:
-                first = group.create_task(ops.call_activity("work", input=value, return_type=str))
-                second = group.create_task(ops.call_activity("work", input=value + 1, return_type=str))
+                first = group.create_task(ctx.call_activity("work", input_=value))
+                second = group.create_task(ctx.call_activity("work", input_=value + 1))
             return [first.result(), second.result()]
+        handles = ctx.as_task_context()
         return list(await asyncio.gather(
-            ctx.call_activity("work", value),
-            ctx.call_activity("work", value + 1),
+            handles.call_activity("work", value),
+            handles.call_activity("work", value + 1),
         ))
 
     fn: Callable[..., Any] = modern if native else compatible
@@ -97,17 +97,17 @@ async def test_coroutine_replay_through_functions_entry_points(native: bool, ent
 
 @pytest.mark.parametrize("native", [False, True], ids=["compat", "native"])
 def test_owned_event_timeout_replacement_through_functions_worker(native: bool) -> None:
-    async def receive(ops: task.AsyncOrchestrationContext) -> str:
+    async def modern(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         try:
-            return await ops.receive_event("approval", timeout=timedelta(seconds=1), data_type=str)
+            return await ctx.wait_for_external_event("approval", timeout=timedelta(seconds=1), data_type=str)
         except TimeoutError:
-            return await ops.receive_event("approval", data_type=str)
+            return await ctx.wait_for_external_event("approval", data_type=str)
 
-    async def modern(ctx: task.OrchestrationContext, _: Any) -> str:
-        return await receive(ctx.as_async())
-
-    async def compatible(ctx: df.DurableOrchestrationContext) -> str:
-        return await receive(ctx.as_async())
+    async def compatible(ctx: df.AsyncDurableOrchestrationContext) -> str:
+        try:
+            return await ctx.wait_for_external_event("approval", str, timeout=timedelta(seconds=1))
+        except TimeoutError:
+            return await ctx.wait_for_external_event("approval", str)
 
     fn: Callable[..., Any] = modern if native else compatible
     worker = DurableFunctionsWorker()

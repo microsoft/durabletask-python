@@ -28,9 +28,9 @@ from tests.durabletask.test_coroutine_orchestrators import (
 
 @pytest.mark.parametrize("fail_branch", [False, True])
 def test_task_group_branches_inherit_context_and_replay_stable_actions(fail_branch: bool) -> None:
-    context: ContextVar[task.OrchestrationContext] = ContextVar("orchestration")
+    context: ContextVar[task.AsyncOrchestrationContext] = ContextVar("orchestration")
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
         token = context.set(ctx)
         try:
             results: dict[str, Any] = {}
@@ -80,7 +80,7 @@ def test_task_group_branches_inherit_context_and_replay_stable_actions(fail_bran
 
 
 def test_gather_resumes_each_branch_without_waiting_for_batch() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[Any]:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[Any]:
         async def branch(name: str) -> Any:
             value: Any = await ctx.call_activity(name)
             await asyncio.sleep(0)
@@ -106,15 +106,16 @@ def test_gather_resumes_each_branch_without_waiting_for_batch() -> None:
 
 @pytest.mark.parametrize("return_exceptions", [False, True])
 def test_gather_failure_does_not_cancel_sibling(return_exceptions: bool) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
         async def sibling() -> str:
             await ctx.call_activity("slow")
             return await ctx.call_activity("continued", return_type=str)
 
+        failure = asyncio.create_task(ctx.call_activity("fail", return_type=str))
         pending = asyncio.create_task(sibling())
         try:
             values = await asyncio.gather(
-                ctx.call_activity("fail", return_type=str), pending, return_exceptions=return_exceptions)
+                failure, pending, return_exceptions=return_exceptions)
             return [isinstance(values[0], task.TaskFailedError), values[1]]
         except task.TaskFailedError:
             assert not pending.cancelled()
@@ -134,7 +135,7 @@ def test_gather_failure_does_not_cancel_sibling(return_exceptions: bool) -> None
 def test_task_group_failure_cancels_waiters_not_durable_work() -> None:
     cleaned: list[str] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def branch(name: str) -> None:
             try:
                 await ctx.call_activity(name)
@@ -155,7 +156,7 @@ def test_task_group_failure_cancels_waiters_not_durable_work() -> None:
 
 @pytest.mark.parametrize("kind", ["sleep", "wait_for", "timeout"])
 def test_durable_timer_and_timeout(kind: str) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         try:
             if kind == "sleep":
                 await asyncio.sleep(2)
@@ -179,7 +180,7 @@ def test_durable_timer_and_timeout(kind: str) -> None:
 
 
 def test_sleep_zero_fifo_without_timer() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[int]:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[int]:
         observed: list[int] = []
 
         async def branch(index: int) -> None:
@@ -205,7 +206,7 @@ def test_discarded_gather_batches_release_decoded_results_during_replay() -> Non
         def __post_init__(self) -> None:
             references.append(ref(self))
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         for batch in range(8):
             await asyncio.gather(*(ctx.call_activity("work", return_type=Payload) for _ in range(4)))
             await asyncio.sleep(0)
@@ -241,7 +242,7 @@ def test_observed_failures_release_traceback_payloads_during_replay(observe: str
         def __post_init__(self) -> None:
             references.append(ref(self))
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         async def branch() -> None:
             payload = await ctx.call_activity("work", return_type=Payload)
             raise ValueError(f"Failed with payload {payload.value}")
@@ -301,7 +302,7 @@ def test_observed_failures_release_traceback_payloads_during_replay(observe: str
 
 
 def test_retired_tasks_do_not_reuse_cancellation_order() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         async def completed() -> None:
             pass
 
@@ -335,7 +336,7 @@ def test_dispatch_cleanup_unwinds_scopes_contexts_asyncgens(under_loop: bool) ->
     cleaned: list[str] = []
     references: list[Any] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         references.extend([ref(ctx), ref(asyncio.get_running_loop()), ref(asyncio.current_task())])
 
         async def resource():
@@ -374,8 +375,8 @@ def test_dispatch_cleanup_unwinds_scopes_contexts_asyncgens(under_loop: bool) ->
 
 
 def test_shared_operation_survives_local_waiter_cancellation() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
-        durable = ctx.call_activity("shared", return_type=str)
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
+        durable = ctx.as_task_context().call_activity("shared", return_type=str)
 
         async def wait() -> Any:
             return await durable
@@ -393,8 +394,8 @@ def test_shared_operation_survives_local_waiter_cancellation() -> None:
 
 
 def test_local_durable_cancellation_wakes_waiter_without_history() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
-        timer = ctx.create_timer(timedelta(days=1))
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
+        timer = ctx.as_task_context().create_timer(timedelta(days=1))
 
         async def waiter() -> None:
             await timer
@@ -426,7 +427,7 @@ def test_async_teardown_preserves_response_and_cannot_schedule_work(
             await asyncio.sleep(0)
             cleaned.append("resource")
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async with resource():
             try:
                 ctx.set_custom_status("waiting")
@@ -437,7 +438,7 @@ def test_async_teardown_preserves_response_and_cannot_schedule_work(
                 try:
                     await asyncio.sleep(0)
                     cleaned.append("inner")
-                    ctx.call_activity("forbidden-cleanup")
+                    await ctx.call_activity("forbidden-cleanup")
                 finally:
                     await asyncio.sleep(0)
                     cleaned.append("outer")
@@ -465,7 +466,7 @@ def test_async_teardown_preserves_response_and_cannot_schedule_work(
 
 
 def test_unhandled_local_root_cancellation_fails_not_abandons() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         raise asyncio.CancelledError
 
     complete = _completion(_execute(orchestrator, [], _start()))
@@ -477,7 +478,7 @@ def test_unhandled_local_root_cancellation_fails_not_abandons() -> None:
 def test_timer_rounding_never_precedes_loop_deadline(delay: float) -> None:
     observed: list[float] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         loop = asyncio.get_running_loop()
         observed.append(loop.time() + delay)
         await asyncio.sleep(delay)
@@ -490,7 +491,7 @@ def test_timer_rounding_never_precedes_loop_deadline(delay: float) -> None:
 
 
 def test_async_sleep_uses_shared_long_timer_chunking() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         await asyncio.sleep(7 * 86400)
         return "done"
 
@@ -510,7 +511,7 @@ def test_async_sleep_uses_shared_long_timer_chunking() -> None:
 
 @pytest.mark.parametrize("api", ["thread", "io", "foreign-loop"])
 def test_unsupported_work_fails_actionably(api: str) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         if api == "thread":
             await asyncio.to_thread(lambda: None)
         elif api == "io":
@@ -537,7 +538,7 @@ def test_cleanup_failure_policy_includes_async_generator_tasks(
 
     error = CleanupAbort("cleanup failed") if unexpected else ValueError("cleanup failed")
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def resource():
             try:
                 yield 1
@@ -565,7 +566,7 @@ def test_cleanup_failure_policy_includes_async_generator_tasks(
 
 
 def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def branch(index: int) -> None:
             try:
                 await ctx.call_activity("work", input=index)
@@ -594,7 +595,7 @@ def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> No
 
 
 def test_cancelling_last_loop_timer_cannot_hide_foreign_wait() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         handle = asyncio.get_running_loop().call_later(1, lambda: None)
         handle.cancel()
         await asyncio.Future()
@@ -608,7 +609,7 @@ def test_cancelling_last_loop_timer_cannot_hide_foreign_wait() -> None:
 @pytest.mark.parametrize("probe_pending", [False, True])
 def test_background_failure_is_reported_unless_observed(
         observed: bool, probe_pending: bool, caplog: pytest.LogCaptureFixture) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         async def fail() -> None:
             raise ValueError("background failure")
 
@@ -635,7 +636,7 @@ def test_unexpected_cleanup_failure_does_not_hide_other_task_errors(
     class CleanupAbort(BaseException):
         pass
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def branch(error: BaseException) -> None:
             try:
                 await ctx.wait_for_external_event("never")
@@ -661,7 +662,7 @@ def test_cleanup_callback_failure_still_drains_tasks_and_asyncgens(
     def fail() -> None:
         raise SystemExit("cleanup exit") if control_flow else ValueError("cleanup callback")
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def resource():
             try:
                 yield 1
@@ -716,7 +717,7 @@ def test_fanout_waiter_inspections_scale_linearly(
 
     monkeypatch.setattr(task.Task, "is_complete", property(is_complete))
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> list[Any]:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> list[Any]:
         async def branch(index: int) -> Any:
             return await ctx.call_activity("work", input=index)
 
@@ -732,7 +733,7 @@ def test_nonquiescent_cleanup_does_not_skip_asyncgen_closure(
         caplog: pytest.LogCaptureFixture) -> None:
     cleaned: list[str] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def resource():
             try:
                 yield 1
@@ -765,7 +766,7 @@ def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bo
     if grouped:
         exit_error = BaseExceptionGroup("forced cleanup group", [exit_error, ValueError("nested")])
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def branch(name: str, error: BaseException | None) -> None:
             try:
                 await ctx.wait_for_external_event(name)
@@ -796,7 +797,7 @@ def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bo
 
 @pytest.mark.parametrize("timer", [False, True])
 def test_callback_stop_iteration_fails_instead_of_completing_orchestrator(timer: bool) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         def fail() -> None:
             raise StopIteration("callback stopped")
 
@@ -823,7 +824,7 @@ def test_callback_stop_iteration_fails_instead_of_completing_orchestrator(timer:
 
 @pytest.mark.parametrize("cancelled", [None, 0, 1])
 def test_identical_timer_callbacks_complete_and_cancel_independently(cancelled: int | None) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> int:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> int:
         loop = asyncio.get_running_loop()
         result = loop.create_future()
         completed: list[None] = []
@@ -865,7 +866,7 @@ def test_cooperative_cleanup_prioritizes_grouped_process_control() -> None:
     exit_error = BaseExceptionGroup("cleanup exit", [SystemExit("stop"), ValueError("nested")])
     cleaned: list[str] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def branch(name: str, error: BaseException | None) -> None:
             try:
                 await ctx.wait_for_external_event(name)

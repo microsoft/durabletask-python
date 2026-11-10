@@ -2740,9 +2740,24 @@ class _OrchestrationExecutor:
                     input = self._data_converter.deserialize(
                         event.executionStarted.input.value, input_type)
 
-                result = fn(
-                    ctx, input
-                )  # this creates the generator or coroutine without executing it
+                is_async = shared.is_async_callable(fn)
+                if is_async:
+                    async_fn = cast(task.AsyncOrchestrator[Any, Any], fn)
+                    result = async_fn(task.AsyncOrchestrationContext(ctx), input)
+                else:
+                    sync_fn = cast(task.SyncOrchestrator[Any, Any], fn)
+                    result = sync_fn(ctx, input)
+
+                if isinstance(result, CoroutineType) and not is_async:
+                    result.close()
+                    raise TypeError(
+                        "A synchronous orchestrator returned a coroutine. Declare it with "
+                        "'async def' or use functools.wraps when decorating an async orchestrator."
+                    )
+                if is_async and not isinstance(result, CoroutineType):
+                    if isinstance(result, GeneratorType):
+                        result.close()
+                    raise TypeError("An async orchestrator must return a coroutine.")
                 if isinstance(result, (GeneratorType, CoroutineType)):
                     # Both protocols suspend on durable tasks and finish with StopIteration.
                     ctx.run(cast(Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any], result))

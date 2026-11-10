@@ -102,10 +102,18 @@ The single-argument orchestrator receives the compatibility
 Use this state to validate the infrastructure upgrade before changing
 application APIs.
 
+In 2.x, a single-argument `async def` orchestrator instead receives
+`AsyncDurableOrchestrationContext`, with the same v1-style argument names and
+awaitable durable operations. Generator orchestrators retain their existing
+eager task-handle behavior. See the
+[async authoring contract](../docs/async-orchestrators.md) before converting
+running orchestrations.
+
 ## Migrate to native orchestration APIs
 
 Native orchestrators accept the durabletask context and input as separate
-arguments:
+arguments. Generator functions receive `task.OrchestrationContext`;
+`async def` functions receive `task.AsyncOrchestrationContext`:
 
 ```python
 from typing import Any

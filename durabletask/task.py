@@ -25,14 +25,6 @@ TOutput = TypeVar('TOutput')
 
 class OrchestrationContext(ABC):
 
-    def as_async(self) -> AsyncOrchestrationContext:
-        """Return a cold, coroutine-native view of this context.
-
-        Existing context methods remain eager and return reusable durable task
-        handles. The async view schedules work only when its coroutines start.
-        """
-        return AsyncOrchestrationContext(self)
-
     @property
     @abstractmethod
     def instance_id(self) -> str:
@@ -988,11 +980,17 @@ class ActivityContext:
         return self._task_id
 
 
-# Orchestrators yield or await durable tasks, or return an immediate result.
-Orchestrator: TypeAlias = Callable[
+# Generator and immediate-result orchestrators use eager durable task handles.
+SyncOrchestrator: TypeAlias = Callable[
     [OrchestrationContext, TInput],
-    Generator[Task[Any], Any, TOutput] | Coroutine[Any, Any, TOutput] | TOutput,
+    Generator[Task[Any], Any, TOutput] | TOutput,
 ]
+
+AsyncOrchestrator: TypeAlias = Callable[
+    [AsyncOrchestrationContext, TInput], Coroutine[Any, Any, TOutput],
+]
+
+Orchestrator: TypeAlias = SyncOrchestrator[TInput, TOutput] | AsyncOrchestrator[TInput, TOutput]
 
 # Activities are simple functions that can be scheduled by orchestrators
 Activity: TypeAlias = Callable[[ActivityContext, TInput], TOutput]

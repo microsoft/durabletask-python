@@ -34,7 +34,7 @@ def activity_chain(context: df.DurableOrchestrationContext):
 
 
 @bp.orchestration_trigger(context_name="context")
-async def async_await_probe(context: df.DurableOrchestrationContext) -> dict[str, Any]:
+async def async_await_probe(context: df.AsyncDurableOrchestrationContext) -> dict[str, Any]:
     greeting = await context.call_activity("say_hello", "Tokyo")
     values = await asyncio.gather(*(context.call_activity("square", i) for i in (2, 3)))
     await asyncio.sleep(0)
@@ -44,14 +44,13 @@ async def async_await_probe(context: df.DurableOrchestrationContext) -> dict[str
 
 
 @bp.orchestration_trigger(context_name="context")
-async def async_cold_probe(context: df.DurableOrchestrationContext) -> dict[str, Any]:
-    ops = context.as_async()
-    greeting = await asyncio.create_task(ops.call_activity("say_hello", input="Tokyo", return_type=str))
+async def async_cold_probe(context: df.AsyncDurableOrchestrationContext) -> dict[str, Any]:
+    greeting = await asyncio.create_task(context.call_activity("say_hello", "Tokyo"))
     async with asyncio.TaskGroup() as group:
-        first = group.create_task(ops.call_activity("square", input=2, return_type=int))
-        second = group.create_task(ops.call_activity("square", input=3, return_type=int))
-    await ops.create_timer(timedelta(milliseconds=10))
-    child: list[str] = await ops.call_sub_orchestrator("activity_chain")
+        first = group.create_task(context.call_activity("square", 2))
+        second = group.create_task(context.call_activity("square", 3))
+    await context.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await context.call_sub_orchestrator("activity_chain")
     return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
 
 
