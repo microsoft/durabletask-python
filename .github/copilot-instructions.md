@@ -55,6 +55,20 @@ Examples:
 - Follow PEP 8 conventions.
 - Use `autopep8` for Python formatting.
 
+## Python Modernization
+
+- Use modern Python syntax, typing, and standard-library APIs compatible with
+  each package's minimum supported Python version.
+- Do not introduce APIs deprecated in any supported Python version. Nearby
+  legacy code is not precedent for new code.
+- Preserve public API compatibility and runtime annotation behavior when
+  modernizing.
+- Resolve deprecation warnings introduced by your changes. Any suppression
+  must be narrowly scoped and justified.
+- Ruff's `UP` rules complement Flake8 and `autopep8`; they do not detect every
+  deprecated API. Temporary rule exclusions in `pyproject.toml` track existing
+  cleanup work, not preferred patterns for new code.
+
 ## Public API Compatibility
 
 - Treat adding an abstract method or property to a public ABC as a breaking
@@ -91,7 +105,9 @@ priority over style.
 ## Python Linting
 
 This repository uses [flake8](https://flake8.pycqa.org/) for Python
-linting. Run it after making changes to verify there are no issues. Lint
+linting and Ruff's `UP` rules for modernization checks. Run `nox -s lint`
+for both checks. Ruff targets Python 3.11 for core/Managed and Python 3.13
+for Functions, including their tests and examples. Lint
 package source and its tests separately, matching CI:
 
 ```bash
@@ -102,6 +118,9 @@ python -m flake8 tests/durabletask-azuremanaged
 python -m flake8 azure-functions-durable
 python -m flake8 tests/azure-functions-durable
 ```
+
+For a focused modernization check, run `python -m ruff check` with the changed
+paths. Run from the repository root to use the shared configuration.
 
 ## Markdown Style
 
@@ -171,6 +190,15 @@ python -m pytest
 python -m pytest tests/azure-functions-durable \
   -m "not dts and not azurite and not functions_e2e"
 ```
+
+The root pytest configuration treats `DeprecationWarning` and
+`PendingDeprecationWarning` as errors. Nox keeps Python 3.13 as the strict
+deprecation gate for every package and reports these warnings without failing
+on the other supported versions. Keep the full compatibility matrix; do not
+raise package minimum versions just to satisfy modernization suggestions.
+Tests deliberately exercising deprecated APIs should assert their warnings
+with `pytest.warns`. Known third-party exceptions must be scoped by warning
+category, message, and originating module where practical, with a reason.
 
 Run Azure Functions Durable E2E tests through Nox, not directly from the root
 virtual environment. Nox creates an isolated Python 3.13 session environment,

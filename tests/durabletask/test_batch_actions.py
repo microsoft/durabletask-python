@@ -238,6 +238,8 @@ def test_get_orchestration_state_pagination_succeeds(backend):
             log_records.append(record)
 
     handler = ListHandler()
+    logger = logging.Logger("test.client.pagination")
+    logger.addHandler(handler)
 
     worker = TaskHubGrpcWorker(host_address=HOST)
 
@@ -245,7 +247,7 @@ def test_get_orchestration_state_pagination_succeeds(backend):
     worker.start()
 
     try:
-        with TaskHubGrpcClient(host_address=HOST, log_handler=handler) as c:
+        with TaskHubGrpcClient(host_address=HOST, logger=logger) as c:
             # Create at least 3 orchestrations to test the limit
             ids = []
             for i in range(3):

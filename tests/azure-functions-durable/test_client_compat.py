@@ -932,7 +932,8 @@ def test_entity_id_pickle_round_trip():
     with pytest.warns(DeprecationWarning):
         entity_id = df.EntityId("Counter", "one")
 
-    restored = pickle.loads(pickle.dumps(entity_id))
+    with pytest.warns(DeprecationWarning, match="EntityId is deprecated"):
+        restored = pickle.loads(pickle.dumps(entity_id))
     assert type(restored) is df.EntityId
     assert isinstance(restored, df.EntityId)
     assert restored.name == "counter"
