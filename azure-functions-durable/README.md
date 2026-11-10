@@ -48,6 +48,41 @@ their existing page sizes.
 so they can be used as dictionary keys or set elements. Construct a new ID
 instead of assigning or deleting attributes on an existing ID.
 
+## JSON payload typing and legacy compatibility
+
+The provider uses the shared `azure-functions` JSON codec. Its default loose
+mode writes custom objects with `to_json` and reconstructs legacy envelopes,
+including nested objects, with `from_json`. Classes are resolved only from
+already-loaded modules. Where available, destination types are passed to the
+codec, such as a native orchestration input annotation, the v1-style
+`orchestration_trigger` `input_type` option, or an explicit `expected_type` on
+an API that accepts one. Loose mode can still reconstruct a different class
+from the one requested; it logs a warning rather than rejecting the mismatch.
+
+Setting `AZURE_FUNCTIONS_DURABLE_STRICT_TYPING=1` opts into strict mode; the
+provider does not enable it automatically. To reconstruct a top-level
+custom-object envelope, strict mode requires a matching destination type with
+both `to_json` and `from_json` methods. Nested legacy envelopes in otherwise
+plain JSON remain dictionaries, and strict serialization does not support
+custom objects nested in plain containers.
+For a v1-style orchestration input, `get_input(expected_type=...)` alone is too
+late for the initial decode: declare `input_type` on `orchestration_trigger`
+when strict mode must reconstruct a top-level custom-object input.
+
+The Functions worker does not pass activity parameter annotations to the
+activity trigger converter. Consequently, strict mode rejects a top-level
+custom-object activity input even when the activity has an annotation; this
+also applies to externalized payloads. Plain JSON activity inputs still decode
+without a destination type.
+
+The shared codec emits one-time `DeprecationWarning` advisories in loose mode
+for decoding without a destination type and for reconstructing custom objects.
+These compatibility paths remain supported.
+
+> [!WARNING]
+> Changing typing modes can change values returned during orchestration replay.
+> Validate existing payloads and drain affected orchestrations before switching.
+
 ## Unicode JSON serialization
 
 By default, durable payloads preserve the shared `azure-functions` codec's
