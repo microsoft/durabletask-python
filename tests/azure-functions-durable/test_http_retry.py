@@ -74,6 +74,24 @@ def test_http_retry_from_json_with_missing_optional_fields():
     assert unbounded_policy.retry_timeout is None
 
 
+def test_http_retry_from_json_with_snake_case_keys():
+    snake_wire = {
+        "first_retry_interval_in_milliseconds": 2500,
+        "max_number_of_attempts": 5,
+        "backoff_coefficient": 1.5,
+        "max_retry_interval_in_milliseconds": 60000,
+        "retry_timeout_in_milliseconds": 120000,
+        "status_codes_to_retry": [429, 503],
+    }
+    policy = df.HttpRetryOptions.from_json(snake_wire)
+    assert policy.first_retry_interval == timedelta(milliseconds=2500)
+    assert policy.max_number_of_attempts == 5
+    assert policy.backoff_coefficient == 1.5
+    assert policy.max_retry_interval == timedelta(seconds=60)
+    assert policy.retry_timeout == timedelta(seconds=120)
+    assert policy.status_codes_to_retry == [429, 503]
+
+
 def test_request_snapshots_policy_and_status_list():
     codes = [429, 503]
     policy = _options(
