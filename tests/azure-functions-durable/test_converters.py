@@ -412,4 +412,3 @@ def test_functions_data_converter_can_reconstruct_and_discovery_unaffected():
     # Builtins are also passed through to df_loads under FunctionsDataConverter
     assert type_discovery.orchestrator_input_type(builtin_func, conv) == dict[str, int]
     assert type_discovery.activity_output_type(builtin_func, conv) == tuple[int, ...]
-
