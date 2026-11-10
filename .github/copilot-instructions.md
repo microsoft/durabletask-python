@@ -167,7 +167,8 @@ python -m pymarkdown -c .pymarkdown.json scan **/*.md
 Install the linter via the dev dependencies:
 
 ```bash
-python -m pip install -r dev-requirements.txt
+python -m pip install --upgrade "pip>=25.1"
+python -m pip install --group lint
 ```
 
 ## Building and Testing
@@ -231,7 +232,7 @@ activate or modify the per-app `.venv` directories created by Nox.
 - `azure-functions-durable/` — Azure Durable Functions provider source
 - `examples/` — example orchestrations (see `examples/README.md`)
 - `tests/` — test suite
-- `dev-requirements.txt` — development dependencies
+- `pyproject.toml` `[dependency-groups]` — development and CI tooling dependencies
 
 ## External Dependencies
 

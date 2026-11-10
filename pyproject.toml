@@ -51,6 +51,49 @@ history-export-azure = [
 repository = "https://github.com/microsoft/durabletask-python"
 changelog = "https://github.com/microsoft/durabletask-python/blob/main/CHANGELOG.md"
 
+# Development tools only: runtime dependencies belong in each package's metadata.
+[dependency-groups]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
+lint = [
+    "autopep8",
+    "flake8",
+    "pymarkdownlnt",
+    "ruff",
+]
+typecheck = [
+    "pyright",
+]
+build = [
+    "build",
+]
+protobuf = [
+    "grpcio-tools",
+]
+nox = [
+    "nox>=2025.2.9",
+]
+examples = [
+    "pydantic>=2",
+    "opentelemetry-exporter-otlp-proto-grpc",
+]
+functions-e2e = [
+    {include-group = "test"},
+    "opentelemetry-exporter-otlp-proto-grpc",
+]
+dev = [
+    {include-group = "test"},
+    {include-group = "lint"},
+    {include-group = "typecheck"},
+    {include-group = "build"},
+    {include-group = "protobuf"},
+    {include-group = "nox"},
+    {include-group = "examples"},
+]
+
 [tool.setuptools.packages.find]
 include = ["durabletask", "durabletask.*"]
 
