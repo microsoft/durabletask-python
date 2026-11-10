@@ -49,6 +49,31 @@ def test_http_retry_defaults_and_round_trip():
     assert df.HttpRetryOptions.from_json(json.loads(json.dumps(policy.to_json()))).to_json() == policy.to_json()
 
 
+def test_http_retry_from_json_with_missing_optional_fields():
+    # Only the required fields provided (as when serialized by minimal JSON or external SDKs)
+    wire = {
+        "firstRetryIntervalInMilliseconds": 1500,
+        "maxNumberOfAttempts": 4,
+    }
+    policy = df.HttpRetryOptions.from_json(wire)
+    assert policy.first_retry_interval == timedelta(milliseconds=1500)
+    assert policy.max_number_of_attempts == 4
+    assert policy.backoff_coefficient == 1.0
+    assert policy.max_retry_interval == timedelta(days=6)
+    assert policy.retry_timeout is None
+    assert policy.status_codes_to_retry is None
+
+    # Wire payload explicitly setting maxRetryInterval to null (unbounded)
+    unbounded_wire = {
+        "firstRetryIntervalInMilliseconds": 2000,
+        "maxNumberOfAttempts": 2,
+        "maxRetryIntervalInMilliseconds": None,
+    }
+    unbounded_policy = df.HttpRetryOptions.from_json(unbounded_wire)
+    assert unbounded_policy.max_retry_interval is None
+    assert unbounded_policy.retry_timeout is None
+
+
 def test_request_snapshots_policy_and_status_list():
     codes = [429, 503]
     policy = _options(
