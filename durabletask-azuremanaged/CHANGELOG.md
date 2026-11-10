@@ -13,6 +13,11 @@ FIXED
 `retry_timeout` decisions use replay-safe orchestration time rather than
 wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)
 for histories that recorded timeout failures under the previous behavior.
+- With the corresponding core `durabletask` SDK update, type discovery now recognizes
+`dict`, `Mapping`, and `tuple` container annotations wrapping reconstructable types,
+automatically reconstructing recorded inputs and inferred activity results into typed model
+instances. See the [core upgrade warning](../CHANGELOG.md#unreleased) for replay-breaking
+guidance and dependency pinning recommendations.
 
 ## v1.13.1
 

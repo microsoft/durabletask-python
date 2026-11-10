@@ -13,6 +13,9 @@ FIXED
 `retry_timeout` decisions use replay-safe orchestration time rather than
 wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)
 for histories that recorded timeout failures under the previous behavior.
+- Async and synchronous Functions-bound clients now propagate the calling
+function's invocation ID in gRPC metadata, enabling host client-operation log
+correlation even when synchronous clients are cached across invocations.
 - Functions clients now remove HTTP URL paths from the host RPC address before
 they connect through gRPC. Both async and sync clients keep the host and port.
 - Functions orchestration queries now request at most 1000 instances per page

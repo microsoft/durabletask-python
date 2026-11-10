@@ -31,8 +31,8 @@ jobs:
       # that a wheel which accidentally drops a declared dependency surfaces
       # the missing dep instead of being silently masked.
       - script: |
-          python -m pip install --upgrade pip
-          python -m pip install build flake8 pytest pytest-asyncio
+          python -m pip install --upgrade "pip>=25.1"
+          python -m pip install --group build --group lint --group test
         displayName: "Install build tooling"
 
       # Lint core SDK
@@ -78,7 +78,7 @@ jobs:
       # intentional: if a wheel ever accidentally drops a declared
       # dependency, this step will surface the missing dependency at install
       # or test time instead of being masked by a preinstalled
-      # requirements.txt. Test-only tools (pytest, pytest-asyncio) are
+      # development environment. Test-only tools from the shared test group are
       # already installed in the "Install build tooling" step above.
       #
       # >>> MAINTENANCE NOTE <<<

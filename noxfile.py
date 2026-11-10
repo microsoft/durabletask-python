@@ -50,6 +50,12 @@ PYTHON_VERSIONS = ("3.11", "3.12", "3.13", "3.14", "3.15")
 DEFAULT_CI_PYTHON = "3.11"
 
 
+def _install_groups(session: nox.Session, *groups: str) -> None:
+    """Install shared tooling without preinstalling SDK runtime dependencies."""
+    pyproject = nox.project.load_toml(REPO_ROOT / "pyproject.toml")
+    session.install(*nox.project.dependency_groups(pyproject, *groups))
+
+
 def _install_packages(session: nox.Session, editable: bool = False) -> None:
     """Install durabletask and the azure-functions-durable provider.
 
@@ -135,6 +141,16 @@ def _pytest_arguments(
         for argument in posargs
     )
     return tuple(posargs) if has_target else (default_target, *posargs)
+
+
+def _pytest_warning_arguments(session: nox.Session) -> tuple[str, ...]:
+    """Keep Python 3.13 as the strict deprecation gate across packages."""
+    if session.python == "3.13":
+        return ()
+    return (
+        "-W", "default::DeprecationWarning",
+        "-W", "default::PendingDeprecationWarning",
+    )
 
 
 def _start_azurite(
@@ -280,8 +296,8 @@ def _stop_dts_emulator(container_name: str) -> None:
 
 @nox.session
 def lint(session: nox.Session) -> None:
-    """Run the Flake8 checks required by the GitHub Actions workflows."""
-    session.install("flake8")
+    """Run Flake8 and Ruff modernization checks without replacing formatting."""
+    _install_groups(session, "lint")
     targets = session.posargs or (
         "durabletask",
         "durabletask-azuremanaged",
@@ -290,34 +306,28 @@ def lint(session: nox.Session) -> None:
         "tests/durabletask-azuremanaged",
         "tests/azure-functions-durable",
         "examples",
+        "noxfile.py",
     )
     session.run("flake8", *targets)
+    session.run("ruff", "check", *targets)
 
 
 @nox.session(python=["3.11"])
 def typecheck_core(session: nox.Session) -> None:
     """Run strict pyright checks for the core and Azure Managed packages."""
-    session.install("-r", "requirements.txt")
-    session.install("-r", "examples/requirements.txt")
-    for requirements in sorted((REPO_ROOT / "examples").glob("*/requirements.txt")):
-        session.install("-r", str(requirements))
+    _install_groups(session, "test", "typecheck", "examples")
     session.install(
-        "--force-reinstall",
-        "--no-deps",
-        str(REPO_ROOT),
+        f"{REPO_ROOT}[azure-blob-payloads,opentelemetry]",
         str(AZUREMANAGED),
     )
-    session.install(f"{REPO_ROOT}[azure-blob-payloads,opentelemetry]")
-    session.install("pyright")
     session.run("pyright", *session.posargs)
 
 
 @nox.session(python=["3.13"])
 def typecheck_functions(session: nox.Session) -> None:
     """Run strict pyright checks for azure-functions-durable."""
-    session.install("-r", "requirements.txt")
+    _install_groups(session, "test", "typecheck")
     _install_packages(session, editable=True)
-    session.install("pyright")
     session.run(
         "pyright",
         "-p",
@@ -329,7 +339,7 @@ def typecheck_functions(session: nox.Session) -> None:
 @nox.session(python=["3.13"])
 def typecheck_functions_package(session: nox.Session) -> None:
     """Check the installed Functions and core wheels with strict Pyright."""
-    session.install("build", "pyright")
+    _install_groups(session, "build", "typecheck")
     temp_dir = Path(session.create_tmp())
     artifact_dir = temp_dir / "functions-dist"
     core_artifact_dir = temp_dir / "core-dist"
@@ -389,7 +399,9 @@ def typecheck_functions_package(session: nox.Session) -> None:
         "-c",
         "import sys; print(sys.executable)",
         silent=True,
-    ).strip()
+    )
+    assert python_path is not None
+    python_path = python_path.strip()
     session.run(
         "pyright",
         "--pythonpath",
@@ -408,11 +420,12 @@ def core_tests(session: nox.Session) -> None:
         arguments=("--silent", "--blobPort", "10000"),
     )
     try:
-        session.install("-r", "requirements.txt")
-        session.install("-e", f"{REPO_ROOT}[azure-blob-payloads]", "aiohttp")
+        _install_groups(session, "test")
+        session.install("-e", f"{REPO_ROOT}[azure-blob-payloads,opentelemetry]")
         arguments = _pytest_arguments("tests/durabletask", session.posargs)
         session.run(
             "pytest",
+            *_pytest_warning_arguments(session),
             *arguments,
             "-m",
             "not dts",
@@ -429,8 +442,7 @@ def azuremanaged_tests(session: nox.Session) -> None:
     try:
         session.env["TASKHUB"] = "default"
         session.env["ENDPOINT"] = endpoint
-        session.install("-r", "requirements.txt")
-        session.install("-r", "examples/requirements.txt")
+        _install_groups(session, "test")
         session.install(
             "-e",
             str(REPO_ROOT),
@@ -441,7 +453,10 @@ def azuremanaged_tests(session: nox.Session) -> None:
             "tests/durabletask-azuremanaged",
             session.posargs,
         )
-        session.run("pytest", *arguments, "-m", "dts", "--verbose")
+        session.run(
+            "pytest", *_pytest_warning_arguments(session),
+            *arguments, "-m", "dts", "--verbose",
+        )
     finally:
         _stop_dts_emulator(container_name)
 
@@ -449,12 +464,11 @@ def azuremanaged_tests(session: nox.Session) -> None:
 @nox.session(python=["3.13", "3.14", "3.15"])
 def functions_unit(session: nox.Session) -> None:
     """Run the azure-functions-durable unit tests (no func/azurite required)."""
-    session.install("-r", "requirements.txt")
+    _install_groups(session, "test")
     _install_packages(session, editable=True)
-    session.install("pytest")
     arguments = _pytest_arguments("tests/azure-functions-durable", session.posargs)
     session.run(
-        "pytest", *arguments,
+        "pytest", *_pytest_warning_arguments(session), *arguments,
         "-m", "not dts and not azurite and not functions_e2e",
         "--verbose",
     )
@@ -493,14 +507,10 @@ def functions_e2e(session: nox.Session) -> None:
         ),
     )
     try:
-        session.env[
-            "AzureFunctionsJobHost__extensions__durableTask__hubName"
-        ] = _new_test_namespace("nox")
         session.env["E2E_PAYLOAD_CONTAINER"] = _new_test_namespace("payloads")
-        session.install("-r", "requirements.txt")
+        _install_groups(session, "functions-e2e")
         _install_packages(session, editable=True)
-        session.install("-e", f"{REPO_ROOT}[azure-blob-payloads]", "aiohttp")
-        session.install("pytest", "opentelemetry-exporter-otlp-proto-grpc")
+        session.install("-e", f"{REPO_ROOT}[azure-blob-payloads]")
         for app in E2E_APPS:
             _link_app_venv(session, E2E_APPS_DIR / app)
         arguments = _pytest_arguments(
@@ -508,7 +518,7 @@ def functions_e2e(session: nox.Session) -> None:
             session.posargs,
         )
         session.run(
-            "pytest", *arguments,
+            "pytest", *_pytest_warning_arguments(session), *arguments,
             "-m", "functions_e2e",
         )
     finally:

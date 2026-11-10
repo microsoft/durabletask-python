@@ -1,5 +1,6 @@
 init:
-	pip3 install -r requirements.txt
+	python3 -m pip install --upgrade "pip>=25.1"
+	python3 -m pip install --group dev -e ".[azure-blob-payloads,opentelemetry]" -e ./durabletask-azuremanaged
 
 test:
 	pytest --verbose

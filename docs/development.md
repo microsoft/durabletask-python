@@ -7,9 +7,38 @@ The following is more information about how to develop this project.
 Use Nox to run the representative local correctness checks:
 
 ```sh
-python -m pip install -r dev-requirements.txt
+python -m pip install --upgrade "pip>=25.1"
+python -m pip install --group nox
 nox -s ci
 ```
+
+Development dependencies are defined once in the root `pyproject.toml` under
+`[dependency-groups]` (PEP 735). Installing groups directly with pip requires
+pip 25.1 or later. Nox uses its built-in group resolver to install each session's
+tools without upgrading pip inside the session. The official build uses the
+same `build`, `lint`, and `test` groups. Add test-only dependencies to `test`
+so local and official test environments stay in sync. Keep runtime dependencies
+and public extras in each package's `[project]` metadata, not in tooling groups:
+the official build resolves them through built wheels to catch missing
+declarations.
+
+For development without Nox, install all tools with `--group dev` and install
+the local packages separately. Use Python 3.13 or later for Azure Functions:
+
+```bash
+python -m pip install --group dev \
+  -e ".[azure-blob-payloads,opentelemetry]" \
+  -e ./durabletask-azuremanaged -e ./azure-functions-durable
+```
+
+```powershell
+python -m pip install --group dev `
+  -e ".[azure-blob-payloads,opentelemetry]" `
+  -e .\durabletask-azuremanaged -e .\azure-functions-durable
+```
+
+Sample and Function app `requirements.txt` files remain deployment inputs, not
+the source of repository development dependencies.
 
 The `ci` session runs linting, strict type checks, core SDK and Azure Managed
 tests on Python 3.11, Azure Functions unit tests on Python 3.13, and Azure
@@ -28,6 +57,51 @@ Azure Functions unit tests cover Python 3.13--3.15; use
 `nox -s functions_unit-3.15` to target Python 3.15 specifically.
 Nox fails rather than silently skipping a session when its required Python
 interpreter is unavailable.
+
+### Modernization and deprecation checks
+
+`nox -s lint` runs Flake8 and Ruff's `UP` modernization rules; `autopep8`
+remains the formatter. Ruff uses Python 3.11 for core/Managed code and Python
+3.13 for Functions code, including their respective tests and examples.
+Generated protobuf files are excluded, including when passed explicitly.
+For a focused check, run from the repository root:
+
+```sh
+python -m ruff check durabletask/client.py
+```
+
+The temporary typing and UTC rule exclusions in `pyproject.toml` are tracked
+in [#322](https://github.com/microsoft/durabletask-python/issues/322) and
+[#323](https://github.com/microsoft/durabletask-python/issues/323).
+Behavior-sensitive generator and enum suggestions have file-specific
+exceptions tracked in
+[#324](https://github.com/microsoft/durabletask-python/issues/324).
+Excluded rules do not reject new occurrences until their cleanup is complete;
+they are not recommendations for new code.
+
+The root pytest configuration treats `DeprecationWarning` and
+`PendingDeprecationWarning` as errors and explicitly uses function-scoped event
+loops for async fixtures. Nox uses Python 3.13 as the representative
+strict deprecation gate for all three packages. On other supported versions,
+Nox reports these warnings without failing, preserving compatibility coverage
+without requiring APIs unavailable at the package's minimum version.
+Run the strict sessions with:
+
+```sh
+nox -s core_tests-3.13 azuremanaged_tests-3.13 functions_unit-3.13
+```
+
+Direct pytest runs from the repository root are strict on every interpreter.
+Tests intentionally exercising deprecated APIs should use `pytest.warns`.
+Any known third-party warning exception must be narrowly scoped by category,
+message, and originating module where practical, and include a reason.
+Two upstream Functions loose-codec warnings remain visible but non-fatal
+while legacy payload support is required; their removal is tracked in
+[#325](https://github.com/microsoft/durabletask-python/issues/325).
+Warnings raised in separately launched Functions workers are not governed by
+the parent pytest process's filters.
+
+### Services and focused validation
 
 Nox starts Azurite automatically for the core and Azure Functions tests. The
 Azure Managed tests start a disposable DTS emulator Docker container. Start
@@ -70,7 +144,8 @@ These commands require `make`. If you're using Windows, you can install `make`
 using [Chocolatey](https://chocolatey.org/) or use WSL.
 
 ```sh
-pip3 install -r dev-requirements.txt
+python -m pip install --upgrade "pip>=25.1"
+python -m pip install --group protobuf
 make gen-proto
 ```
 

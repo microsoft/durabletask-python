@@ -629,10 +629,11 @@ def test_continue_as_new_preserves_trailing_events_in_worker_response(save_event
 def test_activity_retry_then_fan_out_uses_distinct_task_ids():
     """Regression test for Azure/azure-functions-durable-python#603."""
     def orchestrator(context):
-        options = df.RetryOptions(
-            first_retry_interval_in_milliseconds=100,
-            max_number_of_attempts=3,
-        )
+        with pytest.warns(DeprecationWarning, match="RetryOptions is deprecated"):
+            options = df.RetryOptions(
+                first_retry_interval_in_milliseconds=100,
+                max_number_of_attempts=3,
+            )
         yield context.call_activity_with_retry("flaky", options)
         tasks = [context.call_activity("square", value) for value in range(13)]
         return (yield context.task_all(tasks))

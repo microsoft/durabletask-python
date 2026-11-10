@@ -51,6 +51,49 @@ history-export-azure = [
 repository = "https://github.com/microsoft/durabletask-python"
 changelog = "https://github.com/microsoft/durabletask-python/blob/main/CHANGELOG.md"
 
+# Development tools only: runtime dependencies belong in each package's metadata.
+[dependency-groups]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
+lint = [
+    "autopep8",
+    "flake8",
+    "pymarkdownlnt",
+    "ruff",
+]
+typecheck = [
+    "pyright",
+]
+build = [
+    "build",
+]
+protobuf = [
+    "grpcio-tools",
+]
+nox = [
+    "nox>=2025.2.9",
+]
+examples = [
+    "pydantic>=2",
+    "opentelemetry-exporter-otlp-proto-grpc",
+]
+functions-e2e = [
+    {include-group = "test"},
+    "opentelemetry-exporter-otlp-proto-grpc",
+]
+dev = [
+    {include-group = "test"},
+    {include-group = "lint"},
+    {include-group = "typecheck"},
+    {include-group = "build"},
+    {include-group = "protobuf"},
+    {include-group = "nox"},
+    {include-group = "examples"},
+]
+
 [tool.setuptools.packages.find]
 include = ["durabletask", "durabletask.*"]
 
@@ -58,7 +101,42 @@ include = ["durabletask", "durabletask.*"]
 minversion = "6.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+    # Legacy Functions payloads still require the upstream loose codec.
+    # Report only these known warnings without failing; see issue #325.
+    'default:azure\.functions df_loads was called without expected_type\.:DeprecationWarning:azure\.functions\._durable_functions$',
+    'default:azure\.functions Durable JSON codec reconstructed a custom object via the loose-mode object_hook path\.:DeprecationWarning:azure\.functions\._durable_functions$',
+]
 markers = [
     "azurite: tests that require Azurite (local Azure Storage emulator)",
     "functions_e2e: end-to-end tests that require the Azure Functions Core Tools (func) and Azurite",
 ]
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["*_pb2.py", "*_pb2_grpc.py", "*_pb2.pyi", "*_pb2_grpc.pyi", ".python_packages"]
+force-exclude = true
+
+[tool.ruff.per-file-target-version]
+"azure-functions-durable/**/*.py" = "py313"
+"tests/azure-functions-durable/**/*.py" = "py313"
+
+[tool.ruff.lint]
+select = ["UP"]
+ignore = [
+    # Typing migration requires runtime annotation compatibility review:
+    # https://github.com/microsoft/durabletask-python/issues/322
+    "UP006", "UP007", "UP035", "UP037", "UP040", "UP043", "UP045", "UP047",
+    # Repository-wide UTC alias cleanup:
+    # https://github.com/microsoft/durabletask-python/issues/323
+    "UP017",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# These suggestions can change generator protocol or public enum behavior:
+# https://github.com/microsoft/durabletask-python/issues/324
+"durabletask/internal/orchestration_entity_context.py" = ["UP028"]
+"durabletask/scheduled/schedule_status.py" = ["UP042"]

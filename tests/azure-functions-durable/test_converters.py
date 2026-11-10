@@ -361,3 +361,54 @@ def test_durable_client_decode_preserves_host_configuration():
     value = DurableClientConverter.decode(
         meta.Datum(type="string", value=config), trigger_metadata=None)
     assert value == config
+
+
+# ---------------------------------------------------------------------------
+# FunctionsDataConverter reconstruction and discovery
+# ---------------------------------------------------------------------------
+
+def test_functions_data_converter_can_reconstruct_and_discovery_unaffected():
+    """Azure Functions overrides can_reconstruct() to return True uniformly.
+
+    The core SDK's expanded dict/tuple traversal in JsonDataConverter does not
+    alter Azure Functions discovery behavior, because FunctionsDataConverter
+    already returns True for all types (delegating decoding to df_loads).
+    """
+    from collections.abc import Mapping
+    from dataclasses import dataclass
+    from durabletask.internal import type_discovery
+
+    @dataclass
+    class Order:
+        item: str
+        quantity: int
+
+    conv = FunctionsDataConverter()
+
+    # Always returns True for affected container types
+    assert conv.can_reconstruct(dict[str, Order]) is True
+    assert conv.can_reconstruct(Mapping[str, Order]) is True
+    assert conv.can_reconstruct(tuple[Order, ...]) is True
+    assert conv.can_reconstruct(tuple[Order, int]) is True
+
+    # Always returns True even for builtins and unknown types (distinct from core)
+    assert conv.can_reconstruct(dict[str, int]) is True
+    assert conv.can_reconstruct(tuple[int, str]) is True
+    assert conv.can_reconstruct(int) is True
+    assert conv.can_reconstruct(dict) is True
+    assert conv.can_reconstruct(tuple) is True
+
+    # Inbound and outbound type discovery with FunctionsDataConverter hands declared types through
+    def sample_func(ctx, orders: dict[str, Order]) -> tuple[Order, ...]:
+        pass
+
+    assert type_discovery.orchestrator_input_type(sample_func, conv) == dict[str, Order]
+    assert type_discovery.activity_input_type(sample_func, conv) == dict[str, Order]
+    assert type_discovery.activity_output_type(sample_func, conv) == tuple[Order, ...]
+
+    def builtin_func(ctx, data: dict[str, int]) -> tuple[int, ...]:
+        pass
+
+    # Builtins are also passed through to df_loads under FunctionsDataConverter
+    assert type_discovery.orchestrator_input_type(builtin_func, conv) == dict[str, int]
+    assert type_discovery.activity_output_type(builtin_func, conv) == tuple[int, ...]
