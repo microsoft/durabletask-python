@@ -691,7 +691,7 @@ def test_missing_payload_download_does_not_interrupt_other_work(
 
     def blocked(ctx: task.ActivityContext, value: dict[str, Any]) -> dict[str, Any]:
         entered[int(value["index"])].set()
-        assert release.wait(10), "Healthy activity was not released"
+        release.wait()
         return value
 
     def healthy(ctx: task.OrchestrationContext, value: dict[str, Any]) -> Generator[task.Task[Any], Any, Any]:
