@@ -195,6 +195,69 @@ async def test_no_context_omits_invocation_header(transport, use_async):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
+async def test_client_binding_named_context_preserves_client_without_correlation(transport, use_async):
+    config, received = transport
+    app = df.DFApp()
+
+    def execute(context):
+        assert isinstance(context, df.SyncDurableFunctionsClient)
+        assert invocation.get_invocation_id() is None
+        context.terminate_orchestration("client-context")
+
+    async def execute_async(context):
+        assert isinstance(context, df.DurableFunctionsClient)
+        assert invocation.get_invocation_id() is None
+        await context.terminate_orchestration("client-context")
+
+    registered = app.durable_client_input(client_name="context")(
+        execute_async if use_async else execute)._function._func
+    assert list(inspect.signature(registered).parameters) == ["context"]
+    assert inspect.iscoroutinefunction(registered) == use_async
+    if use_async:
+        await registered(context=config)
+    else:
+        await asyncio.to_thread(registered, context=config)
+    _assert_headers(received, {"client-context": None})
+    assert invocation.get_invocation_id() is None
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("client_outer", [False, True])
+@pytest.mark.parametrize("payload", ["activity-input", {"invocation_id": "binding-data"}])
+async def test_activity_binding_named_context_preserves_input_without_correlation(
+        transport, use_async, client_outer, payload):
+    config, received = transport
+    app = df.DFApp()
+
+    def execute(context, client):
+        assert context == payload
+        assert invocation.get_invocation_id() is None
+        client.terminate_orchestration("activity-context")
+        return context
+
+    async def execute_async(context, client):
+        assert context == payload
+        assert invocation.get_invocation_id() is None
+        await client.terminate_orchestration("activity-context")
+        return context
+
+    function = execute_async if use_async else execute
+    activity = app.activity_trigger(input_name="context")
+    client = app.durable_client_input(client_name="client")
+    builder = client(activity(function)) if client_outer else activity(client(function))
+    registered = builder.build().get_user_function()
+    assert list(inspect.signature(registered).parameters) == ["context", "client"]
+    assert inspect.iscoroutinefunction(registered) == use_async
+    if use_async:
+        result = await registered(context=payload, client=config)
+    else:
+        result = await asyncio.to_thread(registered, context=payload, client=config)
+    assert result == payload
+    _assert_headers(received, {"activity-context": None})
+    assert invocation.get_invocation_id() is None
+
+
+@pytest.mark.parametrize("use_async", [False, True])
 async def test_invocation_context_restored_after_failure(use_async):
     def fail(client):
         assert invocation.get_invocation_id() == identifier

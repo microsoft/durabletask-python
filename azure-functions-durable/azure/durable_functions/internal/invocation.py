@@ -106,9 +106,15 @@ def wrap_invocation(function: Callable[..., Any], trigger_name: str | None = Non
         parameters.insert(insertion, context_parameter)
     host_signature = signature.replace(parameters=parameters)
 
-    def bind_invocation(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[inspect.BoundArguments, Any]:
+    def bind_invocation(
+            args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[inspect.BoundArguments, func.Context | None]:
         bound = host_signature.bind(*args, **kwargs)
-        context = bound.arguments.get("context")
+        context: func.Context | None = bound.arguments.get("context")
+        # A binding may also be named context. Worker contexts implement the
+        # runtime contract without inheriting from azure.functions.Context.
+        if not isinstance(getattr(context, "invocation_id", None), str) \
+                or not hasattr(context, "thread_local_storage"):
+            context = None
         if inject_context:
             bound.arguments.pop("context", None)
         if registered_name is not None and trigger_name is not None and registered_name != trigger_name:
