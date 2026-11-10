@@ -42,7 +42,7 @@ import re
 import types
 import typing
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
 from types import SimpleNamespace
 from typing import Any, cast
@@ -283,7 +283,7 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             return any(
                 converter.can_reconstruct(a) for a in args if a is not type(None)
             )
-        if origin in (list, Sequence):
+        if origin in (list, Sequence, MutableSequence):
             return any(converter.can_reconstruct(a) for a in args)
         if origin in (set, frozenset, AbstractSet, typing.AbstractSet):
             if not getattr(converter, "enable_generic_sets", False):
@@ -611,7 +611,7 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
         if len(non_none) == 1:
             return _coerce_to_type(value, non_none[0], converter)
         return value
-    if origin in (list, Sequence) and isinstance(value, list):
+    if origin in (list, Sequence, MutableSequence) and isinstance(value, list):
         elem_type = args[0] if args else None
         return [_coerce_to_type(item, elem_type, converter) for item in cast(list[Any], value)]
     if origin in (set, frozenset, AbstractSet, typing.AbstractSet) and isinstance(
