@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import os
 import time
 
@@ -67,7 +67,7 @@ def test_client_get_class_entity():
         assert state is not None
         assert state.id == entity_id
         assert state.get_locked_by() is None
-        assert state.last_modified < datetime.now(timezone.utc)
+        assert state.last_modified < datetime.now(UTC)
         assert state.get_state(int) == 1
 
     assert invoked

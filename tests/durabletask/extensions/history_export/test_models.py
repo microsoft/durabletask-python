@@ -3,7 +3,7 @@
 
 """Tests for the history-export public data models."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -27,8 +27,8 @@ from durabletask.extensions.history_export.models import (
 )
 
 
-_WINDOW_START = datetime(2025, 1, 1, tzinfo=timezone.utc)
-_WINDOW_END = datetime(2025, 1, 2, tzinfo=timezone.utc)
+_WINDOW_START = datetime(2025, 1, 1, tzinfo=UTC)
+_WINDOW_END = datetime(2025, 1, 2, tzinfo=UTC)
 
 
 def _basic_destination() -> ExportDestination:
@@ -213,7 +213,7 @@ class TestRoundTrip:
         f = ExportFilter(completed_time_from=naive, completed_time_to=_WINDOW_END)
         d = f.to_dict()
         restored = ExportFilter.from_dict(d)
-        assert restored.completed_time_from == naive.replace(tzinfo=timezone.utc)
+        assert restored.completed_time_from == naive.replace(tzinfo=UTC)
 
 
 class TestDescriptionFromState:

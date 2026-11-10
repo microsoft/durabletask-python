@@ -20,7 +20,7 @@ a temporary directory outside the function app where the test can read it back.
 import json
 import tempfile
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -111,7 +111,7 @@ async def start_export(
         req: func.HttpRequest, client: df.DurableFunctionsClient) -> func.HttpResponse:
     body = req.get_json() or {}
     export = _export_client(client)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Callers can narrow the completed-time window so an export only covers the
     # instances they just produced (rather than every terminal instance in the
     # last hour, which would make the fan-out unbounded).

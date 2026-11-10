@@ -11,7 +11,7 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -33,7 +33,7 @@ class _Recorder:
 
     def record(self) -> None:
         with self._lock:
-            self.times.append(datetime.now(timezone.utc))
+            self.times.append(datetime.now(UTC))
 
     @property
     def count(self) -> int:
@@ -71,7 +71,7 @@ def test_client_delayed_signal_is_deferred():
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=secure_channel,
                                        taskhub=taskhub_name, token_credential=None)
         entity_id = entities.EntityInstanceId("Recorder", f"client-delay-{uuid.uuid4().hex[:8]}")
-        sent_at = datetime.now(timezone.utc)
+        sent_at = datetime.now(UTC)
         c.signal_entity(entity_id, "ping", signal_time=sent_at + timedelta(seconds=4))
 
         time.sleep(1)
@@ -96,7 +96,7 @@ def test_orchestration_delayed_signal_is_deferred():
         c = DurableTaskSchedulerClient(host_address=endpoint, secure_channel=secure_channel,
                                        taskhub=taskhub_name, token_credential=None)
         key = f"orch-delay-{uuid.uuid4().hex[:8]}"
-        sent_at = datetime.now(timezone.utc)
+        sent_at = datetime.now(UTC)
         instance_id = c.schedule_new_orchestration(signaling_orchestrator, input=key)
         c.wait_for_orchestration_completion(instance_id, timeout=30)
 

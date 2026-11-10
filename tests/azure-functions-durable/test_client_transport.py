@@ -3,7 +3,7 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import grpc
@@ -107,8 +107,8 @@ async def test_functions_client_reaches_grpc_server_with_url_path(local_grpc_ser
 ])
 async def test_functions_query_limits_page_size_without_changing_query(use_async, page_size, expected):
     query = OrchestrationQuery(
-        created_time_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        created_time_to=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        created_time_from=datetime(2026, 1, 1, tzinfo=UTC),
+        created_time_to=datetime(2026, 2, 1, tzinfo=UTC),
         runtime_status=[OrchestrationStatus.RUNNING],
         max_instance_count=page_size,
         fetch_inputs_and_outputs=True,
@@ -134,8 +134,8 @@ async def test_functions_query_limits_page_size_without_changing_query(use_async
         assert request.instanceIdPrefix.value == "prefix"
         assert list(request.runtimeStatus) == [pb.ORCHESTRATION_STATUS_RUNNING]
         assert [hub.value for hub in request.taskHubNames] == ["TestHub"]
-        assert request.createdTimeFrom.ToDatetime(timezone.utc) == query.created_time_from
-        assert request.createdTimeTo.ToDatetime(timezone.utc) == query.created_time_to
+        assert request.createdTimeFrom.ToDatetime(UTC) == query.created_time_from
+        assert request.createdTimeTo.ToDatetime(UTC) == query.created_time_to
         assert query.max_instance_count == page_size
     finally:
         if use_async:

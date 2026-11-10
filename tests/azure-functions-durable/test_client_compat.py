@@ -3,7 +3,7 @@
 
 import json
 import pickle
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -216,7 +216,7 @@ def test_history_preserves_unrelated_or_malformed_envelopes(monkeypatch, payload
     elif invalid == "signal":
         envelope["signal"] = "false"
     request = dt_history.EventSentEvent(
-        event_id=1, timestamp=datetime.now(timezone.utc),
+        event_id=1, timestamp=datetime.now(UTC),
         instance_id="ordinary-instance" if invalid == "target" else "@counter@one",
         name="application-event" if invalid == "name" else "op",
         input="not-json" if invalid == "json" else json.dumps(envelope))
@@ -235,7 +235,7 @@ def test_history_hydrates_signals_without_correlating_replies(monkeypatch, paylo
     token = json.dumps(store.upload(b'{"reference":"blob:v1:test-container:literal"}'))
     request_id = "63c281d7-02d7-412c-9f66-1d6d26a83948"
     request = dt_history.EventSentEvent(
-        event_id=1, timestamp=datetime.now(timezone.utc), instance_id="@counter@one", name=name,
+        event_id=1, timestamp=datetime.now(UTC), instance_id="@counter@one", name=name,
         input=json.dumps({"id": request_id, "op": "set", "signal": True, "input": token}))
     reply = dt_history.EventRaisedEvent(
         event_id=2, timestamp=request.timestamp, name=request_id,
@@ -724,8 +724,8 @@ def _make_terminal_state(
     return SimpleNamespace(
         name="orch",
         instance_id="abc",
-        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        last_updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        last_updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         runtime_status=runtime_status,
         serialized_input=None,
         serialized_output=serialized_output,
@@ -985,8 +985,8 @@ def _fake_state(
     return SimpleNamespace(
         name="orch",
         instance_id="abc",
-        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        last_updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        last_updated_at=datetime(2026, 1, 2, tzinfo=UTC),
         runtime_status=runtime_status,
         serialized_input='{"in": 1}',
         serialized_output=serialized_output,
@@ -1086,7 +1086,7 @@ async def test_get_status_missing_instance_is_falsy():
 
 
 def _fake_history():
-    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
     return [
         dt_history.OrchestratorStartedEvent(
             event_id=-1, timestamp=started_at),

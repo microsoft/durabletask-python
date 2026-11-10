@@ -9,7 +9,7 @@ Covers ``suspend``/``resume``, ``restart``, ``get_status_all``,
 ``wait_for_completion_or_create_check_status_response``, and ``rewind``.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -67,7 +67,7 @@ def test_get_status_by_runtime_status(v1_app):
 
 
 def test_purge_instance_history_by(v1_app):
-    created_from = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    created_from = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     instance_id = v1_app.start_orchestration("activity_chain")
     v1_app.wait_for_completion(instance_id)
 

@@ -4,7 +4,7 @@
 """Unit tests for the Schedule entity behavior, driven through _EntityExecutor."""
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -145,7 +145,7 @@ class TestUpdate:
 class TestRunSchedule:
     def test_runs_orchestration_when_due_and_rearms(self):
         h = Harness()
-        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        past = datetime.now(UTC) - timedelta(hours=1)
         h.run("create_schedule", _creation_options(start_at=past, start_immediately_if_late=True))
 
         _, actions = h.run("run_schedule", h.token)
@@ -169,7 +169,7 @@ class TestRunSchedule:
 
     def test_future_start_does_not_run_yet(self):
         h = Harness()
-        future = datetime.now(timezone.utc) + timedelta(days=1)
+        future = datetime.now(UTC) + timedelta(days=1)
         h.run("create_schedule", _creation_options(start_at=future))
         _, actions = h.run("run_schedule", h.token)
         assert len(_start_actions(actions)) == 0
@@ -180,8 +180,8 @@ class TestRunSchedule:
 
     def test_past_end_time_deletes(self):
         h = Harness()
-        start = datetime.now(timezone.utc) - timedelta(hours=2)
-        end = datetime.now(timezone.utc) - timedelta(hours=1)
+        start = datetime.now(UTC) - timedelta(hours=2)
+        end = datetime.now(UTC) - timedelta(hours=1)
         h.run("create_schedule", _creation_options(start_at=start, end_at=end))
         _, actions = h.run("run_schedule", h.token)
         delete_signals = [a for a in _signal_actions(actions) if a.sendSignal.name == "delete"]

@@ -5,7 +5,7 @@
 
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -35,7 +35,7 @@ class _Recorder:
 
     def record(self) -> None:
         with self._lock:
-            self.times.append(datetime.now(timezone.utc))
+            self.times.append(datetime.now(UTC))
 
     @property
     def count(self) -> int:
@@ -71,8 +71,8 @@ def test_client_delayed_signal_is_deferred():
 
         with client.TaskHubGrpcClient(host_address=HOST) as c:
             entity_id = entities.EntityInstanceId("Recorder", "client-delay")
-            signal_at = datetime.now(timezone.utc) + timedelta(seconds=2)
-            sent_at = datetime.now(timezone.utc)
+            signal_at = datetime.now(UTC) + timedelta(seconds=2)
+            sent_at = datetime.now(UTC)
             c.signal_entity(entity_id, "ping", signal_time=signal_at)
 
             # Should not have fired immediately.
@@ -108,7 +108,7 @@ def test_orchestration_delayed_signal_is_deferred():
         w.start()
 
         with client.TaskHubGrpcClient(host_address=HOST) as c:
-            sent_at = datetime.now(timezone.utc)
+            sent_at = datetime.now(UTC)
             instance_id = c.schedule_new_orchestration(signaling_orchestrator)
             c.wait_for_orchestration_completion(instance_id, timeout=30)
 

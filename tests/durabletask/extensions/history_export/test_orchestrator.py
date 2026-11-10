@@ -14,7 +14,7 @@ from __future__ import annotations
 import gzip
 import json
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -155,7 +155,7 @@ def seeded_ids(dt_client, w):
 def test_orchestrator_exports_all_terminal_instances_and_marks_completed(
     dt_client, export_client, writer, seeded_ids,
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     desc = export_client.create_job(
         ExportJobCreationOptions(
             mode=ExportMode.BATCH,
@@ -200,7 +200,7 @@ def test_orchestrator_exits_when_entity_is_deleted_mid_run(
     running" rather than the old "orchestration completes with status
     Cancelled".
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     desc = export_client.create_job(
         ExportJobCreationOptions(
             mode=ExportMode.CONTINUOUS,
@@ -256,7 +256,7 @@ def test_orchestrator_records_failure_when_context_resolution_fails(
     # orchestrator's activities run; the autouse ``_default_context``
     # fixture restores the good context afterwards.
     _holder.context = None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     desc = export_client.create_job(
         ExportJobCreationOptions(
             mode=ExportMode.BATCH,
@@ -296,7 +296,7 @@ def test_batch_failure_marks_job_failed_without_invalid_transition(
         client=dt_client, writer=_AlwaysFailingWriter(),
     )
     with caplog.at_level("WARNING", logger="durabletask.extensions.history_export"):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         desc = export_client.create_job(
             ExportJobCreationOptions(
                 mode=ExportMode.BATCH,
