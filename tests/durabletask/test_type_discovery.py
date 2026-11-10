@@ -6,7 +6,7 @@
 import inspect
 import json
 import logging
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Mapping, MutableMapping, MutableSequence
 from dataclasses import dataclass
 from typing import Any, Optional, get_origin
 from unittest.mock import patch
@@ -69,9 +69,11 @@ class TestIsReconstructable:
 
     def test_list_of_dataclass_is_reconstructable(self):
         assert self.conv.can_reconstruct(list[Order]) is True
+        assert self.conv.can_reconstruct(MutableSequence[Order]) is True
 
     def test_list_of_builtin_is_not_reconstructable(self):
         assert self.conv.can_reconstruct(list[int]) is False
+        assert self.conv.can_reconstruct(MutableSequence[int]) is False
 
     def test_dict_and_mapping_of_dataclass_is_reconstructable(self):
         assert self.conv.can_reconstruct(dict[str, Order]) is True
@@ -112,6 +114,7 @@ class TestCustomConverterReconstructable:
         # The base Optional/list recursion goes through ``self``, so the override
         # is consulted for the element type.
         assert conv.can_reconstruct(list[Widget]) is True
+        assert conv.can_reconstruct(MutableSequence[Widget]) is True
         assert conv.can_reconstruct(Optional[Widget]) is True
         # Builtins remain excluded.
         assert conv.can_reconstruct(int) is False

@@ -19,7 +19,7 @@ user must supply a ``to_json`` hook or a custom ``DataConverter``.
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import MutableMapping, MutableSequence
 import enum
 import typing
 from dataclasses import dataclass, field
@@ -369,6 +369,15 @@ def test_optional_enum_field(conv):
 def test_list_of_dataclasses(conv):
     value = [Address("a", "b"), Address("c", "d")]
     result = _round_trip(conv, value, list[Address])
+    assert result == value
+
+
+def test_mutable_sequence_of_dataclasses(conv):
+    value = [Address("a", "b"), Address("c", "d")]
+    result = _round_trip(conv, value, MutableSequence[Address])
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(item, Address) for item in result)
     assert result == value
 
 
