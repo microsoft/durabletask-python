@@ -38,11 +38,12 @@ After the first durable-client, orchestrator, or entity invocation,
 each Python worker checks accessible `requirements.txt` files in the
 background and writes a host worker log warning when the declared constraints
 permit a later major version. The check follows local `-r` and `-c` files and
-applicable environment markers. It is best-effort: missing or unsupported
-requirements are treated as unknown. A lockfile's presence does not indicate
-whether deployment uses it, so the warning describes the risk of installing
-directly from the requirements. The check does not read dependency files during
-app startup or wait for the check before returning from an invocation.
+applicable environment markers. It is best-effort and may miss uncommon version
+ranges; missing or unsupported requirements are treated as unknown. A
+lockfile's presence does not indicate whether deployment uses it, so the warning
+describes the risk of installing directly from the requirements. The check does
+not read dependency files during app startup or wait for the check before
+returning from an invocation.
 
 ## Overview
 

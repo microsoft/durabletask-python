@@ -130,6 +130,13 @@ def _allows_later_major(specifiers: SpecifierSet, installed: Version) -> bool:
         add_release(bound.epoch, bound.major, bound.minor + 1, 0)
         add_release(bound.epoch, bound.major + 1, 0, 0)
 
+    for candidate in tuple(candidates):
+        base = candidate.base_version
+        candidates.update(Version(f"{base}{suffix}") for suffix in (".dev0", "a0", "b0", "rc0"))
+        if candidate.pre and candidate.pre[1] > 0:
+            label, number = candidate.pre
+            candidates.add(Version(f"{base}{label}{number - 1}"))
+
     allowed = [candidate for candidate in candidates if specifiers.contains(candidate, prereleases=True)]
     return (
         any(candidate.major == installed.major for candidate in allowed)

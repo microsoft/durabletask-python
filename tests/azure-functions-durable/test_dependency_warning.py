@@ -32,10 +32,20 @@ def _warnings(caplog):
         ("azure-functions-durable>=2.0.0b1", True),
         ("azure-functions-durable>=2,<4", True),
         ("azure-functions-durable>=2,<3.1", True),
+        ("azure-functions-durable>=2.0.0rc5,<3.0.0rc2", True),
+        ("azure-functions-durable>=2.0.0rc5,<3.0.0rc0", True),
+        ("azure-functions-durable>=2.0.0rc5,<3.0.0a0", True),
+        ("--pre\nazure-functions-durable>=2.0.0rc5,<=3.0.0,!=3.0.0", True),
+        (
+            "azure-functions-durable>=2.0.0rc5,<3.0.0rc2,"
+            "!=3.0.0.dev0,!=3.0.0a0,!=3.0.0b0,!=3.0.0rc0",
+            True,
+        ),
         ("azure-functions-durable!=3.*", True),
         ("azure-functions-durable!=3.0.0", True),
         ("azure-functions-durable<3", False),
         ("azure-functions-durable>=2.0.0b1,<3", False),
+        ("azure-functions-durable>=2.0.0rc5,<3.0.0.dev0", False),
         ("azure-functions-durable==2.*", False),
         ("azure-functions-durable==2.0.0rc5", False),
         ("azure-functions-durable~=2.0", False),
@@ -70,6 +80,14 @@ def test_suggested_constraint_preserves_the_installed_epoch(monkeypatch, tmp_pat
     (tmp_path / "requirements.txt").write_text("azure-functions-durable", encoding="utf-8")
     dependency_warning.warn_if_unbounded(str(tmp_path), logging.getLogger(__name__))
     assert "azure-functions-durable>=1!2.3,<1!3" in _warnings(caplog)[0]
+
+
+def test_future_major_prerelease_preserves_the_installed_epoch(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(dependency_warning, "version", lambda name: "1!2.0rc5")
+    (tmp_path / "requirements.txt").write_text(
+        "azure-functions-durable>=1!2.0rc5,<1!3.0rc2", encoding="utf-8")
+    dependency_warning.warn_if_unbounded(str(tmp_path), logging.getLogger(__name__))
+    assert "azure-functions-durable>=1!2.0rc5,<1!3" in _warnings(caplog)[0]
 
 
 def test_a_higher_major_in_an_older_epoch_is_not_an_upgrade(monkeypatch, tmp_path, caplog):
@@ -320,9 +338,10 @@ async def test_failed_invocations_still_schedule_the_check(monkeypatch, tmp_path
 
     wrapped = invocation.wrap_invocation(async_fail if use_async else fail)
     with pytest.raises(ValueError, match="invocation failed"):
-        result = wrapped(context=context)
         if use_async:
-            await result
+            await wrapped(context=context)
+        else:
+            wrapped(context=context)
 
     assert checked == [context]
     assert invocation.get_invocation_id() is None
