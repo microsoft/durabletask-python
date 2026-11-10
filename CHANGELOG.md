@@ -9,6 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Activity and sub-orchestration `retry_timeout` decisions now use replay-safe
+orchestration time, preventing retries from expiring solely because history is
+replayed later. Retry calculations also accept timezone-aware timestamps.
+Histories that recorded timeout failures based on wall-clock time can replay
+differently; drain affected instances on the previous SDK before upgrading.
 - Type discovery now recognizes `dict` / `Mapping` and `tuple` containers wrapping
 reconstructable types (such as dataclasses and `from_json()`-capable types) via
 `JsonDataConverter.can_reconstruct()`. Inbound activity and orchestrator inputs as

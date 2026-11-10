@@ -2917,7 +2917,7 @@ class _OrchestrationExecutor:
                     retryable_activity_task = cast(task.RetryableTask[Any], activity_task_obj)
                     next_delay = (
                         None if event.taskFailed.failureDetails.isNonRetriable
-                        else retryable_activity_task.compute_next_delay()
+                        else retryable_activity_task.compute_next_delay(ctx.current_utc_datetime)
                     )
                     if next_delay is None:
                         retryable_activity_task.fail(
@@ -3031,7 +3031,7 @@ class _OrchestrationExecutor:
                     retryable_sub_orch_task = cast(task.RetryableTask[Any], sub_orch_task_obj)
                     next_delay = (
                         None if failedEvent.failureDetails.isNonRetriable
-                        else retryable_sub_orch_task.compute_next_delay()
+                        else retryable_sub_orch_task.compute_next_delay(ctx.current_utc_datetime)
                     )
                     if next_delay is None:
                         retryable_sub_orch_task.fail(

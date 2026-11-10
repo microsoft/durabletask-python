@@ -420,10 +420,12 @@ async def test_retry_policies():
 
 
 async def test_retry_timeout():
+    # Failures at 0, 1, 3, and 7 seconds schedule retries; the fifth attempt
+    # at 15 seconds exhausts the 14-second timeout, not the 10-attempt limit.
     throw_activity_counter = 0
     retry_policy = task.RetryPolicy(
         first_retry_interval=timedelta(seconds=1),
-        max_number_of_attempts=5,
+        max_number_of_attempts=10,
         backoff_coefficient=2,
         max_retry_interval=timedelta(seconds=10),
         retry_timeout=timedelta(seconds=14))
@@ -452,7 +454,7 @@ async def test_retry_timeout():
         assert state.failure_details.error_type == "durabletask.task.TaskFailedError"
         assert state.failure_details.message.endswith("Activity task #1 failed: Kah-BOOOOM!!!")
         assert state.failure_details.stack_trace is not None
-        assert throw_activity_counter == 4
+        assert throw_activity_counter == 5
 
 
 async def test_custom_status():
