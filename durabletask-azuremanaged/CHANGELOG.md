@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- With the corresponding core `durabletask` SDK update, type discovery now recognizes
+`dict`, `Mapping`, and `tuple` container annotations wrapping reconstructable types,
+automatically reconstructing recorded inputs and inferred activity results into typed model
+instances. See the [core upgrade warning](../CHANGELOG.md#unreleased) for replay-breaking
+guidance and dependency pinning recommendations.
+
 ## v1.13.1
 
 ADDED

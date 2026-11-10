@@ -6,8 +6,9 @@
 import inspect
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, get_origin
 from unittest.mock import patch
 
 import pytest
@@ -72,6 +73,23 @@ class TestIsReconstructable:
     def test_list_of_builtin_is_not_reconstructable(self):
         assert self.conv.can_reconstruct(list[int]) is False
 
+    def test_dict_and_mapping_of_dataclass_is_reconstructable(self):
+        assert self.conv.can_reconstruct(dict[str, Order]) is True
+        assert self.conv.can_reconstruct(Mapping[str, Order]) is True
+        assert self.conv.can_reconstruct(dict[str, int]) is False
+
+    def test_tuple_of_dataclass_is_reconstructable(self):
+        assert self.conv.can_reconstruct(tuple[Order, ...]) is True
+        assert self.conv.can_reconstruct(tuple[Order, int]) is True
+        assert self.conv.can_reconstruct(tuple[int, str]) is False
+        assert self.conv.can_reconstruct(tuple) is False
+
+    def test_nested_container_reconstructability(self):
+        assert self.conv.can_reconstruct(dict[str, list[Order]]) is True
+        assert self.conv.can_reconstruct(tuple[dict[str, Order], ...]) is True
+        assert self.conv.can_reconstruct(list[dict[str, Order]]) is True
+        assert self.conv.can_reconstruct(dict[str, list[int]]) is False
+
 
 class TestCustomConverterReconstructable:
     """A custom converter can extend reconstructability to its own types, and the
@@ -95,6 +113,48 @@ class TestCustomConverterReconstructable:
         assert conv.can_reconstruct(Optional[Widget]) is True
         # Builtins remain excluded.
         assert conv.can_reconstruct(int) is False
+        # The override is also consulted for elements inside dict and tuple hints.
+        assert conv.can_reconstruct(dict[str, Widget]) is True
+        assert conv.can_reconstruct(tuple[Widget, ...]) is True
+        assert conv.can_reconstruct(tuple[Widget, int]) is True
+
+    def test_override_can_enforce_custom_container_policy(self):
+        class SelectiveConverter(JsonDataConverter):
+            def can_reconstruct(self, target_type: Any) -> bool:
+                # Custom policy: reject all tuple hints even with supported elements
+                if get_origin(target_type) is tuple:
+                    return False
+                return super().can_reconstruct(target_type)
+
+        conv = SelectiveConverter()
+        assert conv.can_reconstruct(dict[str, Order]) is True
+        assert conv.can_reconstruct(tuple[Order, ...]) is False
+        assert conv.can_reconstruct(tuple[Order, int]) is False
+
+        def tuple_activity(ctx, items: tuple[Order, ...]) -> tuple[Order, ...]:
+            pass
+
+        assert type_discovery.activity_input_type(tuple_activity, conv) is None
+        assert type_discovery.activity_output_type(tuple_activity, conv) is None
+
+    def test_permissive_converter_discovery_policy_unaffected(self):
+        """A converter that overrides can_reconstruct to return True (like Azure Functions)
+        remains unaffected and continues to surface all container annotations."""
+        class PermissiveConverter(JsonDataConverter):
+            def can_reconstruct(self, target_type: Any) -> bool:
+                return True
+
+        conv = PermissiveConverter()
+        assert conv.can_reconstruct(dict[str, Order]) is True
+        assert conv.can_reconstruct(tuple[Order, ...]) is True
+        assert conv.can_reconstruct(dict[str, int]) is True
+        assert conv.can_reconstruct(tuple[int, str]) is True
+
+        def sample_act(ctx, d: dict[str, int]) -> tuple[int, ...]:
+            pass
+
+        assert type_discovery.activity_input_type(sample_act, conv) == dict[str, int]
+        assert type_discovery.activity_output_type(sample_act, conv) == tuple[int, ...]
 
     def test_discovery_uses_supplied_converter(self):
         class Widget:
@@ -412,6 +472,47 @@ def test_activity_input_coerced_via_from_json():
     assert seen["type"] == "Money"
     assert seen["amount"] == 50
     assert json.loads(result) == 50
+
+
+def test_activity_input_coerced_for_dict_of_dataclass():
+    seen: dict[str, Any] = {}
+
+    def handle(ctx: task.ActivityContext, orders: dict[str, Order]):
+        seen["orders"] = orders
+        return sum(o.quantity for o in orders.values())
+
+    executor, name = _activity_executor(handle)
+    payload = json.dumps({"o1": {"item": "widget", "quantity": 3}, "o2": {"item": "gadget", "quantity": 7}})
+    result = executor.execute("orch1", name, 1, payload)
+
+    orders = seen["orders"]
+    assert isinstance(orders, dict)
+    assert isinstance(orders["o1"], Order)
+    assert isinstance(orders["o2"], Order)
+    assert orders["o1"].item == "widget"
+    assert orders["o2"].quantity == 7
+    assert json.loads(result) == 10
+
+
+def test_activity_input_coerced_for_tuple_of_dataclass():
+    seen: dict[str, Any] = {}
+
+    def handle(ctx: task.ActivityContext, orders: tuple[Order, ...]):
+        seen["orders"] = orders
+        return len(orders)
+
+    executor, name = _activity_executor(handle)
+    payload = json.dumps([{"item": "widget", "quantity": 3}, {"item": "gadget", "quantity": 7}])
+    result = executor.execute("orch1", name, 1, payload)
+
+    orders = seen["orders"]
+    assert isinstance(orders, tuple)
+    assert len(orders) == 2
+    assert isinstance(orders[0], Order)
+    assert isinstance(orders[1], Order)
+    assert orders[0].item == "widget"
+    assert orders[1].quantity == 7
+    assert json.loads(result) == 2
 
 
 def test_activity_builtin_input_unchanged():

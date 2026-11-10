@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+FIXED
+
+- Type discovery now recognizes `dict` / `Mapping` and `tuple` containers wrapping
+reconstructable types (such as dataclasses and `from_json()`-capable types) via
+`JsonDataConverter.can_reconstruct()`. Inbound activity and orchestrator inputs as
+well as inferred activity return types annotated with these containers are now
+automatically reconstructed into typed model instances without requiring an explicit
+`return_type` override.
+
+> [!WARNING]
+> **Replay-breaking bug fix:** Container annotations involving `dict`, `Mapping`,
+> or `tuple` wrapping reconstructable types, including nested annotations, now
+> reconstruct orchestration inputs and inferred activity results by default.
+> Existing instances that relied on raw dictionaries or lists can change behavior
+> or fail replay with `NonDeterminismError`.
+>
+> Drain affected instances on the previous SDK, or keep their task hub on the
+> previous SDK and use a separate task hub for new instances. Pin or lock the core
+> `durabletask` dependency, including when using the Azure Managed provider.
+
 ## v1.13.1
 
 ADDED

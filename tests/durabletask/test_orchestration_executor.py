@@ -864,6 +864,278 @@ def test_orchestrator_input_type_discovery():
     assert captured["count"] == 5
 
 
+def test_old_history_replay_orchestrator_dict_and_tuple_input_reconstruction():
+    """Demonstrates that replaying an old history reconstructs dict and tuple inputs to typed dataclasses."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Order:
+        item: str
+        quantity: int
+
+    captured_dict: dict = {}
+    captured_tuple: dict = {}
+
+    def dict_orchestrator(ctx: task.OrchestrationContext, orders: dict[str, Order]):
+        captured_dict["orders"] = orders
+        return sum(o.quantity for o in orders.values())
+
+    def tuple_orchestrator(ctx: task.OrchestrationContext, orders: tuple[Order, ...]):
+        captured_tuple["orders"] = orders
+        return len(orders)
+
+    registry = worker._Registry()
+    dict_name = registry.add_orchestrator(dict_orchestrator)
+    tuple_name = registry.add_orchestrator(tuple_orchestrator)
+
+    # Replay dict input from old history
+    encoded_dict_input = json.dumps({"o1": {"item": "widget", "quantity": 3}, "o2": {"item": "gadget", "quantity": 7}})
+    old_events_dict = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(dict_name, TEST_INSTANCE_ID, encoded_input=encoded_dict_input)]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result_dict = executor.execute(TEST_INSTANCE_ID, [], old_events_dict)
+
+    complete_dict = get_and_validate_complete_orchestration_action_list(1, result_dict.actions)
+    assert complete_dict.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_dict.result.value == "10"
+    dict_orders = captured_dict["orders"]
+    assert isinstance(dict_orders, dict)
+    assert isinstance(dict_orders["o1"], Order)
+    assert dict_orders["o1"].item == "widget"
+    assert dict_orders["o1"].quantity == 3
+    assert isinstance(dict_orders["o2"], Order)
+
+    # Replay tuple input from old history
+    encoded_tuple_input = json.dumps([{"item": "widget", "quantity": 1}, {"item": "gadget", "quantity": 2}])
+    old_events_tuple = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(tuple_name, TEST_INSTANCE_ID, encoded_input=encoded_tuple_input)]
+
+    result_tuple = executor.execute(TEST_INSTANCE_ID, [], old_events_tuple)
+
+    complete_tuple = get_and_validate_complete_orchestration_action_list(1, result_tuple.actions)
+    assert complete_tuple.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_tuple.result.value == "2"
+    tuple_orders = captured_tuple["orders"]
+    assert isinstance(tuple_orders, tuple)
+    assert len(tuple_orders) == 2
+    assert isinstance(tuple_orders[0], Order)
+    assert tuple_orders[0].item == "widget"
+    assert isinstance(tuple_orders[1], Order)
+
+
+def test_old_history_replay_orchestrator_dict_input_nondeterminism_when_branching_on_raw_dict():
+    """Demonstrates replay incompatibility when an orchestration branched on uncoerced input dict.
+
+    Under the previous SDK, an input annotated as dict[str, Order] was passed as a raw dict of dicts.
+    An orchestration that branched on `isinstance(orders["o1"], dict)` previously scheduled "HandleRawDict".
+    Under the new SDK, orders["o1"] is reconstructed as Order, taking the typed branch and failing replay
+    with NonDeterminismError against the committed history.
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class Order:
+        item: str
+        quantity: int
+
+    def orchestrator(ctx: task.OrchestrationContext, orders: dict[str, Order]):
+        if isinstance(orders["o1"], dict):
+            yield ctx.call_activity("HandleRawDict")
+        else:
+            yield ctx.call_activity("HandleTypedOrder")
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    # History recorded under previous SDK behavior: scheduled "HandleRawDict"
+    encoded_input = json.dumps({"o1": {"item": "widget", "quantity": 3}})
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=encoded_input),
+        helpers.new_task_scheduled_event(1, "HandleRawDict")]
+    new_events = [helpers.new_task_completed_event(1, json.dumps("done"))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete_action.failureDetails.errorType == "durabletask.task.NonDeterminismError"
+    assert "HandleRawDict" in complete_action.failureDetails.errorMessage
+    assert "HandleTypedOrder" in complete_action.failureDetails.errorMessage
+
+
+def test_old_history_replay_orchestrator_tuple_input_nondeterminism_when_branching_on_raw_element():
+    """Demonstrates replay incompatibility when an orchestration branched on uncoerced tuple input."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Order:
+        item: str
+
+    def orchestrator(ctx: task.OrchestrationContext, orders: tuple[Order, ...]):
+        if isinstance(orders[0], dict):
+            yield ctx.call_activity("HandleRawTuple")
+        else:
+            yield ctx.call_activity("HandleTypedTuple")
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    encoded_input = json.dumps([{"item": "widget"}])
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=encoded_input),
+        helpers.new_task_scheduled_event(1, "HandleRawTuple")]
+    new_events = [helpers.new_task_completed_event(1, json.dumps("done"))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete_action.failureDetails.errorType == "durabletask.task.NonDeterminismError"
+    assert "HandleRawTuple" in complete_action.failureDetails.errorMessage
+    assert "HandleTypedTuple" in complete_action.failureDetails.errorMessage
+
+
+def test_old_history_replay_inferred_activity_result_reconstruction():
+    """Demonstrates that replaying an old history reconstructs inferred activity return types."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Order:
+        item: str
+        quantity: int
+
+    def fetch_orders(ctx: task.ActivityContext, _) -> dict[str, Order]:
+        pass
+
+    captured: dict = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        orders = yield ctx.call_activity(fetch_orders)
+        captured["orders"] = orders
+        return orders["o1"].item
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(fetch_orders))]
+    new_events = [
+        helpers.new_task_completed_event(1, json.dumps({"o1": {"item": "widget", "quantity": 3}}))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert complete_action.result.value == json.dumps("widget")
+    orders = captured["orders"]
+    assert isinstance(orders, dict)
+    assert isinstance(orders["o1"], Order)
+    assert orders["o1"].item == "widget"
+    assert orders["o1"].quantity == 3
+
+
+def test_old_history_replay_inferred_activity_result_nondeterminism_when_branching_on_raw_result():
+    """Demonstrates replay incompatibility when an orchestration branched on uncoerced activity results.
+
+    Under the previous SDK, return annotation `-> dict[str, Order]` was not reconstructable, so
+    call_activity(fetch_orders) returned a raw dict of dicts. An orchestration branching on
+    `isinstance(orders["o1"], dict)` scheduled "HandleRawActivityDict".
+    Replaying this history under the new SDK reconstructs Order, selects "HandleTypedActivityResult",
+    and fails with NonDeterminismError against the committed history.
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class Order:
+        item: str
+
+    def fetch_orders(ctx: task.ActivityContext, _) -> dict[str, Order]:
+        pass
+
+    def orchestrator(ctx: task.OrchestrationContext, _):
+        orders = yield ctx.call_activity(fetch_orders)
+        if isinstance(orders["o1"], dict):
+            yield ctx.call_activity("HandleRawActivityDict")
+        else:
+            yield ctx.call_activity("HandleTypedActivityResult")
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=None),
+        helpers.new_task_scheduled_event(1, task.get_name(fetch_orders)),
+        helpers.new_task_completed_event(1, json.dumps({"o1": {"item": "widget"}})),
+        helpers.new_task_scheduled_event(2, "HandleRawActivityDict")]
+    new_events = [helpers.new_task_completed_event(2, json.dumps("done"))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete_action.failureDetails.errorType == "durabletask.task.NonDeterminismError"
+    assert "HandleRawActivityDict" in complete_action.failureDetails.errorMessage
+    assert "HandleTypedActivityResult" in complete_action.failureDetails.errorMessage
+
+
+def test_unaffected_annotations_and_explicit_return_type_remain_unchanged():
+    """Confirms that builtins (dict[str, int]) remain uncoerced and explicit return_type overrides annotation."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Order:
+        item: str
+
+    def fetch_orders(ctx: task.ActivityContext, _) -> dict[str, Order]:
+        pass
+
+    captured: dict = {}
+
+    def orchestrator(ctx: task.OrchestrationContext, counts: dict[str, int]):
+        # Unaffected builtin: dict[str, int] is not reconstructable and remains raw dict
+        captured["counts"] = counts
+        # Explicit return_type=dict overrides discovered dict[str, Order] annotation
+        orders = yield ctx.call_activity(fetch_orders, return_type=dict)
+        captured["orders"] = orders
+        return "done"
+
+    registry = worker._Registry()
+    name = registry.add_orchestrator(orchestrator)
+
+    old_events = [
+        helpers.new_orchestrator_started_event(),
+        helpers.new_execution_started_event(name, TEST_INSTANCE_ID, encoded_input=json.dumps({"widgets": 5})),
+        helpers.new_task_scheduled_event(1, task.get_name(fetch_orders))]
+    new_events = [
+        helpers.new_task_completed_event(1, json.dumps({"o1": {"item": "gadget"}}))]
+
+    executor = worker._OrchestrationExecutor(registry, TEST_LOGGER, JsonDataConverter())
+    result = executor.execute(TEST_INSTANCE_ID, old_events, new_events)
+
+    complete_action = get_and_validate_complete_orchestration_action_list(1, result.actions)
+    assert complete_action.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+
+    assert captured["counts"] == {"widgets": 5}
+    assert isinstance(captured["counts"], dict)
+
+    assert captured["orders"] == {"o1": {"item": "gadget"}}
+    assert isinstance(captured["orders"], dict)
+    assert isinstance(captured["orders"]["o1"], dict)
+    assert not isinstance(captured["orders"]["o1"], Order)
+
+
 def test_activity_task_failed():
     """Tests the failure of an activity task"""
     def dummy_activity(ctx, _):
