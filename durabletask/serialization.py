@@ -42,7 +42,7 @@ import re
 import types
 import typing
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from collections.abc import Set as AbstractSet
 from types import SimpleNamespace
 from typing import Any, cast
@@ -291,7 +291,7 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             if not args:
                 return True
             return _is_supported_set_element(converter, args[0])
-        if origin in (dict, Mapping):
+        if origin in (dict, Mapping, MutableMapping):
             return len(args) == 2 and converter.can_reconstruct(args[1])
         if origin is tuple:
             if not args:
@@ -627,7 +627,7 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
         if origin is frozenset:
             return frozenset(coerced)
         return set(coerced)
-    if origin in (dict, Mapping) and isinstance(value, dict):
+    if origin in (dict, Mapping, MutableMapping) and isinstance(value, dict):
         # JSON object keys are always strings, so only the values can carry a
         # reconstructable type. Keys are passed through unchanged.
         mapping = cast("dict[Any, Any]", value)
