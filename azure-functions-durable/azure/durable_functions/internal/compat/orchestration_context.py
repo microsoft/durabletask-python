@@ -4,7 +4,7 @@
 import inspect
 import json
 from datetime import UTC, datetime
-from typing import Any, Callable, Generator, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Generator, Optional, cast
 from uuid import UUID
 
 from durabletask import task
@@ -14,6 +14,9 @@ from durabletask.task import OrchestrationContext, RetryPolicy, Task
 from ..serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .function_context import FunctionContext
 from .token_source import TokenSource
+
+if TYPE_CHECKING:
+    from ...http.models import HttpRetryOptions
 
 
 class DurableOrchestrationContext:
@@ -215,7 +218,8 @@ class DurableOrchestrationContext:
                   content: Any = None,
                   headers: Optional[dict[str, str]] = None,
                   token_source: Optional[TokenSource] = None,
-                  is_raw_str: bool = False) -> Task[Any]:
+                  is_raw_str: bool = False,
+                  retry_options: Optional["HttpRetryOptions"] = None) -> Task[Any]:
         """Schedule a durable HTTP call to the specified endpoint.
 
         The request is executed by a built-in activity and, if the endpoint
@@ -240,6 +244,11 @@ class DurableOrchestrationContext:
         is_raw_str: bool
             When ``True``, send ``str`` content as-is instead of JSON-encoding
             it. Requires ``content`` to be a ``str``.
+        retry_options: Optional[HttpRetryOptions]
+            Opt-in durable failure retries for the initial request only.
+            Selected HTTP statuses and activity failures fail this task after
+            exhaustion. Location polls do not inherit the policy. Only enable
+            retries when repeating the request's side effects is safe.
         """
         # Imported lazily to avoid a module import cycle
         # (http.models -> compat.token_source).
@@ -260,7 +269,8 @@ class DurableOrchestrationContext:
             else:
                 json_content = json.dumps(content)
 
-        request = DurableHttpRequest(method, uri, json_content, headers, token_source)
+        request = DurableHttpRequest(
+            method, uri, json_content, headers, token_source, retry_options)
         return self._ctx.call_sub_orchestrator(
             BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
             input=request.to_json(),
