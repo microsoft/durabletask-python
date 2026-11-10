@@ -11,6 +11,7 @@ that the converters use the durabletask-based encodings the host expects.
 
 
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from azure.functions import meta
@@ -136,6 +137,83 @@ def test_activity_trigger_externalizes_and_hydrates(monkeypatch, payload_store_f
     assert decoded == value
     assert _decode_activity(
         meta.Datum(type=data_type, value=token), trigger_metadata=None) == value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("quoted", [False, True])
+@pytest.mark.parametrize("version", ["v1", "v2"])
+@pytest.mark.parametrize("account_wide", [False, True])
+async def test_blob_payload_references_round_trip_through_functions(
+        monkeypatch, use_async, quoted, version, account_wide):
+    pytest.importorskip("azure.storage.blob")
+    from azure.storage.blob import BlobClient
+    from azure.storage.blob.aio import BlobClient as AsyncBlobClient
+    from durabletask.extensions.azure_blob_payloads import BlobPayloadStore, BlobPayloadStoreOptions
+
+    store = BlobPayloadStore(BlobPayloadStoreOptions(
+        account_url="https://example.blob.core.windows.net",
+        threshold_bytes=10, enable_compression=False, allow_all_containers_in_configured_account=account_wide,
+    ))
+    store._ensure_container_created = True
+    value = json.dumps({"value": "payload" * 100})
+    sync_stream = MagicMock()
+    sync_stream.readall.return_value = value.encode()
+    async_stream = MagicMock()
+    async_stream.readall = AsyncMock(return_value=value.encode())
+    monkeypatch.setattr(BlobClient, "upload_blob", MagicMock())
+    monkeypatch.setattr(AsyncBlobClient, "upload_blob", AsyncMock())
+    sync_download = MagicMock(return_value=sync_stream)
+    async_download = AsyncMock(return_value=async_stream)
+    monkeypatch.setattr(BlobClient, "download_blob", sync_download)
+    monkeypatch.setattr(AsyncBlobClient, "download_blob", async_download)
+    monkeypatch.setattr(payloads, "_payload_store", store)
+    try:
+        encoded = (await payloads.externalize_activity_output_async(value) if use_async
+                   else payloads.externalize_activity_output(value))
+        token = json.loads(encoded)
+        assert token.startswith("blob:v2:https://example.blob.core.windows.net/durabletask-payloads/")
+        if version == "v1":
+            blob_name = store._get_download_destination(token)[2]
+            token = f"blob:v1:durabletask-payloads:{blob_name}"
+        reference = json.dumps(token) if quoted else token
+        decoded = (await payloads.deexternalize_payload_async(reference) if use_async
+                   else payloads.deexternalize_payload(reference))
+        assert decoded == value
+
+        sync_download.reset_mock()
+        async_download.reset_mock()
+        other_container = ("blob:v1:other-container:blob" if version == "v1"
+                           else "blob:v2:https://example.blob.core.windows.net/other-container/blob")
+        reference = json.dumps(other_container) if quoted else other_container
+        if account_wide:
+            decoded = (await payloads.deexternalize_payload_async(reference) if use_async
+                       else payloads.deexternalize_payload(reference))
+            assert decoded == value
+        else:
+            with pytest.raises(ValueError, match="configured container"):
+                if use_async:
+                    await payloads.deexternalize_payload_async(reference)
+                else:
+                    payloads.deexternalize_payload(reference)
+            sync_download.assert_not_called()
+            async_download.assert_not_called()
+
+        sync_download.reset_mock()
+        async_download.reset_mock()
+        reference = "blob:v2:https://unlisted.blob.core.windows.net/durabletask-payloads/blob"
+        if quoted:
+            reference = json.dumps(reference)
+        with pytest.raises(ValueError, match="Storage endpoint"):
+            if use_async:
+                await payloads.deexternalize_payload_async(reference)
+            else:
+                payloads.deexternalize_payload(reference)
+        sync_download.assert_not_called()
+        async_download.assert_not_called()
+    finally:
+        store.close()
+        await store.close_async()
 
 
 def test_activity_trigger_keeps_small_payload_inline(monkeypatch, payload_store_factory):
@@ -283,3 +361,54 @@ def test_durable_client_decode_preserves_host_configuration():
     value = DurableClientConverter.decode(
         meta.Datum(type="string", value=config), trigger_metadata=None)
     assert value == config
+
+
+# ---------------------------------------------------------------------------
+# FunctionsDataConverter reconstruction and discovery
+# ---------------------------------------------------------------------------
+
+def test_functions_data_converter_can_reconstruct_and_discovery_unaffected():
+    """Azure Functions overrides can_reconstruct() to return True uniformly.
+
+    The core SDK's expanded dict/tuple traversal in JsonDataConverter does not
+    alter Azure Functions discovery behavior, because FunctionsDataConverter
+    already returns True for all types (delegating decoding to df_loads).
+    """
+    from collections.abc import Mapping
+    from dataclasses import dataclass
+    from durabletask.internal import type_discovery
+
+    @dataclass
+    class Order:
+        item: str
+        quantity: int
+
+    conv = FunctionsDataConverter()
+
+    # Always returns True for affected container types
+    assert conv.can_reconstruct(dict[str, Order]) is True
+    assert conv.can_reconstruct(Mapping[str, Order]) is True
+    assert conv.can_reconstruct(tuple[Order, ...]) is True
+    assert conv.can_reconstruct(tuple[Order, int]) is True
+
+    # Always returns True even for builtins and unknown types (distinct from core)
+    assert conv.can_reconstruct(dict[str, int]) is True
+    assert conv.can_reconstruct(tuple[int, str]) is True
+    assert conv.can_reconstruct(int) is True
+    assert conv.can_reconstruct(dict) is True
+    assert conv.can_reconstruct(tuple) is True
+
+    # Inbound and outbound type discovery with FunctionsDataConverter hands declared types through
+    def sample_func(ctx, orders: dict[str, Order]) -> tuple[Order, ...]:
+        pass
+
+    assert type_discovery.orchestrator_input_type(sample_func, conv) == dict[str, Order]
+    assert type_discovery.activity_input_type(sample_func, conv) == dict[str, Order]
+    assert type_discovery.activity_output_type(sample_func, conv) == tuple[Order, ...]
+
+    def builtin_func(ctx, data: dict[str, int]) -> tuple[int, ...]:
+        pass
+
+    # Builtins are also passed through to df_loads under FunctionsDataConverter
+    assert type_discovery.orchestrator_input_type(builtin_func, conv) == dict[str, int]
+    assert type_discovery.activity_output_type(builtin_func, conv) == tuple[int, ...]

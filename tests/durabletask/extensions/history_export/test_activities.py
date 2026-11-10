@@ -352,7 +352,7 @@ def test_blob_name_matches_dotnet_hash_scheme():
     assert _dotnet_o_format(last_updated) == "2026-06-04T17:09:09.4209900+00:00"
 
     expected_hash = hashlib.sha256(
-        f"{_dotnet_o_format(last_updated)}|{instance_id}".encode("utf-8")
+        f"{_dotnet_o_format(last_updated)}|{instance_id}".encode()
     ).hexdigest()
 
     assert _blob_name_for(

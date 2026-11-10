@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+FIXED
+
+- Functions clients now remove HTTP URL paths from the host RPC address before
+they connect through gRPC. Both async and sync clients keep the host and port.
+- Functions orchestration queries now request at most 1000 instances per page
+to support Azure Table Storage. Smaller explicit page sizes are kept. Queries
+still return all matching instances, including results after an empty page
+with a continuation token.
+
+## v2.0.0rc5
+
+ADDED
+
+- Added inherited Blob payload access scopes, including JSON-quoted references,
+with a configured-container default and explicit account-wide and
+additional-account opt-ins; see
+[access scopes](../docs/features.md#blob-payload-access-scopes).
+- Added inherited `blob:v2` payload reference support through `BlobPayloadStore`,
+preserving Functions-compatible JSON-quoted references and v1 reads within the
+configured payload access scopes. Older Python SDK versions cannot read v2; see the
+[core upgrade guidance](../docs/features.md#cross-sdk-compatibility).
+
+CHANGED
+
+- Updated the minimum `durabletask` dependency to v1.13.1.
+
+FIXED
+
+- Compressed Blob payload uploads now set the GZIP encoding property through
+the core store, and marked downloads decode explicitly. Upgrade all Python
+readers before enabling new writers; existing headerless blobs still require
+their original compression setting. See the
+[core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
+
 ## v2.0.0rc4
 
 ADDED
