@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- A best-effort background check warns when a Function App's requirements allow
+a future major version, which may introduce replay-breaking changes.
+
 FIXED
 
 - With the corresponding core SDK update, activity and sub-orchestration

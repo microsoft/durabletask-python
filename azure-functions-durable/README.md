@@ -17,8 +17,32 @@ built on top of the [`durabletask`](https://pypi.org/project/durabletask/) SDK.
 ## Installation
 
 ```bash
-pip install azure-functions-durable
+pip install "azure-functions-durable>=2.0.0b1,<3"
 ```
+
+For deployments, also constrain `azure-functions-durable` in the Function
+App's `requirements.txt`:
+
+```text
+azure-functions-durable>=2.0.0b1,<3
+```
+
+Future major versions may include broad, replay-breaking changes. An automatic
+upgrade during deployment can cause existing orchestrations to fail
+unexpectedly. Review the [migration guide](MIGRATION_GUIDE.md) and test replay
+before upgrading. A major-version constraint does not pin the `durabletask`
+dependency or guarantee replay compatibility; lock the complete dependency
+graph for reproducible deployments.
+
+After the first durable-client, orchestrator, or entity invocation,
+each Python worker checks accessible `requirements.txt` files in the
+background and writes a host worker log warning when the declared constraints
+permit a later major version. The check follows local `-r` and `-c` files and
+applicable environment markers. It is best-effort: missing or unsupported
+requirements are treated as unknown. A lockfile's presence does not indicate
+whether deployment uses it, so the warning describes the risk of installing
+directly from the requirements. The check does not read dependency files during
+app startup or wait for the check before returning from an invocation.
 
 ## Overview
 

@@ -11,14 +11,48 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
 from functools import lru_cache, wraps
+from threading import Lock, Thread
 from types import FunctionType
 from typing import Any, Callable, ParamSpec, TypeVar
 
 import azure.functions as func
 
 _invocation_context: ContextVar[func.Context | None] = ContextVar("durable_invocation_context", default=None)
+_dependency_check_lock = Lock()
+_dependency_check_scheduled = False
+_logger = logging.getLogger(__name__)
+# The worker routes SDK logs through the host even after an invocation ends.
+_dependency_logger = logging.getLogger("azure.functions.durable")
 _Parameters = ParamSpec("_Parameters")
 _Result = TypeVar("_Result")
+
+
+def _check_dependency_in_background(directory: str) -> None:
+    from .dependency_warning import warn_for_function_directory
+
+    warn_for_function_directory(directory, _dependency_logger)
+
+
+def _schedule_dependency_check(context: func.Context | None) -> None:
+    global _dependency_check_scheduled
+    if _dependency_check_scheduled or context is None:
+        return
+    directory = getattr(context, "function_directory", None)
+    if not isinstance(directory, str) or not directory:
+        return
+    with _dependency_check_lock:
+        if _dependency_check_scheduled:
+            return
+        _dependency_check_scheduled = True
+        try:
+            Thread(
+                target=_check_dependency_in_background,
+                args=(directory,),
+                name="durable-dependency-check",
+                daemon=True,
+            ).start()
+        except RuntimeError:
+            _logger.warning("Unable to start the Durable Functions dependency check.", exc_info=True)
 
 
 def preserve_function_source(wrapper: Callable[..., Any], original: Callable[..., Any]) -> None:
@@ -131,6 +165,7 @@ def wrap_invocation(function: Callable[..., Any], trigger_name: str | None = Non
                 return await function(*original.args, **original.kwargs)
             finally:
                 _invocation_context.reset(token)
+                _schedule_dependency_check(context)
 
         wrapper = async_wrapper
     else:
@@ -142,6 +177,7 @@ def wrap_invocation(function: Callable[..., Any], trigger_name: str | None = Non
                 return function(*original.args, **original.kwargs)
             finally:
                 _invocation_context.reset(token)
+                _schedule_dependency_check(context)
 
         wrapper = sync_wrapper
 
