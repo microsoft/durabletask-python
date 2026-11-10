@@ -3,10 +3,29 @@
 
 from importlib.metadata import version
 
+import grpc
+import grpc.aio
+
 from durabletask.internal.grpc_interceptor import (
     DefaultAsyncClientInterceptorImpl,
     DefaultClientInterceptorImpl,
+    _AsyncClientCallDetails,  # pyright: ignore[reportPrivateUsage]
+    _ClientCallDetails,  # pyright: ignore[reportPrivateUsage]
+    _MetadataLike,  # pyright: ignore[reportPrivateUsage]
 )
+
+from .invocation import get_invocation_id
+
+
+def _with_invocation_id(metadata: _MetadataLike | None) -> _MetadataLike | None:
+    invocation_id = get_invocation_id()
+    if not invocation_id:
+        return metadata
+    key = "x-azure-functions-invocationid"
+    # Resolve at call time: synchronous clients and their interceptors are cached.
+    headers = [(name, value) for name, value in (metadata or ()) if name.lower() != key]
+    headers.append((key, invocation_id))
+    return headers
 
 
 def _build_metadata(taskhub_name: str) -> list[tuple[str, str]]:
@@ -34,6 +53,12 @@ class AzureFunctionsDefaultClientInterceptorImpl(DefaultClientInterceptorImpl):
         self._metadata = _build_metadata(taskhub_name)
         super().__init__(self._metadata)
 
+    def _intercept_call(self, client_call_details: grpc.ClientCallDetails) -> grpc.ClientCallDetails:
+        details = super()._intercept_call(client_call_details)
+        return _ClientCallDetails(
+            details.method, details.timeout, _with_invocation_id(details.metadata),
+            details.credentials, details.wait_for_ready, details.compression)
+
 
 class AzureFunctionsAsyncDefaultClientInterceptorImpl(DefaultAsyncClientInterceptorImpl):
     """Async version of AzureFunctionsDefaultClientInterceptorImpl for use with grpc.aio channels.
@@ -46,3 +71,9 @@ class AzureFunctionsAsyncDefaultClientInterceptorImpl(DefaultAsyncClientIntercep
         self.required_query_string_parameters = required_query_string_parameters
         self._metadata = _build_metadata(taskhub_name)
         super().__init__(self._metadata)
+
+    async def _intercept_call(self, client_call_details: grpc.aio.ClientCallDetails) -> grpc.aio.ClientCallDetails:
+        details = await super()._intercept_call(client_call_details)
+        return _AsyncClientCallDetails(
+            details.method, details.timeout, _with_invocation_id(details.metadata),
+            details.credentials, details.wait_for_ready)

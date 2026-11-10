@@ -106,6 +106,26 @@ async def start_logging_filtered(
         json.dumps({"id": instance_id}), status_code=202, mimetype="application/json")
 
 
+@bp.route(route="correlation/async", methods=["POST"])
+@bp.durable_client_input(client_name="client")
+async def correlation_async(
+        req: func.HttpRequest, client: df.DurableFunctionsClient, context: func.Context) -> func.HttpResponse:
+    instance_id = await client.schedule_new_orchestration("activity_chain")
+    return func.HttpResponse(
+        json.dumps({"id": instance_id, "invocationId": context.invocation_id}),
+        status_code=202, mimetype="application/json")
+
+
+@bp.route(route="correlation/sync", methods=["POST"])
+@bp.durable_client_input(client_name="client")
+def correlation_sync(
+        req: func.HttpRequest, client: df.SyncDurableFunctionsClient, context: func.Context) -> func.HttpResponse:
+    instance_id = client.schedule_new_orchestration("activity_chain")
+    return func.HttpResponse(
+        json.dumps({"id": instance_id, "invocationId": context.invocation_id}),
+        status_code=202, mimetype="application/json")
+
+
 @bp.route(route="status/{id}", methods=["GET"])
 @bp.durable_client_input(client_name="client")
 async def get_orchestration_status(
