@@ -4,12 +4,13 @@ The following features are currently supported:
 
 ## Orchestrations
 
-Orchestrators are implemented using ordinary Python functions that take an `OrchestrationContext` as
-their first parameter. The `OrchestrationContext` provides APIs for starting child orchestrations,
-scheduling activities, and waiting for external events, among other things. Orchestrations are
-fault-tolerant and durable, meaning that they can automatically recover from failures and rebuild
-their local execution state. Orchestrator functions must be deterministic, meaning that they must
-always produce the same output given the same input.
+Orchestrators can be generator functions taking an `OrchestrationContext`, or
+`async def` functions taking an `AsyncOrchestrationContext`. Both provide APIs
+for starting child orchestrations, scheduling activities, and waiting for
+external events. Orchestrations are fault-tolerant and durable: they recover
+from failures by rebuilding local state through replay. Orchestrator code must
+be deterministic. See the [async authoring contract](async-orchestrators.md)
+for supported asyncio operations and replay constraints.
 
 ### Orchestration versioning
 
