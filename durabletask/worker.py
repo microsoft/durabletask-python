@@ -8,12 +8,12 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Coroutine, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
-from types import GeneratorType
+from types import CoroutineType, GeneratorType
 from enum import Enum
 from functools import partial
 from typing import Any, Self, TypeVar, cast, overload
@@ -50,6 +50,7 @@ from durabletask.internal.grpc_resiliency import (
 from durabletask.payload import helpers as payload_helpers
 from durabletask import task
 from durabletask.internal.grpc_interceptor import DefaultClientInterceptorImpl
+from durabletask.internal.asyncio_loop import DurableEventLoop
 from durabletask.payload.store import PayloadStore
 from durabletask.serialization import DataConverter, JsonDataConverter
 
@@ -1669,22 +1670,42 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._data_converter = data_converter
         self._exception_properties_provider = exception_properties_provider
         self._logger = logger
+        self._async_loop: DurableEventLoop | None = None
 
-    def run(self, generator: Generator[task.Task[Any], Any, Any]) -> None:
-        self._generator = generator
-        # TODO: Do something with this task
-        task = next(generator)  # this starts the generator
-        # TODO: Check if the task is null?
-        self._previous_task = task
+    def run(self, orchestrator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any]) -> None:
+        if isinstance(orchestrator, Coroutine):
+            self._async_loop = DurableEventLoop(
+                self, is_complete=lambda: self._is_complete, logger=self._logger)
+            self._async_loop.start(orchestrator)
+            return
+        self._generator = orchestrator
+        self._set_next_task(orchestrator.send(None))
+
+    def close(self) -> None:
+        if self._async_loop is not None:
+            self._async_loop.close()
+        elif self._generator is not None:
+            self._generator.close()
+
+    def _set_next_task(self, next_task: Any) -> None:
+        if not isinstance(next_task, task.Task):
+            raise TypeError(
+                "Generator orchestrators must yield durabletask.Task objects. "
+                "Use async def and await for asyncio composition."
+            )
+        self._previous_task = next_task
 
     def resume(self) -> None:
+        if self._async_loop is not None:
+            self._async_loop.resume()
+            return
         if self._generator is None:
             # This is never expected unless maybe there's an issue with the history
             raise TypeError(
-                "The orchestrator generator is not initialized! Was the orchestration history corrupted?"
+                "The orchestrator is not initialized! Was the orchestration history corrupted?"
             )
 
-        # We can resume the generator only if the previously yielded task
+        # We can resume the generator only if the previous task
         # has reached a completed state. The only time this won't be the
         # case is if the user yielded on a WhenAll task and there are still
         # outstanding child tasks that need to be completed.
@@ -1699,9 +1720,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
                 # This will either return a Task or raise StopIteration if it's done.
                 next_task = self._generator.send(self._previous_task.get_result())
 
-            if not isinstance(next_task, task.Task):
-                raise TypeError("The orchestrator generator yielded a non-Task object")
-            self._previous_task = next_task
+            self._set_next_task(next_task)
 
     def set_complete(
             self,
@@ -2524,34 +2543,33 @@ class _OrchestrationExecutor:
         finally:
             # Close after building the response, so the orchestrator's finally
             # blocks do not change the actions or custom status we return.
-            if ctx._generator is not None:  # pyright: ignore[reportPrivateUsage]
-                try:
-                    ctx._generator.close()  # pyright: ignore[reportPrivateUsage]
-                except (Exception, asyncio.CancelledError):
-                    cleanup_name = next(
-                        (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),
-                        orchestration_name,
-                    )
-                    self._logger.warning(
-                        f"{instance_id}: Failed to close orchestrator {cleanup_name} generator.",
-                        exc_info=True,
-                    )
-                except BaseException as ex:
-                    self._logger.error(
-                        f"{instance_id}: Orchestrator {orchestration_name} generator teardown exited unexpectedly.",
-                        exc_info=True,
-                    )
-                    if not dispatch_exited:
-                        if _is_control_flow_exception(ex) or result is None:
-                            raise
-                        # Keep an existing failure rather than mask its cause.
-                        if not any(
-                            action.HasField("completeOrchestration")
-                            and action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-                            for action in result.actions
-                        ):
-                            result = result.as_failed(ph.new_failure_details(
-                                ex, self._exception_properties_provider, self._logger))
+            try:
+                ctx.close()
+            except (Exception, asyncio.CancelledError):
+                cleanup_name = next(
+                    (e.executionStarted.name for e in new_events if e.HasField("executionStarted")),
+                    orchestration_name,
+                )
+                self._logger.warning(
+                    f"{instance_id}: Failed to close orchestrator {cleanup_name}.",
+                    exc_info=True,
+                )
+            except BaseException as ex:
+                self._logger.error(
+                    f"{instance_id}: Orchestrator {orchestration_name} teardown exited unexpectedly.",
+                    exc_info=True,
+                )
+                if not dispatch_exited:
+                    if _is_control_flow_exception(ex) or result is None:
+                        raise
+                    # Keep an existing failure rather than mask its cause.
+                    if not any(
+                        action.HasField("completeOrchestration")
+                        and action.completeOrchestration.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+                        for action in result.actions
+                    ):
+                        result = result.as_failed(ph.new_failure_details(
+                            ex, self._exception_properties_provider, self._logger))
         assert result is not None
         return result
 
@@ -2726,12 +2744,28 @@ class _OrchestrationExecutor:
                     input = self._data_converter.deserialize(
                         event.executionStarted.input.value, input_type)
 
-                result = fn(
-                    ctx, input
-                )  # this does not execute the generator, only creates it
-                if isinstance(result, GeneratorType):
-                    # Start the orchestrator's generator function
-                    ctx.run(cast(Generator[task.Task[Any], Any, Any], result))
+                # Layer 4 passes async orchestrators a cold context instead.
+                is_async = shared.is_async_callable(fn)
+                result = fn(ctx, input)
+
+                if isinstance(result, CoroutineType) and not is_async:
+                    result.close()
+                    raise TypeError(
+                        "A synchronous orchestrator returned a coroutine. Declare it with "
+                        "'async def' or use functools.wraps when decorating an async orchestrator."
+                    )
+                if is_async and not isinstance(result, CoroutineType):
+                    if isinstance(result, GeneratorType):
+                        result.close()
+                    raise TypeError("An async orchestrator must return a coroutine.")
+                if isinstance(result, (GeneratorType, CoroutineType)):
+                    # Both protocols suspend on durable tasks and finish with StopIteration.
+                    ctx.run(cast(Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any], result))
+                elif inspect.isasyncgen(result):
+                    raise TypeError(
+                        "Async generator orchestrators are not supported. "
+                        "Use async def with await, not yield."
+                    )
                 else:
                     # This is an orchestrator that doesn't schedule any tasks
                     ctx.set_complete(result, pb.ORCHESTRATION_STATUS_COMPLETED)
