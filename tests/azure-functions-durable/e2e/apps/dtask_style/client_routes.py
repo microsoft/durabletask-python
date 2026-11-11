@@ -16,7 +16,7 @@ native method names: ``schedule_new_orchestration``,
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import azure.functions as func
@@ -246,7 +246,7 @@ async def signal_entity(
     signal_time = None
     delay_seconds = body.get("delay_seconds")
     if delay_seconds:
-        signal_time = datetime.now(timezone.utc) + timedelta(seconds=float(delay_seconds))
+        signal_time = datetime.now(UTC) + timedelta(seconds=float(delay_seconds))
     await client.signal_entity(
         entity_id, req.route_params["op"], input=body.get("input"), signal_time=signal_time)
     return func.HttpResponse(status_code=202)

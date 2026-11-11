@@ -4,7 +4,8 @@
 from enum import Enum
 
 
-class ScheduleStatus(str, Enum):
+# StrEnum would change the public string and format representations.
+class ScheduleStatus(str, Enum):  # noqa: UP042
     """Represents the current status of a schedule."""
 
     UNINITIALIZED = "Uninitialized"

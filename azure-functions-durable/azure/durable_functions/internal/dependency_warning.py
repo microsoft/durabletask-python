@@ -24,14 +24,15 @@ _INDEX_OPTIONS_WITH_VALUE = {
 _INDEX_FLAGS = {"--no-index", "--pre", "--prefer-binary"}
 
 
-def _read_specifiers(root: Path, logger: Logger) -> SpecifierSet | None:
+def _read_specifiers(root: Path, logger: Logger) -> tuple[SpecifierSet, bool] | None:
     specifiers: list[str] = []
     required = False
+    allow_prereleases = False
     active: set[tuple[Path, bool]] = set()
     visited: set[tuple[Path, bool]] = set()
 
     def read_file(path: Path, constraint: bool) -> bool:
-        nonlocal required
+        nonlocal allow_prereleases, required
         try:
             path = path.resolve()
             key = (path, constraint)
@@ -68,7 +69,10 @@ def _read_specifiers(root: Path, logger: Logger) -> SpecifierSet | None:
                         option, argument = option.split("=", 1)
                     elif option.startswith(("-r", "-c")) and len(option) > 2 and len(parts) == 1:
                         option, argument = option[:2], option[2:]
-                    elif (option in _INDEX_FLAGS and len(parts) == 1) or (
+                    elif option in _INDEX_FLAGS and len(parts) == 1:
+                        allow_prereleases = allow_prereleases or option == "--pre"
+                        continue
+                    elif (
                             option in _INDEX_OPTIONS_WITH_VALUE and len(parts) == 2) or (
                             option.split("=", 1)[0] in _INDEX_OPTIONS_WITH_VALUE
                             and "=" in option and len(parts) == 1):
@@ -76,7 +80,7 @@ def _read_specifiers(root: Path, logger: Logger) -> SpecifierSet | None:
                     if not argument or "://" in argument or "${" in argument:
                         logger.debug("Cannot inspect a requirements option in %s.", path)
                         return False
-                    nested_constraint = constraint or option in ("-c", "--constraint")
+                    nested_constraint = option in ("-c", "--constraint")
                     if not read_file(path.parent / argument, nested_constraint):
                         return False
                     continue
@@ -105,10 +109,15 @@ def _read_specifiers(root: Path, logger: Logger) -> SpecifierSet | None:
 
     if not read_file(root / "requirements.txt", False) or not required:
         return None
-    return SpecifierSet(",".join(specifiers))
+    package_specifiers = SpecifierSet(",".join(specifiers))
+    allow_prereleases = allow_prereleases or any(specifier.prereleases for specifier in package_specifiers)
+    return package_specifiers, allow_prereleases
 
 
-def _allows_later_major(specifiers: SpecifierSet, installed: Version) -> bool:
+def _allows_later_major(
+        specifiers: SpecifierSet,
+        installed: Version,
+        allow_prereleases: bool = False) -> bool:
     candidates: set[Version] = set()
 
     def add_release(epoch: int, major: int, minor: int, patch: int) -> None:
@@ -137,7 +146,10 @@ def _allows_later_major(specifiers: SpecifierSet, installed: Version) -> bool:
             label, number = candidate.pre
             candidates.add(Version(f"{base}{label}{number - 1}"))
 
-    allowed = [candidate for candidate in candidates if specifiers.contains(candidate, prereleases=True)]
+    allowed = [
+        candidate for candidate in candidates
+        if specifiers.contains(candidate, prereleases=allow_prereleases)
+    ]
     return (
         any(candidate.major == installed.major for candidate in allowed)
         and any(candidate.major > installed.major and candidate > installed for candidate in allowed)
@@ -167,15 +179,16 @@ def warn_if_unbounded(function_directory: str, logger: Logger) -> None:
     """Warn when the app's requirements demonstrably permit a later major."""
     root = Path(function_directory)
     try:
-        specifiers = _read_specifiers(root, logger)
+        requirements = _read_specifiers(root, logger)
     except RecursionError as exc:
         logger.debug("Cannot check deeply nested Function App requirements: %s", exc)
         return
-    if specifiers is None:
+    if requirements is None:
         return
+    specifiers, allow_prereleases = requirements
     try:
         installed = Version(version(_PACKAGE))
-        allows_later_major = _allows_later_major(specifiers, installed)
+        allows_later_major = _allows_later_major(specifiers, installed, allow_prereleases)
     except (PackageNotFoundError, InvalidVersion) as exc:
         logger.debug("Cannot determine the installed Durable Functions version: %s", exc)
         return

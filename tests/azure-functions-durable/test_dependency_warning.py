@@ -35,6 +35,7 @@ def _warnings(caplog):
         ("azure-functions-durable>=2.0.0rc5,<3.0.0rc2", True),
         ("azure-functions-durable>=2.0.0rc5,<3.0.0rc0", True),
         ("azure-functions-durable>=2.0.0rc5,<3.0.0a0", True),
+        ("azure-functions-durable>=2,<=3,!=3", False),
         ("--pre\nazure-functions-durable>=2.0.0rc5,<=3.0.0,!=3.0.0", True),
         (
             "azure-functions-durable>=2.0.0rc5,<3.0.0rc2,"
@@ -143,6 +144,31 @@ def test_local_requirements_and_constraints_are_combined(
     assert _warnings(caplog) == []
 
     (tmp_path / "constraints.txt").write_text("azure-functions-durable>=2\n", encoding="utf-8")
+    dependency_warning.warn_if_unbounded(str(tmp_path), logging.getLogger(__name__))
+    assert len(_warnings(caplog)) == 1
+
+
+def test_requirement_include_inside_constraint_resets_constraint_mode(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(dependency_warning, "version", lambda name: "2.1.0")
+    (tmp_path / "requirements.txt").write_text("-c constraints.txt\n", encoding="utf-8")
+    (tmp_path / "constraints.txt").write_text("-r actual.txt\n", encoding="utf-8")
+    (tmp_path / "actual.txt").write_text("azure-functions-durable>=2.1.0\n", encoding="utf-8")
+
+    dependency_warning.warn_if_unbounded(str(tmp_path), logging.getLogger(__name__))
+
+    assert len(_warnings(caplog)) == 1
+
+
+def test_pre_option_controls_candidate_prerelease_warnings(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(dependency_warning, "version", lambda name: "2.1.0")
+    (tmp_path / "requirements.txt").write_text(
+        "azure-functions-durable>=2,<=3,!=3\n", encoding="utf-8")
+
+    dependency_warning.warn_if_unbounded(str(tmp_path), logging.getLogger(__name__))
+    assert _warnings(caplog) == []
+
+    (tmp_path / "requirements.txt").write_text(
+        "--pre\nazure-functions-durable>=2,<=3,!=3\n", encoding="utf-8")
     dependency_warning.warn_if_unbounded(str(tmp_path), logging.getLogger(__name__))
     assert len(_warnings(caplog)) == 1
 

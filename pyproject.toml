@@ -130,13 +130,4 @@ ignore = [
     # Typing migration requires runtime annotation compatibility review:
     # https://github.com/microsoft/durabletask-python/issues/322
     "UP006", "UP007", "UP035", "UP037", "UP040", "UP043", "UP045", "UP047",
-    # Repository-wide UTC alias cleanup:
-    # https://github.com/microsoft/durabletask-python/issues/323
-    "UP017",
 ]
-
-[tool.ruff.lint.per-file-ignores]
-# These suggestions can change generator protocol or public enum behavior:
-# https://github.com/microsoft/durabletask-python/issues/324
-"durabletask/internal/orchestration_entity_context.py" = ["UP028"]
-"durabletask/scheduled/schedule_status.py" = ["UP042"]

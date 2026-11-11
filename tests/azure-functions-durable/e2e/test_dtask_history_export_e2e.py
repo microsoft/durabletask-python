@@ -11,7 +11,7 @@ the exported blobs contain the instances we produced.
 """
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,7 @@ def test_history_export_batch(dtask_app):
     # Scope the export to instances completed from just before this test, so the
     # fan-out only covers the instances we create here (not every terminal
     # instance produced by the wider session).
-    completed_from = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    completed_from = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
 
     # Produce a couple of terminal orchestrations to export.
     instance_ids = []

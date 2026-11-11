@@ -3,7 +3,7 @@
 
 """Unit tests for host-free durable entity execution."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -105,7 +105,7 @@ def test_execute_class_entity_calls_optional_input_method_without_argument():
 
 
 def test_execute_entity_returns_typed_actions():
-    signal_time = datetime(2030, 1, 2, 3, 4, tzinfo=timezone.utc)
+    signal_time = datetime(2030, 1, 2, 3, 4, tzinfo=UTC)
 
     class Relay(DurableEntity):
         def dispatch(self, input: dict[str, Any]) -> str:

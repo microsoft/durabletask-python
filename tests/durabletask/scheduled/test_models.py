@@ -3,7 +3,7 @@
 
 """Unit tests for scheduled tasks models, validation, and serialization."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -46,9 +46,9 @@ class TestCreationOptionsValidation:
 
 class TestCreationOptionsSerialization:
     @pytest.mark.parametrize("timestamp, expected", [
-        ("2026-01-01T12:34:56Z", datetime(2026, 1, 1, 12, 34, 56, tzinfo=timezone.utc)),
-        ("2026-01-01T12:34:56+00:00", datetime(2026, 1, 1, 12, 34, 56, tzinfo=timezone.utc)),
-        ("2026-01-01T14:34:56+02:00", datetime(2026, 1, 1, 12, 34, 56, tzinfo=timezone.utc)),
+        ("2026-01-01T12:34:56Z", datetime(2026, 1, 1, 12, 34, 56, tzinfo=UTC)),
+        ("2026-01-01T12:34:56+00:00", datetime(2026, 1, 1, 12, 34, 56, tzinfo=UTC)),
+        ("2026-01-01T14:34:56+02:00", datetime(2026, 1, 1, 12, 34, 56, tzinfo=UTC)),
         ("2026-01-01T12:34:56", datetime(2026, 1, 1, 12, 34, 56)),
     ])
     def test_parse_iso_timestamps(self, timestamp: str, expected: datetime) -> None:
@@ -64,8 +64,8 @@ class TestCreationOptionsSerialization:
         assert options.start_at.isoformat() == timestamp.replace("Z", "+00:00")
 
     def test_round_trip_through_json(self):
-        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        end = datetime(2026, 2, 1, tzinfo=UTC)
         options = ScheduleCreationOptions(
             schedule_id="s1", orchestration_name="orch", interval=timedelta(minutes=5),
             orchestration_input={"key": "value"}, orchestration_instance_id="inst-1",
@@ -101,8 +101,8 @@ class TestScheduleConfiguration:
     def test_from_create_options_rejects_start_after_end(self):
         options = ScheduleCreationOptions(
             schedule_id="s1", orchestration_name="orch", interval=timedelta(seconds=5),
-            start_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
-            end_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+            start_at=datetime(2026, 2, 1, tzinfo=UTC),
+            end_at=datetime(2026, 1, 1, tzinfo=UTC))
         with pytest.raises(ValueError):
             ScheduleConfiguration.from_create_options(options)
 
@@ -127,11 +127,11 @@ class TestScheduleConfiguration:
         config = ScheduleConfiguration.from_create_options(
             ScheduleCreationOptions(schedule_id="s1", orchestration_name="orch",
                                     interval=timedelta(seconds=5),
-                                    start_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+                                    start_at=datetime(2026, 1, 1, tzinfo=UTC)))
         restored = converter.deserialize(converter.serialize(config), ScheduleConfiguration)
         assert restored.schedule_id == "s1"
         assert restored.interval == timedelta(seconds=5)
-        assert restored.start_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert restored.start_at == datetime(2026, 1, 1, tzinfo=UTC)
 
     def test_to_json_uses_dotnet_compatible_shape(self):
         # The Durable Task Scheduler dashboard deserializes the raw entity state
@@ -210,7 +210,7 @@ class TestScheduleState:
     def test_round_trip_and_description(self):
         state = ScheduleState()
         state.status = ScheduleStatus.ACTIVE
-        state.schedule_created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        state.schedule_created_at = datetime(2026, 1, 1, tzinfo=UTC)
         state.schedule_configuration = ScheduleConfiguration.from_create_options(
             ScheduleCreationOptions(schedule_id="s1", orchestration_name="orch",
                                     interval=timedelta(seconds=5)))
@@ -218,7 +218,7 @@ class TestScheduleState:
         # The nested ``ScheduleConfiguration`` round-trips automatically.
         restored = converter.deserialize(converter.serialize(state), ScheduleState)
         assert restored.status == ScheduleStatus.ACTIVE
-        assert restored.schedule_created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert restored.schedule_created_at == datetime(2026, 1, 1, tzinfo=UTC)
         assert restored.schedule_configuration is not None
         assert restored.schedule_configuration.interval == timedelta(seconds=5)
 
@@ -301,13 +301,13 @@ class TestScheduleQueryNormalization:
             created_to=datetime(2026, 2, 1, 0, 0, 0),
         )
         assert q.created_from is not None and q.created_to is not None
-        assert q.created_from == datetime(2026, 1, 1, tzinfo=timezone.utc)
-        assert q.created_to == datetime(2026, 2, 1, tzinfo=timezone.utc)
-        assert q.created_from.tzinfo is timezone.utc
-        assert q.created_to.tzinfo is timezone.utc
+        assert q.created_from == datetime(2026, 1, 1, tzinfo=UTC)
+        assert q.created_to == datetime(2026, 2, 1, tzinfo=UTC)
+        assert q.created_from.tzinfo is UTC
+        assert q.created_to.tzinfo is UTC
 
     def test_aware_bounds_are_preserved(self):
-        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
         q = ScheduleQuery(created_from=start)
         assert q.created_from == start
 
