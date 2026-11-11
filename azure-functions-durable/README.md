@@ -108,6 +108,30 @@ These compatibility paths remain supported.
 > Changing typing modes can change values returned during orchestration replay.
 > Validate existing payloads and drain affected orchestrations before switching.
 
+## Async orchestrators
+
+Both authoring styles accept `async def` and `await` without an adapter loop.
+Await durable operations and compose branches with `asyncio.gather` or task
+groups; `asyncio.sleep` and timeouts use durable timers. Synchronous generator
+orchestrators remain supported, including mixed-style sub-orchestrations.
+
+Async orchestrators automatically receive cold coroutine operations accepted by
+`create_task` and task groups. Native orchestrators receive
+`task.AsyncOrchestrationContext`; single-argument orchestrators receive
+`df.AsyncDurableOrchestrationContext`, retaining v1-style argument names and
+`await context.task_all(...)` / `await context.task_any(...)`.
+`wait_for_external_event()` owns its registration and optional durable timeout,
+so an abandoned receive cannot consume the next event. Generator contexts
+retain eager, reusable durable handles; async code can access those through
+`context.as_task_context()` and use `handle.wait()` to create a borrowed waiter.
+
+The [shared async contract](../docs/async-orchestrators.md) defines the supported
+API subset, cancellation, per-dispatch `finally`/async-generator cleanup,
+replay/migration rules, and framework adapter responsibilities. Arbitrary I/O,
+threads, subprocesses, `asyncio.wait`/`as_completed`, and automatic recording of
+ordinary async helpers are not supported. Put nondeterministic work in ordinary
+activities, not orchestrators.
+
 ## Durable HTTP failure retries
 
 Opt in to durable retries for the **initial** `context.call_http()` request with
@@ -153,6 +177,7 @@ rather than returning the last selected response. Transport and other activity
 failures also use the policy regardless of the status list.
 
 The policy and status list are snapshotted when the request is scheduled.
+For async orchestrators, scheduling occurs when the coroutine starts.
 Omitting `retry_options` preserves the existing request payload and behavior.
 Automatic 202/Location polling remains separate: subsequent GET polls inherit
 neither the failure retry policy nor its status classification. Poll HTTP

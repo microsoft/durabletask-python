@@ -7,6 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `async def` orchestrators with an automatically supplied
+`AsyncOrchestrationContext`, cold coroutine operations, durable asyncio
+timers, and supported task-group and gather composition. Generator
+orchestrators retain their eager durable handles. `as_task_context()` and
+`Task.wait()` enable explicit interoperability with those handles.
+- Async event waits support owned cancellation and timeouts, withdrawing
+abandoned subscriptions so they cannot consume later events.
+
+> [!WARNING]
+> Async cleanup can run at every dispatch, including suspension; it is not
+> durable workflow compensation. Converting running orchestrations or changing
+> Python versions may alter replay-visible action order. See the
+> [async contract](docs/async-orchestrators.md) for supported operations and
+> replay and upgrade guidance.
+
 FIXED
 
 - Async orchestrators wrapped with `functools.wraps` are now recognized even
