@@ -75,7 +75,6 @@ types; equivalent `typing` aliases with the same origin are also recognized.
 | `tuple[T, ...]`, `tuple[T1, T2]` | Coerces elements; discovery needs a reconstructable element. |
 | `Optional[T]` | Non-`None` values use `T`; discovery follows `T`. |
 | `set[T]`, `frozenset[T]`, `Set[T]` | Generic reconstruction is opt-in; see below. |
-| `MutableMapping[str, T]`, `MutableSequence[T]` | Not discovered or traversed; values stay raw. |
 
 JSON object keys remain strings; mapping value annotations do not coerce keys.
 The converter recognizes the listed container origins, not arbitrary related
@@ -151,10 +150,9 @@ does not add reconstruction. The
 [custom converter example](../examples/custom_data_converter/README.md) shows
 delegation and explains its top-level generic limitation.
 
-For example, where appropriate, `dict[str, Order]` and `list[Order]` annotations
-can be used instead of `MutableMapping[str, Order]` and
-`MutableSequence[Order]`. Changing existing annotations can affect replay, so
-apply the upgrade precautions above.
+Where appropriate, an annotation listed in the support table can be used
+instead. Changing existing annotations can affect replay, so apply the upgrade
+precautions above.
 
 Keep custom serialization deterministic and configure compatible converters on
 both clients and workers that exchange durable payloads.
