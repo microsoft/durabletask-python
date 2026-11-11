@@ -5,6 +5,7 @@ import inspect
 import logging
 import warnings
 from collections.abc import Sequence
+from functools import partial
 from typing import Any, TypeAlias
 
 import grpc
@@ -71,6 +72,23 @@ AsyncClientInterceptor: TypeAlias = (
 
 SECURE_PROTOCOLS = ["https://", "grpcs://"]
 INSECURE_PROTOCOLS = ["http://", "grpc://"]
+
+
+def is_async_callable(fn: Any) -> bool:
+    """Recognize async functions, wrapped functions, partials and callable objects."""
+    while True:
+        if inspect.iscoroutinefunction(fn):
+            return True
+        fn = inspect.unwrap(fn)
+        if isinstance(fn, partial):
+            fn = fn.func
+            continue
+        if inspect.iscoroutinefunction(fn):
+            return True
+        if inspect.isfunction(fn) or inspect.ismethod(fn) or inspect.isbuiltin(fn):
+            return False
+        call = getattr(fn, "__call__", None)
+        return call is not None and inspect.iscoroutinefunction(inspect.unwrap(call))
 
 
 def _get_legacy_logging_warning_stacklevel() -> int:
