@@ -15,16 +15,16 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, NamedTuple, cast
 
 import pytest
 
 from durabletask import history, task
 
-_TS = datetime(2025, 1, 2, 3, 4, 5, 678901, tzinfo=timezone.utc)
+_TS = datetime(2025, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
 _NAIVE_TS = datetime(2024, 12, 31, 23, 59, 58)
-_FIRE_AT = datetime(2025, 6, 7, 8, 9, 10, tzinfo=timezone.utc)
+_FIRE_AT = datetime(2025, 6, 7, 8, 9, 10, tzinfo=UTC)
 
 
 def _legacy_to_serializable(value: Any) -> Any:
@@ -361,8 +361,8 @@ class TestToDictOutputShape:
         )
         assert event.to_dict() == {
             'event_id': 5,
-            'timestamp': _TS.isoformat(),
-            'fire_at': _FIRE_AT.isoformat(),
+            'timestamp': '2025-01-02T03:04:05.678901+00:00',
+            'fire_at': '2025-06-07T08:09:10+00:00',
             'timer_id': 3,
         }
 

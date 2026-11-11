@@ -8,7 +8,7 @@ Focuses on the JSON (de)serialization surface used by the v1 client shims:
 falsy/empty behaviour for a non-existent instance.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import azure.durable_functions as df
@@ -39,8 +39,8 @@ def test_from_json_reconstructs_attribute_surface():
     assert bool(status) is True
     assert status.name == "orch"
     assert status.instance_id == "abc"
-    assert status.created_time == datetime(2026, 1, 1, tzinfo=timezone.utc)
-    assert status.last_updated_time == datetime(2026, 1, 2, tzinfo=timezone.utc)
+    assert status.created_time == datetime(2026, 1, 1, tzinfo=UTC)
+    assert status.last_updated_time == datetime(2026, 1, 2, tzinfo=UTC)
     assert status.input_ == {"in": 1}
     assert status.output == {"out": 2}
     assert status.custom_status == "cs"

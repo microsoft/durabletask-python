@@ -5,7 +5,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -441,7 +441,7 @@ class TestOtelNotAvailable:
     def test_emit_timer_span_without_otel(self):
         """emit_timer_span is a no-op when OTel is unavailable."""
         with patch.object(tracing, '_OTEL_AVAILABLE', False):
-            tracing.emit_timer_span("orch", "inst1", 1, datetime.now(timezone.utc))
+            tracing.emit_timer_span("orch", "inst1", 1, datetime.now(UTC))
 
     def test_start_create_orchestration_span_without_otel(self):
         """start_create_orchestration_span yields None when OTel unavailable."""
@@ -779,7 +779,7 @@ class TestTimerSpan:
     """Tests for emit_timer_span."""
 
     def test_emits_internal_span(self, otel_setup: InMemorySpanExporter):
-        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
         tracing.emit_timer_span("MyOrch", "inst-1", 5, fire_at)
 
         spans = otel_setup.get_finished_spans()
@@ -794,7 +794,7 @@ class TestTimerSpan:
 
     def test_backdated_start_time(self, otel_setup: InMemorySpanExporter):
         """Timer span should cover the full wait period when scheduled_time_ns is set."""
-        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
         created_ns = 1704067200_000_000_000  # 2024-01-01T00:00:00Z
         tracing.emit_timer_span(
             "MyOrch", "inst-1", 5, fire_at, scheduled_time_ns=created_ns,
@@ -813,7 +813,7 @@ class TestTimerSpan:
             traceParent=traceparent,
             spanID="b7ad6b7169203331",
         )
-        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        fire_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
         tracing.emit_timer_span(
             "MyOrch", "inst-1", 5, fire_at,
             parent_trace_context=parent_ctx,

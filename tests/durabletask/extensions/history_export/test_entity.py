@@ -10,7 +10,7 @@ job ID so there is no cross-test interference.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Callable, Optional
 
 import pytest
@@ -35,8 +35,8 @@ from tests.durabletask._port_utils import find_free_port
 PORT = find_free_port()
 HOST = f"localhost:{PORT}"
 
-_WINDOW_START = datetime(2025, 1, 1, tzinfo=timezone.utc)
-_WINDOW_END = datetime(2025, 1, 2, tzinfo=timezone.utc)
+_WINDOW_START = datetime(2025, 1, 1, tzinfo=UTC)
+_WINDOW_END = datetime(2025, 1, 2, tzinfo=UTC)
 
 
 def _no_op_orchestrator(ctx: task.OrchestrationContext, _input):

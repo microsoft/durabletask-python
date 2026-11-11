@@ -10,7 +10,7 @@ These tests assume a sidecar/emulator is running. Example command:
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -93,7 +93,7 @@ def test_create_describe_and_run():
             orchestration_name=task.get_name(target_orchestrator),
             interval=timedelta(seconds=1),
             orchestration_input="hello",
-            start_at=datetime.now(timezone.utc),
+            start_at=datetime.now(UTC),
             start_immediately_if_late=True,
         ))
         try:
@@ -117,7 +117,7 @@ def test_pause_and_resume():
             schedule_id=schedule_id,
             orchestration_name=task.get_name(target_orchestrator),
             interval=timedelta(seconds=1),
-            start_at=datetime.now(timezone.utc),
+            start_at=datetime.now(UTC),
             start_immediately_if_late=True,
         ))
         try:
@@ -149,7 +149,7 @@ def test_update_interval_and_input():
             orchestration_name=task.get_name(target_orchestrator),
             interval=timedelta(seconds=30),
             orchestration_input="before",
-            start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            start_at=datetime.now(UTC) + timedelta(hours=1),
         ))
         try:
             schedule.update(ScheduleUpdateOptions(
@@ -177,7 +177,7 @@ def test_list_and_delete():
                 schedule_id=schedule_id,
                 orchestration_name=task.get_name(target_orchestrator),
                 interval=timedelta(seconds=30),
-                start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                start_at=datetime.now(UTC) + timedelta(hours=1),
             ))
             created.append(schedule_id)
 
