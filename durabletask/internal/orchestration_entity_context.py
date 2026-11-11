@@ -28,7 +28,8 @@ class OrchestrationEntityContext:
 
     def get_available_entities(self) -> Generator[EntityInstanceId, None, None]:
         if self.is_inside_critical_section:
-            for available_lock in self.available_locks:
+            # Do not forward send, throw, or close to the lock iterator.
+            for available_lock in self.available_locks:  # noqa: UP028
                 yield available_lock
 
     def validate_suborchestration_transition(self) -> tuple[bool, str]:
