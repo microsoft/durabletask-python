@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
@@ -335,6 +336,49 @@ def test_retired_tasks_do_not_reuse_cancellation_order() -> None:
     assert json.loads(_completion(_execute(orchestrator, old, new)).result.value) == "done"
 
 
+@pytest.mark.parametrize("under_loop", [False, True])
+def test_dispatch_cleanup_unwinds_scopes_contexts_asyncgens(under_loop: bool) -> None:
+    cleaned: list[str] = []
+    references: list[Any] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        references.extend([ref(ctx), ref(asyncio.get_running_loop()), ref(asyncio.current_task())])
+
+        async def resource():
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append("asyncgen")
+
+        opened = resource()
+        await anext(opened)
+        try:
+            async with asyncio.TaskGroup():
+                await ctx.call_activity("wait")
+        finally:
+            await asyncio.sleep(0)
+            cleaned.append("root")
+
+    def dispatch() -> None:
+        result = _execute(orchestrator, [], _start())
+        assert [a.scheduleTask.name for a in result.actions] == ["wait"]
+        assert cleaned == ["root", "asyncgen"]
+
+    async def outer() -> None:
+        before = asyncio.current_task()
+        dispatch()
+        assert asyncio.current_task() is before
+        await asyncio.sleep(0)
+
+    if under_loop:
+        asyncio.run(outer())
+    else:
+        dispatch()
+    gc.collect()
+    assert all(reference() is None for reference in references)
+
+
 def test_shared_operation_survives_local_waiter_cancellation() -> None:
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
         durable = ctx.call_activity("shared", return_type=str)
@@ -373,6 +417,57 @@ def test_local_durable_cancellation_wakes_waiter_without_history() -> None:
     result = _execute(orchestrator, [], _start())
     assert len(result.actions) == 1
     assert json.loads(_completion(result).result.value) == "cancelled"
+
+
+@pytest.mark.parametrize("terminal", ["suspend", "terminate", "continue", "history-failure"])
+def test_async_teardown_preserves_response_and_cannot_schedule_work(
+        terminal: str, caplog: pytest.LogCaptureFixture) -> None:
+    cleaned: list[str] = []
+
+    @asynccontextmanager
+    async def resource():
+        try:
+            yield
+        finally:
+            await asyncio.sleep(0)
+            cleaned.append("resource")
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async with resource():
+            try:
+                ctx.set_custom_status("waiting")
+                if terminal == "continue":
+                    ctx.continue_as_new("next")
+                await ctx.call_activity("wait")
+            finally:
+                try:
+                    await asyncio.sleep(0)
+                    cleaned.append("inner")
+                    await ctx.call_activity("forbidden-cleanup")
+                finally:
+                    await asyncio.sleep(0)
+                    cleaned.append("outer")
+
+    old = _start()
+    if terminal == "terminate":
+        new = [pb.HistoryEvent(executionTerminated=pb.ExecutionTerminatedEvent())]
+    elif terminal == "history-failure":
+        new = [helpers.new_task_scheduled_event(1, "wrong")]
+    else:
+        old, new = [], old
+    result = _execute(orchestrator, old, new)
+    assert cleaned == ["inner", "outer", "resource"]
+    assert result.encoded_custom_status == '"waiting"'
+    assert all(action.scheduleTask.name != "forbidden-cleanup" for action in result.actions)
+    if terminal == "terminate":
+        assert _completion(result).orchestrationStatus == pb.ORCHESTRATION_STATUS_TERMINATED
+    elif terminal == "history-failure":
+        assert _completion(result).failureDetails.errorType.endswith("NonDeterminismError")
+    elif terminal == "continue":
+        assert _completion(result).orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+    else:
+        assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+    assert "Dispatch cleanup cannot schedule durable work" in caplog.text
 
 
 def test_unhandled_local_root_cancellation_fails_not_abandons() -> None:
@@ -496,6 +591,42 @@ def test_unsupported_work_fails_actionably(api: str) -> None:
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert any(text in complete.failureDetails.errorMessage for text in (
         "use an activity", "ordinary activity", "different loop"))
+
+
+@pytest.mark.parametrize("async_generator", [False, True])
+@pytest.mark.parametrize("unexpected", [False, True])
+def test_cleanup_failure_policy_includes_async_generator_tasks(
+        async_generator: bool, unexpected: bool, caplog: pytest.LogCaptureFixture) -> None:
+    class CleanupAbort(BaseException):
+        pass
+
+    error = CleanupAbort("cleanup failed") if unexpected else ValueError("cleanup failed")
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def resource():
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                raise error
+
+        opened = resource()
+        await anext(opened)
+        try:
+            await ctx.call_activity("wait")
+        finally:
+            if not async_generator:
+                await opened.aclose()
+
+    result = _execute(orchestrator, [], _start())
+    if unexpected:
+        complete = _completion(result)
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+        assert complete.failureDetails.errorMessage == "cleanup failed"
+        assert complete.failureDetails.errorType.endswith("CleanupAbort")
+    else:
+        assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+        assert "cleanup failed" in caplog.text
 
 
 def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> None:
@@ -672,6 +803,80 @@ def test_background_failure_is_reported_unless_observed(
     assert ("background failure" in caplog.text) is not observed
 
 
+def test_unexpected_cleanup_failure_does_not_hide_other_task_errors(
+        caplog: pytest.LogCaptureFixture) -> None:
+    class CleanupAbort(BaseException):
+        pass
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(error: BaseException) -> None:
+            try:
+                await ctx.wait_for_external_event("never")
+            finally:
+                await asyncio.sleep(0)
+                raise error
+
+        asyncio.create_task(branch(CleanupAbort("first cleanup failure")))
+        asyncio.create_task(branch(ValueError("second cleanup failure")))
+        await ctx.call_activity("wait")
+
+    complete = _completion(_execute(orchestrator, [], _start()))
+    assert complete.failureDetails.errorMessage == "first cleanup failure"
+    assert "second cleanup failure" in caplog.text
+
+
+@pytest.mark.parametrize("control_flow", [False, True])
+def test_cleanup_callback_failure_still_drains_tasks_and_asyncgens(
+        control_flow: bool, caplog: pytest.LogCaptureFixture) -> None:
+    cleaned: list[str] = []
+    retained: list[asyncio.Task[Any]] = []
+
+    def fail() -> None:
+        raise SystemExit("cleanup exit") if control_flow else ValueError("cleanup callback")
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def resource():
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append("asyncgen")
+
+        async def sibling() -> None:
+            try:
+                await ctx.wait_for_external_event("never")
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append("sibling")
+
+        opened = resource()
+        await anext(opened)
+        retained.append(asyncio.create_task(sibling()))
+        current = asyncio.current_task()
+        assert current is not None
+        retained.append(current)
+        try:
+            await ctx.call_activity("wait")
+        finally:
+            if control_flow:
+                fail()
+            asyncio.get_running_loop().call_soon(fail)
+            await asyncio.sleep(0)
+            cleaned.append("root")
+
+    if control_flow:
+        with pytest.raises(SystemExit, match="cleanup exit"):
+            _execute(orchestrator, [], _start())
+    else:
+        result = _execute(orchestrator, [], _start())
+        assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+        assert "cleanup callback" in caplog.text
+        assert "root" in cleaned
+    assert "sibling" in cleaned
+    assert "asyncgen" in cleaned
+    assert all(pending.done() for pending in retained)
+
+
 @pytest.mark.parametrize("count", [128, 4096])
 def test_fanout_waiter_inspections_scale_linearly(
         count: int, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
@@ -694,6 +899,72 @@ def test_fanout_waiter_inspections_scale_linearly(
     assert [action.id for action in result.actions] == list(range(1, count + 1))
     assert inspections < count * 20
     assert not caplog.records
+
+
+def test_nonquiescent_cleanup_does_not_skip_asyncgen_closure(
+        caplog: pytest.LogCaptureFixture) -> None:
+    cleaned: list[str] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def resource():
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append("asyncgen")
+
+        opened = resource()
+        await anext(opened)
+        try:
+            await ctx.call_activity("wait")
+        finally:
+            while True:
+                await asyncio.sleep(0)
+
+    result = _execute(orchestrator, [], _start())
+    assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+    assert cleaned == ["asyncgen"]
+    assert "cleanup did not quiesce" in caplog.text
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+@pytest.mark.parametrize("custom_error", [False, True])
+def test_forced_cleanup_preserves_process_control_after_other_errors(grouped: bool, custom_error: bool) -> None:
+    class CleanupAbort(BaseException):
+        pass
+
+    cleaned: list[str] = []
+    exit_error: BaseException = SystemExit("forced cleanup exit")
+    if grouped:
+        exit_error = BaseExceptionGroup("forced cleanup group", [exit_error, ValueError("nested")])
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(name: str, error: BaseException | None) -> None:
+            try:
+                await ctx.wait_for_external_event(name)
+            finally:
+                try:
+                    while True:
+                        try:
+                            await asyncio.Future()
+                        except asyncio.CancelledError:
+                            # Force teardown to close a cancellation-resistant coroutine.
+                            pass
+                finally:
+                    cleaned.append(name)
+                    if error is not None:
+                        raise error
+
+        first_error = CleanupAbort("custom cleanup error") if custom_error else ValueError("ordinary cleanup error")
+        asyncio.create_task(branch("ordinary", first_error))
+        asyncio.create_task(branch("exit", exit_error))
+        asyncio.create_task(branch("last", None))
+        await ctx.call_activity("wait")
+
+    with pytest.raises(type(exit_error)) as caught:
+        _execute(orchestrator, [], _start())
+    assert caught.value is exit_error
+    assert cleaned == ["ordinary", "exit", "last"]
 
 
 @pytest.mark.parametrize("timer", [False, True])
@@ -758,3 +1029,31 @@ def test_identical_timer_callbacks_complete_and_cancel_independently(cancelled: 
         else:
             assert json.loads(_completion(result).result.value) == len(remaining)
         old += new
+
+
+def test_cooperative_cleanup_prioritizes_grouped_process_control() -> None:
+    class CleanupAbort(BaseException):
+        pass
+
+    exit_error = BaseExceptionGroup("cleanup exit", [SystemExit("stop"), ValueError("nested")])
+    cleaned: list[str] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(name: str, error: BaseException | None) -> None:
+            try:
+                await ctx.wait_for_external_event(name)
+            finally:
+                await asyncio.sleep(0)
+                cleaned.append(name)
+                if error is not None:
+                    raise error
+
+        asyncio.create_task(branch("custom", CleanupAbort("first failure")))
+        asyncio.create_task(branch("exit", exit_error))
+        asyncio.create_task(branch("last", None))
+        await ctx.call_activity("wait")
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        _execute(orchestrator, [], _start())
+    assert caught.value is exit_error
+    assert cleaned == ["custom", "exit", "last"]

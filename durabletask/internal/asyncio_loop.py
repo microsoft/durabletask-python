@@ -9,6 +9,7 @@ import asyncio
 import contextvars
 import math
 import logging
+import sys
 from collections import deque
 from collections.abc import Callable, Coroutine, Generator
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ from fractions import Fraction
 from typing import Any, TypeVar, cast
 
 from durabletask import task
+from durabletask.internal.exceptions import is_control_flow_exception
 
 T = TypeVar("T")
 
@@ -130,9 +132,11 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._observers: dict[int, _CompletionObserver] = {}
         self._completions: deque[Callable[[], None]] = deque()
         self._timers: dict[_DurableTimerHandle, _CompletionObserver] = {}
+        self._asyncgens: dict[int, Any] = {}
         self._closed = False
         self._closing = False
         self._fatal: BaseException | None = None
+        self._cleanup_failure: BaseException | None = None
         self._root: asyncio.Task[Any] | None = None
 
     def time(self) -> float:
@@ -237,6 +241,8 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             self._ready.append(handle)
 
     async def wait_durable(self, durable: task.Task[T]) -> T:
+        if self._closing:
+            raise RuntimeError("Dispatch cleanup cannot await durable work.")
         if durable.is_complete:
             return durable.get_result()
         future = self.create_future()
@@ -283,7 +289,8 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 raise task.TaskCancelledError(
                     "The orchestrator coroutine was cancelled. Catch local cancellation "
                     "inside the orchestrator; terminate the durable instance through the client.")
-            # result() propagates the orchestrator's failure to the executor.
+            # result() deliberately propagates control-flow BaseExceptions to the
+            # existing executor recovery boundary, not a success-shaped fallback.
             result = self._root.result()
             raise StopIteration(result)
         if not self._has_durable_work():
@@ -297,32 +304,56 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     def _drain(self) -> None:
         previous_loop = asyncio._get_running_loop()
         previous_task = asyncio.current_task(previous_loop) if previous_loop is not None else None
+        previous_hooks = sys.get_asyncgen_hooks()
         if previous_task is not None and previous_loop is not None:
             asyncio.tasks._leave_task(previous_loop, previous_task)
         asyncio._set_running_loop(self)
+        sys.set_asyncgen_hooks(firstiter=self._asyncgen_firstiter, finalizer=self._asyncgen_finalizer)
         try:
+            steps = 0
+            cleanup_limit = max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
             while self._ready or self._cancel_ready:
                 self._ready.extend(handle for _, _, handle in sorted(self._cancel_ready))
                 self._cancel_ready.clear()
                 handle = self._ready.popleft()
                 if not handle.cancelled():
-                    handle._run()
+                    try:
+                        handle._run()
+                    except BaseException as error:
+                        if not self._closing:
+                            raise
+                        # Defer all exits until other cleanup tasks have drained.
+                        self._record_cleanup_error(error)
                 if self._fatal is not None:
                     error, self._fatal = self._fatal, None
                     if not self._closing:
                         raise error
-                    self._logger.warning(
-                        "%s: Async cleanup callback failed.", self.ctx.instance_id, exc_info=error)
+                    self._record_cleanup_error(error)
+                if not self._closing and self._is_complete():
+                    break
+                if not self._closing and self._root is not None and self._root.done():
+                    break
                 if not self._closing:
-                    if self._is_complete():
-                        break
-                    if self._root is not None and self._root.done():
-                        break
                     self._deliver_completions()
+                steps += 1
+                if self._closing and steps >= cleanup_limit:
+                    self._record_cleanup_error(RuntimeError(
+                        "Async cleanup did not quiesce; cleanup must cooperate with cancellation."))
+                    self._ready.clear()
+                    self._cancel_ready.clear()
+                    break
         finally:
+            sys.set_asyncgen_hooks(*previous_hooks)
             asyncio._set_running_loop(previous_loop)
             if previous_task is not None and previous_loop is not None:
                 asyncio.tasks._enter_task(previous_loop, previous_task)
+
+    def _asyncgen_firstiter(self, generator: Any) -> None:
+        self._asyncgens[id(generator)] = generator
+
+    def _asyncgen_finalizer(self, generator: Any) -> None:
+        if not self._closed:
+            self.create_task(generator.aclose())
 
     def call_exception_handler(self, context: dict[str, Any]) -> None:
         error = context.get("exception")
@@ -332,26 +363,47 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             error = failure
         self._fatal = error if isinstance(error, BaseException) else RuntimeError(context["message"])
 
+    def _record_cleanup_error(self, error: BaseException, source: str = "cleanup callback") -> None:
+        self._logger.warning("%s: Async %s failed.", self.ctx.instance_id, source, exc_info=error)
+        if not isinstance(error, (Exception, asyncio.CancelledError)):
+            if self._cleanup_failure is None or is_control_flow_exception(error):
+                self._cleanup_failure = error
+
     def close(self) -> None:
-        """Cancel unfinished coroutines so their cleanup runs before the dispatch ends."""
-        if self._closed:
-            return
         self._closing = True
         try:
+            completed_at_close = {future for future in self._tasks if future.done()}
+            unobserved_at_close = {
+                future for future in completed_at_close if getattr(future, "_log_traceback", False)}
             for future in tuple(self._tasks):
                 if not future.done():
                     future.cancel()
             self._drain()
-            failure: BaseException | None = None
+            for generator in tuple(self._asyncgens.values()):
+                self.create_task(generator.aclose())
+            self._drain()
             for future in tuple(self._tasks):
                 if not future.done():
-                    future.get_coro().close()
+                    future.cancel()
+            self._drain()
+            failure: BaseException | None = self._cleanup_failure
+            for future in tuple(self._tasks):
+                if not future.done():
+                    try:
+                        future.get_coro().close()
+                    except BaseException as error:
+                        # Close siblings before propagating process-control exits.
+                        self._record_cleanup_error(error, "coroutine cleanup")
+                        failure = failure or error
                     failure = failure or RuntimeError(
                         "Async cleanup must finish without waiting for durable or external work.")
-                elif not future.cancelled() and getattr(future, "_log_traceback", False):
-                    self._logger.warning(
-                        "%s: Async background task failed.", self.ctx.instance_id,
-                        exc_info=future.exception())
+                elif not future.cancelled():
+                    error = future.exception()
+                    if error is not None and (future not in completed_at_close or future in unobserved_at_close):
+                        self._record_cleanup_error(
+                            error, "background task" if future in completed_at_close else "task cleanup")
+            if self._cleanup_failure is not None:
+                raise self._cleanup_failure
             if failure is not None:
                 raise failure
         finally:
@@ -365,6 +417,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             self._waits.clear()
             self._timers.clear()
             self._tasks.clear()
+            self._asyncgens.clear()
 
     def run_in_executor(self, executor: Any, func: Any, *args: Any) -> asyncio.Future[Any]:
         raise RuntimeError("Threads/executors are unsupported in orchestrators; use an activity.")

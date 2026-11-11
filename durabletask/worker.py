@@ -63,14 +63,6 @@ _STREAM_CLOSED_SENTINEL = object()
 _WorkItem = tuple[Callable[..., Any], Callable[..., Any], tuple[Any, ...], dict[str, Any]]
 
 
-def _is_control_flow_exception(error: BaseException) -> bool:
-    control_flow_types = (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit)
-    if isinstance(error, BaseExceptionGroup):
-        group = cast(BaseExceptionGroup[BaseException], error)
-        return group.subgroup(control_flow_types) is not None
-    return isinstance(error, control_flow_types)
-
-
 class ConcurrencyOptions:
     """Configuration options for controlling concurrency of different work item types and the thread pool size.
 
@@ -1671,6 +1663,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._exception_properties_provider = exception_properties_provider
         self._logger = logger
         self._async_loop: DurableEventLoop | None = None
+        self._async_cleanup = False
 
     def run(self, orchestrator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any]) -> None:
         if isinstance(orchestrator, Coroutine):
@@ -1683,6 +1676,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
 
     def close(self) -> None:
         if self._async_loop is not None:
+            self._async_cleanup = True
             self._async_loop.close()
         elif self._generator is not None:
             self._generator.close()
@@ -1849,6 +1843,8 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         return current_actions
 
     def next_sequence_number(self) -> int:
+        if self._async_cleanup:
+            raise RuntimeError("Dispatch cleanup cannot schedule durable work; use normal orchestrator control flow.")
         self._sequence_number += 1
         return self._sequence_number
 
@@ -2493,7 +2489,7 @@ class _OrchestrationExecutor:
                 ctx.set_failed(ex)
 
             except BaseException as ex:
-                if _is_control_flow_exception(ex):
+                if pe.is_control_flow_exception(ex):
                     raise
                 self._logger.error(
                     f"{instance_id}: Orchestrator {orchestration_name} exited unexpectedly.",
@@ -2527,7 +2523,7 @@ class _OrchestrationExecutor:
             result = ExecutionResults(
                 actions=actions, encoded_custom_status=ctx._encoded_custom_status,  # pyright: ignore[reportPrivateUsage]
                 orchestration_trace_context=ctx._orchestration_trace_context,  # pyright: ignore[reportPrivateUsage]
-                # Snapshot before generator teardown can exit a critical section.
+                # Snapshot before orchestrator teardown can exit a critical section.
                 entity_lock_releases=list(ctx._entity_context.get_lock_release_messages()),  # pyright: ignore[reportPrivateUsage]
             )
             if unexpected_failure and result.entity_lock_releases:
@@ -2560,7 +2556,7 @@ class _OrchestrationExecutor:
                     exc_info=True,
                 )
                 if not dispatch_exited:
-                    if _is_control_flow_exception(ex) or result is None:
+                    if pe.is_control_flow_exception(ex) or result is None:
                         raise
                     # Keep an existing failure rather than mask its cause.
                     if not any(
