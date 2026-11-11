@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
 
+from durabletask.async_context import AsyncOrchestrationContext as AsyncOrchestrationContext
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
 import durabletask.internal.orchestrator_service_pb2 as pb
@@ -986,7 +987,7 @@ SyncOrchestrator: TypeAlias = Callable[
 ]
 
 AsyncOrchestrator: TypeAlias = Callable[
-    [OrchestrationContext, TInput], Coroutine[Any, Any, TOutput],
+    [AsyncOrchestrationContext, TInput], Coroutine[Any, Any, TOutput],
 ]
 
 Orchestrator: TypeAlias = SyncOrchestrator[TInput, TOutput] | AsyncOrchestrator[TInput, TOutput]
