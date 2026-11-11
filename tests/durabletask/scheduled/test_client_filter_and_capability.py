@@ -3,7 +3,7 @@
 
 """Unit tests for ScheduleClient filtering and scheduled-tasks worker capability."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -30,7 +30,7 @@ def _state_created_at(created_at: datetime) -> ScheduleState:
 
 class TestMatchesFilter:
     def test_naive_bound_does_not_crash_against_aware_created_at(self):
-        state = _state_created_at(datetime(2026, 1, 15, tzinfo=timezone.utc))
+        state = _state_created_at(datetime(2026, 1, 15, tzinfo=UTC))
         # A naive bound is normalized by ScheduleQuery, so the comparison must
         # not raise "can't compare offset-naive and offset-aware".
         q = ScheduleQuery(created_from=datetime(2026, 1, 1, 0, 0, 0))
@@ -39,32 +39,32 @@ class TestMatchesFilter:
     def test_created_from_is_exclusive(self):
         # Bounds match .NET's exclusive semantics: a schedule created exactly at
         # the bound is excluded.
-        boundary = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        boundary = datetime(2026, 1, 1, tzinfo=UTC)
         state = _state_created_at(boundary)
         q = ScheduleQuery(created_from=boundary)
         assert ScheduledTaskClient.matches_filter(state, q) is False
 
     def test_created_to_is_exclusive(self):
-        boundary = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        boundary = datetime(2026, 1, 1, tzinfo=UTC)
         state = _state_created_at(boundary)
         q = ScheduleQuery(created_to=boundary)
         assert ScheduledTaskClient.matches_filter(state, q) is False
 
     def test_inside_window_matches(self):
-        state = _state_created_at(datetime(2026, 1, 15, tzinfo=timezone.utc))
+        state = _state_created_at(datetime(2026, 1, 15, tzinfo=UTC))
         q = ScheduleQuery(
-            created_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            created_to=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            created_from=datetime(2026, 1, 1, tzinfo=UTC),
+            created_to=datetime(2026, 2, 1, tzinfo=UTC),
         )
         assert ScheduledTaskClient.matches_filter(state, q) is True
 
     def test_outside_window_is_excluded(self):
-        state = _state_created_at(datetime(2026, 3, 1, tzinfo=timezone.utc))
-        q = ScheduleQuery(created_to=datetime(2026, 2, 1, tzinfo=timezone.utc))
+        state = _state_created_at(datetime(2026, 3, 1, tzinfo=UTC))
+        q = ScheduleQuery(created_to=datetime(2026, 2, 1, tzinfo=UTC))
         assert ScheduledTaskClient.matches_filter(state, q) is False
 
     def test_status_filter(self):
-        state = _state_created_at(datetime(2026, 1, 1, tzinfo=timezone.utc))
+        state = _state_created_at(datetime(2026, 1, 1, tzinfo=UTC))
         assert ScheduledTaskClient.matches_filter(state, ScheduleQuery(status=ScheduleStatus.ACTIVE)) is True
         assert ScheduledTaskClient.matches_filter(state, ScheduleQuery(status=ScheduleStatus.PAUSED)) is False
 

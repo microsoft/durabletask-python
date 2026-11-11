@@ -7,7 +7,7 @@ import json
 import grpc
 import pytest
 from collections import namedtuple
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 from google.protobuf import wrappers_pb2
@@ -1338,7 +1338,7 @@ def test_list_instance_ids_returns_page():
         history_client = TaskHubGrpcClient()
         page = history_client.list_instance_ids(
             runtime_status=[OrchestrationStatus.COMPLETED],
-            completed_time_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            completed_time_from=datetime(2025, 1, 1, tzinfo=UTC),
             page_size=2,
             continuation_token='prev',
         )

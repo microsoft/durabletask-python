@@ -11,7 +11,7 @@ the activity directly with a stubbed history-export context.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -29,7 +29,7 @@ from durabletask.extensions.history_export.models import ExportJobState
 import azure.durable_functions.internal.history_export_compat as hec
 
 _FROM = "2025-01-01T00:00:00+00:00"
-_COMPLETED = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_COMPLETED = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _state(instance_id: str, completed_at: datetime = _COMPLETED) -> SimpleNamespace:
@@ -89,8 +89,8 @@ def test_exact_multiple_of_page_size_terminates():
 
 
 def test_completed_time_window_is_applied():
-    early = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    late = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    early = datetime(2020, 1, 1, tzinfo=UTC)
+    late = datetime(2030, 1, 1, tzinfo=UTC)
     ctx = _context_with_states([
         _state("early", early), _state("in-window", _COMPLETED), _state("late", late)])
     page = hec.list_terminal_instances(ctx, {
@@ -158,7 +158,7 @@ def test_continuous_create_over_active_job_is_rejected_and_preserves_state():
         config=ExportJobCreationOptions(
             mode=ExportMode.BATCH,
             completed_time_from=_COMPLETED,
-            completed_time_to=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            completed_time_to=datetime(2026, 1, 2, tzinfo=UTC),
             destination=ExportDestination(container="exports", prefix="run-1"),
         ).to_configuration(),
         created_at=_COMPLETED,

@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+ADDED
+
+- Added opt-in `HttpRetryOptions` on `context.call_http()` for durable initial
+request retries with configurable timing and status selection. Empty or omitted
+status lists select all non-2xx responses; exhausted retries fail the call.
+Subsequent 202 Location polls do not inherit the policy. See
+[usage and upgrade guidance](README.md#durable-http-failure-retries).
+Release coordination requires the corrected core replay-safe retry-timeout
+behavior before this provider feature is published; version and dependency
+minimum updates belong in the dedicated release PR.
+
 FIXED
 
+- With the corresponding core SDK update, activity and sub-orchestration
+`retry_timeout` decisions use replay-safe orchestration time rather than
+wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)
+for histories that recorded timeout failures under the previous behavior.
 - Async and synchronous Functions-bound clients now propagate the calling
 function's invocation ID in gRPC metadata, enabling host client-operation log
 correlation even when synchronous clients are cached across invocations.

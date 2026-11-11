@@ -4,7 +4,7 @@
 import asyncio
 import unittest
 from concurrent import futures
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
 import threading
 import time
@@ -285,7 +285,7 @@ class TestAccessTokenManagerThreadSafety(unittest.TestCase):
         manager.get_access_token()
         self.assertEqual(1, credential.calls)
 
-        manager.expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+        manager.expiry_time = datetime.now(UTC) - timedelta(seconds=1)
 
         self._get_access_token_concurrently(manager)
 
@@ -344,7 +344,7 @@ class TestAsyncAccessTokenManagerSingleFlight(unittest.IsolatedAsyncioTestCase):
         await manager.get_access_token()
         self.assertEqual(1, credential.calls)
 
-        manager.expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+        manager.expiry_time = datetime.now(UTC) - timedelta(seconds=1)
 
         tokens = await asyncio.gather(*(manager.get_access_token() for _ in range(16)))
 
@@ -384,7 +384,7 @@ class TestAsyncAccessTokenManagerEventLoopBinding(unittest.TestCase):
 
         first = asyncio.run(manager.get_access_token())
 
-        manager.expiry_time = datetime.now(timezone.utc) - timedelta(seconds=1)
+        manager.expiry_time = datetime.now(UTC) - timedelta(seconds=1)
 
         # The second run uses a distinct event loop; the refresh guard must not stay
         # bound to the first, now-closed loop.

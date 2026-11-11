@@ -7,7 +7,7 @@ Tests for batch query and purge APIs using the InMemoryOrchestrationBackend.
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from durabletask import client, entities, task
@@ -134,13 +134,13 @@ def test_get_orchestration_state_by_time_range(backend):
     try:
         with TaskHubGrpcClient(host_address=HOST) as c:
             # Get current time
-            before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
+            before_creation = datetime.now(UTC) - timedelta(seconds=5)
 
             # Schedule orchestration
             id = c.schedule_new_orchestration(empty_orchestrator, input="TimeTest")
             c.wait_for_orchestration_completion(id, timeout=30)
 
-            after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
+            after_creation = datetime.now(UTC) + timedelta(seconds=5)
 
             # Query by time range
             query = client.OrchestrationQuery(
@@ -345,13 +345,13 @@ def test_purge_orchestrations_by_time_range(backend):
     try:
         with TaskHubGrpcClient(host_address=HOST) as c:
             # Get current time
-            before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
+            before_creation = datetime.now(UTC) - timedelta(seconds=5)
 
             # Schedule orchestration
             id = c.schedule_new_orchestration(empty_orchestrator, input="ToPurgeByTime")
             c.wait_for_orchestration_completion(id, timeout=30)
 
-            after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
+            after_creation = datetime.now(UTC) + timedelta(seconds=5)
 
             # Verify it exists
             state_before = c.get_orchestration_state(id)
@@ -390,7 +390,7 @@ def test_list_instance_ids_paginates_terminal_instances(backend):
             failed_id = c.schedule_new_orchestration(failing_orchestrator)
             failed_state = c.wait_for_orchestration_completion(failed_id, timeout=30)
 
-            window_start = datetime.now(timezone.utc) - timedelta(minutes=1)
+            window_start = datetime.now(UTC) - timedelta(minutes=1)
             first_page = c.list_instance_ids(
                 runtime_status=[client.OrchestrationStatus.COMPLETED, client.OrchestrationStatus.FAILED],
                 completed_time_from=window_start,
@@ -545,14 +545,14 @@ def test_get_entities_by_time_range(backend):
     try:
         with TaskHubGrpcClient(host_address=HOST) as c:
             # Get current time
-            before_creation = datetime.now(timezone.utc) - timedelta(seconds=5)
+            before_creation = datetime.now(UTC) - timedelta(seconds=5)
 
             # Create entity
             entity_id = entities.EntityInstanceId("simple_entity", "timeTestEntity")
             c.signal_entity(entity_id, "set", input="test_value")
             time.sleep(3)  # Wait for signal to be processed
 
-            after_creation = datetime.now(timezone.utc) + timedelta(seconds=5)
+            after_creation = datetime.now(UTC) + timedelta(seconds=5)
 
             # Query by time range
             query = client.EntityQuery(
