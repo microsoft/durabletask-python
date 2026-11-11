@@ -14,7 +14,12 @@ from google.protobuf import wrappers_pb2
 
 import durabletask.history as history
 import durabletask.internal.orchestrator_service_pb2 as pb
-from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationStatus, TaskHubGrpcClient
+from durabletask.client import (
+    AsyncTaskHubGrpcClient,
+    OrchestrationIdReusePolicy,
+    OrchestrationStatus,
+    TaskHubGrpcClient,
+)
 from durabletask.grpc_options import (
     GrpcChannelOptions,
     GrpcClientResiliencyOptions,
@@ -37,6 +42,81 @@ from durabletask.internal.shared import (
 HOST_ADDRESS = 'localhost:50051'
 METADATA = [('key1', 'value1'), ('key2', 'value2')]
 INTERCEPTORS = [DefaultClientInterceptorImpl(METADATA)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("policy, expected_statuses", [
+    (None, None),
+    (OrchestrationIdReusePolicy(), None),
+    (OrchestrationIdReusePolicy(dedupe_statuses=[]), [
+        pb.ORCHESTRATION_STATUS_RUNNING, pb.ORCHESTRATION_STATUS_COMPLETED,
+        pb.ORCHESTRATION_STATUS_FAILED, pb.ORCHESTRATION_STATUS_CANCELED,
+        pb.ORCHESTRATION_STATUS_TERMINATED, pb.ORCHESTRATION_STATUS_PENDING,
+        pb.ORCHESTRATION_STATUS_SUSPENDED,
+    ]),
+    (OrchestrationIdReusePolicy(dedupe_statuses=(
+        OrchestrationStatus.RUNNING, OrchestrationStatus.PENDING,
+        OrchestrationStatus.SUSPENDED, OrchestrationStatus.TERMINATED,
+        OrchestrationStatus.RUNNING,
+    )), [
+        pb.ORCHESTRATION_STATUS_COMPLETED, pb.ORCHESTRATION_STATUS_FAILED,
+        pb.ORCHESTRATION_STATUS_CANCELED,
+    ]),
+    (OrchestrationIdReusePolicy(dedupe_statuses=[
+        OrchestrationStatus.RUNNING, OrchestrationStatus.COMPLETED,
+        OrchestrationStatus.FAILED, OrchestrationStatus.CANCELED,
+        OrchestrationStatus.TERMINATED, OrchestrationStatus.PENDING,
+        OrchestrationStatus.SUSPENDED,
+    ]), []),
+    (pb.OrchestrationIdReusePolicy(), []),
+    (pb.OrchestrationIdReusePolicy(replaceableStatus=[pb.ORCHESTRATION_STATUS_FAILED]),
+     [pb.ORCHESTRATION_STATUS_FAILED]),
+])
+async def test_schedule_new_orchestration_reuse_policy(use_async, policy, expected_statuses):
+    stub = MagicMock()
+    response = pb.CreateInstanceResponse(instanceId="instance")
+    stub.StartInstance = AsyncMock(return_value=response) if use_async else MagicMock(return_value=response)
+
+    with patch('durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        if use_async:
+            async with AsyncTaskHubGrpcClient(channel=MagicMock()) as client:
+                result = await client.schedule_new_orchestration(
+                    "orchestrator", instance_id="instance", reuse_id_policy=policy)
+        else:
+            with TaskHubGrpcClient(channel=MagicMock()) as client:
+                result = client.schedule_new_orchestration(
+                    "orchestrator", instance_id="instance", reuse_id_policy=policy)
+
+    assert result == "instance"
+    stub.StartInstance.assert_called_once()
+    request = stub.StartInstance.call_args.args[0]
+    assert request.HasField("orchestrationIdReusePolicy") == (expected_statuses is not None)
+    if expected_statuses is not None:
+        assert list(request.orchestrationIdReusePolicy.replaceableStatus) == expected_statuses
+    stub.GetInstance.assert_not_called()
+    stub.TerminateInstance.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("status", [
+    OrchestrationStatus.CONTINUED_AS_NEW, "Running", pb.ORCHESTRATION_STATUS_RUNNING,
+])
+async def test_schedule_new_orchestration_rejects_invalid_dedupe_status(use_async, status):
+    stub = MagicMock()
+    policy = OrchestrationIdReusePolicy(dedupe_statuses=[status])
+
+    with patch('durabletask.client.stubs.TaskHubSidecarServiceStub', return_value=stub):
+        with pytest.raises(ValueError, match="Invalid orchestration dedupe status"):
+            if use_async:
+                async with AsyncTaskHubGrpcClient(channel=MagicMock()) as client:
+                    await client.schedule_new_orchestration("orchestrator", reuse_id_policy=policy)
+            else:
+                with TaskHubGrpcClient(channel=MagicMock()) as client:
+                    client.schedule_new_orchestration("orchestrator", reuse_id_policy=policy)
+
+    stub.StartInstance.assert_not_called()
 
 
 class FakeRpcError(grpc.RpcError):

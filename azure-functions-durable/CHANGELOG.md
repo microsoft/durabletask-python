@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- With the corresponding core SDK release, Functions-bound synchronous and
+asynchronous clients accept public `OrchestrationIdReusePolicy` values through
+`schedule_new_orchestration()`, preserving backend defaults when omitted.
+See [ID reuse](../docs/features.md#orchestration-id-reuse). Core release and
+dependency minimum updates are coordinated in the dedicated release PR.
 - Added opt-in `HttpRetryOptions` on `context.call_http()` for durable initial
 request retries with configurable timing and status selection. Empty or omitted
 status lists select all non-2xx responses; exhausted retries fail the call.

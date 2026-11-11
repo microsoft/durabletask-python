@@ -23,6 +23,7 @@ from durabletask.internal.grpc_interceptor import (
 if TYPE_CHECKING:
     from durabletask.client import (
         EntityQuery,
+        OrchestrationIdReusePolicy,
         OrchestrationQuery,
         OrchestrationState,
         OrchestrationStatus,
@@ -77,11 +78,30 @@ def build_schedule_new_orchestration_req(
         input: TInput | None,
         instance_id: str | None,
         start_at: datetime | None,
-        reuse_id_policy: pb.OrchestrationIdReusePolicy | None,
+        reuse_id_policy: OrchestrationIdReusePolicy | pb.OrchestrationIdReusePolicy | None,
         tags: dict[str, str] | None,
         version: str | None,
         data_converter: DataConverter) -> pb.CreateInstanceRequest:
     """Build a CreateInstanceRequest for scheduling a new orchestration."""
+    if reuse_id_policy is not None and not isinstance(reuse_id_policy, pb.OrchestrationIdReusePolicy):
+        from durabletask.client import OrchestrationStatus
+
+        dedupe_statuses = reuse_id_policy.dedupe_statuses
+        if dedupe_statuses is None:
+            reuse_id_policy = None
+        else:
+            stable_statuses = tuple(
+                status for status in OrchestrationStatus
+                if status is not OrchestrationStatus.CONTINUED_AS_NEW)
+            for status in dedupe_statuses:
+                if status not in stable_statuses:
+                    raise ValueError(f"Invalid orchestration dedupe status: {status!r}")
+            reuse_id_policy = pb.OrchestrationIdReusePolicy(
+                replaceableStatus=[
+                    status.value for status in stable_statuses
+                    if status not in dedupe_statuses
+                ])
+
     name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
     return pb.CreateInstanceRequest(
         name=name,
