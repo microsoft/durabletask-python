@@ -13,6 +13,7 @@ and context properties -- plus the failure paths.
 """
 
 from datetime import timedelta
+import asyncio
 import logging
 from typing import Any
 
@@ -33,6 +34,27 @@ def activity_chain(ctx: task.OrchestrationContext, _: Any):
     second = yield ctx.call_activity("say_hello", input="Seattle")
     third = yield ctx.call_activity("say_hello", input="London")
     return [first, second, third]
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_await_probe(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
+    greeting = await ctx.call_activity("say_hello", input="Tokyo", return_type=str)
+    values = await asyncio.gather(*(ctx.call_activity("square", input=i, return_type=int) for i in (2, 3)))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+    child: list[str] = await ctx.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": sum(values), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_cold_probe(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
+    greeting = await asyncio.create_task(ctx.call_activity("say_hello", input="Tokyo", return_type=str))
+    async with asyncio.TaskGroup() as group:
+        first = group.create_task(ctx.call_activity("square", input=2, return_type=int))
+        second = group.create_task(ctx.call_activity("square", input=3, return_type=int))
+    await ctx.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await ctx.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
 
 
 @bp.orchestration_trigger(context_name="context")

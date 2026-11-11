@@ -17,7 +17,10 @@ from .internal.compat.purge_history_result import PurgeHistoryResult
 from .internal.compat.entity_state_response import EntityStateResponse
 from .internal.compat.entity_id import EntityId
 from .internal.compat.token_source import ManagedIdentityTokenSource, TokenSource
-from .internal.compat.orchestration_context import DurableOrchestrationContext
+from .internal.compat.orchestration_context import (
+    AsyncDurableOrchestrationContext,
+    DurableOrchestrationContext,
+)
 from .internal.compat.entity_context import DurableEntityContext
 from .internal.compat.compat_aliases import (
     DurableOrchestrationClient,
@@ -39,6 +42,7 @@ register_durable_client_lifecycle()
 
 __all__ = [
     "Blueprint",
+    "AsyncDurableOrchestrationContext",
     "DFApp",
     "DurableEntityContext",
     "DurableFunctionsClient",

@@ -5,7 +5,9 @@ import base64
 import io
 import json
 import urllib.error
+from collections.abc import Generator
 from datetime import datetime, timedelta, tzinfo
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -361,18 +363,24 @@ def test_excluded_error_and_no_options_return_full_response(with_options):
 
 
 @pytest.mark.parametrize("succeed", [False, True])
-def test_call_http_schedules_snapshot_and_observes_child_result(succeed):
+@pytest.mark.parametrize("async_caller", [False, True], ids=["generator", "coroutine"])
+def test_call_http_schedules_snapshot_and_observes_child_result(succeed: bool, async_caller: bool) -> None:
     codes = [503]
     policy = df.HttpRetryOptions(
         first_retry_interval=timedelta(seconds=2),
         max_number_of_attempts=1, status_codes_to_retry=codes)
 
-    def caller(context):
+    def caller(context: df.DurableOrchestrationContext) -> Generator[task.Task[Any], Any, df.DurableHttpResponse]:
         pending = context.call_http("GET", "https://example.com", retry_options=policy)
         codes.append(404)
         return (yield pending)
 
-    parent = _History(caller)
+    async def coroutine_caller(context: df.AsyncDurableOrchestrationContext) -> df.DurableHttpResponse:
+        pending = context.call_http("GET", "https://example.com", retry_options=policy)
+        codes.append(404)
+        return await pending
+
+    parent = _History(coroutine_caller if async_caller else caller)
     action = parent.only_action("createSubOrchestration")
     assert action.createSubOrchestration.name == BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
     payload = json.loads(action.createSubOrchestration.input.value)
