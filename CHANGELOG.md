@@ -31,6 +31,8 @@ automatically reconstructed into typed model instances without requiring an expl
 > Drain affected instances on the previous SDK, or keep their task hub on the
 > previous SDK and use a separate task hub for new instances. Pin or lock the core
 > `durabletask` dependency, including when using the Azure Managed provider.
+> See [serialization and replay](docs/serialization.md) for supported types and
+> compatibility guidance.
 
 ## v1.13.1
 
