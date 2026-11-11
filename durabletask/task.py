@@ -633,8 +633,10 @@ class Task(ABC, Generic[T]):
     async def wait(self) -> T:
         """Borrow this operation's result through a fresh native coroutine.
 
-        Calling this method does not schedule another durable operation. Each
-        call creates an independent waiter.
+        Suitable for ``asyncio.create_task`` and task groups. Calling this
+        method does not schedule another durable operation. Each call creates
+        an independent waiter; cancelling it does not cancel the underlying
+        operation, timer, or event subscription, or any other waiter.
         """
         return await self
 
