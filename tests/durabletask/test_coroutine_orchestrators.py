@@ -7,15 +7,17 @@ import asyncio
 import inspect
 import json
 import logging
+import subprocess
+import sys
 from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timedelta
-from functools import partial, wraps
+from functools import partial, update_wrapper, wraps
 from typing import Any
 
 import pytest
 
 from durabletask import entities, task, worker
-from durabletask.internal import helpers
+from durabletask.internal import helpers, shared
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.serialization import JsonDataConverter
 
@@ -92,6 +94,75 @@ def test_async_orchestrator_is_dispatched_for_supported_callable_shapes(shape: s
     assert json.loads(complete.result.value) == 4
 
 
+@pytest.mark.parametrize("shape", [
+    "function", "partial", "bound-method", "callable", "partial-callable",
+    "async-callable", "nested-callable",
+])
+def test_async_orchestrator_is_recognized_before_its_synchronous_wrapped_function(shape: str) -> None:
+    def base(ctx: task.OrchestrationContext, value: int) -> int:
+        return value + 1
+
+    @wraps(base)
+    async def asynchronous(ctx: task.OrchestrationContext, value: int) -> int:
+        return base(ctx, value)
+
+    @wraps(asynchronous)
+    def traced(ctx: task.OrchestrationContext, value: int) -> Any:
+        return asynchronous(ctx, value)
+
+    class DecoratedCallable:
+        def base(self, ctx: task.OrchestrationContext, value: int) -> int:
+            return value + 1
+
+        async def asynchronous(self, ctx: task.OrchestrationContext, value: int) -> int:
+            return self.base(ctx, value)
+
+        def __call__(self, ctx: task.OrchestrationContext, value: int) -> Any:
+            return self.asynchronous(ctx, value)
+
+    update_wrapper(DecoratedCallable.asynchronous, DecoratedCallable.base)
+    update_wrapper(DecoratedCallable.__call__, DecoratedCallable.asynchronous)
+
+    class AsyncCallable(DecoratedCallable):
+        async def __call__(self, ctx: task.OrchestrationContext, value: int) -> int:
+            return self.base(ctx, value)
+
+    update_wrapper(AsyncCallable.__call__, AsyncCallable.base)
+
+    def wrap_callable(target: task.Orchestrator[Any, Any]) -> task.Orchestrator[Any, Any]:
+        class Wrapper:
+            def __call__(self, ctx: task.OrchestrationContext, value: int) -> Any:
+                return target(ctx, value)
+
+        update_wrapper(Wrapper.__call__, target)
+        return Wrapper()
+
+    decorated = DecoratedCallable()
+    nested: task.Orchestrator[Any, Any] = traced
+    # Each __call__ lookup produces a temporary bound method.
+    for _ in range(32):
+        nested = wrap_callable(nested)
+    variants = {
+        "function": traced,
+        "partial": partial(traced),
+        "bound-method": decorated.__call__,
+        "callable": decorated,
+        "partial-callable": partial(decorated),
+        "async-callable": AsyncCallable(),
+        "nested-callable": nested,
+    }
+    fn = variants[shape]
+    assert shared.is_async_callable(fn)
+    complete = _completion(_execute(fn, [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert json.loads(complete.result.value) == 4
+
+
+@pytest.mark.parametrize("fn", [int, len, list[int].append, object().__str__])
+def test_synchronous_builtin_callables_are_not_classified_as_async(fn: Any) -> None:
+    assert not shared.is_async_callable(fn)
+
+
 def test_unmarked_synchronous_wrapper_returning_coroutine_is_rejected_and_closed() -> None:
     created: list[Any] = []
 
@@ -148,6 +219,47 @@ def test_cyclic_async_wrapper_fails_instead_of_hanging() -> None:
     complete = _completion(_execute(wrapper, [], _start()))
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert "wrapper loop" in complete.failureDetails.errorMessage
+
+
+def _assert_mixed_wrapper_cycle_fails(shape: str) -> None:
+    def wrapper(ctx: task.OrchestrationContext, value: int) -> int:
+        return value
+
+    if shape == "partial":
+        wrapper.__wrapped__ = partial(wrapper)  # type: ignore[attr-defined]
+    else:
+        class CallableWrapper:
+            def __call__(self, ctx: task.OrchestrationContext, value: int) -> int:
+                return value
+
+        wrapper.__wrapped__ = CallableWrapper()  # type: ignore[attr-defined]
+        CallableWrapper.__call__.__wrapped__ = partial(wrapper)  # type: ignore[attr-defined]
+
+    # No input: dispatch must detect the cycle without relying on type discovery.
+    history = [
+        helpers.new_orchestrator_started_event(NOW),
+        helpers.new_execution_started_event("test", INSTANCE_ID),
+    ]
+    complete = _completion(_execute(wrapper, [], history))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete.failureDetails.errorType == "builtins.ValueError"
+    assert "wrapper loop" in complete.failureDetails.errorMessage
+    with pytest.raises(ValueError, match="wrapper loop"):
+        shared.is_async_callable(wrapper)
+
+
+@pytest.mark.parametrize("shape", ["partial", "callable-partial"])
+def test_mixed_wrapper_cycle_fails_within_bounded_worker_dispatch(shape: str) -> None:
+    result = subprocess.run(
+        [
+            sys.executable, "-c",
+            "import runpy, sys; "
+            "runpy.run_path(sys.argv[1])[sys.argv[2]](sys.argv[3])",
+            __file__, _assert_mixed_wrapper_cycle_fails.__name__, shape,
+        ],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_await_is_concrete_and_completed_tasks_do_not_suspend() -> None:

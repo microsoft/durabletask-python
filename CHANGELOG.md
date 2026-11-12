@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- Async orchestrators wrapped with `functools.wraps` are now recognized even
+when an intermediate async wrapper decorates a synchronous function, including
+callable instances and partials. Cyclic wrapper chains fail instead of hanging
+worker dispatch.
 - Activity and sub-orchestration `retry_timeout` decisions now use replay-safe
 orchestration time, preventing retries from expiring solely because history is
 replayed later. Retry calculations also accept timezone-aware timestamps.
