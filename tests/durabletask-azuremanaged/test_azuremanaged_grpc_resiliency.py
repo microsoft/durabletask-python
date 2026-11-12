@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from collections.abc import Mapping
 from typing import Any
 
 import pytest
 
 from durabletask import task
+from durabletask.client import OrchestrationIdReusePolicy, OrchestrationStatus
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.azuremanaged.client import (
@@ -19,6 +20,35 @@ from durabletask.grpc_options import (
     GrpcClientResiliencyOptions,
     GrpcWorkerResiliencyOptions,
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_dts_client_accepts_public_reuse_policy(use_async):
+    stub = Mock()
+    response = pb.CreateInstanceResponse(instanceId="instance")
+    stub.StartInstance = AsyncMock(return_value=response) if use_async else Mock(return_value=response)
+    policy = OrchestrationIdReusePolicy(dedupe_statuses=[OrchestrationStatus.RUNNING])
+    kwargs = dict(host_address="localhost:4001", taskhub="hub",
+                  token_credential=None, channel=Mock())
+
+    with patch("durabletask.client.stubs.TaskHubSidecarServiceStub", return_value=stub):
+        if use_async:
+            async with AsyncDurableTaskSchedulerClient(**kwargs) as client:
+                assert await client.schedule_new_orchestration(
+                    "orchestrator", instance_id="instance", reuse_id_policy=policy) == "instance"
+        else:
+            with DurableTaskSchedulerClient(**kwargs) as client:
+                assert client.schedule_new_orchestration(
+                    "orchestrator", instance_id="instance", reuse_id_policy=policy) == "instance"
+
+    request = stub.StartInstance.call_args.args[0]
+    assert request.HasField("orchestrationIdReusePolicy")
+    assert list(request.orchestrationIdReusePolicy.replaceableStatus) == [
+        pb.ORCHESTRATION_STATUS_COMPLETED, pb.ORCHESTRATION_STATUS_FAILED,
+        pb.ORCHESTRATION_STATUS_CANCELED, pb.ORCHESTRATION_STATUS_TERMINATED,
+        pb.ORCHESTRATION_STATUS_PENDING, pb.ORCHESTRATION_STATUS_SUSPENDED,
+    ]
 
 
 def test_dts_client_passes_resiliency_options_to_base_client():

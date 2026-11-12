@@ -63,6 +63,7 @@ class OrchestrationStatus(Enum):
     RUNNING = pb.ORCHESTRATION_STATUS_RUNNING
     COMPLETED = pb.ORCHESTRATION_STATUS_COMPLETED
     FAILED = pb.ORCHESTRATION_STATUS_FAILED
+    CANCELED = pb.ORCHESTRATION_STATUS_CANCELED
     TERMINATED = pb.ORCHESTRATION_STATUS_TERMINATED
     CONTINUED_AS_NEW = pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW
     PENDING = pb.ORCHESTRATION_STATUS_PENDING
@@ -70,6 +71,23 @@ class OrchestrationStatus(Enum):
 
     def __str__(self) -> str:
         return cast(str, helpers.get_orchestration_status_str(self.value))
+
+
+@dataclass
+class OrchestrationIdReusePolicy:
+    """Control duplicate instance IDs when scheduling an orchestration.
+
+    ``dedupe_statuses`` lists existing-instance statuses that must not be
+    replaced. Other stable statuses permit replacement if supported by the
+    backend. ``None`` preserves backend defaults; an empty sequence permits
+    replacement in every stable status. ``CONTINUED_AS_NEW`` is a transition,
+    not a configurable instance status.
+
+    This policy does not provide an atomic no-op/ignore action. Replacement
+    behavior and support are determined by the backend.
+    """
+
+    dedupe_statuses: Sequence[OrchestrationStatus] | None = None
 
 
 @dataclass
@@ -631,13 +649,18 @@ class TaskHubGrpcClient:
                                    input: TInput | None = None,
                                    instance_id: str | None = None,
                                    start_at: datetime | None = None,
-                                   reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
+                                   reuse_id_policy: OrchestrationIdReusePolicy | pb.OrchestrationIdReusePolicy | None = None,
                                    tags: dict[str, str] | None = None,
                                    version: str | None = None) -> str:
         """Schedule a new orchestration instance for execution.
 
         If instance_id is not specified, a random UUID hex string is generated upfront
         and shared across both the OpenTelemetry producer span and the CreateInstanceRequest.
+
+        ``reuse_id_policy`` controls which existing-instance statuses reject
+        duplicate IDs. Omission preserves backend defaults. Existing protobuf
+        policies remain supported and retain their replaceable-status semantics.
+        Invalid public policy statuses raise ``ValueError`` before sending the request.
         """
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex
@@ -1183,13 +1206,18 @@ class AsyncTaskHubGrpcClient:
                                          input: TInput | None = None,
                                          instance_id: str | None = None,
                                          start_at: datetime | None = None,
-                                         reuse_id_policy: pb.OrchestrationIdReusePolicy | None = None,
+                                         reuse_id_policy: OrchestrationIdReusePolicy | pb.OrchestrationIdReusePolicy | None = None,
                                          tags: dict[str, str] | None = None,
                                          version: str | None = None) -> str:
         """Schedule a new orchestration instance for execution asynchronously.
 
         If instance_id is not specified, a random UUID hex string is generated upfront
         and shared across both the OpenTelemetry producer span and the CreateInstanceRequest.
+
+        ``reuse_id_policy`` controls which existing-instance statuses reject
+        duplicate IDs. Omission preserves backend defaults. Existing protobuf
+        policies remain supported and retain their replaceable-status semantics.
+        Invalid public policy statuses raise ``ValueError`` before sending the request.
         """
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
         resolved_instance_id = instance_id if instance_id else uuid.uuid4().hex

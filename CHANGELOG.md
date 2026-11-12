@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added public `OrchestrationIdReusePolicy` with typed deduplication statuses for
+synchronous and asynchronous orchestration scheduling, including legacy
+`OrchestrationStatus.CANCELED`. Omission preserves backend defaults; existing
+protobuf policies remain supported. See [ID reuse](docs/features.md#orchestration-id-reuse).
+
 FIXED
 
 - Activity and sub-orchestration `retry_timeout` decisions now use replay-safe

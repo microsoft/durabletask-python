@@ -11,7 +11,13 @@ import pytest
 from google.protobuf.wrappers_pb2 import StringValue
 
 from azure.durable_functions import DurableFunctionsClient, SyncDurableFunctionsClient
-from durabletask.client import AsyncTaskHubGrpcClient, OrchestrationQuery, OrchestrationStatus, TaskHubGrpcClient
+from durabletask.client import (
+    AsyncTaskHubGrpcClient,
+    OrchestrationIdReusePolicy,
+    OrchestrationQuery,
+    OrchestrationStatus,
+    TaskHubGrpcClient,
+)
 from durabletask.internal import orchestrator_service_pb2 as pb
 from durabletask.internal import orchestrator_service_pb2_grpc as rpc
 
@@ -24,6 +30,35 @@ def _config(address: str) -> str:
         "requiredQueryStringParameters": "code=test-key",
         "maxGrpcMessageSizeInBytes": 8388608,
     })
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_functions_client_accepts_public_reuse_policy(use_async):
+    stub = Mock()
+    response = pb.CreateInstanceResponse(instanceId="instance")
+    policy = OrchestrationIdReusePolicy(dedupe_statuses=[OrchestrationStatus.RUNNING])
+    if use_async:
+        stub.StartInstance = AsyncMock(return_value=response)
+        async with DurableFunctionsClient(_config("localhost:8080")) as client:
+            with patch.object(client, "_get_stub", return_value=stub):
+                result = await client.schedule_new_orchestration(
+                    "orchestrator", instance_id="instance", reuse_id_policy=policy)
+    else:
+        stub.StartInstance.return_value = response
+        with SyncDurableFunctionsClient(_config("localhost:8080")) as client:
+            with patch.object(client, "_stub", stub):
+                result = client.schedule_new_orchestration(
+                    "orchestrator", instance_id="instance", reuse_id_policy=policy)
+
+    assert result == "instance"
+    request = stub.StartInstance.call_args.args[0]
+    assert request.HasField("orchestrationIdReusePolicy")
+    assert list(request.orchestrationIdReusePolicy.replaceableStatus) == [
+        pb.ORCHESTRATION_STATUS_COMPLETED, pb.ORCHESTRATION_STATUS_FAILED,
+        pb.ORCHESTRATION_STATUS_CANCELED, pb.ORCHESTRATION_STATUS_TERMINATED,
+        pb.ORCHESTRATION_STATUS_PENDING, pb.ORCHESTRATION_STATUS_SUSPENDED,
+    ]
 
 
 @pytest.mark.parametrize("use_async", [False, True])
