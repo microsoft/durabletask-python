@@ -646,7 +646,7 @@ def test_untracked_task_finalized_after_dispatch_close_is_quiet(monkeypatch: pyt
     untracked: list[asyncio.Task[Any]] = []
 
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
-        untracked.append(asyncio.Task(ctx.call_activity("background").wait()))
+        untracked.append(asyncio.Task(ctx.call_activity("background")))
         await ctx.call_activity("work")
 
     _execute(orchestrator, [], _start())
