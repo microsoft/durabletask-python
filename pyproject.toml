@@ -105,10 +105,11 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "error::DeprecationWarning",
     "error::PendingDeprecationWarning",
-    # Legacy Functions payloads still require the upstream loose codec.
-    # Report only these known warnings without failing; see issue #325.
-    'default:azure\.functions df_loads was called without expected_type\.:DeprecationWarning:azure\.functions\._durable_functions$',
-    'default:azure\.functions Durable JSON codec reconstructed a custom object via the loose-mode object_hook path\.:DeprecationWarning:azure\.functions\._durable_functions$',
+    # Activity triggers can lack a destination type, and even typed loose-mode
+    # decoding uses the object hook for legacy custom objects. Report only
+    # these exact upstream advisories without failing; see issue #325.
+    'default:^azure\.functions df_loads was called without expected_type\.  Pass the destination type to enable validation and prepare for strict typing \(AZURE_FUNCTIONS_DURABLE_STRICT_TYPING=1\)\.  This message will not be repeated\.\Z:DeprecationWarning:azure\.functions\._durable_functions\Z',
+    'default:^azure\.functions Durable JSON codec reconstructed a custom object via the loose-mode object_hook path\.  Set AZURE_FUNCTIONS_DURABLE_STRICT_TYPING=1 and supply expected_type at decode call sites to enable type-validated deserialization\.  This message will not be repeated\.\Z:DeprecationWarning:azure\.functions\._durable_functions\Z',
 ]
 markers = [
     "azurite: tests that require Azurite (local Azure Storage emulator)",
