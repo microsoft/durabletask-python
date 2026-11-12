@@ -193,7 +193,9 @@ Create branches from ordered inputs. Ready work follows FIFO scheduling;
 history completions are delivered in history order, draining ready work after
 each completion. Task-group cancellation wakeups are ordered by local task
 creation, not set/object-hash iteration. Local tasks are dispatch resources,
-not new durable instances.
+not new durable instances. Create them with `asyncio.create_task` or a task
+group; do not construct `asyncio.Task` directly, because such tasks are not
+tracked by the dispatch and are not cancelled or cleaned up with it.
 
 `loop.time()` uses seconds from a fixed UTC epoch and the current orchestration
 clock, never machine monotonic time. `loop.call_at` and `call_later` schedule
@@ -201,8 +203,10 @@ durable timers for future finite deadlines. Timer conversion rounds up when
 necessary so a durable timer does not precede its floating-point deadline.
 Core/Functions long timers reuse the existing chunking; Azure Managed retains
 its native long timers. Past deadlines are ready callbacks. `sleep(0)` yields
-to ready coroutines without a durable timer. Clock advancement and timers
-require history events, not elapsed time in the worker.
+to ready coroutines without a durable timer. Delays below the resolution of
+`loop.time()` (about 238 nanoseconds at current dates) are effectively zero.
+Clock advancement and timers require history events, not elapsed time in the
+worker.
 
 > [!WARNING]
 > This is not a general-purpose asyncio event loop. External network/storage
