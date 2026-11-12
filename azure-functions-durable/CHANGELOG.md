@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- A best-effort background check warns when a Function App's requirements allow
+a future major version, which may introduce replay-breaking changes.
+
 - Added opt-in `HttpRetryOptions` on `context.call_http()` for durable initial
 request retries with configurable timing and status selection. Empty or omitted
 status lists select all non-2xx responses; exhausted retries fail the call.

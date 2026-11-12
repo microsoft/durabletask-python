@@ -32,7 +32,8 @@ readme = "README.md"
 dependencies = [
     "durabletask[opentelemetry]>=1.13.1",
     "azure-identity>=1.19.0",
-    "azure-functions>=2.4.0b1"
+    "azure-functions>=2.4.0b1",
+    "packaging"
 ]
 
 [project.urls]
