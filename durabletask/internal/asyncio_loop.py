@@ -15,7 +15,14 @@ Private asyncio dependencies (verified against the supported Python versions):
 - ``asyncio.Handle._run``: run a ready callback with asyncio's own context and
   exception-handler semantics.
 - ``asyncio.Task._log_traceback``: report unobserved local-task failures during
-  dispatch cleanup without marking them as retrieved.
+  dispatch cleanup without marking them as retrieved, and keep such tasks
+  tracked until then.
+- ``__self__`` of Task step/wakeup callbacks (including the C implementation's
+  step wrapper and bound ``task_wakeup``): identify which local task a
+  callback resumes, so task-group cancellation wakeups run in task-creation
+  order.
+- ``AbstractEventLoop._timer_handle_cancelled``: the hook ``TimerHandle.cancel``
+  calls on its loop, used to withdraw the durable timer observer.
 """
 
 from __future__ import annotations
@@ -23,16 +30,19 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import math
 from collections import deque
 from collections.abc import Callable, Coroutine, Generator
-from datetime import UTC, datetime
-from typing import Any, TypeVar
+from datetime import UTC, datetime, timedelta
+from fractions import Fraction
+from typing import Any, TypeVar, cast
 
 from durabletask import task
 
 T = TypeVar("T")
 
 _EPOCH = datetime(1970, 1, 1)
+_MICROSECOND = timedelta(microseconds=1)
 
 
 class _CompletionObserver(task.CompositeTask[None]):
@@ -50,11 +60,82 @@ class _CompletionObserver(task.CompositeTask[None]):
         self._notify_parent()
 
 
+class _DurableAsyncTask(asyncio.Task[T]):
+    def __init__(
+        self, coro: Coroutine[Any, Any, T] | Generator[Any, None, T], *,
+        sequence: int, loop: DurableEventLoop, name: str | None,
+        context: contextvars.Context | None,
+    ) -> None:
+        self._sequence = sequence
+        super().__init__(coro, loop=loop, name=name, context=context)
+
+    def __hash__(self) -> int:
+        # Load-bearing for replay determinism: TaskGroup keeps its children in a
+        # set and iterates it to cancel them. Hashing by creation sequence makes
+        # that traversal, and the cancellation wakeups it schedules, follow task
+        # creation order instead of memory addresses that differ across workers.
+        return self._sequence
+
+    def __await__(self) -> Generator[Any, None, T]:
+        try:
+            return (yield from super().__await__())
+        finally:
+            self._retire_if_observed()
+
+    __iter__ = __await__
+
+    def result(self) -> T:
+        try:
+            return super().result()
+        finally:
+            self._retire_if_observed()
+
+    def exception(self) -> BaseException | None:
+        try:
+            return super().exception()
+        finally:
+            self._retire_if_observed()
+
+    def _retire_if_observed(self) -> None:
+        loop = self.get_loop()
+        assert isinstance(loop, DurableEventLoop)
+        loop.retire_task(self)
+
+    def cancel(self, msg: Any = None) -> bool:
+        loop = self.get_loop()
+        assert isinstance(loop, DurableEventLoop)
+        previous = loop.cancelling_task
+        loop.cancelling_task = self
+        try:
+            return super().cancel(msg)
+        finally:
+            loop.cancelling_task = previous
+
+
+class _DurableTimerHandle(asyncio.TimerHandle):
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    __hash__ = object.__hash__
+
+    def __init__(
+        self, when: float, callback: Callable[..., Any], args: tuple[Any, ...],
+        loop: DurableEventLoop, context: contextvars.Context | None,
+    ) -> None:
+        super().__init__(when, callback, args, loop, context=context)
+        self.durable_timer: task.TimerTask | None = None
+
+    def cancel(self) -> None:
+        super().cancel()
+        if self.durable_timer is not None:
+            self.durable_timer.cancel()
+
+
 class DurableEventLoop(asyncio.AbstractEventLoop):
     """A FIFO microtask loop; it never polls a selector or advances wall time.
 
-    Only history events can complete durable waits. asyncio owns coroutine
-    stepping; this loop owns the ordering of ready callbacks.
+    Only history events can complete durable waits/timers. asyncio owns coroutine
+    stepping, gather and structured cancellation; this loop owns their ordering.
     """
 
     def __init__(
@@ -65,21 +146,28 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._is_complete = is_complete
         self._logger = logger or logging.getLogger(__name__)
         self._ready: deque[asyncio.Handle] = deque()
-        self._tasks: list[asyncio.Task[Any]] = []
+        self._cancel_ready: list[tuple[int, int, asyncio.Handle]] = []
+        self._tasks: dict[asyncio.Task[Any], int] = {}
+        self._task_sequence = 0
+        self.cancelling_task: asyncio.Task[Any] | None = None
         self._waits: dict[int, tuple[task.Task[Any], list[asyncio.Future[Any]]]] = {}
         self._observers: dict[int, _CompletionObserver] = {}
         self._completions: deque[Callable[[], None]] = deque()
+        self._timers: dict[_DurableTimerHandle, _CompletionObserver] = {}
         self._closed = False
         self._closing = False
         self._fatal: BaseException | None = None
         self._root: asyncio.Task[Any] | None = None
 
-    def time(self) -> float:
-        # A fixed UTC epoch avoids local-time and platform timestamp differences.
+    def _now(self) -> datetime:
         now = self.ctx.current_utc_datetime
         if now.tzinfo is not None:
             now = now.astimezone(UTC).replace(tzinfo=None)
-        return (now - _EPOCH).total_seconds()
+        return now
+
+    def time(self) -> float:
+        # A fixed UTC epoch avoids local-time and platform timestamp differences.
+        return (self._now() - _EPOCH).total_seconds()
 
     def get_debug(self) -> bool:
         return False
@@ -106,27 +194,78 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         if kwargs:
             coro.close()
             raise TypeError("Custom/eager task execution is not supported in durable orchestrators.")
-        future = asyncio.Task(coro, loop=self, name=name, context=context)
-        self._tasks.append(future)
+        sequence = self._task_sequence
+        self._task_sequence += 1
+        future = _DurableAsyncTask(coro, sequence=sequence, loop=self, name=name, context=context)
+        self._tasks[future] = sequence
+        future.add_done_callback(self.retire_task)
         return future
+
+    def retire_task(self, future: asyncio.Task[Any]) -> None:
+        # A failed task may be observed after its done callbacks have run.
+        # Inspect without retrieving exceptions so unobserved failures still log.
+        if not self._closing and future.done() and not getattr(future, "_log_traceback", False):
+            self._tasks.pop(future, None)
 
     def call_soon(
         self, callback: Callable[..., Any], *args: Any,
         context: contextvars.Context | None = None,
     ) -> asyncio.Handle:
         handle = asyncio.Handle(callback, args, self, context=context)
-        self._ready.append(handle)
+        if self.cancelling_task is not None:
+            # TaskGroup cancels a set of tasks. Do not let object hashes
+            # determine the order in which their finally blocks execute.
+            owner = getattr(callback, "__self__", None)
+            index = self._tasks.get(
+                self.cancelling_task, getattr(self.cancelling_task, "_sequence", self._task_sequence))
+            if isinstance(owner, asyncio.Task):
+                index = self._tasks.get(cast(asyncio.Task[Any], owner), index)
+            self._cancel_ready.append((index, len(self._cancel_ready), handle))
+        else:
+            self._ready.append(handle)
         return handle
 
-    def call_later(self, delay: float, callback: Callable[..., Any], *args: Any,
-                   context: contextvars.Context | None = None) -> asyncio.TimerHandle:
-        raise NotImplementedError(
-            "Loop timers, including asyncio.sleep() with a positive delay, are not "
-            "supported by the durable orchestration loop. Await ctx.create_timer(...) for a durable timer.")
+    def call_later(
+        self, delay: float, callback: Callable[..., Any], *args: Any,
+        context: contextvars.Context | None = None,
+    ) -> asyncio.TimerHandle:
+        if not math.isfinite(delay):
+            raise ValueError("Durable delays must be finite.")
+        return self.call_at(self.time() + max(0, delay), callback, *args, context=context)
 
-    def call_at(self, when: float, callback: Callable[..., Any], *args: Any,
-                context: contextvars.Context | None = None) -> asyncio.TimerHandle:
-        return self.call_later(when - self.time(), callback, *args, context=context)
+    def call_at(
+        self, when: float, callback: Callable[..., Any], *args: Any,
+        context: contextvars.Context | None = None,
+    ) -> asyncio.TimerHandle:
+        if not math.isfinite(when):
+            raise ValueError("Durable deadlines must be finite.")
+        handle = _DurableTimerHandle(when, callback, args, self, context)
+        # Exact rational ceiling: float round-trips can emit a deadline that
+        # precedes the requested one by a fraction of a microsecond.
+        deadline_us = math.ceil(Fraction(when) * 1_000_000)
+        now_us = (self._now() - _EPOCH) // _MICROSECOND
+        if when <= self.time() or deadline_us <= now_us:
+            self._ready.append(handle)
+        else:
+            if self._closing:
+                raise RuntimeError("Dispatch cleanup cannot schedule durable timers.")
+            deadline = _EPOCH + timedelta(microseconds=deadline_us)
+            handle.durable_timer = self.ctx.create_timer(deadline)
+            self._timers[handle] = _CompletionObserver(
+                handle.durable_timer,
+                lambda: self._completions.append(lambda: self._complete_timer(handle)))
+        return handle
+
+    def _timer_handle_cancelled(self, handle: asyncio.TimerHandle) -> None:
+        if isinstance(handle, _DurableTimerHandle):
+            observer = self._timers.pop(handle, None)
+            if observer is not None:
+                observer.detach()
+
+    def _complete_timer(self, handle: _DurableTimerHandle) -> None:
+        self._timers.pop(handle, None)
+        if not handle.cancelled():
+            self._ready.append(handle)
 
     async def wait_durable(self, durable: task.Task[T]) -> T:
         if durable.is_complete:
@@ -144,7 +283,10 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             entry[1].remove(future)
             if not entry[1]:
                 self._waits.pop(id(durable), None)
-                self._observers.pop(id(durable)).detach()
+                # Dispatch close may already have detached and cleared observers.
+                observer = self._observers.pop(id(durable), None)
+                if observer is not None:
+                    observer.detach()
 
     def _complete_wait(self, durable: task.Task[Any]) -> None:
         entry = self._waits.get(id(durable))
@@ -184,7 +326,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 "Await durable activities, events or timers; external I/O is unsupported.")
 
     def _has_durable_work(self) -> bool:
-        return any(not durable.is_complete for durable, _ in self._waits.values())
+        return any(not durable.is_complete for durable, _ in self._waits.values()) or bool(self._timers)
 
     def _drain(self) -> None:
         previous_loop = asyncio._get_running_loop()
@@ -193,7 +335,9 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             asyncio.tasks._leave_task(previous_loop, previous_task)
         asyncio._set_running_loop(self)
         try:
-            while self._ready:
+            while self._ready or self._cancel_ready:
+                self._ready.extend(handle for _, _, handle in sorted(self._cancel_ready))
+                self._cancel_ready.clear()
                 handle = self._ready.popleft()
                 if not handle.cancelled():
                     handle._run()
@@ -247,9 +391,52 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         finally:
             self._closed = True
             self._ready.clear()
-            for observer in self._observers.values():
+            self._cancel_ready.clear()
+            for observer in (*self._observers.values(), *self._timers.values()):
                 observer.detach()
             self._completions.clear()
             self._observers.clear()
             self._waits.clear()
+            self._timers.clear()
             self._tasks.clear()
+
+
+_IO_HINT = "External I/O is unsupported in orchestrators; move it to an ordinary activity."
+_THREAD_HINT = "Threads/executors are unsupported in orchestrators; use an activity."
+_LOOP_HINT = "The worker owns the durable loop's lifecycle and configuration."
+
+# Every asyncio loop API this loop does not implement fails with one actionable
+# error instead of AbstractEventLoop's bare NotImplementedError.
+_UNSUPPORTED_LOOP_APIS: dict[str, str] = {
+    **dict.fromkeys((
+        "create_connection", "create_server", "create_datagram_endpoint",
+        "create_unix_connection", "create_unix_server", "connect_accepted_socket",
+        "connect_read_pipe", "connect_write_pipe", "start_tls", "sendfile",
+        "getaddrinfo", "getnameinfo", "sock_connect", "sock_accept", "sock_recv",
+        "sock_recv_into", "sock_recvfrom", "sock_recvfrom_into", "sock_sendall",
+        "sock_sendto", "sock_sendfile", "subprocess_exec", "subprocess_shell",
+        "add_reader", "remove_reader", "add_writer", "remove_writer",
+        "add_signal_handler", "remove_signal_handler",
+    ), _IO_HINT),
+    **dict.fromkeys((
+        "run_in_executor", "set_default_executor", "shutdown_default_executor",
+        "call_soon_threadsafe",
+    ), _THREAD_HINT),
+    **dict.fromkeys((
+        "run_forever", "run_until_complete", "stop", "set_task_factory",
+        "set_exception_handler",
+    ), _LOOP_HINT),
+}
+
+
+def _unsupported_loop_api(name: str, hint: str) -> Callable[..., Any]:
+    def unsupported(self: DurableEventLoop, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"loop.{name}() is not supported in durable orchestrators. {hint}")
+
+    unsupported.__name__ = unsupported.__qualname__ = name
+    return unsupported
+
+
+for _name, _hint in _UNSUPPORTED_LOOP_APIS.items():
+    if _name not in vars(DurableEventLoop):
+        setattr(DurableEventLoop, _name, _unsupported_loop_api(_name, _hint))

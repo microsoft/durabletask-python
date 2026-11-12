@@ -604,12 +604,3 @@ def test_loop_time_accepts_naive_and_aware_orchestration_clocks(now: datetime, o
     ctx = cast(task.OrchestrationContext, SimpleNamespace(current_utc_datetime=now))
     loop = DurableEventLoop(ctx, is_complete=lambda: False)
     assert loop.time() == (NOW - datetime(1970, 1, 1)).total_seconds() - offset
-
-
-def test_positive_asyncio_sleep_reports_durable_timer_alternative() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
-        await asyncio.sleep(1)
-
-    complete = _completion(_execute(orchestrator, [], _start()))
-    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert "ctx.create_timer" in complete.failureDetails.errorMessage

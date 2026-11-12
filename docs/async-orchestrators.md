@@ -187,7 +187,9 @@ Create branches from ordered inputs. Ready work follows FIFO scheduling;
 history completions are delivered in history order, draining ready work after
 each completion. Task-group cancellation wakeups are ordered by local task
 creation, not set/object-hash iteration. Local tasks are dispatch resources,
-not new durable instances.
+not new durable instances. Create them with `asyncio.create_task` or a task
+group; do not construct `asyncio.Task` directly, because such tasks are not
+tracked by the dispatch and are not cancelled or cleaned up with it.
 
 `loop.time()` uses seconds from a fixed UTC epoch and the current orchestration
 clock, never machine monotonic time. `loop.call_at` and `call_later` schedule
@@ -195,8 +197,10 @@ durable timers for future finite deadlines. Timer conversion rounds up when
 necessary so a durable timer does not precede its floating-point deadline.
 Core/Functions long timers reuse the existing chunking; Azure Managed retains
 its native long timers. Past deadlines are ready callbacks. `sleep(0)` yields
-to ready coroutines without a durable timer. Clock advancement and timers
-require history events, not elapsed time in the worker.
+to ready coroutines without a durable timer. Delays below the resolution of
+`loop.time()` (about 238 nanoseconds at current dates) are effectively zero.
+Clock advancement and timers require history events, not elapsed time in the
+worker.
 
 > [!WARNING]
 > This is not a general-purpose asyncio event loop. External network/storage
@@ -332,6 +336,12 @@ automatic recording or interception of arbitrary await expressions.
 `is_replaying` is not a substitute for recording results. Activities remain
 at-least-once work: side effects require appropriate idempotency/deduplication.
 
+Successive orchestration dispatches and their activities can run on different
+workers. Replay reconstructs local tasks and futures from ordered durable
+history; it does not rely on task identities or memory retained by a previous
+worker. Activity completion order is the order recorded in history, not worker
+placement.
+
 Framework adapters can compose supported durable operations using async
 helpers. Adapters remain responsible for registering ordinary model/tool
 activities, encoding/decoding framework payloads, and supplying replay-stable
@@ -350,8 +360,9 @@ construction order is not execution order.
 
 Supporting several Python versions does not guarantee recorded-history
 portability between them. Pin the runtime and dependencies for active
-instances and validate histories before upgrades; see the Python version
-warning above.
+instances and validate histories before upgrades. All workers processing an
+instance must use that pinned environment; see the Python version warning
+above.
 
 The Functions `orchestrator_generator_wrapper` helper supports direct durable
 awaits in synchronous and async mock-based unit tests; it does not simulate the
