@@ -266,6 +266,12 @@ automatic recording or interception of arbitrary await expressions.
 `is_replaying` is not a substitute for recording results. Activities remain
 at-least-once work: side effects require appropriate idempotency/deduplication.
 
+Successive orchestration dispatches and their activities can run on different
+workers. Replay reconstructs local tasks and futures from ordered durable
+history; it does not rely on task identities or memory retained by a previous
+worker. Activity completion order is the order recorded in history, not worker
+placement.
+
 Framework adapters can compose supported durable operations using async
 helpers. Adapters remain responsible for registering ordinary model/tool
 activities, encoding/decoding framework payloads, and supplying replay-stable
@@ -284,7 +290,8 @@ construction order is not execution order.
 
 Supporting several Python versions does not guarantee recorded-history
 portability between them. Pin the runtime and dependencies for active
-instances and validate histories before upgrades. In particular, Python 3.11
+instances and validate histories before upgrades. All workers processing an
+instance must use that pinned environment. In particular, Python 3.11
 and 3.12+ schedule coroutine operands of `asyncio.wait_for()` differently, which
 can change durable action order inside concurrent branches. The async context
 does not normalize arbitrary standard-library scheduling.

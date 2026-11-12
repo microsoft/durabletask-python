@@ -6,9 +6,13 @@
 import asyncio
 import gc
 import json
+import os
+import subprocess
+import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
 from typing import Any
 from weakref import ReferenceType, ref
 
@@ -461,6 +465,114 @@ def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> No
                 for index in range(3)]
     for _ in range(10):
         assert _execute(orchestrator, [], old).actions == expected
+
+
+async def _shared_future_cancellation_orchestrator(
+    ctx: task.OrchestrationContext, _: Any, *, direct_future: bool, gather_wait: bool,
+) -> str:
+    loop = asyncio.get_running_loop()
+    futures: list[asyncio.Future[None]] = [
+        asyncio.Future[None]() if direct_future else loop.create_future() for _ in range(2)]
+
+    def on_cancelled(index: int, future: asyncio.Future[None]) -> None:
+        assert future.cancelled()
+        ctx.call_activity(f"cancelled-{index}")
+
+    for index, future in enumerate(futures):
+        future.add_done_callback(partial(on_cancelled, index))
+
+    async def wait(future: asyncio.Future[None]) -> None:
+        if gather_wait:
+            await asyncio.gather(future)
+        else:
+            await future
+
+    async def fail() -> None:
+        await asyncio.sleep(0)
+        raise ValueError("cancel siblings")
+
+    try:
+        async with asyncio.TaskGroup() as group:
+            for future in futures * 2:
+                group.create_task(wait(future))
+            group.create_task(fail())
+    except* ValueError:
+        pass
+    return await ctx.call_activity("join", return_type=str)
+
+
+@pytest.mark.parametrize("direct_future", [False, True])
+@pytest.mark.parametrize("gather_wait", [False, True])
+def test_shared_future_cancellation_callbacks_replay_on_fresh_executors(
+    direct_future: bool, gather_wait: bool,
+) -> None:
+    orchestrator = partial(
+        _shared_future_cancellation_orchestrator, direct_future=direct_future, gather_wait=gather_wait)
+    start = _start()
+    initial = _execute(orchestrator, [], start)
+    assert sorted(a.scheduleTask.name for a in initial.actions[:-1]) == ["cancelled-0", "cancelled-1"]
+    assert initial.actions[-1].scheduleTask.name == "join"
+    recorded = start + [
+        helpers.new_task_scheduled_event(action.id, action.scheduleTask.name)
+        for action in initial.actions
+    ]
+    # Activity workers may complete in any order. Each dispatch reconstructs
+    # all local tasks and futures from history, as on a different worker.
+    completed = [
+        helpers.new_task_completed_event(initial.actions[1].id, "null"),
+        helpers.new_task_completed_event(initial.actions[0].id, "null"),
+    ]
+    for _ in range(30):
+        assert _execute(orchestrator, [], start).actions == initial.actions
+        assert _execute(orchestrator, recorded, completed).actions == []
+        complete = _completion(_execute(
+            orchestrator, recorded + completed,
+            [helpers.new_task_completed_event(initial.actions[-1].id, '"joined"')]))
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED, complete.failureDetails
+        assert json.loads(complete.result.value) == "joined"
+
+
+def test_shared_future_cancellation_history_replays_in_other_worker_processes() -> None:
+    orchestrator = partial(
+        _shared_future_cancellation_orchestrator, direct_future=True, gather_wait=False)
+    start = _start()
+    initial = _execute(orchestrator, [], start)
+    history = start + [
+        helpers.new_task_scheduled_event(action.id, action.scheduleTask.name)
+        for action in initial.actions
+    ]
+    history += [
+        helpers.new_task_completed_event(initial.actions[1].id, "null"),
+        helpers.new_task_completed_event(initial.actions[0].id, "null"),
+    ]
+    payload = json.dumps({
+        "initial": [action.SerializeToString().hex() for action in initial.actions],
+        "history": [event.SerializeToString().hex() for event in history],
+        "join_id": initial.actions[-1].id,
+    })
+    code = """
+import json
+import sys
+from functools import partial
+from durabletask.internal import helpers, orchestrator_service_pb2 as pb
+from tests.durabletask.test_asyncio_orchestrators import _shared_future_cancellation_orchestrator
+from tests.durabletask.test_coroutine_orchestrators import _completion, _execute, _start
+
+data = json.load(sys.stdin)
+orchestrator = partial(_shared_future_cancellation_orchestrator, direct_future=True, gather_wait=False)
+initial = _execute(orchestrator, [], _start())
+assert [action.SerializeToString().hex() for action in initial.actions] == data["initial"]
+history = [pb.HistoryEvent.FromString(bytes.fromhex(event)) for event in data["history"]]
+result = _completion(_execute(
+    orchestrator, history, [helpers.new_task_completed_event(data["join_id"], '"joined"')]))
+assert result.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED, result.failureDetails
+assert json.loads(result.result.value) == "joined"
+"""
+    for seed in ("0", "999"):
+        process = subprocess.run(
+            [sys.executable, "-c", code], input=payload, capture_output=True, text=True,
+            env={**os.environ, "PYTHONHASHSEED": seed}, timeout=30)
+        assert process.returncode == 0, process.stdout + process.stderr
 
 
 def test_cancelling_last_loop_timer_cannot_hide_foreign_wait() -> None:

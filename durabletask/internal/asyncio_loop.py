@@ -35,6 +35,19 @@ class _CompletionObserver(task.CompositeTask[None]):
 
 
 class _DurableAsyncTask(asyncio.Task[T]):
+    def __init__(
+        self, coro: Coroutine[Any, Any, T] | Generator[Any, None, T], *,
+        sequence: int, loop: DurableEventLoop, name: str | None,
+        context: contextvars.Context | None,
+    ) -> None:
+        self._sequence = sequence
+        super().__init__(coro, loop=loop, name=name, context=context)
+
+    def __hash__(self) -> int:
+        # TaskGroup traverses a set before cancellation schedules shared-Future
+        # callbacks. Stabilize that traversal, not just the resulting wakeups.
+        return self._sequence
+
     def __await__(self) -> Generator[Any, None, T]:
         try:
             return (yield from super().__await__())
@@ -147,9 +160,10 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         if kwargs:
             coro.close()
             raise TypeError("Custom/eager task execution is not supported in durable orchestrators.")
-        future = _DurableAsyncTask(coro, loop=self, name=name, context=context)
-        self._tasks[future] = self._task_sequence
+        sequence = self._task_sequence
         self._task_sequence += 1
+        future = _DurableAsyncTask(coro, sequence=sequence, loop=self, name=name, context=context)
+        self._tasks[future] = sequence
         future.add_done_callback(self.retire_task)
         return future
 
