@@ -38,9 +38,14 @@ batch before scheduling its next operation.
 ## Cold operations and reusable handles
 
 An `async def` orchestrator automatically receives an
-`AsyncOrchestrationContext`. Its durable operations return native coroutines.
+`AsyncOrchestrationContext`. Its awaited durable operations return cold,
+single-use native coroutines.
 Generator orchestrators still receive `OrchestrationContext` and keep their
 eager durable task handles. Both contexts use the same replay engine.
+
+One-way commands `ctx.send_event(...)`, `ctx.signal_entity(...)`, and
+`ctx.continue_as_new(...)` remain synchronous and eager: call them **without
+`await`**. These commands take effect when invoked and return `None`.
 
 | Expression | Meaning |
 |---|---|
@@ -50,9 +55,9 @@ eager durable task handles. Both contexts use the same replay engine.
 | `ctx.wait_for_external_event(...)` | Withdraw an owned event wait on cancellation or timeout. |
 | `ctx.create_timer(...)` | Own a timer, cancelling its pending local work on cancellation. |
 
-Use the async context with `asyncio.create_task`, `TaskGroup.create_task`, and
-ordered `gather`. Constructing a coroutine does not allocate action IDs,
-serialize input, or consume buffered events. Cancelling its local task before
+Use these cold coroutines with `asyncio.create_task`, `TaskGroup.create_task`,
+and ordered `gather`. Constructing a coroutine does not validate the operation,
+allocate action IDs, serialize input, or consume buffered events. Cancelling its local task before
 its first step starts no durable operation. Mutable inputs are read when the
 coroutine executes, and relative timer delays start from that execution point.
 Keep or copy inputs accordingly.
