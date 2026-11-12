@@ -21,9 +21,6 @@ and core dependency minimum in a dedicated release PR.
 
 FIXED
 
-- With the corresponding core SDK update, async dispatch cleanup no longer
-hangs when async-generator finalizers continually start successor generators.
-Exceeding the cleanup budget is reported without changing the snapshotted response.
 - With the corresponding core SDK update, activity and sub-orchestration
 `retry_timeout` decisions use replay-safe orchestration time rather than
 wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)
