@@ -39,7 +39,6 @@ from fractions import Fraction
 from typing import Any, TypeVar, cast
 
 from durabletask import task
-from durabletask.internal.exceptions import is_control_flow_exception
 
 T = TypeVar("T")
 
@@ -169,6 +168,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._closing = False
         self._fatal: BaseException | None = None
         self._cleanup_failure: BaseException | None = None
+        self._cleanup_truncated = False
         self._root: asyncio.Task[Any] | None = None
 
     def _now(self) -> datetime:
@@ -343,7 +343,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     def _has_durable_work(self) -> bool:
         return any(not durable.is_complete for durable, _ in self._waits.values()) or bool(self._timers)
 
-    def _drain(self) -> int:
+    def _drain(self, cleanup_limit: int | None = None) -> int:
         previous_loop = asyncio._get_running_loop()
         previous_task = asyncio.current_task(previous_loop) if previous_loop is not None else None
         previous_hooks = sys.get_asyncgen_hooks()
@@ -353,7 +353,8 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         sys.set_asyncgen_hooks(firstiter=self._asyncgen_firstiter, finalizer=self._asyncgen_finalizer)
         try:
             steps = 0
-            cleanup_limit = max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
+            if cleanup_limit is None:
+                cleanup_limit = self._cleanup_budget()
             while self._ready or self._cancel_ready:
                 self._ready.extend(handle for _, _, handle in sorted(self._cancel_ready))
                 self._cancel_ready.clear()
@@ -379,10 +380,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                     self._deliver_completions()
                 steps += 1
                 if self._closing and steps >= cleanup_limit:
-                    self._record_cleanup_error(RuntimeError(
-                        "Async cleanup did not quiesce; cleanup must cooperate with cancellation."))
-                    self._ready.clear()
-                    self._cancel_ready.clear()
+                    self._report_unquiesced_cleanup()
                     break
             return steps
         finally:
@@ -411,12 +409,25 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             error = failure
         self._fatal = error if isinstance(error, BaseException) else RuntimeError(context["message"])
 
+    def _cleanup_budget(self) -> int:
+        # Cooperative cleanup is capped in scheduling steps, not wall-clock time.
+        return max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
+
+    def _report_unquiesced_cleanup(self) -> None:
+        self._ready.clear()
+        self._cancel_ready.clear()
+        if not self._cleanup_truncated:
+            self._cleanup_truncated = True
+            self._record_cleanup_error(RuntimeError(
+                "Async cleanup did not quiesce; cleanup must cooperate with cancellation."))
+
     def _record_cleanup_error(self, error: BaseException, source: str = "cleanup callback") -> None:
         self._logger.warning("%s: Async %s failed.", self.ctx.instance_id, source, exc_info=error)
         if not isinstance(error, (Exception, asyncio.CancelledError)):
             if _is_process_control(self._cleanup_failure):
                 return
-            if self._cleanup_failure is None or is_control_flow_exception(error):
+            # Keep the first failure unless a process-control exit supersedes it.
+            if self._cleanup_failure is None or _is_process_control(error):
                 self._cleanup_failure = error
 
     def _close_asyncgens(self, closed: dict[int, Any]) -> None:
@@ -424,22 +435,24 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         # Closed generators stay referenced so their ids cannot be reused during cleanup.
         steps = 0
         # Cleanup-created tasks and generators must not replenish the sweep's budget.
-        limit = max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
+        limit = self._cleanup_budget()
         while True:
             pending = [
                 generator for key, generator in self._asyncgens.items() if closed.get(key) is not generator]
             if not pending:
                 return
             if steps >= limit:
-                self._record_cleanup_error(RuntimeError(
-                    "Async cleanup did not quiesce; cleanup must cooperate with cancellation."))
+                self._report_unquiesced_cleanup()
                 return
             for generator in pending:
                 closed[id(generator)] = generator
                 self.create_task(generator.aclose())
-            steps += max(1, self._drain())
+            # Each drain spends from this sweep's remaining budget.
+            steps += max(1, self._drain(limit - steps))
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._closing = True
         try:
             completed_at_close = {future for future in self._tasks if future.done()}

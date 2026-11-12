@@ -9,9 +9,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
-- Async dispatch cleanup no longer hangs when async-generator finalizers
-continually start successor generators; exceeding the cleanup budget is reported
-without changing the snapshotted response.
 - Activity and sub-orchestration `retry_timeout` decisions now use replay-safe
 orchestration time, preventing retries from expiring solely because history is
 replayed later. Retry calculations also accept timezone-aware timestamps.
