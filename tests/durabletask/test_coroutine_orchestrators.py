@@ -103,46 +103,48 @@ def test_async_context_is_selected_for_supported_callable_shapes(shape: str) -> 
     "async-callable", "nested-callable",
 ])
 def test_async_orchestrator_is_recognized_before_its_synchronous_wrapped_function(shape: str) -> None:
-    def base(ctx: task.OrchestrationContext, value: int) -> int:
+    def base(ctx: task.AsyncOrchestrationContext, value: int) -> int:
+        assert isinstance(ctx, task.AsyncOrchestrationContext)
         return value + 1
 
     @wraps(base)
-    async def asynchronous(ctx: task.OrchestrationContext, value: int) -> int:
+    async def asynchronous(ctx: task.AsyncOrchestrationContext, value: int) -> int:
         return base(ctx, value)
 
     @wraps(asynchronous)
-    def traced(ctx: task.OrchestrationContext, value: int) -> Any:
+    def traced(ctx: task.AsyncOrchestrationContext, value: int) -> Any:
         return asynchronous(ctx, value)
 
     class DecoratedCallable:
-        def base(self, ctx: task.OrchestrationContext, value: int) -> int:
+        def base(self, ctx: task.AsyncOrchestrationContext, value: int) -> int:
+            assert isinstance(ctx, task.AsyncOrchestrationContext)
             return value + 1
 
-        async def asynchronous(self, ctx: task.OrchestrationContext, value: int) -> int:
+        async def asynchronous(self, ctx: task.AsyncOrchestrationContext, value: int) -> int:
             return self.base(ctx, value)
 
-        def __call__(self, ctx: task.OrchestrationContext, value: int) -> Any:
+        def __call__(self, ctx: task.AsyncOrchestrationContext, value: int) -> Any:
             return self.asynchronous(ctx, value)
 
     update_wrapper(DecoratedCallable.asynchronous, DecoratedCallable.base)
     update_wrapper(DecoratedCallable.__call__, DecoratedCallable.asynchronous)
 
     class AsyncCallable(DecoratedCallable):
-        async def __call__(self, ctx: task.OrchestrationContext, value: int) -> int:
+        async def __call__(self, ctx: task.AsyncOrchestrationContext, value: int) -> int:
             return self.base(ctx, value)
 
     update_wrapper(AsyncCallable.__call__, AsyncCallable.base)
 
-    def wrap_callable(target: task.Orchestrator[Any, Any]) -> task.Orchestrator[Any, Any]:
+    def wrap_callable(target: task.AsyncOrchestrator[Any, Any]) -> task.AsyncOrchestrator[Any, Any]:
         class Wrapper:
-            def __call__(self, ctx: task.OrchestrationContext, value: int) -> Any:
+            def __call__(self, ctx: task.AsyncOrchestrationContext, value: int) -> Any:
                 return target(ctx, value)
 
         update_wrapper(Wrapper.__call__, target)
         return Wrapper()
 
     decorated = DecoratedCallable()
-    nested: task.Orchestrator[Any, Any] = traced
+    nested: task.AsyncOrchestrator[Any, Any] = traced
     # Each __call__ lookup produces a temporary bound method.
     for _ in range(32):
         nested = wrap_callable(nested)
