@@ -9,11 +9,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
-- With the corresponding core SDK update, coroutine task-group cancellation
-schedules shared-Future callbacks deterministically when replayed on another
-worker using the same SDK and Python runtime. See the
-[core upgrade guidance](../CHANGELOG.md#unreleased) for existing cancellation
-histories.
 - With the corresponding core SDK update, activity and sub-orchestration
 `retry_timeout` decisions use replay-safe orchestration time rather than
 wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)

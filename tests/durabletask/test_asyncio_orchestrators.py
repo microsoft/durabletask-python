@@ -11,10 +11,11 @@ import subprocess
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import ROUND_CEILING, Decimal, localcontext
 from functools import partial
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from weakref import ReferenceType, ref
 
 import pytest
@@ -22,6 +23,7 @@ import pytest
 from durabletask import task
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
+from durabletask.internal.asyncio_loop import _UNSUPPORTED_LOOP_APIS, DurableEventLoop  # pyright: ignore[reportPrivateUsage]
 from tests.durabletask.test_coroutine_orchestrators import (
     NOW,
     _completion,  # pyright: ignore[reportPrivateUsage]
@@ -396,7 +398,6 @@ def test_timer_rounding_never_precedes_loop_deadline(delay: float) -> None:
     actions = _execute(orchestrator, [], _start()).actions
     assert len(actions) == 1
     deadline = actions[0].createTimer.fireAt.ToDatetime()
-    from datetime import datetime
     assert (deadline - datetime(1970, 1, 1)).total_seconds() >= observed[0]
 
 
@@ -496,6 +497,30 @@ def test_unsupported_work_fails_actionably(api: str) -> None:
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert any(text in complete.failureDetails.errorMessage for text in (
         "use an activity", "ordinary activity", "different loop"))
+
+
+@pytest.mark.parametrize("name", sorted(_UNSUPPORTED_LOOP_APIS))
+def test_every_unsupported_loop_api_fails_actionably(name: str) -> None:
+    ctx = cast(task.OrchestrationContext, SimpleNamespace(current_utc_datetime=NOW))
+    loop = DurableEventLoop(ctx, is_complete=lambda: False)
+    with pytest.raises(RuntimeError, match=rf"loop\.{name}\(\) is not supported") as error:
+        getattr(loop, name)()
+    assert str(error.value).endswith(_UNSUPPORTED_LOOP_APIS[name])
+
+
+def test_untracked_task_finalized_after_dispatch_close_is_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    unraisable: list[Any] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+    untracked: list[asyncio.Task[Any]] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        untracked.append(asyncio.Task(ctx.call_activity("background").wait()))
+        await ctx.call_activity("work")
+
+    _execute(orchestrator, [], _start())
+    untracked.clear()
+    gc.collect()
+    assert not [hook for hook in unraisable if isinstance(hook.exc_value, KeyError)]
 
 
 def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> None:
