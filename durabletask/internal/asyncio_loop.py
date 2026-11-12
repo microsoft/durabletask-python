@@ -15,15 +15,22 @@ Private asyncio dependencies (verified against the supported Python versions):
 - ``asyncio.Handle._run``: run a ready callback with asyncio's own context and
   exception-handler semantics.
 - ``asyncio.Task._log_traceback``: report unobserved local-task failures during
-  dispatch cleanup without marking them as retrieved.
+  dispatch cleanup without marking them as retrieved, and keep such tasks
+  tracked until then.
+- ``__self__`` of Task step/wakeup callbacks (including the C implementation's
+  step wrapper and bound ``task_wakeup``): identify which local task a
+  callback resumes, so task-group cancellation wakeups run in task-creation
+  order.
+- ``AbstractEventLoop._timer_handle_cancelled``: the hook ``TimerHandle.cancel``
+  calls on its loop, used to withdraw the durable timer observer.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextvars
-import math
 import logging
+import math
 import sys
 from collections import deque
 from collections.abc import Callable, Coroutine, Generator
@@ -72,8 +79,10 @@ class _DurableAsyncTask(asyncio.Task[T]):
         super().__init__(coro, loop=loop, name=name, context=context)
 
     def __hash__(self) -> int:
-        # TaskGroup traverses a set before cancellation schedules shared-Future
-        # callbacks. Stabilize that traversal, not just the resulting wakeups.
+        # Load-bearing for replay determinism: TaskGroup keeps its children in a
+        # set and iterates it to cancel them. Hashing by creation sequence makes
+        # that traversal, and the cancellation wakeups it schedules, follow task
+        # creation order instead of memory addresses that differ across workers.
         return self._sequence
 
     def __await__(self) -> Generator[Any, None, T]:
@@ -162,12 +171,15 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._cleanup_failure: BaseException | None = None
         self._root: asyncio.Task[Any] | None = None
 
-    def time(self) -> float:
-        # A fixed UTC epoch avoids local-time and platform timestamp differences.
+    def _now(self) -> datetime:
         now = self.ctx.current_utc_datetime
         if now.tzinfo is not None:
             now = now.astimezone(UTC).replace(tzinfo=None)
-        return (now - _EPOCH).total_seconds()
+        return now
+
+    def time(self) -> float:
+        # A fixed UTC epoch avoids local-time and platform timestamp differences.
+        return (self._now() - _EPOCH).total_seconds()
 
     def get_debug(self) -> bool:
         return False
@@ -216,7 +228,8 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             # TaskGroup cancels a set of tasks. Do not let object hashes
             # determine the order in which their finally blocks execute.
             owner = getattr(callback, "__self__", None)
-            index = self._tasks[self.cancelling_task]
+            index = self._tasks.get(
+                self.cancelling_task, getattr(self.cancelling_task, "_sequence", self._task_sequence))
             if isinstance(owner, asyncio.Task):
                 index = self._tasks.get(cast(asyncio.Task[Any], owner), index)
             self._cancel_ready.append((index, len(self._cancel_ready), handle))
@@ -242,7 +255,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         # Exact rational ceiling: float round-trips can emit a deadline that
         # precedes the requested one by a fraction of a microsecond.
         deadline_us = math.ceil(Fraction(when) * 1_000_000)
-        now_us = (self.ctx.current_utc_datetime - _EPOCH) // _MICROSECOND
+        now_us = (self._now() - _EPOCH) // _MICROSECOND
         if when <= self.time() or deadline_us <= now_us:
             self._ready.append(handle)
         else:
@@ -284,7 +297,10 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             entry[1].remove(future)
             if not entry[1]:
                 self._waits.pop(id(durable), None)
-                self._observers.pop(id(durable)).detach()
+                # Dispatch close may already have detached and cleared observers.
+                observer = self._observers.pop(id(durable), None)
+                if observer is not None:
+                    observer.detach()
 
     def _complete_wait(self, durable: task.Task[Any]) -> None:
         entry = self._waits.get(id(durable))
@@ -473,24 +489,43 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             self._tasks.clear()
             self._asyncgens.clear()
 
-    def run_in_executor(self, executor: Any, func: Any, *args: Any) -> asyncio.Future[Any]:
-        raise RuntimeError("Threads/executors are unsupported in orchestrators; use an activity.")
 
-    def call_soon_threadsafe(self, callback: Any, *args: Any, context: Any = None) -> asyncio.Handle:
-        raise RuntimeError("Cross-thread scheduling is unsupported in orchestrators; use an activity.")
+_IO_HINT = "External I/O is unsupported in orchestrators; move it to an ordinary activity."
+_THREAD_HINT = "Threads/executors are unsupported in orchestrators; use an activity."
+_LOOP_HINT = "The worker owns the durable loop's lifecycle and configuration."
 
-    async def _unsupported_io(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("External I/O is unsupported in orchestrators; move it to an ordinary activity.")
+# Every asyncio loop API this loop does not implement fails with one actionable
+# error instead of AbstractEventLoop's bare NotImplementedError.
+_UNSUPPORTED_LOOP_APIS: dict[str, str] = {
+    **dict.fromkeys((
+        "create_connection", "create_server", "create_datagram_endpoint",
+        "create_unix_connection", "create_unix_server", "connect_accepted_socket",
+        "connect_read_pipe", "connect_write_pipe", "start_tls", "sendfile",
+        "getaddrinfo", "getnameinfo", "sock_connect", "sock_accept", "sock_recv",
+        "sock_recv_into", "sock_recvfrom", "sock_recvfrom_into", "sock_sendall",
+        "sock_sendto", "sock_sendfile", "subprocess_exec", "subprocess_shell",
+        "add_reader", "remove_reader", "add_writer", "remove_writer",
+        "add_signal_handler", "remove_signal_handler",
+    ), _IO_HINT),
+    **dict.fromkeys((
+        "run_in_executor", "set_default_executor", "shutdown_default_executor",
+        "call_soon_threadsafe",
+    ), _THREAD_HINT),
+    **dict.fromkeys((
+        "run_forever", "run_until_complete", "stop", "set_task_factory",
+        "set_exception_handler",
+    ), _LOOP_HINT),
+}
 
-    create_connection = _unsupported_io
-    create_server = _unsupported_io
-    create_datagram_endpoint = _unsupported_io
-    connect_read_pipe = _unsupported_io
-    connect_write_pipe = _unsupported_io
-    getaddrinfo = _unsupported_io
-    getnameinfo = _unsupported_io
-    sock_connect = _unsupported_io
-    sock_recv = _unsupported_io
-    sock_sendall = _unsupported_io
-    subprocess_exec = _unsupported_io
-    subprocess_shell = _unsupported_io
+
+def _unsupported_loop_api(name: str, hint: str) -> Callable[..., Any]:
+    def unsupported(self: DurableEventLoop, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"loop.{name}() is not supported in durable orchestrators. {hint}")
+
+    unsupported.__name__ = unsupported.__qualname__ = name
+    return unsupported
+
+
+for _name, _hint in _UNSUPPORTED_LOOP_APIS.items():
+    if _name not in vars(DurableEventLoop):
+        setattr(DurableEventLoop, _name, _unsupported_loop_api(_name, _hint))
