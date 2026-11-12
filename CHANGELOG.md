@@ -14,7 +14,8 @@ orchestration time, preventing retries from expiring solely because history is
 replayed later. Retry calculations also accept timezone-aware timestamps.
 Histories that recorded timeout failures based on wall-clock time can replay
 differently; drain affected instances on the previous SDK before upgrading.
-- Type discovery now recognizes `dict` / `Mapping` and `tuple` containers wrapping
+- Type discovery now recognizes `dict` / `Mapping` / `MutableMapping`,
+`tuple`, and `list` / `Sequence` / `MutableSequence` containers wrapping
 reconstructable types (such as dataclasses and `from_json()`-capable types) via
 `JsonDataConverter.can_reconstruct()`. Inbound activity and orchestrator inputs as
 well as inferred activity return types annotated with these containers are now
@@ -23,8 +24,9 @@ automatically reconstructed into typed model instances without requiring an expl
 
 > [!WARNING]
 > **Replay-breaking bug fix:** Container annotations involving `dict`, `Mapping`,
-> or `tuple` wrapping reconstructable types, including nested annotations, now
-> reconstruct orchestration inputs and inferred activity results by default.
+> `MutableMapping`, `list`, `Sequence`, `MutableSequence`, or `tuple` wrapping
+> reconstructable types, including nested annotations, now reconstruct
+> orchestration inputs and inferred activity results by default.
 > Existing instances that relied on raw dictionaries or lists can change behavior
 > or fail replay with `NonDeterminismError`.
 >

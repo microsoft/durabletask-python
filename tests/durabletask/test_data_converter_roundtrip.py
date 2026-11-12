@@ -19,6 +19,7 @@ user must supply a ``to_json`` hook or a custom ``DataConverter``.
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping, MutableSequence
 import enum
 import typing
 from dataclasses import dataclass, field
@@ -371,10 +372,26 @@ def test_list_of_dataclasses(conv):
     assert result == value
 
 
+def test_mutable_sequence_of_dataclasses(conv):
+    value = [Address("a", "b"), Address("c", "d")]
+    result = _round_trip(conv, value, MutableSequence[Address])
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(item, Address) for item in result)
+    assert result == value
+
+
 def test_dict_of_dataclasses(conv):
     value = {"home": Address("a", "b")}
     result = _round_trip(conv, value, dict[str, Address])
     assert isinstance(result["home"], Address)
+
+
+def test_mutable_mapping_of_dataclasses(conv):
+    value = {"home": Address("a", "b")}
+    result = _round_trip(conv, value, MutableMapping[str, Address])
+    assert isinstance(result["home"], Address)
+    assert result == value
 
 
 def test_dict_of_optional_dataclasses(conv):

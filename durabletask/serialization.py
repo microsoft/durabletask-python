@@ -42,7 +42,7 @@ import re
 import types
 import typing
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
 from types import SimpleNamespace
 from typing import Any, cast
@@ -268,9 +268,9 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
     """:class:`JsonDataConverter`'s reconstruction policy.
 
     Recognizes dataclasses and ``from_json()``-capable types, plus ``Optional``,
-    ``list`` / ``Sequence``, ``dict`` / ``Mapping``, and ``tuple`` hints wrapping
-    them; builtins and unknown annotations are excluded. When set support is
-    enabled on the converter (via ``enable_generic_sets=True``), ``set`` /
+    ``list`` / ``Sequence`` / ``MutableSequence``, ``dict`` / ``Mapping`` /
+    ``MutableMapping``, and ``tuple`` hints wrapping them; builtins and unknown
+    annotations are excluded. When set support is enabled on the converter (via ``enable_generic_sets=True``), ``set`` /
     ``frozenset`` / ``Set`` containers with supported element types are also
     recognized. Recurses through ``converter.can_reconstruct`` (not itself) so a
     :class:`JsonDataConverter` subclass that overrides ``can_reconstruct``
@@ -283,7 +283,7 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             return any(
                 converter.can_reconstruct(a) for a in args if a is not type(None)
             )
-        if origin in (list, Sequence):
+        if origin in (list, Sequence, MutableSequence):
             return any(converter.can_reconstruct(a) for a in args)
         if origin in (set, frozenset, AbstractSet, typing.AbstractSet):
             if not getattr(converter, "enable_generic_sets", False):
@@ -291,7 +291,7 @@ def _can_reconstruct(converter: DataConverter, target_type: Any) -> bool:
             if not args:
                 return True
             return _is_supported_set_element(converter, args[0])
-        if origin in (dict, Mapping):
+        if origin in (dict, Mapping, MutableMapping):
             return len(args) == 2 and converter.can_reconstruct(args[1])
         if origin is tuple:
             if not args:
@@ -611,7 +611,7 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
         if len(non_none) == 1:
             return _coerce_to_type(value, non_none[0], converter)
         return value
-    if origin in (list, Sequence) and isinstance(value, list):
+    if origin in (list, Sequence, MutableSequence) and isinstance(value, list):
         elem_type = args[0] if args else None
         return [_coerce_to_type(item, elem_type, converter) for item in cast(list[Any], value)]
     if origin in (set, frozenset, AbstractSet, typing.AbstractSet) and isinstance(
@@ -627,7 +627,7 @@ def _coerce_generic(value: Any, expected_type: Any, origin: Any,
         if origin is frozenset:
             return frozenset(coerced)
         return set(coerced)
-    if origin in (dict, Mapping) and isinstance(value, dict):
+    if origin in (dict, Mapping, MutableMapping) and isinstance(value, dict):
         # JSON object keys are always strings, so only the values can carry a
         # reconstructable type. Keys are passed through unchanged.
         mapping = cast("dict[Any, Any]", value)

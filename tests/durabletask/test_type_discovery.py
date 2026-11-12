@@ -6,7 +6,7 @@
 import inspect
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping, MutableSequence
 from dataclasses import dataclass
 from typing import Any, Optional, get_origin
 from unittest.mock import patch
@@ -69,14 +69,18 @@ class TestIsReconstructable:
 
     def test_list_of_dataclass_is_reconstructable(self):
         assert self.conv.can_reconstruct(list[Order]) is True
+        assert self.conv.can_reconstruct(MutableSequence[Order]) is True
 
     def test_list_of_builtin_is_not_reconstructable(self):
         assert self.conv.can_reconstruct(list[int]) is False
+        assert self.conv.can_reconstruct(MutableSequence[int]) is False
 
     def test_dict_and_mapping_of_dataclass_is_reconstructable(self):
         assert self.conv.can_reconstruct(dict[str, Order]) is True
         assert self.conv.can_reconstruct(Mapping[str, Order]) is True
+        assert self.conv.can_reconstruct(MutableMapping[str, Order]) is True
         assert self.conv.can_reconstruct(dict[str, int]) is False
+        assert self.conv.can_reconstruct(MutableMapping[str, int]) is False
 
     def test_tuple_of_dataclass_is_reconstructable(self):
         assert self.conv.can_reconstruct(tuple[Order, ...]) is True
@@ -110,11 +114,13 @@ class TestCustomConverterReconstructable:
         # The base Optional/list recursion goes through ``self``, so the override
         # is consulted for the element type.
         assert conv.can_reconstruct(list[Widget]) is True
+        assert conv.can_reconstruct(MutableSequence[Widget]) is True
         assert conv.can_reconstruct(Optional[Widget]) is True
         # Builtins remain excluded.
         assert conv.can_reconstruct(int) is False
         # The override is also consulted for elements inside dict and tuple hints.
         assert conv.can_reconstruct(dict[str, Widget]) is True
+        assert conv.can_reconstruct(MutableMapping[str, Widget]) is True
         assert conv.can_reconstruct(tuple[Widget, ...]) is True
         assert conv.can_reconstruct(tuple[Widget, int]) is True
 
@@ -507,6 +513,47 @@ def test_activity_input_coerced_for_tuple_of_dataclass():
 
     orders = seen["orders"]
     assert isinstance(orders, tuple)
+    assert len(orders) == 2
+    assert isinstance(orders[0], Order)
+    assert isinstance(orders[1], Order)
+    assert orders[0].item == "widget"
+    assert orders[1].quantity == 7
+    assert json.loads(result) == 2
+
+
+def test_activity_input_coerced_for_mutable_mapping_of_dataclass():
+    seen: dict[str, Any] = {}
+
+    def handle(ctx: task.ActivityContext, orders: MutableMapping[str, Order]):
+        seen["orders"] = orders
+        return sum(o.quantity for o in orders.values())
+
+    executor, name = _activity_executor(handle)
+    payload = json.dumps({"o1": {"item": "widget", "quantity": 3}, "o2": {"item": "gadget", "quantity": 7}})
+    result = executor.execute("orch1", name, 1, payload)
+
+    orders = seen["orders"]
+    assert isinstance(orders, MutableMapping)
+    assert isinstance(orders["o1"], Order)
+    assert isinstance(orders["o2"], Order)
+    assert orders["o1"].item == "widget"
+    assert orders["o2"].quantity == 7
+    assert json.loads(result) == 10
+
+
+def test_activity_input_coerced_for_mutable_sequence_of_dataclass():
+    seen: dict[str, Any] = {}
+
+    def handle(ctx: task.ActivityContext, orders: MutableSequence[Order]):
+        seen["orders"] = orders
+        return len(orders)
+
+    executor, name = _activity_executor(handle)
+    payload = json.dumps([{"item": "widget", "quantity": 3}, {"item": "gadget", "quantity": 7}])
+    result = executor.execute("orch1", name, 1, payload)
+
+    orders = seen["orders"]
+    assert isinstance(orders, MutableSequence)
     assert len(orders) == 2
     assert isinstance(orders[0], Order)
     assert isinstance(orders[1], Order)
