@@ -500,7 +500,7 @@ def test_timer_rounding_never_precedes_loop_deadline(delay: float) -> None:
 def test_call_at_deadline_is_exact_microsecond_ceiling(offset: float) -> None:
     requested: list[float] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         loop = asyncio.get_running_loop()
         when = loop.time() + offset
         requested.append(when)
@@ -523,7 +523,7 @@ def test_call_at_deadline_is_exact_microsecond_ceiling(offset: float) -> None:
 
 
 def test_call_at_known_float_deadline_rounds_up_to_next_microsecond() -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         loop = asyncio.get_running_loop()
         fired = loop.create_future()
         loop.call_at(loop.time() + 0.000003, fired.set_result, None)
@@ -535,7 +535,7 @@ def test_call_at_known_float_deadline_rounds_up_to_next_microsecond() -> None:
 
 @pytest.mark.parametrize("offset", [0.0, -1.0])
 def test_call_at_due_deadline_runs_without_durable_timer(offset: float) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         loop = asyncio.get_running_loop()
         fired = loop.create_future()
         loop.call_at(loop.time() + offset, fired.set_result, "fired")
@@ -547,7 +547,7 @@ def test_call_at_due_deadline_runs_without_durable_timer(offset: float) -> None:
 
 @pytest.mark.parametrize("when", [1e20, float(sys.float_info.max)])
 def test_call_at_out_of_range_deadline_fails(when: float) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         asyncio.get_running_loop().call_at(when, lambda: None)
 
     complete = _completion(_execute(orchestrator, [], _start()))
@@ -660,7 +660,7 @@ def test_task_group_cancellation_durable_cleanup_has_stable_action_order() -> No
 
 
 async def _shared_future_cancellation_orchestrator(
-    ctx: task.OrchestrationContext, _: Any, *, direct_future: bool, gather_wait: bool,
+    ctx: task.AsyncOrchestrationContext, _: Any, *, direct_future: bool, gather_wait: bool,
 ) -> str:
     loop = asyncio.get_running_loop()
     futures: list[asyncio.Future[None]] = [
@@ -668,7 +668,7 @@ async def _shared_future_cancellation_orchestrator(
 
     def on_cancelled(index: int, future: asyncio.Future[None]) -> None:
         assert future.cancelled()
-        ctx.call_activity(f"cancelled-{index}")
+        ctx.as_task_context().call_activity(f"cancelled-{index}")
 
     for index, future in enumerate(futures):
         future.add_done_callback(partial(on_cancelled, index))
@@ -1083,7 +1083,7 @@ def test_cleanup_keeps_process_control_over_other_control_flow(
         errors.reverse()
     cleaned: list[int] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def branch(index: int) -> None:
             try:
                 await ctx.wait_for_external_event(f"never-{index}")
@@ -1106,7 +1106,7 @@ def test_cleanup_closes_async_generators_started_during_generator_cleanup(
         count: int, caplog: pytest.LogCaptureFixture) -> None:
     closed: list[int] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def resource(index: int) -> AsyncIterator[int]:
             try:
                 yield 1
@@ -1148,7 +1148,7 @@ class Capture(logging.Handler):
 
 logging.getLogger().addHandler(Capture())
 
-async def orchestrator(ctx: task.OrchestrationContext, _):
+async def orchestrator(ctx: task.AsyncOrchestrationContext, _):
     async def resource():
         try:
             yield 1
@@ -1191,7 +1191,7 @@ assert any("Async cleanup did not quiesce" in message for message in warnings), 
 def test_exhausted_async_generators_are_not_retained_until_dispatch_end() -> None:
     references: list[ReferenceType[Any]] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def values() -> AsyncIterator[int]:
             yield 1
 
@@ -1217,7 +1217,7 @@ def test_entity_lock_disposal_during_teardown_does_not_schedule_releases(
     first = entities.EntityInstanceId("counter", "a")
     second = entities.EntityInstanceId("counter", "b")
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> Any:
         with await ctx.lock_entities([first, second]):
             if suspend == "activity":
                 return await ctx.call_activity("inside-lock")
