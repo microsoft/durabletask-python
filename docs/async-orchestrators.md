@@ -35,6 +35,45 @@ batch before scheduling its next operation.
 > when the workflow finishes. Keep durable compensation in normal orchestration
 > control flow; see [dispatch teardown](#dispatch-teardown-is-not-workflow-cancellation).
 
+## Motivation and scope
+
+Generator orchestrators cannot call `async def` helpers or use ordinary
+asyncio composition, so async-only libraries need adapters or rewrites before
+they can participate in a durable workflow
+([#294](https://github.com/microsoft/durabletask-python/issues/294)).
+
+Goals:
+
+- Let orchestrators be written with `async def` and `await`, sharing the
+existing replay engine, history format, and provider integrations.
+- Support ordinary deterministic asyncio composition, such as
+`asyncio.gather`, `asyncio.TaskGroup`, `asyncio.timeout`, and
+`asyncio.wait_for`, with durable timers as the clock.
+- Allow async helpers and libraries to compose durable operations, as long as
+they use only supported asyncio APIs.
+- Keep generator orchestrators and their recorded histories unchanged.
+
+Non-goals:
+
+- A general-purpose asyncio event loop. Real network, storage, or subprocess
+I/O, threads, and executors remain activity work.
+- Set-based composition such as `asyncio.wait` and `asyncio.as_completed`,
+whose ordering is not replay-stable.
+- Automatic recording of arbitrary `await` results or local activities.
+
+Alternatives considered:
+
+- **A minimal await-to-generator driver without an event loop.** Driving the
+coroutine directly would support sequential awaits, but not asyncio tasks,
+task groups, timeouts, or libraries that call `asyncio.get_running_loop()`.
+- **Combinator-only APIs.** Extending `task.when_all` / `task.when_any` keeps the
+generator model but still excludes async-only code and standard asyncio
+composition.
+
+A deterministic, dispatch-local event loop supports the standard composition
+primitives while deriving its clock and task ordering from durable history,
+so replays reconstruct the same local scheduling decisions.
+
 ## Cold operations and reusable handles
 
 An `async def` orchestrator automatically receives an
@@ -58,9 +97,9 @@ One-way commands `ctx.send_event(...)`, `ctx.signal_entity(...)`, and
 Use these cold coroutines with `asyncio.create_task`, `TaskGroup.create_task`,
 and ordered `gather`. Constructing a coroutine does not validate the operation,
 allocate action IDs, serialize input, or consume buffered events. Cancelling its local task before
-its first step starts no durable operation. Mutable inputs are read when the
-coroutine executes, and relative timer delays start from that execution point.
-Keep or copy inputs accordingly.
+its first step starts no durable operation. Operation inputs are not copied:
+mutations made before the coroutine's first step are observed, and relative
+timer delays start from that execution point. Keep or copy inputs accordingly.
 
 Cold coroutines are single-use, like ordinary Python coroutines. For an
 explicitly started operation with multiple independent waiters, retain its
@@ -79,11 +118,20 @@ Cancelling either borrower does not cancel the underlying operation. Direct
 an awaitable durable handle is not a coroutine. Do not retry that expression
 assuming the eager operation was rolled back.
 
-Async function detection also recognizes `functools.wraps`, partials, and
-callable instances; existing registration naming requirements still apply.
-Use `functools.wraps` when a synchronous decorator wraps an async orchestrator;
-an unmarked synchronous wrapper returning a coroutine is rejected because it
-would have received the generator context.
+The worker classifies each orchestrator once, when it is registered:
+
+1. A callable that is itself a coroutine function (including partials, bound
+methods, and callable instances whose `__call__` is `async def`) is async.
+2. A callable that is itself a generator function is a generator orchestrator.
+3. Otherwise, a `functools.wraps` wrapper is classified by the function it
+wraps, so a synchronous decorator around an async orchestrator remains async.
+4. Any other callable is synchronous.
+
+Async orchestrators receive an `AsyncOrchestrationContext` and must return a
+coroutine; synchronous orchestrators receive `OrchestrationContext`. An
+unmarked synchronous wrapper returning a coroutine is rejected because it would
+have received the generator context. Cyclic `__wrapped__` chains are rejected at
+registration. Existing registration naming requirements still apply.
 
 ## Azure Functions compatibility
 
@@ -158,14 +206,18 @@ require history events, not elapsed time in the worker.
 > raise errors, but the SDK cannot detect every unsafe operation, especially
 > synchronous side effects or already-completed foreign awaitables.
 
-`asyncio.wait` and `as_completed` are **not supported deterministic composition
-APIs**. `wait` returns unordered sets; `as_completed` converts inputs to a set
-and can create tasks in hash-dependent order. Pre-completed/tied tasks and
-differences between Python implementations can change ordering even when a
-particular example executes successfully. Do not iterate sets to schedule
-durable actions. Use ordered `gather`, task groups, or durable `when_any` and
-explicitly handle the selected durable task. Other asyncio APIs are not
-implicitly supported because they happen to execute.
+Other asyncio APIs are not implicitly supported because they happen to execute.
+Do not iterate sets to schedule durable actions.
+
+> [!WARNING]
+> `asyncio.wait` and `asyncio.as_completed` are **not supported** in async
+> orchestrators. They are not rejected at run time, but `wait` returns
+> unordered sets and `as_completed` converts its inputs to a set and can create
+> tasks in hash-dependent order. Pre-completed or tied tasks and differences
+> between Python implementations can change durable action order on replay,
+> even when a particular example executes successfully. Use ordered `gather`,
+> task groups, or durable `when_any` and explicitly handle the selected durable
+> task.
 
 ## Failures, timeouts, and cancellation
 
@@ -231,15 +283,20 @@ to follow the existing worker recovery policy.
 
 ## Dispatch teardown is not workflow cancellation
 
+> [!WARNING]
+> Dispatch teardown is not workflow cancellation. Nested `finally` blocks and
+> async context-manager exits may run at **every dispatch boundary**, including
+> dispatches that simply suspend while waiting for durable work, long before
+> the workflow completes.
+
 Every dispatch reconstructs the coroutine and its local tasks from history.
 After the response and entity-release obligations are snapshotted, teardown
 cancels remaining local tasks, drains cooperative cleanup, closes tracked async
 generators, and disposes the loop. This includes dispatches that suspend,
 continue as new, encounter a history failure, or reject a version.
 
-Nested `finally` blocks and async context-manager exits may run at **every
-dispatch boundary**, before workflow completion. Local cleanup can await ready
-work such as `sleep(0)`; it must not wait for new durable or external work.
+Local cleanup can await ready work such as `sleep(0)`; it must not wait for new
+durable or external work.
 Scheduling/awaiting durable work during async teardown raises an actionable
 error. Teardown must cooperate with cancellation; a non-quiescent cleanup
 queue is bounded and reported, not allowed to run indefinitely.
@@ -259,6 +316,15 @@ Async-generator *helpers* are closed; async-generator *orchestrators*
 (`async def` containing `yield`) are rejected.
 
 ## Replay and framework adapters
+
+> [!WARNING]
+> Recorded histories are coupled to the Python minor version. Python 3.11 and
+> 3.12+ schedule coroutine operands of `asyncio.wait_for()` differently, which
+> can change durable action order inside concurrent branches, and the async
+> context does not normalize arbitrary standard-library scheduling. Keep the
+> Python minor version (and dependencies) fixed for in-flight instances; drain
+> or version affected instances before upgrading. See
+> [#337](https://github.com/microsoft/durabletask-python/issues/337).
 
 Ordinary async helpers rerun during replay. Their return values are not
 automatically checkpointed. There are no local/virtual activities and no
@@ -291,10 +357,8 @@ construction order is not execution order.
 Supporting several Python versions does not guarantee recorded-history
 portability between them. Pin the runtime and dependencies for active
 instances and validate histories before upgrades. All workers processing an
-instance must use that pinned environment. In particular, Python 3.11
-and 3.12+ schedule coroutine operands of `asyncio.wait_for()` differently, which
-can change durable action order inside concurrent branches. The async context
-does not normalize arbitrary standard-library scheduling.
+instance must use that pinned environment; see the Python version warning
+above.
 
 The Functions `orchestrator_generator_wrapper` helper supports direct durable
 awaits in synchronous and async mock-based unit tests; it does not simulate the
