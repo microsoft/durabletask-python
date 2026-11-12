@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 from collections.abc import Coroutine, Generator
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, get_type_hints
 
@@ -33,7 +34,53 @@ def test_additive_public_api_has_no_new_abstract_requirements() -> None:
 
 def test_public_async_context_annotations_resolve_at_runtime() -> None:
     assert get_type_hints(AsyncOrchestrationContext.call_activity)["return"] is Any
+    assert get_type_hints(AsyncOrchestrationContext.call_sub_orchestrator)["return"] is Any
     assert get_type_hints(AsyncOrchestrationContext.as_task_context)["return"] is task.OrchestrationContext
+
+
+@pytest.mark.parametrize("child_style", ["async", "generator", "name"])
+@pytest.mark.parametrize("reconstruction", ["omitted", "none", "explicit"])
+def test_sub_orchestration_result_requires_explicit_reconstruction_type(
+    child_style: str, reconstruction: str,
+) -> None:
+    @dataclass
+    class Result:
+        value: int
+
+    async def async_child(ctx: task.AsyncOrchestrationContext, value: int) -> Result:
+        return Result(value)
+
+    def generator_child(ctx: task.OrchestrationContext, value: int) -> Generator[task.Task[Any], Any, Result]:
+        yield ctx.call_activity("work")
+        return Result(value)
+
+    child = {"async": async_child, "generator": generator_child, "name": "child"}[child_style]
+    child_name = child if isinstance(child, str) else task.get_name(child)
+
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> int:
+        if reconstruction == "explicit":
+            result = await ctx.call_sub_orchestrator(child, input=42, return_type=Result)
+            assert isinstance(result, Result)
+            return result.value
+        raw: dict[str, int]
+        if reconstruction == "none":
+            raw = await ctx.call_sub_orchestrator(child, input=42, return_type=None)
+        else:
+            raw = await ctx.call_sub_orchestrator(child, input=42)
+        assert isinstance(raw, dict)
+        return raw["value"]
+
+    start = _start()
+    initial = _execute(orchestrator, [], start)
+    assert len(initial.actions) == 1
+    scheduled = initial.actions[0]
+    assert scheduled.createSubOrchestration.name == child_name
+    history = start + [helpers.new_sub_orchestration_created_event(
+        scheduled.id, child_name, scheduled.createSubOrchestration.instanceId)]
+    complete = _completion(_execute(orchestrator, history, [
+        helpers.new_sub_orchestration_completed_event(scheduled.id, '{"value": 42}')]))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+    assert json.loads(complete.result.value) == 42
 
 
 @pytest.mark.parametrize("cancel", [False, True])

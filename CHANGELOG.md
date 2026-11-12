@@ -13,6 +13,10 @@ FIXED
 when an intermediate async wrapper decorates a synchronous function, including
 callable instances and partials. Cyclic wrapper chains fail instead of hanging
 worker dispatch.
+- Async sub-orchestration calls without an explicit `return_type` now expose
+`Any` rather than promising the child function's annotated result type.
+Custom result reconstruction still requires `return_type`; runtime decoding is
+unchanged.
 - Async dispatch cleanup no longer hangs when async-generator finalizers
 continually start successor generators; exceeding the cleanup budget is reported
 without changing the snapshotted response.

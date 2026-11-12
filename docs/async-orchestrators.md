@@ -128,6 +128,12 @@ where supported by the provider. Functions compatibility contexts also provide
 async `task_all` / `task_any`. Generator and coroutine parents/children may call
 one another through durable sub-orchestrations.
 
+For sub-orchestration results, pass `return_type=Result` to reconstruct a custom
+result type. Unlike activity calls, a child orchestrator's return annotation is
+not used for result reconstruction, even when passing the child function rather
+than its name. Without an explicit `return_type`, the async API returns `Any`;
+with the default JSON converter, a plain JSON object remains a dictionary.
+
 The dispatch-local loop supports FIFO ready callbacks, local futures and tasks,
 `asyncio.create_task`, `asyncio.gather`, `asyncio.sleep`, `asyncio.TaskGroup`,
 and `asyncio.timeout` / `timeout_at`.

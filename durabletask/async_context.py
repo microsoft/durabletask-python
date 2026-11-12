@@ -157,7 +157,7 @@ class AsyncOrchestrationContext:
         retry_policy: task.RetryPolicy | None = ...,
         version: str | None = ...,
         return_type: None = ...,
-    ) -> TOutput:
+    ) -> Any:
         ...
 
     @overload
@@ -178,7 +178,12 @@ class AsyncOrchestrationContext:
         version: str | None = None,
         return_type: type | None = None,
     ) -> Any:
-        """Start and await a sub-orchestration when this coroutine executes."""
+        """Start and await a sub-orchestration when this coroutine executes.
+
+        Supply ``return_type`` to reconstruct a custom result type. A callable's
+        return annotation is not used to reconstruct sub-orchestration results;
+        without an explicit type, the result is typed as ``Any``.
+        """
         return await self._context.call_sub_orchestrator(
             orchestrator, input=input, instance_id=instance_id,
             retry_policy=retry_policy, version=version, return_type=return_type)
