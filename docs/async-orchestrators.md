@@ -302,8 +302,17 @@ continue as new, encounter a history failure, or reject a version.
 Local cleanup can await ready work such as `sleep(0)`; it must not wait for new
 durable or external work.
 Scheduling/awaiting durable work during async teardown raises an actionable
-error. Teardown must cooperate with cancellation; a non-quiescent cleanup
-queue is bounded and reported, not allowed to run indefinitely.
+error. Teardown must cooperate with cancellation.
+
+> [!WARNING]
+> Async teardown is capped at about 10,000 event-loop steps per cleanup phase
+> (more for dispatches with many tasks or async generators). Cleanup that is
+> still running when the cap is reached is truncated: remaining callbacks are
+> dropped, unfinished coroutines are closed, and a warning is logged. The
+> response decided before teardown is unchanged. Each async-generator sweep's
+> budget is fixed at sweep entry; tasks or generators created during that sweep
+> cannot increase it. The cap bounds cooperative scheduling steps, not
+> wall-clock time or code that never yields.
 
 Ordinary teardown failures (including `CancelledError`) are logged without
 changing the decided response or skipping other cooperative finalizers.
@@ -311,13 +320,20 @@ Unexpected non-cancellation `BaseException`
 exits retain the existing terminal-failure/recovery policy; an existing primary
 failure is preserved. Teardown status/actions do not replace the response.
 Held entity-release obligations are captured before teardown for terminal
-payload/failure handling.
+payload/failure handling. Exiting an entity critical section during teardown
+does not schedule additional release messages, and a `SystemExit` or
+`KeyboardInterrupt` raised by any finalizer takes precedence over other
+cleanup failures.
 
 Keep workflow cleanup that must be durable in **normal orchestration control
 flow**, before return or continue-as-new, not solely in a dispatch finalizer.
 No cleanup is guaranteed after process crash or forced termination.
 Async-generator *helpers* are closed; async-generator *orchestrators*
-(`async def` containing `yield`) are rejected.
+(`async def` containing `yield`) are rejected. The dispatch owns every async
+generator it starts until teardown, including generators first iterated by
+another generator's cleanup. To run a generator's cleanup earlier, close it
+explicitly with `await gen.aclose()` or iterate it inside
+`contextlib.aclosing(...)`.
 
 ## Replay and framework adapters
 
