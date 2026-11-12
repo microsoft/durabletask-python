@@ -174,12 +174,13 @@ def purchase_order_workflow(ctx: task.OrchestrationContext, order: Order):
     return f"Approved by '{approval_details.approver}'"
 ```
 
-As an aside, you'll also notice that the example orchestration above works with custom business
-objects. Custom classes, data classes, and named tuples are serialized to plain JSON automatically.
-To reconstruct the original type on the receiving side, supply the type — for example via the
-`data_type` argument to `wait_for_external_event` (shown above), the `return_type` argument to
-`call_activity` / `call_sub_orchestrator` / `call_entity`, or by annotating the consuming function's
-input parameter. Without a type, the payload is returned as plain JSON (a `dict` or `list`).
+The example also works with custom business objects. Dataclasses, named tuples, and objects with
+`to_json()` hooks can be serialized as plain JSON. To reconstruct a supported type on the receiving
+side, supply the type — for example via the `data_type` argument to `wait_for_external_event`
+(shown above), the `return_type` argument to `call_activity` / `call_sub_orchestrator` /
+`call_entity`, or a supported annotation on the consuming function's input parameter. Without a
+type, the payload is normally returned as plain JSON (a `dict` or `list`). See
+[serialization and replay](serialization.md) for supported types and compatibility guidance.
 
 See the full [human interaction sample](../examples/human_interaction.py).
 
