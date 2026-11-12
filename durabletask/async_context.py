@@ -230,6 +230,8 @@ class AsyncOrchestrationContext:
         coroutine is constructed. Cancellation removes uncommitted timer work
         where possible; it cannot retract a timer already present in history.
         """
+        if isinstance(fire_at, timedelta) and not math.isfinite(fire_at.total_seconds()):
+            raise ValueError("Timer delays must be finite.")
         timer = self._context.create_timer(fire_at)
         try:
             await timer

@@ -26,10 +26,6 @@ abandoned subscriptions so they cannot consume later events.
 
 FIXED
 
-- Async sub-orchestration calls without an explicit `return_type` now expose
-`Any` rather than promising the child function's annotated result type.
-Custom result reconstruction still requires `return_type`; runtime decoding is
-unchanged.
 - Activity and sub-orchestration `retry_timeout` decisions now use replay-safe
 orchestration time, preventing retries from expiring solely because history is
 replayed later. Retry calculations also accept timezone-aware timestamps.
