@@ -350,6 +350,7 @@ class _Registry:
 
     def __init__(self):
         self.orchestrators = {}
+        self._orchestrator_kinds: dict[str, tuple[task.Orchestrator[Any, Any], bool]] = {}
         self.activities = {}
         self.entities = {}
 
@@ -367,10 +368,19 @@ class _Registry:
         if name in self.orchestrators:
             raise ValueError(f"A '{name}' orchestrator already exists.")
 
+        # Classify once so wrapper problems surface at registration, not dispatch.
+        is_async = shared.is_async_callable(fn)
         self.orchestrators[name] = fn
+        self._orchestrator_kinds[name] = (fn, is_async)
 
     def get_orchestrator(self, name: str) -> task.Orchestrator[Any, Any] | None:
         return self.orchestrators.get(name)
+
+    def is_async_orchestrator(self, name: str, fn: task.Orchestrator[Any, Any]) -> bool:
+        kind = self._orchestrator_kinds.get(name)
+        if kind is not None and kind[0] is fn:
+            return kind[1]
+        return shared.is_async_callable(fn)
 
     def add_activity(self, fn: task.Activity[TInput, TOutput]) -> str:
         if fn is None:
@@ -2744,7 +2754,7 @@ class _OrchestrationExecutor:
                     input = self._data_converter.deserialize(
                         event.executionStarted.input.value, input_type)
 
-                is_async = shared.is_async_callable(fn)
+                is_async = self._registry.is_async_orchestrator(event.executionStarted.name, fn)
                 if is_async:
                     async_fn = cast(task.AsyncOrchestrator[Any, Any], fn)
                     result = async_fn(task.AsyncOrchestrationContext(ctx), input)
@@ -2761,7 +2771,11 @@ class _OrchestrationExecutor:
                 if is_async and not isinstance(result, CoroutineType):
                     if isinstance(result, GeneratorType):
                         result.close()
-                    raise TypeError("An async orchestrator must return a coroutine.")
+                    raise TypeError(
+                        "An async orchestrator must return a coroutine. A synchronous wrapper "
+                        "decorated with functools.wraps(async_fn) is classified as async; declare "
+                        "the wrapper with 'async def', or do not copy the async function's metadata."
+                    )
                 if isinstance(result, (GeneratorType, CoroutineType)):
                     # Both protocols suspend on durable tasks and finish with StopIteration.
                     ctx.run(cast(Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any], result))
