@@ -3,13 +3,14 @@
 
 """Exercise both workers over gRPC and optionally against the DTS emulator."""
 
-import json
 import asyncio
+import importlib.util
+import json
 import os
-import socket
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from datetime import timedelta
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -17,6 +18,30 @@ from durabletask import client, task, worker
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.testing import create_test_backend
+
+
+def _load_find_free_port() -> Callable[[], int]:
+    # pytest imports this hyphenated directory's modules top-level, so the shared
+    # core test helper cannot be imported through the `tests` package here.
+    path = Path(__file__).resolve().parents[1] / "durabletask" / "_port_utils.py"
+    spec = importlib.util.spec_from_file_location("_durabletask_test_port_utils", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return cast(Callable[[], int], module.find_free_port)
+
+
+find_free_port = _load_find_free_port()
+taskhub_name = os.getenv("TASKHUB", "default")
+endpoint = os.getenv("ENDPOINT", "http://localhost:8080")
+
+
+def _get_credential():
+    """Returns DefaultAzureCredential if endpoint is https, otherwise None (for emulator)."""
+    if endpoint.startswith("https://"):
+        from azure.identity import DefaultAzureCredential
+        return DefaultAzureCredential()
+    return None
 
 
 @pytest.mark.parametrize("transport", [
@@ -65,20 +90,21 @@ def test_mixed_orchestrators_over_grpc(transport: str, coroutine_parent: bool, b
 
     if transport == "dts":
         backend = None
-        host = os.environ["ENDPOINT"]
-        taskhub = os.environ["TASKHUB"]
+        host = endpoint
+        taskhub = taskhub_name
+        credential = _get_credential()
     else:
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
+        port = find_free_port()
         backend = create_test_backend(port=port)
-        host = f"localhost:{port}"
+        # The in-memory backend has no TLS; the http:// scheme selects an insecure channel.
+        host = f"http://localhost:{port}"
         taskhub = "test"
+        credential = None
     if transport != "core":
         w = DurableTaskSchedulerWorker(
-            host_address=host, secure_channel=False, taskhub=taskhub, token_credential=None)
+            host_address=host, secure_channel=True, taskhub=taskhub, token_credential=credential)
         c = DurableTaskSchedulerClient(
-            host_address=host, secure_channel=False, taskhub=taskhub, token_credential=None)
+            host_address=host, secure_channel=True, taskhub=taskhub, token_credential=credential)
     else:
         w = worker.TaskHubGrpcWorker(host_address=host)
         c = client.TaskHubGrpcClient(host_address=host)

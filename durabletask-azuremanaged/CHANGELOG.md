@@ -15,9 +15,8 @@ durable operations, and supported asyncio composition. Generator orchestrators
 retain their existing behavior. Event waits support owned cancellation and
 timeouts; remote operations are not cancelled by local waiter cancellation.
 See the [async contract](../docs/async-orchestrators.md) for dispatch cleanup
-and replay/upgrade precautions.
-Release the core async support first, then coordinate this provider's version
-and core dependency minimum in a dedicated release PR.
+and replay/upgrade precautions. Requires a `durabletask` release with async
+orchestrator support.
 
 FIXED
 
