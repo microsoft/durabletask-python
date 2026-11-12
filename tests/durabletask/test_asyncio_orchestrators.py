@@ -12,6 +12,7 @@ import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
+from decimal import ROUND_CEILING, Decimal, localcontext
 from functools import partial
 from typing import Any
 from weakref import ReferenceType, ref
@@ -397,6 +398,65 @@ def test_timer_rounding_never_precedes_loop_deadline(delay: float) -> None:
     deadline = actions[0].createTimer.fireAt.ToDatetime()
     from datetime import datetime
     assert (deadline - datetime(1970, 1, 1)).total_seconds() >= observed[0]
+
+
+@pytest.mark.parametrize("offset", [0.000003, 0.0000003, 0.000001, 0.0000013, 1.0, 2.25])
+def test_call_at_deadline_is_exact_microsecond_ceiling(offset: float) -> None:
+    requested: list[float] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        loop = asyncio.get_running_loop()
+        when = loop.time() + offset
+        requested.append(when)
+        fired = loop.create_future()
+        loop.call_at(when, fired.set_result, None)
+        await fired
+
+    actions = _execute(orchestrator, [], _start()).actions
+    assert len(actions) == 1
+    fire_at = actions[0].createTimer.fireAt
+    assert fire_at.nanos % 1000 == 0
+    emitted_us = fire_at.seconds * 1_000_000 + fire_at.nanos // 1000
+    # Decimal(float) is exact, so this oracle shares no float arithmetic with the loop.
+    with localcontext() as exact:
+        exact.prec = 400
+        requested_seconds = Decimal(requested[0])
+        oracle_us = int((requested_seconds * 1_000_000).to_integral_value(rounding=ROUND_CEILING))
+        assert emitted_us == oracle_us
+        assert Decimal(emitted_us) / 1_000_000 >= requested_seconds
+
+
+def test_call_at_known_float_deadline_rounds_up_to_next_microsecond() -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        loop = asyncio.get_running_loop()
+        fired = loop.create_future()
+        loop.call_at(loop.time() + 0.000003, fired.set_result, None)
+        await fired
+
+    actions = _execute(orchestrator, [], _start()).actions
+    assert actions[0].createTimer.fireAt.ToDatetime() == NOW + timedelta(microseconds=4)
+
+
+@pytest.mark.parametrize("offset", [0.0, -1.0])
+def test_call_at_due_deadline_runs_without_durable_timer(offset: float) -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+        loop = asyncio.get_running_loop()
+        fired = loop.create_future()
+        loop.call_at(loop.time() + offset, fired.set_result, "fired")
+        return await fired
+
+    result = _execute(orchestrator, [], _start())
+    assert json.loads(_completion(result).result.value) == "fired"
+
+
+@pytest.mark.parametrize("when", [1e20, float(sys.float_info.max)])
+def test_call_at_out_of_range_deadline_fails(when: float) -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        asyncio.get_running_loop().call_at(when, lambda: None)
+
+    complete = _completion(_execute(orchestrator, [], _start()))
+    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+    assert complete.failureDetails.errorType.endswith("OverflowError")
 
 
 def test_async_sleep_uses_shared_long_timer_chunking() -> None:

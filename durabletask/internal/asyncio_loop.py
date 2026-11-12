@@ -12,11 +12,15 @@ import logging
 from collections import deque
 from collections.abc import Callable, Coroutine, Generator
 from datetime import datetime, timedelta
+from fractions import Fraction
 from typing import Any, TypeVar, cast
 
 from durabletask import task
 
 T = TypeVar("T")
+
+_EPOCH = datetime(1970, 1, 1)
+_MICROSECOND = timedelta(microseconds=1)
 
 
 class _CompletionObserver(task.CompositeTask[None]):
@@ -133,7 +137,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
 
     def time(self) -> float:
         # A fixed UTC epoch avoids local-time and platform timestamp differences.
-        return (self.ctx.current_utc_datetime - datetime(1970, 1, 1)).total_seconds()
+        return (self.ctx.current_utc_datetime - _EPOCH).total_seconds()
 
     def get_debug(self) -> bool:
         return False
@@ -205,14 +209,16 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         if not math.isfinite(when):
             raise ValueError("Durable deadlines must be finite.")
         handle = _DurableTimerHandle(when, callback, args, self, context)
-        if when <= self.time():
+        # Exact rational ceiling: float round-trips can emit a deadline that
+        # precedes the requested one by a fraction of a microsecond.
+        deadline_us = math.ceil(Fraction(when) * 1_000_000)
+        now_us = (self.ctx.current_utc_datetime - _EPOCH) // _MICROSECOND
+        if when <= self.time() or deadline_us <= now_us:
             self._ready.append(handle)
         else:
             if self._closing:
                 raise RuntimeError("Dispatch cleanup cannot schedule durable timers.")
-            deadline = datetime(1970, 1, 1) + timedelta(seconds=when)
-            if (deadline - datetime(1970, 1, 1)).total_seconds() < when:
-                deadline += timedelta(microseconds=1)
+            deadline = _EPOCH + timedelta(microseconds=deadline_us)
             handle.durable_timer = self.ctx.create_timer(deadline)
             self._timers[handle] = _CompletionObserver(
                 handle.durable_timer,
