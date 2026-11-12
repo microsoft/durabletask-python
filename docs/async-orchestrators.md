@@ -100,6 +100,8 @@ allocate action IDs, serialize input, or consume buffered events. Cancelling its
 its first step starts no durable operation. Operation inputs are not copied:
 mutations made before the coroutine's first step are observed, and relative
 timer delays start from that execution point. Keep or copy inputs accordingly.
+Dropping an operation without awaiting it or wrapping it in a task schedules
+nothing, and Python reports that the coroutine was never awaited.
 
 Cold coroutines are single-use, like ordinary Python coroutines. For an
 explicitly started operation with multiple independent waiters, retain its
@@ -117,6 +119,27 @@ Cancelling either borrower does not cancel the underlying operation. Direct
 `await operation` remains supported, but `create_task(operation)` is not valid:
 an awaitable durable handle is not a coroutine. Do not retry that expression
 assuming the eager operation was rolled back.
+
+To identify the winner of a race, check whether an operation has completed, or
+read its result later, use eager handles with `task.when_any`, or wrap cold
+operations in `asyncio` tasks:
+
+```python
+eager = ctx.as_task_context()
+approval = eager.wait_for_external_event("approval", data_type=bool)
+deadline = eager.create_timer(timedelta(hours=1))
+winner = await task.when_any([approval, deadline])  # The identical handle wins.
+if winner is approval:
+    deadline.cancel()
+    approved = approval.get_result()
+else:
+    report = asyncio.create_task(ctx.call_activity("report", return_type=str))
+    finished = report.done()  # Completion check without waiting.
+    summary = await report  # Result, or the operation's failure.
+```
+
+The losing handle stays inspectable through `is_complete` and, once complete,
+`get_result()`.
 
 The worker classifies each orchestrator once, when it is registered:
 

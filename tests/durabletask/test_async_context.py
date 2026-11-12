@@ -19,6 +19,7 @@ from durabletask.async_context import AsyncOrchestrationContext
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
 from tests.durabletask.test_coroutine_orchestrators import (
+    INSTANCE_ID,
     NOW,
     _completion,  # pyright: ignore[reportPrivateUsage]
     _execute,  # pyright: ignore[reportPrivateUsage]
@@ -30,6 +31,56 @@ def test_additive_public_api_has_no_new_abstract_requirements() -> None:
     assert "as_task_context" not in task.OrchestrationContext.__abstractmethods__
     assert "wait" not in task.Task.__abstractmethods__
     assert task.AsyncOrchestrationContext is AsyncOrchestrationContext
+
+
+# Intentional differences between the contexts; anything else is drift.
+_ASYNC_ONLY_MEMBERS = {"as_task_context"}
+_EAGER_ONLY_MEMBERS: set[str] = set()
+_ASYNC_OPERATIONS = {
+    "call_activity", "call_sub_orchestrator", "call_entity", "lock_entities",
+    "create_timer", "wait_for_external_event",
+}
+_EXTRA_ASYNC_PARAMETERS = {"wait_for_external_event": {"timeout"}}
+
+
+def _public_members(cls: type) -> set[str]:
+    return {name for name in dir(cls) if not name.startswith("_")}
+
+
+def test_async_context_public_api_matches_task_context() -> None:
+    async_members = _public_members(AsyncOrchestrationContext)
+    eager_members = _public_members(task.OrchestrationContext)
+    assert async_members - eager_members == _ASYNC_ONLY_MEMBERS
+    assert eager_members - async_members == _EAGER_ONLY_MEMBERS
+
+    for name in sorted(async_members & eager_members):
+        async_member = inspect.getattr_static(AsyncOrchestrationContext, name)
+        eager_member = inspect.getattr_static(task.OrchestrationContext, name)
+        assert isinstance(async_member, property) == isinstance(eager_member, property), name
+        if isinstance(async_member, property):
+            continue
+        assert inspect.iscoroutinefunction(async_member) == (name in _ASYNC_OPERATIONS), name
+        async_parameters = set(inspect.signature(async_member).parameters)
+        eager_parameters = set(inspect.signature(eager_member).parameters)
+        assert async_parameters - eager_parameters == _EXTRA_ASYNC_PARAMETERS.get(name, set()), name
+        assert eager_parameters <= async_parameters, name
+
+
+def test_async_context_metadata_matches_task_context() -> None:
+    observed: list[tuple[Any, Any]] = []
+
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
+        eager = ctx.as_task_context()
+        for name in ("instance_id", "parent_instance_id", "version", "current_utc_datetime", "is_replaying"):
+            observed.append((getattr(ctx, name), getattr(eager, name)))
+        await ctx.call_activity("work")
+        observed.append((ctx.is_replaying, eager.is_replaying))
+
+    old = _start() + [helpers.new_task_scheduled_event(1, "work")]
+    _execute(orchestrator, old, [helpers.new_task_completed_event(1, "null")])
+    assert observed and all(async_value == eager_value for async_value, eager_value in observed)
+    assert observed[0][0] == INSTANCE_ID
+    assert observed[4][0] is True and observed[-1][0] is False
 
 
 def test_public_async_context_annotations_resolve_at_runtime() -> None:
@@ -346,6 +397,63 @@ def test_nonfinite_timeout_rejected_before_consuming_event(seconds: float) -> No
         helpers.new_event_raised_event("go", None),
     ])
     assert json.loads(_completion(result).result.value) == 42
+
+
+@pytest.mark.parametrize("seconds", [float("inf"), float("-inf"), float("nan")])
+def test_nonfinite_timer_delay_rejected_before_scheduling(seconds: float) -> None:
+    class InfiniteDelay(timedelta):
+        def total_seconds(self) -> float:
+            return seconds
+
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
+        with pytest.raises(ValueError, match="finite"):
+            await ctx.create_timer(InfiniteDelay())
+        return await ctx.call_activity("work", return_type=str)
+
+    actions = _execute(orchestrator, [], _start()).actions
+    assert [(action.id, action.scheduleTask.name) for action in actions] == [(1, "work")]
+
+
+@pytest.mark.parametrize("approved_first", [True, False])
+def test_winner_completion_and_result_idioms(approved_first: bool) -> None:
+    observed: list[Any] = []
+
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
+        eager = ctx.as_task_context()
+        approval = eager.wait_for_external_event("approval", data_type=bool)
+        deadline = eager.create_timer(timedelta(hours=1))
+        winner = await task.when_any([approval, deadline])
+        observed.append((winner is approval, approval.is_complete, deadline.is_complete))
+        if winner is approval:
+            deadline.cancel()
+            return f"approved:{approval.get_result()}"
+
+        report = asyncio.create_task(ctx.call_activity("report", return_type=str))
+        await asyncio.sleep(0)
+        observed.append(report.done())
+        return f"timed-out:{await report}"
+
+    deadline = NOW + timedelta(hours=1)
+    old = _start() + [helpers.new_timer_created_event(1, deadline)]
+    if approved_first:
+        new = [helpers.new_event_raised_event("approval", "true")]
+        for _ in range(2):
+            observed.clear()
+            complete = _completion(_execute(orchestrator, old, new))
+            assert json.loads(complete.result.value) == "approved:True"
+            assert observed == [(True, True, False)]
+        return
+
+    fired = [helpers.new_orchestrator_started_event(deadline), helpers.new_timer_fired_event(1, deadline)]
+    actions = _execute(orchestrator, old, fired).actions
+    assert [action.scheduleTask.name for action in actions] == ["report"]
+    assert observed == [(False, False, True), False]
+    old += fired + [helpers.new_task_scheduled_event(2, "report")]
+    for _ in range(2):
+        observed.clear()
+        complete = _completion(_execute(orchestrator, old, [helpers.new_task_completed_event(2, '"sent"')]))
+        assert json.loads(complete.result.value) == "timed-out:sent"
+        assert observed == [(False, False, True), False]
 
 
 def test_owned_timer_cancellation_does_not_cancel_borrowed_timer() -> None:
