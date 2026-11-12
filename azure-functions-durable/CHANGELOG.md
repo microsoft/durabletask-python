@@ -14,6 +14,9 @@ asynchronous clients accept public `OrchestrationIdReusePolicy` values through
 `schedule_new_orchestration()`, preserving backend defaults when omitted.
 See [ID reuse](../docs/features.md#orchestration-id-reuse). Core release and
 dependency minimum updates are coordinated in the dedicated release PR.
+- A best-effort background check warns when a Function App's requirements allow
+a future major version, which may introduce replay-breaking changes.
+
 - Added opt-in `HttpRetryOptions` on `context.call_http()` for durable initial
 request retries with configurable timing and status selection. Empty or omitted
 status lists select all non-2xx responses; exhausted retries fail the call.
