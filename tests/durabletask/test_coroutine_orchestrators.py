@@ -10,16 +10,20 @@ import logging
 import subprocess
 import sys
 from collections.abc import AsyncGenerator, Generator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from functools import partial, update_wrapper, wraps
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from durabletask import entities, task, worker
 from durabletask.internal import helpers, shared
 from durabletask.internal import orchestrator_service_pb2 as pb
+from durabletask.internal.asyncio_loop import DurableEventLoop
 from durabletask.serialization import JsonDataConverter
+
+pytestmark = pytest.mark.filterwarnings("error::RuntimeWarning")
 
 
 INSTANCE_ID = "coroutine-test"
@@ -217,14 +221,55 @@ def test_async_classified_wrapper_closes_returned_generator() -> None:
     assert inspect.getgeneratorstate(created[0]) == inspect.GEN_CLOSED
 
 
-def test_cyclic_async_wrapper_fails_instead_of_hanging() -> None:
+@pytest.mark.parametrize("shape", ["function", "partial", "callable"])
+def test_generator_wrapper_of_async_function_is_synchronous(shape: str) -> None:
+    async def async_orchestrator(ctx: task.OrchestrationContext, value: int) -> int:
+        return value
+
+    @wraps(async_orchestrator)
+    def generator(ctx: task.OrchestrationContext, value: int) -> Generator[task.Task[Any], Any, int]:
+        return (yield ctx.call_activity("work", input=value, return_type=int))
+
+    class GeneratorCallable:
+        def __call__(self, ctx: task.OrchestrationContext, value: int) -> Generator[task.Task[Any], Any, int]:
+            return (yield ctx.call_activity("work", input=value, return_type=int))
+
+    update_wrapper(GeneratorCallable.__call__, async_orchestrator)
+    variants: dict[str, Any] = {
+        "function": generator,
+        "partial": partial(generator),
+        "callable": GeneratorCallable(),
+    }
+    fn = variants[shape]
+    assert not shared.is_async_callable(fn)
+    actions = _execute(fn, [], _start()).actions
+    assert [a.scheduleTask.name for a in actions] == ["work"]
+
+
+def test_orchestrator_is_classified_once_at_registration(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def orchestrator(ctx: task.OrchestrationContext, value: int) -> int:
+        return await ctx.call_activity("work", input=value, return_type=int)
+
+    registry = worker._Registry()  # pyright: ignore[reportPrivateUsage]
+    registry.add_named_orchestrator("test", orchestrator)
+    calls: list[Any] = []
+    original = shared.is_async_callable
+    monkeypatch.setattr(shared, "is_async_callable", lambda fn: calls.append(fn) or original(fn))
+    executor = worker._OrchestrationExecutor(  # pyright: ignore[reportPrivateUsage]
+        registry, logging.getLogger(__name__), JsonDataConverter())
+    old = _start() + [helpers.new_task_scheduled_event(1, "work")]
+    executor.execute(INSTANCE_ID, [], _start())
+    executor.execute(INSTANCE_ID, old, [helpers.new_task_completed_event(1, "4")])
+    assert calls == []
+
+
+def test_cyclic_async_wrapper_is_rejected_at_registration() -> None:
     def wrapper(ctx: task.OrchestrationContext, value: int) -> int:
         return value
 
     wrapper.__wrapped__ = wrapper  # type: ignore[attr-defined]
-    complete = _completion(_execute(wrapper, [], _start()))
-    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert "wrapper loop" in complete.failureDetails.errorMessage
+    with pytest.raises(ValueError, match="wrapper loop"):
+        worker._Registry().add_named_orchestrator("test", wrapper)  # pyright: ignore[reportPrivateUsage]
 
 
 def _assert_mixed_wrapper_cycle_fails(shape: str) -> None:
@@ -241,21 +286,16 @@ def _assert_mixed_wrapper_cycle_fails(shape: str) -> None:
         wrapper.__wrapped__ = CallableWrapper()  # type: ignore[attr-defined]
         CallableWrapper.__call__.__wrapped__ = partial(wrapper)  # type: ignore[attr-defined]
 
-    # No input: dispatch must detect the cycle without relying on type discovery.
-    history = [
-        helpers.new_orchestrator_started_event(NOW),
-        helpers.new_execution_started_event("test", INSTANCE_ID),
-    ]
-    complete = _completion(_execute(wrapper, [], history))
-    assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
-    assert complete.failureDetails.errorType == "builtins.ValueError"
-    assert "wrapper loop" in complete.failureDetails.errorMessage
+    registry = worker._Registry()  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match="wrapper loop"):
+        registry.add_named_orchestrator("test", wrapper)
+    assert registry.get_orchestrator("test") is None
     with pytest.raises(ValueError, match="wrapper loop"):
         shared.is_async_callable(wrapper)
 
 
 @pytest.mark.parametrize("shape", ["partial", "callable-partial"])
-def test_mixed_wrapper_cycle_fails_within_bounded_worker_dispatch(shape: str) -> None:
+def test_mixed_wrapper_cycle_is_rejected_within_bounded_registration(shape: str) -> None:
     result = subprocess.run(
         [
             sys.executable, "-c",
@@ -579,3 +619,12 @@ def test_async_generator_is_rejected() -> None:
     complete = _completion(_execute(orchestrator, [], _start()))
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert "Async generator orchestrators are not supported" in complete.failureDetails.errorMessage
+
+
+@pytest.mark.parametrize(("now", "offset"), [
+    (NOW, 0), (NOW.replace(tzinfo=UTC), 0), (NOW.replace(tzinfo=timezone(timedelta(hours=2))), 7200),
+])
+def test_loop_time_accepts_naive_and_aware_orchestration_clocks(now: datetime, offset: int) -> None:
+    ctx = cast(task.OrchestrationContext, SimpleNamespace(current_utc_datetime=now))
+    loop = DurableEventLoop(ctx, is_complete=lambda: False)
+    assert loop.time() == (NOW - datetime(1970, 1, 1)).total_seconds() - offset

@@ -26,10 +26,6 @@ abandoned subscriptions so they cannot consume later events.
 
 FIXED
 
-- Async orchestrators wrapped with `functools.wraps` are now recognized even
-when an intermediate async wrapper decorates a synchronous function, including
-callable instances and partials. Cyclic wrapper chains fail instead of hanging
-worker dispatch.
 - Async sub-orchestration calls without an explicit `return_type` now expose
 `Any` rather than promising the child function's annotated result type.
 Custom result reconstruction still requires `return_type`; runtime decoding is

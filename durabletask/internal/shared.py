@@ -75,28 +75,40 @@ INSECURE_PROTOCOLS = ["http://", "grpc://"]
 
 
 def is_async_callable(fn: Any) -> bool:
-    """Recognize async functions, wrapped functions, partials and callable objects."""
+    """Classify an orchestrator callable as async (``True``) or synchronous.
+
+    Each callable is checked directly before following ``functools.wraps``
+    metadata: coroutine functions are async and generator functions are
+    synchronous, even when they wrap a function of the other kind. Partials and
+    callable instances are resolved through ``func`` and ``__call__``. Only a
+    callable that is neither falls back to the function it wraps.
+    """
     # Keep nodes alive so temporary bound-method IDs cannot be reused.
     seen: dict[int, Any] = {}
+    wrapped_fallbacks: list[Any] = []
+    node: Any = fn
     while True:
-        identity = id(fn)
+        if node is None:
+            if not wrapped_fallbacks:
+                return False
+            node = wrapped_fallbacks.pop()
+        identity = id(node)
         if identity in seen:
             raise ValueError("wrapper loop when classifying async callable")
-        seen[identity] = fn
-        if inspect.iscoroutinefunction(fn):
+        seen[identity] = node
+        if inspect.iscoroutinefunction(node):
             return True
-        if hasattr(fn, "__wrapped__"):
-            fn = fn.__wrapped__
-            continue
-        if isinstance(fn, partial):
-            fn = fn.func
-            continue
-        if (inspect.isfunction(fn) or inspect.ismethod(fn)
-                or inspect.isbuiltin(fn) or inspect.ismethodwrapper(fn)):
+        if inspect.isgeneratorfunction(node) or inspect.isasyncgenfunction(node):
             return False
-        fn = getattr(fn, "__call__", None)
-        if fn is None:
-            return False
+        if hasattr(node, "__wrapped__"):
+            wrapped_fallbacks.append(node.__wrapped__)
+        if isinstance(node, partial):
+            node = node.func
+        elif (inspect.isfunction(node) or inspect.ismethod(node)
+                or inspect.isbuiltin(node) or inspect.ismethodwrapper(node)):
+            node = None
+        else:
+            node = getattr(node, "__call__", None)
 
 
 def _get_legacy_logging_warning_stacklevel() -> int:
