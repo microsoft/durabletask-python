@@ -308,11 +308,17 @@ continue as new, encounter a history failure, or reject a version.
 Local cleanup can await ready work such as `sleep(0)`; it must not wait for new
 durable or external work.
 Scheduling/awaiting durable work during async teardown raises an actionable
-error. Teardown must cooperate with cancellation; a non-quiescent cleanup
-queue is bounded and reported, not allowed to run indefinitely. Each
-async-generator sweep has a step budget fixed at sweep entry; tasks or generators
-created during that sweep cannot increase it. This bounds cooperative scheduling
-steps, not wall-clock time or code that never yields.
+error. Teardown must cooperate with cancellation.
+
+> [!WARNING]
+> Async teardown is capped at about 10,000 event-loop steps per cleanup phase
+> (more for dispatches with many tasks or async generators). Cleanup that is
+> still running when the cap is reached is truncated: remaining callbacks are
+> dropped, unfinished coroutines are closed, and a warning is logged. The
+> response decided before teardown is unchanged. Each async-generator sweep's
+> budget is fixed at sweep entry; tasks or generators created during that sweep
+> cannot increase it. The cap bounds cooperative scheduling steps, not
+> wall-clock time or code that never yields.
 
 Ordinary teardown failures (including `CancelledError`) are logged without
 changing the decided response or skipping other cooperative finalizers.
