@@ -13,6 +13,9 @@ FIXED
 when an intermediate async wrapper decorates a synchronous function, including
 callable instances and partials. Cyclic wrapper chains fail instead of hanging
 worker dispatch.
+- Async dispatch cleanup no longer hangs when async-generator finalizers
+continually start successor generators; exceeding the cleanup budget is reported
+without changing the snapshotted response.
 - Coroutine task-group cancellation now schedules shared-Future callbacks
 deterministically across replays, including when a dispatch resumes on another
 worker using the same SDK and Python runtime. Previously recorded cancellation

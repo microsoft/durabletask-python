@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 FIXED
 
+- With the corresponding core SDK update, async dispatch cleanup no longer
+hangs when async-generator finalizers continually start successor generators.
+Exceeding the cleanup budget is reported without changing the snapshotted response.
 - With the corresponding core SDK update, coroutine task-group cancellation
 schedules shared-Future callbacks deterministically when replayed on another
 worker using the same SDK and Python runtime. See the

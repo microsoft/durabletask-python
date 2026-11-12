@@ -389,12 +389,13 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         # Closing one generator may first-iterate another; sweep until no new generators appear.
         # Closed generators stay referenced so their ids cannot be reused during cleanup.
         steps = 0
+        # Cleanup-created tasks and generators must not replenish the sweep's budget.
+        limit = max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
         while True:
             pending = [
                 generator for key, generator in self._asyncgens.items() if closed.get(key) is not generator]
             if not pending:
                 return
-            limit = max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
             if steps >= limit:
                 self._record_cleanup_error(RuntimeError(
                     "Async cleanup did not quiesce; cleanup must cooperate with cancellation."))

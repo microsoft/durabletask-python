@@ -1101,32 +1101,91 @@ def test_cleanup_keeps_process_control_over_other_control_flow(
     assert cleaned == [0, 1]
 
 
+@pytest.mark.parametrize("count", [2, 32, 6000])
 def test_cleanup_closes_async_generators_started_during_generator_cleanup(
-        caplog: pytest.LogCaptureFixture) -> None:
-    closed: list[str] = []
+        count: int, caplog: pytest.LogCaptureFixture) -> None:
+    closed: list[int] = []
 
     async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
-        async def child() -> AsyncIterator[int]:
+        async def resource(index: int) -> AsyncIterator[int]:
             try:
                 yield 1
             finally:
+                if index + 1 < count:
+                    await anext(resource(index + 1))
                 await asyncio.sleep(0)
-                closed.append("child")
+                closed.append(index)
 
-        async def outer() -> AsyncIterator[int]:
-            try:
-                yield 1
-            finally:
-                await anext(child())
-                closed.append("outer")
-
-        await anext(outer())
+        await anext(resource(0))
         await ctx.call_activity("wait")
 
     actions = _execute(orchestrator, [], _start()).actions
     assert [action.scheduleTask.name for action in actions] == ["wait"]
-    assert closed == ["outer", "child"]
-    assert "Async" not in caplog.text
+    assert closed == list(range(count))
+    if count == 6000:
+        assert "Async cleanup did not quiesce" in caplog.text
+    else:
+        assert "Async" not in caplog.text
+
+
+@pytest.mark.parametrize("control", [None, "system_exit", "keyboard_interrupt", "nested_group"])
+def test_infinite_asyncgen_discovery_has_bounded_cleanup(control: str | None) -> None:
+    code = """
+import asyncio
+import logging
+import sys
+from durabletask import task
+from tests.durabletask.test_asyncio_orchestrators import _cleanup_signal
+from tests.durabletask.test_coroutine_orchestrators import _execute, _start
+
+control = sys.argv[1]
+exit_error = None if control == "none" else _cleanup_signal(control)
+warnings = []
+
+class Capture(logging.Handler):
+    def emit(self, record):
+        warnings.append(logging.Formatter().format(record))
+
+logging.getLogger().addHandler(Capture())
+
+async def orchestrator(ctx: task.OrchestrationContext, _):
+    async def resource():
+        try:
+            yield 1
+        finally:
+            await anext(resource())
+
+    async def signal_on_forced_close():
+        try:
+            await ctx.wait_for_external_event("never")
+        finally:
+            try:
+                while True:
+                    try:
+                        await asyncio.Future()
+                    except asyncio.CancelledError:
+                        pass
+            finally:
+                raise exit_error
+
+    if exit_error is not None:
+        asyncio.create_task(signal_on_forced_close())
+    await anext(resource())
+    await ctx.call_activity("wait")
+
+try:
+    result = _execute(orchestrator, [], _start())
+except BaseException as error:
+    assert exit_error is not None and error is exit_error, repr(error)
+else:
+    assert exit_error is None
+    assert [action.scheduleTask.name for action in result.actions] == ["wait"]
+assert any("Async cleanup did not quiesce" in message for message in warnings), warnings
+"""
+    process = subprocess.run(
+        [sys.executable, "-c", code, control or "none"],
+        capture_output=True, text=True, timeout=30)
+    assert process.returncode == 0, process.stdout + process.stderr
 
 
 def test_exhausted_async_generators_are_not_retained_until_dispatch_end() -> None:
@@ -1146,7 +1205,10 @@ def test_exhausted_async_generators_are_not_retained_until_dispatch_end() -> Non
         assert sum(reference() is not None for reference in references) < 100
         await ctx.call_activity("wait")
 
-    _execute(orchestrator, [], _start())
+    actions = _execute(orchestrator, [], _start()).actions
+    assert len(actions) == 1
+    assert actions[0].HasField("scheduleTask")
+    assert actions[0].scheduleTask.name == "wait"
 
 
 @pytest.mark.parametrize("suspend", ["activity", "entity"])

@@ -242,7 +242,10 @@ dispatch boundary**, before workflow completion. Local cleanup can await ready
 work such as `sleep(0)`; it must not wait for new durable or external work.
 Scheduling/awaiting durable work during async teardown raises an actionable
 error. Teardown must cooperate with cancellation; a non-quiescent cleanup
-queue is bounded and reported, not allowed to run indefinitely.
+queue is bounded and reported, not allowed to run indefinitely. Each
+async-generator sweep has a step budget fixed at sweep entry; tasks or generators
+created during that sweep cannot increase it. This bounds cooperative scheduling
+steps, not wall-clock time or code that never yields.
 
 Ordinary teardown failures (including `CancelledError`) are logged without
 changing the decided response or skipping other cooperative finalizers.
