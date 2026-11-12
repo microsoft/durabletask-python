@@ -2754,9 +2754,13 @@ class _OrchestrationExecutor:
                     input = self._data_converter.deserialize(
                         event.executionStarted.input.value, input_type)
 
-                # Layer 4 passes async orchestrators a cold context instead.
                 is_async = self._registry.is_async_orchestrator(event.executionStarted.name, fn)
-                result = fn(ctx, input)
+                if is_async:
+                    async_fn = cast(task.AsyncOrchestrator[Any, Any], fn)
+                    result = async_fn(task.AsyncOrchestrationContext(ctx), input)
+                else:
+                    sync_fn = cast(task.SyncOrchestrator[Any, Any], fn)
+                    result = sync_fn(ctx, input)
 
                 if isinstance(result, CoroutineType) and not is_async:
                     result.close()
