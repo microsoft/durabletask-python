@@ -76,19 +76,27 @@ INSECURE_PROTOCOLS = ["http://", "grpc://"]
 
 def is_async_callable(fn: Any) -> bool:
     """Recognize async functions, wrapped functions, partials and callable objects."""
+    # Keep nodes alive so temporary bound-method IDs cannot be reused.
+    seen: dict[int, Any] = {}
     while True:
+        identity = id(fn)
+        if identity in seen:
+            raise ValueError("wrapper loop when classifying async callable")
+        seen[identity] = fn
         if inspect.iscoroutinefunction(fn):
             return True
-        fn = inspect.unwrap(fn)
+        if hasattr(fn, "__wrapped__"):
+            fn = fn.__wrapped__
+            continue
         if isinstance(fn, partial):
             fn = fn.func
             continue
-        if inspect.iscoroutinefunction(fn):
-            return True
-        if inspect.isfunction(fn) or inspect.ismethod(fn) or inspect.isbuiltin(fn):
+        if (inspect.isfunction(fn) or inspect.ismethod(fn)
+                or inspect.isbuiltin(fn) or inspect.ismethodwrapper(fn)):
             return False
-        call = getattr(fn, "__call__", None)
-        return call is not None and inspect.iscoroutinefunction(inspect.unwrap(call))
+        fn = getattr(fn, "__call__", None)
+        if fn is None:
+            return False
 
 
 def _get_legacy_logging_warning_stacklevel() -> int:
