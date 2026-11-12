@@ -156,8 +156,8 @@ def say_hello(name: str) -> str:
 | `context.call_activity_with_retry(...)` | `ctx.call_activity(..., retry_policy=policy)` |
 | `context.call_sub_orchestrator(name, input_)` | `ctx.call_sub_orchestrator(name, input=input_)` |
 | `call_sub_orchestrator_with_retry` | `ctx.call_sub_orchestrator(..., retry_policy=...)` |
-| `context.task_all(tasks)` | `task.when_all(tasks)` |
-| `context.task_any(tasks)` | `task.when_any(tasks)` |
+| `context.task_all(tasks)` | `task.when_all(tasks)` (eager `task.Task` handles only) |
+| `context.task_any(tasks)` | `task.when_any(tasks)` (eager `task.Task` handles only) |
 | `context.new_guid()` | `ctx.new_uuid()` |
 | `df.EntityId(name, key)` | `entities.EntityInstanceId(name, key)` |
 
@@ -166,6 +166,40 @@ Methods including `create_timer`, `wait_for_external_event`,
 retain their names. Activity, sub-orchestration, and entity calls use keyword
 `input` instead of the 1.x `input_` or `operationInput` names.
 `continue_as_new` uses `new_input`.
+
+### Compose async operations
+
+The grouping mappings above apply to generator orchestrators and explicit eager
+durable handles, not the cold coroutines returned by
+`task.AsyncOrchestrationContext`. Do not pass `ctx.call_activity(...)` coroutines
+directly to `task.when_all` or `task.when_any`. To keep durable grouping semantics
+in a native async orchestrator, obtain reusable handles through
+`ctx.as_task_context()`:
+
+```python
+async def greetings(ctx: task.AsyncOrchestrationContext, names: list[str]) -> list[str]:
+    handles = ctx.as_task_context()
+    operations = [
+        handles.call_activity("say_hello", input=name, return_type=str)
+        for name in names
+    ]
+    return await task.when_all(operations)
+```
+
+`task.when_all` waits for every handle before raising the first observed
+failure. `task.when_any` returns the winning durable handle; await it to obtain
+its result or failure. Losing handles are not cancelled; retain and join them
+when their completion matters.
+
+Cold coroutines instead support ordered `asyncio.gather` and
+`asyncio.TaskGroup`. These are not interchangeable with the wait-all-on-failure
+join: default `gather` reports the first failure without cancelling siblings,
+while task groups cancel and drain local siblings on failure. Local
+cancellation does not stop already-issued remote work. The single-argument
+async compatibility context retains `task_all` (wait for all before raising)
+and `task_any` (return the winning future without cancelling losers).
+See the [async composition and ownership contract](../docs/async-orchestrators.md#azure-functions-compatibility)
+before changing joins or cancellation behavior in running orchestrations.
 
 ### Retry policy mapping
 

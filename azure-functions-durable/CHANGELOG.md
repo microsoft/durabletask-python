@@ -19,6 +19,8 @@ argument names and provides async `task_all` and `task_any`. Generator
 orchestrators retain their eager behavior. See the
 [async contract](../docs/async-orchestrators.md) for dispatch cleanup and
 replay/upgrade precautions.
+Release the core async support first, then coordinate this provider's version
+and core dependency minimum in a dedicated release PR.
 - The `orchestrator_generator_wrapper` test helper accepts direct-await
 coroutines. Tests involving asyncio scheduling still require a replay executor
 or backend.

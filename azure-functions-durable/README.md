@@ -322,8 +322,9 @@ agree on the store and reference encoding; Functions references are JSON strings
 > storage error can therefore become a terminal orchestration failure.
 
 Registered orchestration and entity handlers await the store's async methods
-before and after execution. Orchestrators remain synchronous generators, and
-orchestration replay and entity code run on execution threads with their
+before and after execution. Orchestrators may be synchronous generators or
+native `async def` functions; both use synchronous replay execution.
+Orchestration replay and entity code run on execution threads with their
 invocation logging context preserved. Their payload downloads and uploads do
 not occupy those threads, and serialization does not access storage during
 replay. Custom stores must implement genuinely nonblocking async methods to
