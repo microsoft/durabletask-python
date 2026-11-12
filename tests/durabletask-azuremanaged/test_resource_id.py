@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import grpc
@@ -51,7 +51,7 @@ _RESOURCE_CASES = [
     (None, "api://custom/.default/.default", "api://custom/.default"),
 ]
 _INVALID_RESOURCE_IDS = [" \t ", "///", "/.default", " /.DEFAULT/// "]
-_EXPIRED = datetime.now(timezone.utc) - timedelta(hours=1)
+_EXPIRED = datetime.now(UTC) - timedelta(hours=1)
 
 
 def _set_region(monkeypatch: pytest.MonkeyPatch, region: str | None) -> None:

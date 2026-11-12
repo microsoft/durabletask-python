@@ -15,7 +15,7 @@ import gzip
 import json
 import threading
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import grpc
@@ -117,7 +117,7 @@ def seeded_terminal_instances(dt_client, w):
 def test_create_get_and_wait_for_job_end_to_end(
     dt_client, export_client, writer, seeded_terminal_instances,
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     desc = export_client.create_job(
         ExportJobCreationOptions(
             mode=ExportMode.BATCH,
@@ -158,7 +158,7 @@ async def test_async_client_create_list_wait_and_delete(
 ):
     async with client.AsyncTaskHubGrpcClient(host_address=HOST) as dt_client:
         export_client = AsyncExportHistoryClient(dt_client, writer)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         desc = await export_client.create_job(ExportJobCreationOptions(
             mode=ExportMode.BATCH,
             completed_time_from=now - timedelta(hours=1),
@@ -257,8 +257,8 @@ def test_wait_for_job_times_out_when_status_stays_active(
     local_client = ExportHistoryClient(dt_client, writer)
     fake_desc = ExportJobCreationOptions(
         mode=ExportMode.BATCH,
-        completed_time_from=datetime.now(timezone.utc) - timedelta(hours=1),
-        completed_time_to=datetime.now(timezone.utc) + timedelta(hours=1),
+        completed_time_from=datetime.now(UTC) - timedelta(hours=1),
+        completed_time_to=datetime.now(UTC) + timedelta(hours=1),
         destination=ExportDestination(container="c"),
         format=ExportFormat(kind=ExportFormatKind.JSON),
     ).to_configuration()
@@ -269,8 +269,8 @@ def test_wait_for_job_times_out_when_status_stays_active(
         return ExportJobDescription(
             job_id=job_id,
             status=ExportJobStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
-            last_modified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            last_modified_at=datetime.now(UTC),
             config=fake_desc,
             orchestrator_instance_id="orch-1",
             scanned_instances=0,
@@ -288,7 +288,7 @@ def test_wait_for_job_times_out_when_status_stays_active(
 
 
 def test_delete_job_clears_entity_state(dt_client, export_client):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     desc = export_client.create_job(
         ExportJobCreationOptions(
             mode=ExportMode.BATCH,
@@ -312,7 +312,7 @@ def test_delete_job_clears_entity_state(dt_client, export_client):
 
 
 def test_list_jobs_returns_created_jobs_and_supports_status_filter(export_client):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     completed_ids: list[str] = []
     for _ in range(3):
         d = export_client.create_job(
@@ -350,7 +350,7 @@ def test_list_jobs_returns_created_jobs_and_supports_status_filter(export_client
 
 
 def test_export_history_job_client_round_trip(export_client):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     desc = export_client.create_job(
         ExportJobCreationOptions(
             mode=ExportMode.BATCH,

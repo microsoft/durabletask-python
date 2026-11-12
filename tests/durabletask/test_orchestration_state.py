@@ -5,7 +5,7 @@
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from durabletask.client import OrchestrationState, OrchestrationStatus
 
@@ -29,7 +29,7 @@ class Money:
 
 
 def _state(serialized_input=None, serialized_output=None, serialized_custom_status=None) -> OrchestrationState:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return OrchestrationState(
         instance_id="abc123",
         name="test",

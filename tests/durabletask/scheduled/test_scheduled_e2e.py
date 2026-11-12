@@ -5,7 +5,7 @@
 
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -91,7 +91,7 @@ def test_create_describe_and_run():
                 orchestration_name=task.get_name(target_orchestrator),
                 interval=timedelta(seconds=1),
                 orchestration_input="hello",
-                start_at=datetime.now(timezone.utc),
+                start_at=datetime.now(UTC),
                 start_immediately_if_late=True,
             ))
 
@@ -123,7 +123,7 @@ async def test_async_client_create_list_and_delete():
                 schedule_id="async-schedule",
                 orchestration_name=task.get_name(target_orchestrator),
                 interval=timedelta(seconds=30),
-                start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                start_at=datetime.now(UTC) + timedelta(hours=1),
             ))
 
             assert (await scheduled.get_schedule("async-schedule")) is not None
@@ -148,7 +148,7 @@ def test_pause_and_resume():
                 schedule_id="sched-pause",
                 orchestration_name=task.get_name(target_orchestrator),
                 interval=timedelta(seconds=1),
-                start_at=datetime.now(timezone.utc),
+                start_at=datetime.now(UTC),
                 start_immediately_if_late=True,
             ))
 
@@ -180,7 +180,7 @@ def test_update_interval_and_input():
                 orchestration_name=task.get_name(target_orchestrator),
                 interval=timedelta(seconds=30),
                 orchestration_input="before",
-                start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                start_at=datetime.now(UTC) + timedelta(hours=1),
             ))
 
             schedule.update(ScheduleUpdateOptions(
@@ -205,13 +205,13 @@ def test_list_schedules_with_prefix_and_status():
                     schedule_id=f"group-a-{i}",
                     orchestration_name=task.get_name(target_orchestrator),
                     interval=timedelta(seconds=30),
-                    start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                    start_at=datetime.now(UTC) + timedelta(hours=1),
                 ))
             scheduled.create_schedule(ScheduleCreationOptions(
                 schedule_id="group-b-0",
                 orchestration_name=task.get_name(target_orchestrator),
                 interval=timedelta(seconds=30),
-                start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                start_at=datetime.now(UTC) + timedelta(hours=1),
             ))
 
             all_schedules = scheduled.list_schedules()
@@ -237,7 +237,7 @@ def test_delete_removes_schedule():
                 schedule_id="sched-delete",
                 orchestration_name=task.get_name(target_orchestrator),
                 interval=timedelta(seconds=30),
-                start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                start_at=datetime.now(UTC) + timedelta(hours=1),
             ))
 
             assert scheduled.get_schedule("sched-delete") is not None

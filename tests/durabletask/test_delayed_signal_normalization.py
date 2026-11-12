@@ -5,7 +5,7 @@
 timer lifecycle (regression coverage for PR #160 review feedback)."""
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import durabletask.internal.orchestrator_service_pb2 as pb
 from durabletask.entities import EntityInstanceId
@@ -20,7 +20,7 @@ class TestSignalTimeNormalization:
     def test_build_signal_entity_req_naive_matches_aware(self):
         entity_id = EntityInstanceId("Recorder", "k")
         naive = datetime(2030, 1, 1, 12, 0, 0)
-        aware = datetime(2030, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        aware = datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC)
 
         req_naive = build_signal_entity_req(entity_id, "ping", signal_time=naive)
         req_aware = build_signal_entity_req(entity_id, "ping", signal_time=aware)
@@ -30,7 +30,7 @@ class TestSignalTimeNormalization:
     def test_new_signal_entity_action_naive_matches_aware(self):
         entity_id = EntityInstanceId("Recorder", "k")
         naive = datetime(2030, 1, 1, 12, 0, 0)
-        aware = datetime(2030, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        aware = datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC)
 
         a_naive = helpers.new_signal_entity_action(1, entity_id, "ping", None, "r1", naive)
         a_aware = helpers.new_signal_entity_action(1, entity_id, "ping", None, "r2", aware)
@@ -51,7 +51,7 @@ class TestDelayedTimerLifecycle:
             )
             # Schedule the op to fire shortly in the future, then reset before it
             # fires so the timer wakes into a reset (new-generation) backend.
-            fire_at = datetime.now(timezone.utc) + timedelta(seconds=0.3)
+            fire_at = datetime.now(UTC) + timedelta(seconds=0.3)
             backend._schedule_delayed_entity_operation(  # pyright: ignore[reportPrivateUsage]
                 entity_id, event, fire_at)
             backend.reset()

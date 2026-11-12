@@ -16,7 +16,7 @@ from __future__ import annotations
 import gzip
 import json
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -133,7 +133,7 @@ def test_activities_list_and_export_to_in_memory_writer(c, seeded_ids):
     writer = _InMemoryWriter()
     _holder.context = HistoryExportContext(client=c, writer=writer)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fmt = ExportFormat(kind=ExportFormatKind.JSONL_GZIP)
     dest = ExportDestination(container="exports", prefix="run-1")
     orch_input = {
@@ -186,7 +186,7 @@ def test_export_activity_reports_failure_when_writer_raises(c, seeded_ids):
 
     _holder.context = HistoryExportContext(client=c, writer=FailingWriter())
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fmt = ExportFormat(kind=ExportFormatKind.JSON)
     dest = ExportDestination(container="exports")
     orch_input = {
@@ -216,7 +216,7 @@ def test_export_activity_reports_failure_when_writer_raises(c, seeded_ids):
 def test_activities_fail_when_context_resolution_raises(c):
     # Do NOT set a context in the holder.  The resolver should raise,
     # and the activity failure must surface on the orchestration.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fmt = ExportFormat(kind=ExportFormatKind.JSON)
     dest = ExportDestination(container="exports")
     orch_input = {
@@ -343,7 +343,7 @@ def test_blob_name_matches_dotnet_hash_scheme():
         _dotnet_o_format,
     )
 
-    last_updated = datetime(2026, 6, 4, 17, 9, 9, 420990, tzinfo=timezone.utc)
+    last_updated = datetime(2026, 6, 4, 17, 9, 9, 420990, tzinfo=UTC)
     instance_id = "inst-1"
     fmt = ExportFormat(kind=ExportFormatKind.JSON)
 
@@ -379,7 +379,7 @@ def test_blob_name_isolates_instance_ids_that_differ_only_by_slash():
     """
     from durabletask.extensions.history_export.activities import _blob_name_for
 
-    last_updated = datetime(2026, 6, 4, 17, 9, 9, 420990, tzinfo=timezone.utc)
+    last_updated = datetime(2026, 6, 4, 17, 9, 9, 420990, tzinfo=UTC)
     fmt = ExportFormat(kind=ExportFormatKind.JSON)
 
     name_a = _blob_name_for(
@@ -398,8 +398,8 @@ def test_blob_name_changes_when_instance_terminal_timestamp_changes():
     fmt = ExportFormat(kind=ExportFormatKind.JSON)
     instance_id = "inst-x"
 
-    earlier = datetime(2026, 6, 4, 17, 0, 0, 0, tzinfo=timezone.utc)
-    later = datetime(2026, 6, 4, 18, 0, 0, 0, tzinfo=timezone.utc)
+    earlier = datetime(2026, 6, 4, 17, 0, 0, 0, tzinfo=UTC)
+    later = datetime(2026, 6, 4, 18, 0, 0, 0, tzinfo=UTC)
 
     name_earlier = _blob_name_for(
         instance_id=instance_id, last_updated_at=earlier, prefix=None, fmt=fmt,

@@ -16,6 +16,14 @@ def _assert_host_routed(line: str, message: str) -> None:
     assert re.fullmatch(rf"\[[^\]]+Z\] {re.escape(message)}", line)
 
 
+def test_unpinned_dependency_warning_reaches_the_host(dtask_app):
+    dtask_app.start_orchestration("activity_chain")
+    warning = dtask_app.wait_for_host_log(
+        "The Function App requirements allow azure-functions-durable to upgrade beyond major version")
+    assert "replay-breaking changes" in warning
+    assert "existing orchestrations to fail unexpectedly" in warning
+
+
 def test_client_and_worker_logs_flow_through_host(dtask_app):
     instance_id = dtask_app.start_orchestration("activity_chain")
     status = dtask_app.wait_for_completion(instance_id)

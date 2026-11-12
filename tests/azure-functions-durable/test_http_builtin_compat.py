@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import urllib.error
@@ -264,7 +264,7 @@ def _fake_orchestration_context(request, parent_instance_id="parent"):
         get_input=lambda: request,
         call_activity=call_activity,
         create_timer=create_timer,
-        current_utc_datetime=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        current_utc_datetime=datetime(2020, 1, 1, tzinfo=UTC),
         parent_instance_id=parent_instance_id,
         _activity_calls=activity_calls,
     )
@@ -419,7 +419,7 @@ def test_poll_orchestrator_resolves_relative_location():
 # Retry-After parsing
 # ---------------------------------------------------------------------------
 
-_NOW = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2020, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def test_retry_after_delta_seconds():

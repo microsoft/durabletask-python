@@ -8,7 +8,7 @@ for changes not yet present in an installed release.
 
 Azure Functions Durable uses the shared Azure Functions codec instead. Its
 serialization behavior is not described by the type matrix below; see the
-[provider documentation](../azure-functions-durable/README.md#unicode-json-serialization).
+[provider documentation](../azure-functions-durable/README.md#json-payload-typing-and-legacy-compatibility).
 The compatibility policy also guides changes in this repository to that
 provider's default serialization.
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import gzip
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -25,7 +25,7 @@ from durabletask.extensions.history_export.serialization import (
 
 
 def _sample_events() -> list[history.HistoryEvent]:
-    ts = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    ts = datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC)
     return [
         history.OrchestratorStartedEvent(event_id=-1, timestamp=ts),
         history.ExecutionStartedEvent(
@@ -59,7 +59,7 @@ class TestEventToDict:
     def test_includes_type_discriminator(self) -> None:
         e = history.OrchestratorStartedEvent(
             event_id=0,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         )
         d = event_to_dict(e)
         assert d["event_type"] == "OrchestratorStartedEvent"
@@ -71,7 +71,7 @@ class TestEventToDict:
         # JSON-safe dict rather than a raw FailureDetails object.
         e = history.ExecutionCompletedEvent(
             event_id=-1,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             orchestration_status=3,
             result=None,
             failure_details=task.FailureDetails(
@@ -159,7 +159,7 @@ class TestHelpers:
 
 class TestMetadataEmbedding:
     def _state(self) -> client_module.OrchestrationState:
-        ts = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC)
         return client_module.OrchestrationState(
             instance_id="inst-meta",
             name="MyOrch",
