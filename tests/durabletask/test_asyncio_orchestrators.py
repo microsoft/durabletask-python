@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ from weakref import ReferenceType, ref
 
 import pytest
 
-from durabletask import task
+from durabletask import entities, task
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
 from tests.durabletask.test_coroutine_orchestrators import (
@@ -1057,3 +1058,132 @@ def test_cooperative_cleanup_prioritizes_grouped_process_control() -> None:
         _execute(orchestrator, [], _start())
     assert caught.value is exit_error
     assert cleaned == ["custom", "exit", "last"]
+
+
+def _cleanup_signal(kind: str) -> BaseException:
+    if kind == "system_exit":
+        return SystemExit("stop")
+    if kind == "keyboard_interrupt":
+        return KeyboardInterrupt("interrupt")
+    if kind == "nested_group":
+        return BaseExceptionGroup("outer", [BaseExceptionGroup("inner", [SystemExit("stop")])])
+    if kind == "generator_exit":
+        return GeneratorExit("closed")
+    return BaseExceptionGroup("cancelled", [asyncio.CancelledError()])
+
+
+@pytest.mark.parametrize("control_first", [True, False])
+@pytest.mark.parametrize("other", ["generator_exit", "cancelled_group"])
+@pytest.mark.parametrize("control", ["system_exit", "keyboard_interrupt", "nested_group"])
+def test_cleanup_keeps_process_control_over_other_control_flow(
+        control: str, other: str, control_first: bool) -> None:
+    control_error = _cleanup_signal(control)
+    errors = [control_error, _cleanup_signal(other)]
+    if not control_first:
+        errors.reverse()
+    cleaned: list[int] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def branch(index: int) -> None:
+            try:
+                await ctx.wait_for_external_event(f"never-{index}")
+            finally:
+                cleaned.append(index)
+                raise errors[index]
+
+        asyncio.create_task(branch(0))
+        asyncio.create_task(branch(1))
+        await ctx.call_activity("wait")
+
+    with pytest.raises(type(control_error)) as caught:
+        _execute(orchestrator, [], _start())
+    assert caught.value is control_error
+    assert cleaned == [0, 1]
+
+
+def test_cleanup_closes_async_generators_started_during_generator_cleanup(
+        caplog: pytest.LogCaptureFixture) -> None:
+    closed: list[str] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def child() -> AsyncIterator[int]:
+            try:
+                yield 1
+            finally:
+                await asyncio.sleep(0)
+                closed.append("child")
+
+        async def outer() -> AsyncIterator[int]:
+            try:
+                yield 1
+            finally:
+                await anext(child())
+                closed.append("outer")
+
+        await anext(outer())
+        await ctx.call_activity("wait")
+
+    actions = _execute(orchestrator, [], _start()).actions
+    assert [action.scheduleTask.name for action in actions] == ["wait"]
+    assert closed == ["outer", "child"]
+    assert "Async" not in caplog.text
+
+
+def test_exhausted_async_generators_are_not_retained_until_dispatch_end() -> None:
+    references: list[ReferenceType[Any]] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+        async def values() -> AsyncIterator[int]:
+            yield 1
+
+        for _ in range(200):
+            generator = values()
+            references.append(ref(generator))
+            async for _ in generator:
+                pass
+            del generator
+        gc.collect()
+        assert sum(reference() is not None for reference in references) < 100
+        await ctx.call_activity("wait")
+
+    _execute(orchestrator, [], _start())
+
+
+@pytest.mark.parametrize("suspend", ["activity", "entity"])
+def test_entity_lock_disposal_during_teardown_does_not_schedule_releases(
+        suspend: str, caplog: pytest.LogCaptureFixture) -> None:
+    first = entities.EntityInstanceId("counter", "a")
+    second = entities.EntityInstanceId("counter", "b")
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Any:
+        with await ctx.lock_entities([first, second]):
+            if suspend == "activity":
+                return await ctx.call_activity("inside-lock")
+            return await ctx.call_entity(first, "get")
+
+    old = _start()
+    lock = _execute(orchestrator, [], old).actions[0].sendEntityMessage.entityLockRequested
+    old += [helpers.new_event_sent_event(1, str(first), json.dumps({"id": lock.criticalSectionId}))]
+    new = [helpers.new_event_raised_event(lock.criticalSectionId, None)]
+    actions = _execute(orchestrator, old, new).actions
+    assert len(actions) == 1
+    if suspend == "activity":
+        assert actions[0].scheduleTask.name == "inside-lock"
+        old += new + [helpers.new_task_scheduled_event(2, "inside-lock")]
+        new = [helpers.new_task_completed_event(2, json.dumps(42))]
+    else:
+        call = actions[0].sendEntityMessage.entityOperationCalled
+        assert call.targetInstanceId.value == str(first)
+        old += new + [helpers.new_event_sent_event(2, str(first), json.dumps({"id": call.requestId}))]
+        new = [helpers.new_event_raised_event(call.requestId, json.dumps({"result": "42"}))]
+    assert "cleanup" not in caplog.text
+
+    result = _execute(orchestrator, old, new)
+    actions = result.actions
+    releases = [action.sendEntityMessage.entityUnlockSent for action in actions[:-1]]
+    # Entity calls inside a critical section keep the legacy shared-list release order.
+    expected = [first, second] if suspend == "activity" else [second, first]
+    assert [release.targetInstanceId.value for release in releases] == [str(e) for e in expected]
+    assert [action.id for action in actions] == [3, 4, 5]
+    assert json.loads(_completion(result).result.value) == 42
+    assert "cleanup" not in caplog.text

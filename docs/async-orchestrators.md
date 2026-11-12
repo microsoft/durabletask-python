@@ -250,13 +250,20 @@ Unexpected non-cancellation `BaseException`
 exits retain the existing terminal-failure/recovery policy; an existing primary
 failure is preserved. Teardown status/actions do not replace the response.
 Held entity-release obligations are captured before teardown for terminal
-payload/failure handling.
+payload/failure handling. Exiting an entity critical section during teardown
+does not schedule additional release messages, and a `SystemExit` or
+`KeyboardInterrupt` raised by any finalizer takes precedence over other
+cleanup failures.
 
 Keep workflow cleanup that must be durable in **normal orchestration control
 flow**, before return or continue-as-new, not solely in a dispatch finalizer.
 No cleanup is guaranteed after process crash or forced termination.
 Async-generator *helpers* are closed; async-generator *orchestrators*
-(`async def` containing `yield`) are rejected.
+(`async def` containing `yield`) are rejected. The dispatch owns every async
+generator it starts until teardown, including generators first iterated by
+another generator's cleanup. To run a generator's cleanup earlier, close it
+explicitly with `await gen.aclose()` or iterate it inside
+`contextlib.aclosing(...)`.
 
 ## Replay and framework adapters
 

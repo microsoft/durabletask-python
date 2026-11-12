@@ -2234,6 +2234,10 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
             # _exit_critical_section both from the EntityLock and the continue_as_new logic. We must keep both calls in
             # case the user code crashes after calling continue_as_new but before the EntityLock object is exited.
             return
+        if self._async_cleanup:
+            # Lock disposal during local teardown is not a durable release; the
+            # pre-teardown response already carries any release this dispatch owns.
+            return
         for entity_unlock_message in self._entity_context.emit_lock_release_messages():
             task_id = self.next_sequence_number()
             action = pb.OrchestratorAction(id=task_id, sendEntityMessage=entity_unlock_message)

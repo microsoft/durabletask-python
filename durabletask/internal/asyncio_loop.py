@@ -25,6 +25,13 @@ _EPOCH = datetime(1970, 1, 1)
 _MICROSECOND = timedelta(microseconds=1)
 
 
+def _is_process_control(error: BaseException | None) -> bool:
+    if isinstance(error, BaseExceptionGroup):
+        group = cast(BaseExceptionGroup[BaseException], error)
+        return group.subgroup((KeyboardInterrupt, SystemExit)) is not None
+    return isinstance(error, (KeyboardInterrupt, SystemExit))
+
+
 class _CompletionObserver(task.CompositeTask[None]):
     def __init__(self, durable: task.Task[Any], callback: Callable[[], None]) -> None:
         self._callback = callback
@@ -133,6 +140,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
         self._completions: deque[Callable[[], None]] = deque()
         self._timers: dict[_DurableTimerHandle, _CompletionObserver] = {}
         self._asyncgens: dict[int, Any] = {}
+        self._asyncgen_prune_at = 64
         self._closed = False
         self._closing = False
         self._fatal: BaseException | None = None
@@ -301,7 +309,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     def _has_durable_work(self) -> bool:
         return any(not durable.is_complete for durable, _ in self._waits.values()) or bool(self._timers)
 
-    def _drain(self) -> None:
+    def _drain(self) -> int:
         previous_loop = asyncio._get_running_loop()
         previous_task = asyncio.current_task(previous_loop) if previous_loop is not None else None
         previous_hooks = sys.get_asyncgen_hooks()
@@ -342,6 +350,7 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                     self._ready.clear()
                     self._cancel_ready.clear()
                     break
+            return steps
         finally:
             sys.set_asyncgen_hooks(*previous_hooks)
             asyncio._set_running_loop(previous_loop)
@@ -349,6 +358,11 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 asyncio.tasks._enter_task(previous_loop, previous_task)
 
     def _asyncgen_firstiter(self, generator: Any) -> None:
+        if len(self._asyncgens) >= self._asyncgen_prune_at:
+            # Exhausted generators have no cleanup left; amortized pruning bounds retention.
+            self._asyncgens = {
+                key: value for key, value in self._asyncgens.items() if value.ag_frame is not None}
+            self._asyncgen_prune_at = max(64, 2 * len(self._asyncgens))
         self._asyncgens[id(generator)] = generator
 
     def _asyncgen_finalizer(self, generator: Any) -> None:
@@ -366,8 +380,29 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     def _record_cleanup_error(self, error: BaseException, source: str = "cleanup callback") -> None:
         self._logger.warning("%s: Async %s failed.", self.ctx.instance_id, source, exc_info=error)
         if not isinstance(error, (Exception, asyncio.CancelledError)):
+            if _is_process_control(self._cleanup_failure):
+                return
             if self._cleanup_failure is None or is_control_flow_exception(error):
                 self._cleanup_failure = error
+
+    def _close_asyncgens(self, closed: dict[int, Any]) -> None:
+        # Closing one generator may first-iterate another; sweep until no new generators appear.
+        # Closed generators stay referenced so their ids cannot be reused during cleanup.
+        steps = 0
+        while True:
+            pending = [
+                generator for key, generator in self._asyncgens.items() if closed.get(key) is not generator]
+            if not pending:
+                return
+            limit = max(10000, 4 * (len(self._tasks) + len(self._asyncgens)))
+            if steps >= limit:
+                self._record_cleanup_error(RuntimeError(
+                    "Async cleanup did not quiesce; cleanup must cooperate with cancellation."))
+                return
+            for generator in pending:
+                closed[id(generator)] = generator
+                self.create_task(generator.aclose())
+            steps += max(1, self._drain())
 
     def close(self) -> None:
         self._closing = True
@@ -379,13 +414,13 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
                 if not future.done():
                     future.cancel()
             self._drain()
-            for generator in tuple(self._asyncgens.values()):
-                self.create_task(generator.aclose())
-            self._drain()
+            closed_asyncgens: dict[int, Any] = {}
+            self._close_asyncgens(closed_asyncgens)
             for future in tuple(self._tasks):
                 if not future.done():
                     future.cancel()
             self._drain()
+            self._close_asyncgens(closed_asyncgens)
             failure: BaseException | None = self._cleanup_failure
             for future in tuple(self._tasks):
                 if not future.done():
