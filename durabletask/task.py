@@ -4,9 +4,9 @@
 # See https://peps.python.org/pep-0563/
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
-import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine, Generator, Sequence
 from dataclasses import dataclass

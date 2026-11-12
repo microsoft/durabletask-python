@@ -1,7 +1,22 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Dispatch-local asyncio scheduling on top of the shared durable history engine."""
+"""Dispatch-local asyncio scheduling on top of the shared durable history engine.
+
+Private asyncio dependencies (verified against the supported Python versions):
+
+- ``asyncio._get_running_loop`` / ``asyncio._set_running_loop``: install this
+  loop as the running loop only while a dispatch drains ready callbacks, and
+  restore any host loop afterwards. ``Task.__await__`` uses the getter to
+  detect durable, foreign, or absent loops without raising.
+- ``asyncio.tasks._enter_task`` / ``asyncio.tasks._leave_task``: suspend and
+  restore the host's current task while draining, so asyncio does not see two
+  tasks running on one thread.
+- ``asyncio.Handle._run``: run a ready callback with asyncio's own context and
+  exception-handler semantics.
+- ``asyncio.Task._log_traceback``: report unobserved local-task failures during
+  dispatch cleanup without marking them as retrieved.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +27,7 @@ import logging
 import sys
 from collections import deque
 from collections.abc import Callable, Coroutine, Generator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from typing import Any, TypeVar, cast
 
@@ -149,7 +164,10 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
 
     def time(self) -> float:
         # A fixed UTC epoch avoids local-time and platform timestamp differences.
-        return (self.ctx.current_utc_datetime - _EPOCH).total_seconds()
+        now = self.ctx.current_utc_datetime
+        if now.tzinfo is not None:
+            now = now.astimezone(UTC).replace(tzinfo=None)
+        return (now - _EPOCH).total_seconds()
 
     def get_debug(self) -> bool:
         return False
