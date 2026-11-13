@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added `async def` orchestrators. They receive an `AsyncOrchestrationContext`
+whose durable operations are cold coroutines, support durable asyncio timers
+and ordered composition such as `asyncio.gather`, `asyncio.TaskGroup`, and
+`asyncio.timeout`, and offer event waits with owned cancellation and timeouts.
+Generator orchestrators are unchanged; `as_task_context()` and `Task.wait()`
+interoperate with their eager durable handles. Pass `return_type` to type and
+reconstruct async sub-orchestration results. `asyncio.wait` and
+`asyncio.as_completed` are not supported.
+
+> [!WARNING]
+> Async cleanup can run at every dispatch, including suspension; it is not
+> durable workflow compensation. Converting running orchestrations can alter
+> replay-visible action order, and recorded async histories depend on the
+> Python minor version, so keep it fixed for in-flight instances. See the
+> [async contract](docs/async-orchestrators.md) for supported operations and
+> replay and upgrade guidance.
+
 FIXED
 
 - Activity and sub-orchestration `retry_timeout` decisions now use replay-safe

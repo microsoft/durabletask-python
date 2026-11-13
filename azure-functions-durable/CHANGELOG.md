@@ -11,7 +11,14 @@ ADDED
 
 - A best-effort background check warns when a Function App's requirements allow
 a future major version, which may introduce replay-breaking changes.
-
+- Added `async def` orchestrators with the core two-argument shape,
+`async def orchestrator(ctx: task.AsyncOrchestrationContext, input)`, and
+`df.call_http()` for durable HTTP requests from durabletask orchestration
+contexts. Single-parameter `async def` orchestrators are not supported and
+raise `TypeError` when registered. Generator orchestrators are unchanged.
+Requires a `durabletask` release with async orchestrator support. See the
+[async contract](../docs/async-orchestrators.md) for dispatch cleanup and
+replay/upgrade precautions.
 - Added opt-in `HttpRetryOptions` on `context.call_http()` for durable initial
 request retries with configurable timing and status selection. Empty or omitted
 status lists select all non-2xx responses; exhausted retries fail the call.

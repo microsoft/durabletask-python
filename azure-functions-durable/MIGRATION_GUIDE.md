@@ -102,10 +102,16 @@ The single-argument orchestrator receives the compatibility
 Use this state to validate the infrastructure upgrade before changing
 application APIs.
 
+Single-argument orchestrators must be generator or regular functions. To write
+an `async def` orchestrator, use the native two-argument shape described next;
+the `orchestration_trigger` decorator raises `TypeError` for a single-argument
+`async def` orchestrator.
+
 ## Migrate to native orchestration APIs
 
 Native orchestrators accept the durabletask context and input as separate
-arguments:
+arguments. Generator functions receive `task.OrchestrationContext`;
+`async def` functions receive `task.AsyncOrchestrationContext`:
 
 ```python
 from typing import Any
@@ -148,16 +154,58 @@ def say_hello(name: str) -> str:
 | `context.call_activity_with_retry(...)` | `ctx.call_activity(..., retry_policy=policy)` |
 | `context.call_sub_orchestrator(name, input_)` | `ctx.call_sub_orchestrator(name, input=input_)` |
 | `call_sub_orchestrator_with_retry` | `ctx.call_sub_orchestrator(..., retry_policy=...)` |
-| `context.task_all(tasks)` | `task.when_all(tasks)` |
-| `context.task_any(tasks)` | `task.when_any(tasks)` |
+| `context.task_all(tasks)` | `task.when_all(tasks)` (eager `task.Task` handles only) |
+| `context.task_any(tasks)` | `task.when_any(tasks)` (eager `task.Task` handles only) |
 | `context.new_guid()` | `ctx.new_uuid()` |
+| `context.call_http(method, uri, ...)` | `df.call_http(ctx, method, uri, ...)` |
 | `df.EntityId(name, key)` | `entities.EntityInstanceId(name, key)` |
 
 Methods including `create_timer`, `wait_for_external_event`,
 `continue_as_new`, `set_custom_status`, `call_entity`, and `signal_entity`
 retain their names. Activity, sub-orchestration, and entity calls use keyword
 `input` instead of the 1.x `input_` or `operationInput` names.
-`continue_as_new` uses `new_input`.
+`continue_as_new` uses `new_input`. `df.call_http` takes the request options
+as keyword arguments.
+
+### Compose async operations
+
+The grouping mappings above apply to generator orchestrators and explicit eager
+durable handles, not the cold coroutines returned by
+`task.AsyncOrchestrationContext`. Do not pass `ctx.call_activity(...)` coroutines
+directly to `task.when_all` or `task.when_any`.
+
+For fan-out in an async orchestrator, use ordered `asyncio.gather` or
+`asyncio.TaskGroup`:
+
+```python
+async def greetings(ctx: task.AsyncOrchestrationContext, names: list[str]) -> list[str]:
+    return list(await asyncio.gather(*(
+        ctx.call_activity("say_hello", input=name, return_type=str)
+        for name in names
+    )))
+```
+
+These are not interchangeable with the generator `task.when_all` join, which
+waits for every task before raising the first observed failure: default
+`gather` reports the first failure without cancelling siblings, while task
+groups cancel and drain local siblings on failure. Local cancellation does not
+stop already-issued remote work.
+
+For races, obtain eager handles through `ctx.as_task_context()` and pass them to
+`task.when_any`, which returns the identical winning handle:
+
+```python
+async def approval(ctx: task.AsyncOrchestrationContext, _: Any) -> bool:
+    handles = ctx.as_task_context()
+    approved = handles.wait_for_external_event("approval", data_type=bool)
+    deadline = handles.create_timer(timedelta(hours=1))
+    winner = await task.when_any([approved, deadline])
+    return winner is approved and approved.get_result()
+```
+
+Losing handles are not cancelled; retain and join them when their completion
+matters. See the [async authoring contract](../docs/async-orchestrators.md)
+before changing joins or cancellation behavior in running orchestrations.
 
 ### Retry policy mapping
 

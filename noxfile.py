@@ -457,6 +457,13 @@ def azuremanaged_tests(session: nox.Session) -> None:
             "pytest", *_pytest_warning_arguments(session),
             *arguments, "-m", "dts", "--verbose",
         )
+        if not session.posargs:
+            # In-memory gRPC cases need no emulator but still gate PRs here.
+            session.run(
+                "pytest", *_pytest_warning_arguments(session),
+                "tests/durabletask-azuremanaged/test_dts_coroutine_orchestrators.py",
+                "-m", "not dts", "--verbose",
+            )
     finally:
         _stop_dts_emulator(container_name)
 

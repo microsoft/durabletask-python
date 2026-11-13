@@ -32,6 +32,53 @@ The Azure Functions Durable provider requires Python 3.13 or later.
 
 ## Optional Features
 
+### Async Orchestrators
+
+All three packages support `async def` orchestrators and nested async helpers.
+Existing generator orchestrators continue to work.
+
+```python
+import asyncio
+
+from durabletask import task
+
+
+async def sequence(ctx: task.AsyncOrchestrationContext, value: int) -> list[int]:
+    first = await ctx.call_activity("plus_one", input=value, return_type=int)
+    async with asyncio.TaskGroup() as group:
+        left = group.create_task(ctx.call_activity("plus_one", input=first, return_type=int))
+        right = group.create_task(ctx.call_activity("plus_one", input=value, return_type=int))
+    return [left.result(), right.result()]
+```
+
+Register the function with `TaskHubGrpcWorker`, `DurableTaskSchedulerWorker`,
+or the Azure Functions `orchestration_trigger` decorator as usual. All three
+packages use this two-argument shape for async orchestrators. Async
+orchestrators automatically receive cold coroutine operations accepted by
+`create_task` and task groups.
+Generator orchestrators keep their eager, reusable durable handles. For
+interoperability, `ctx.as_task_context()` exposes the eager context and
+`handle.wait()` creates an independently cancellable borrower.
+
+> [!WARNING]
+> This is replay-driven await syntax, not general-purpose asyncio execution.
+> Compose durable work with `asyncio.gather`, local tasks/task groups, and
+> durable `asyncio.sleep` / timeouts within the
+> [supported contract](docs/async-orchestrators.md).
+> Perform network, storage, and other nondeterministic I/O in activities.
+> Completed foreign awaitables and synchronous side effects cannot reliably be
+> detected by the replay engine.
+> Python `finally` blocks and async context-manager exits can run at ordinary
+> dispatch suspension; they are not workflow-lifetime compensation scopes.
+
+An async helper is not a durable sub-orchestration: use
+`await ctx.call_sub_orchestrator(...)` for a separate orchestration instance.
+An `async def` function containing `yield` is an async generator, not a supported
+orchestrator. Converting an existing orchestrator must preserve durable action
+order and payloads for replay compatibility.
+See the contract for cancellation, per-dispatch async cleanup, unsupported
+ordering-sensitive APIs and framework adapters.
+
 ### Task Hub Query Filters
 
 Set `OrchestrationQuery.task_hub_names` to filter orchestration queries by one or
