@@ -4,7 +4,8 @@
 """Orchestrator functions for the durabletask-native-style sample app (blueprint).
 
 Every orchestrator uses the modern durabletask two-argument style
-(``def orch(ctx, input):``) and the durabletask ``OrchestrationContext`` API
+(``def orch(ctx, input):`` or ``async def orch(ctx, input):``) and the
+durabletask ``OrchestrationContext`` / ``AsyncOrchestrationContext`` API
 directly. These cover the inherited durabletask surface -- activity chaining,
 fan-out/fan-in (``task.when_all``), sub-orchestrations, external events, timers,
 entities (``ctx.call_entity`` / ``ctx.signal_entity``), custom status,
@@ -55,6 +56,29 @@ async def async_cold_probe(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[
     await ctx.create_timer(timedelta(milliseconds=10))
     child: list[str] = await ctx.call_sub_orchestrator("activity_chain")
     return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_fan_out(ctx: task.AsyncOrchestrationContext, count: int | None) -> int:
+    count = count or 5
+    results = await asyncio.gather(
+        *(ctx.call_activity("square", input=i, return_type=int) for i in range(1, count + 1)))
+    return sum(results)
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_race(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
+    handles = ctx.as_task_context()
+    activity = handles.call_activity("say_hello", input="Tokyo", return_type=str)
+    timeout = handles.create_timer(timedelta(minutes=5))
+    winner = await task.when_any([activity, timeout])
+    return {"activity_won": winner is activity, "result": activity.get_result()}
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_call_http(ctx: task.AsyncOrchestrationContext, url: str) -> dict[str, Any]:
+    response = await df.call_http(ctx, "GET", url)
+    return {"status_code": response.status_code, "content": response.content}
 
 
 @bp.orchestration_trigger(context_name="context")

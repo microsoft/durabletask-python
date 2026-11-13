@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import asyncio
-from collections.abc import Generator
+from collections.abc import Coroutine, Generator
 from datetime import timedelta
 from typing import Any, assert_type
 
@@ -45,43 +44,28 @@ async def check_async_context_manager(client: DurableFunctionsClient) -> None:
         assert_type(entered_client, DurableFunctionsClient)
 
 
-async def check_cold_operations(
-    context: df.AsyncDurableOrchestrationContext,
+async def check_call_http(
     native: task.AsyncOrchestrationContext,
+    eager: task.OrchestrationContext,
+    context: df.DurableOrchestrationContext,
 ) -> None:
-    pending = asyncio.create_task(native.call_activity("activity", return_type=int))
-    assert_type(pending, asyncio.Task[int])
-    assert_type(await pending, int)
-    event = asyncio.create_task(native.wait_for_external_event(
-        "approval", timeout=timedelta(seconds=1), data_type=str))
-    assert_type(await event, str)
-    assert_type(await context.wait_for_external_event("approval", str), str)
-    assert_type(context.as_task_context(), df.DurableOrchestrationContext)
-    assert_type(await context.task_all([pending, pending]), list[int])
-    assert_type(await context.task_any([pending]), asyncio.Future[int])
-    assert_type(await context.call_http(
-        "GET", "https://example.com",
-        retry_options=df.HttpRetryOptions(
-            first_retry_interval=timedelta(seconds=1), max_number_of_attempts=3),
-    ), df.DurableHttpResponse)
-    operation = native.as_task_context().call_activity("shared", return_type=int)
-    borrower = asyncio.create_task(operation.wait())
-    assert_type(borrower, asyncio.Task[int])
+    retry = df.HttpRetryOptions(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=3)
+    pending = assert_type(
+        df.call_http(native, "GET", "https://example.com", retry_options=retry),
+        Coroutine[Any, Any, df.DurableHttpResponse])
+    assert_type(await pending, df.DurableHttpResponse)
+    assert_type(df.call_http(eager, "GET", "https://example.com"), task.Task[df.DurableHttpResponse])
+    assert_type(context.call_http("GET", "https://example.com"), task.Task[Any])
 
 
 def register_orchestrators(app: df.DFApp, worker: DurableFunctionsWorker) -> None:
     def generator(context: df.DurableOrchestrationContext) -> Generator[task.Task[Any], Any, int]:
         return (yield context.call_activity("activity"))
 
-    async def compatible(context: df.AsyncDurableOrchestrationContext) -> int:
-        return await context.call_activity("activity")
-
     async def native(context: task.AsyncOrchestrationContext, value: int) -> int:
         return await context.call_activity("activity", input=value, return_type=int)
 
     assert_type(app.orchestration_trigger("context")(generator), FunctionBuilder)
-    assert_type(app.orchestration_trigger("context")(compatible), FunctionBuilder)
     assert_type(app.orchestration_trigger("context")(native), FunctionBuilder)
     assert_type(worker.execute_orchestration_request(generator, ""), str)
-    assert_type(worker.execute_orchestration_request(compatible, ""), str)
     assert_type(worker.execute_orchestration_request(native, ""), str)
