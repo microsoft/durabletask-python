@@ -2,13 +2,13 @@
 # Licensed under the MIT License.
 
 import inspect
-import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Callable, Generator, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Generator, Optional, TypeAlias, cast
 from uuid import UUID
 
 from durabletask import task
 from durabletask.entities import EntityInstanceId
+from durabletask.internal.shared import is_async_callable
 from durabletask.task import OrchestrationContext, RetryPolicy, Task
 
 from ..serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
@@ -252,29 +252,23 @@ class DurableOrchestrationContext:
         """
         # Imported lazily to avoid a module import cycle
         # (http.models -> compat.token_source).
-        from ...http.builtin import BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
-        from ...http.models import DurableHttpRequest, DurableHttpResponse
+        from ...http.call import schedule_http_request
 
-        if (not isinstance(content, str)) and is_raw_str:
-            raise TypeError(
-                "Invalid use of 'is_raw_str' parameter: 'is_raw_str' is set to "
-                "'True' but 'content' is not an instance of type 'str'. Either "
-                "set 'is_raw_str' to 'False', or ensure your 'content' is of "
-                "type 'str'.")
+        return schedule_http_request(
+            self._ctx, method, uri, content, headers, token_source, is_raw_str, retry_options)
 
-        json_content: Optional[str] = None
-        if content is not None:
-            if isinstance(content, str) and is_raw_str:
-                json_content = content
-            else:
-                json_content = json.dumps(content)
 
-        request = DurableHttpRequest(
-            method, uri, json_content, headers, token_source, retry_options)
-        return self._ctx.call_sub_orchestrator(
-            BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
-            input=request.to_json(),
-            return_type=DurableHttpResponse)
+FunctionsOrchestrator: TypeAlias = (
+    task.Orchestrator[Any, Any]
+    | Callable[[DurableOrchestrationContext], Any]
+)
+"""Orchestrator shapes accepted by the Functions decorators and worker.
+
+Async orchestrators use the durabletask two-argument shape
+``async def orchestrator(ctx: task.AsyncOrchestrationContext, input)``. The
+single-argument ``DurableOrchestrationContext`` shape is for synchronous and
+generator orchestrators only.
+"""
 
 
 def accepts_two_positional_args(fn: Callable[..., Any]) -> bool:
@@ -308,10 +302,35 @@ def accepts_two_positional_args(fn: Callable[..., Any]) -> bool:
     return positional >= 2
 
 
+def validate_orchestrator(fn: Callable[..., Any]) -> None:
+    """Reject orchestrator shapes the Functions provider does not support.
+
+    A single-argument ``async def`` orchestrator is rejected because the
+    ``DurableOrchestrationContext`` API is synchronous. The function is only
+    inspected, never called, so no coroutine is created.
+
+    Raises
+    ------
+    TypeError
+        If ``fn`` is a single-argument async orchestrator.
+    """
+    if accepts_two_positional_args(fn) or not is_async_callable(fn):
+        return
+    name = getattr(fn, "__name__", "orchestrator")
+    raise TypeError(
+        f"Orchestrator '{name}' is an async function with a single context parameter, "
+        "which is not supported. Declare async orchestrators with two parameters, "
+        "for example 'async def orchestrator(ctx: task.AsyncOrchestrationContext, input)', "
+        "where 'task' is 'durabletask.task'. Single-parameter orchestrators that use "
+        "DurableOrchestrationContext must be generator or regular functions.")
+
+
 def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Adapt a v1-style one-argument orchestrator to durabletask's ``(ctx, input)``.
 
-    Two-argument (durabletask-native) orchestrators are returned unchanged. The
+    Two-argument (durabletask-native) orchestrators, including ``async def``
+    orchestrators, are returned unchanged. Single-argument ``async def``
+    orchestrators are rejected with ``TypeError``. The
     returned wrapper deliberately does not set ``__wrapped__`` so durabletask
     introspects the wrapper's own ``(context, _input)`` signature rather than the
     wrapped function's signature. When the ``orchestration_trigger`` decorator
@@ -320,6 +339,7 @@ def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
     type (required in strict-typing mode, where the codec reconstructs a
     custom-object payload only when given the destination type).
     """
+    validate_orchestrator(fn)
     if accepts_two_positional_args(fn):
         return fn
 

@@ -5,7 +5,9 @@ import base64
 import io
 import json
 import urllib.error
+from collections.abc import Generator
 from datetime import datetime, timedelta, tzinfo
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -360,19 +362,40 @@ def test_excluded_error_and_no_options_return_full_response(with_options):
     assert response.to_json() == {"status_code": 503, "headers": {"X-Error": "detail"}, "content": "body"}
 
 
-@pytest.mark.parametrize("succeed", [False, True])
-def test_call_http_schedules_snapshot_and_observes_child_result(succeed):
+def _v1_caller(policy: df.HttpRetryOptions, codes: list[int]):
+    def caller(context: df.DurableOrchestrationContext) -> Generator[task.Task[Any], Any, df.DurableHttpResponse]:
+        pending = context.call_http("GET", "https://example.com", retry_options=policy)
+        codes.append(404)
+        return (yield pending)
+    return caller
+
+
+def _task_caller(policy: df.HttpRetryOptions, codes: list[int]):
+    def caller(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, df.DurableHttpResponse]:
+        pending = df.call_http(ctx, "GET", "https://example.com", retry_options=policy)
+        codes.append(404)
+        return (yield pending)
+    return caller
+
+
+def _async_caller(policy: df.HttpRetryOptions, codes: list[int]):
+    async def caller(ctx: task.AsyncOrchestrationContext, _: Any) -> df.DurableHttpResponse:
+        pending = df.call_http(ctx, "GET", "https://example.com", retry_options=policy)
+        codes.append(404)
+        return await pending
+    return caller
+
+
+@pytest.mark.parametrize("outcome", ["success", "polled", "failure"])
+@pytest.mark.parametrize("make_caller", [_v1_caller, _task_caller, _async_caller],
+                         ids=["v1-context", "task-context", "async-context"])
+def test_call_http_schedules_snapshot_and_observes_child_result(make_caller, outcome: str) -> None:
     codes = [503]
     policy = df.HttpRetryOptions(
         first_retry_interval=timedelta(seconds=2),
         max_number_of_attempts=1, status_codes_to_retry=codes)
 
-    def caller(context):
-        pending = context.call_http("GET", "https://example.com", retry_options=policy)
-        codes.append(404)
-        return (yield pending)
-
-    parent = _History(caller)
+    parent = _History(make_caller(policy, codes))
     action = parent.only_action("createSubOrchestration")
     assert action.createSubOrchestration.name == BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
     payload = json.loads(action.createSubOrchestration.input.value)
@@ -381,11 +404,17 @@ def test_call_http_schedules_snapshot_and_observes_child_result(succeed):
         action.id, BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME, "child",
         encoded_input=action.createSubOrchestration.input.value))
     child = _History(builtin_http_poll_orchestrator, payload, parent="instance")
-    child.run_activity(status=200 if succeed else 503)
+    if outcome == "polled":
+        child.run_activity(status=202, headers={"Location": "/status", "Retry-After": "3"})
+        child.fire_timer(timedelta(seconds=3))
+        assert child.run_activity()["uri"] == "https://example.com/status"
+    else:
+        child.run_activity(status=200 if outcome == "success" else 503)
     completion = child.only_action("completeOrchestration").completeOrchestration
-    if succeed:
+    if outcome != "failure":
         parent.dispatch([helpers.new_sub_orchestration_completed_event(action.id, completion.result.value)])
         assert parent.result().status_code == 200
+        assert parent.result().content == "body"
     else:
         failure = helpers.new_sub_orchestration_failed_event(action.id, RuntimeError("placeholder"))
         failure.subOrchestrationInstanceFailed.failureDetails.CopyFrom(completion.failureDetails)
@@ -393,3 +422,45 @@ def test_call_http_schedules_snapshot_and_observes_child_result(succeed):
         completion = parent.only_action("completeOrchestration").completeOrchestration
         assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
         assert "status code 503" in str(completion.failureDetails)
+
+
+def test_async_call_http_is_cold_until_awaited() -> None:
+    async def caller(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
+        pending = df.call_http(ctx, "POST", "https://example.com", content=1, is_raw_str=True)
+        await ctx.create_timer(timedelta(seconds=1))
+        with pytest.raises(TypeError, match="is_raw_str"):
+            await pending
+        return "validated"
+
+    history = _History(caller)
+    # Neither validation nor scheduling happens when the coroutine is created.
+    history.only_action("createTimer")
+    history.fire_timer(timedelta(seconds=1))
+    completion = history.only_action("completeOrchestration").completeOrchestration
+    assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED, completion.failureDetails
+    assert json.loads(completion.result.value) == "validated"
+
+
+@pytest.mark.parametrize(("content", "is_raw_str", "expected"), [
+    (None, False, None),
+    ({"a": 1}, False, '{"a": 1}'),
+    ("text", False, '"text"'),
+    ("text", True, "text"),
+])
+def test_call_http_content_encoding_matches_v1_context(content: Any, is_raw_str: bool, expected: str | None) -> None:
+    async def caller(ctx: task.AsyncOrchestrationContext, _: Any) -> df.DurableHttpResponse:
+        return await df.call_http(
+            ctx, "POST", "https://example.com", content=content, is_raw_str=is_raw_str,
+            headers={"X-Test": "value"})
+
+    action = _History(caller).only_action("createSubOrchestration")
+    payload = json.loads(action.createSubOrchestration.input.value)
+    assert payload.get("content") == expected
+    assert payload["headers"] == {"X-Test": "value"}
+    assert "retryOptions" not in payload
+
+
+def test_call_http_rejects_v1_context() -> None:
+    context = df.DurableOrchestrationContext(MagicMock(spec=task.OrchestrationContext))
+    with pytest.raises(TypeError, match=r"context\.call_http"):
+        df.call_http(context, "GET", "https://example.com")  # type: ignore[call-overload]
