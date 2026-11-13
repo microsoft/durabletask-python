@@ -1,12 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import asyncio
 import inspect
-import json
-from collections.abc import Awaitable, Callable, Coroutine, Generator, Sequence
-from datetime import UTC, datetime, timedelta
-from typing import Any, Optional, TypeAlias, TypeVar, cast, overload
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Callable, Generator, Optional, TypeAlias, cast
 from uuid import UUID
 
 from durabletask import task
@@ -14,12 +11,12 @@ from durabletask.entities import EntityInstanceId
 from durabletask.internal.shared import is_async_callable
 from durabletask.task import OrchestrationContext, RetryPolicy, Task
 
-from ...http.models import DurableHttpResponse, HttpRetryOptions
 from ..serialization import DEFAULT_FUNCTIONS_DATA_CONVERTER
 from .function_context import FunctionContext
 from .token_source import TokenSource
 
-T = TypeVar("T")
+if TYPE_CHECKING:
+    from ...http.models import HttpRetryOptions
 
 
 class DurableOrchestrationContext:
@@ -255,294 +252,23 @@ class DurableOrchestrationContext:
         """
         # Imported lazily to avoid a module import cycle
         # (http.models -> compat.token_source).
-        from ...http.builtin import BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
-        from ...http.models import DurableHttpRequest, DurableHttpResponse
+        from ...http.call import schedule_http_request
 
-        if (not isinstance(content, str)) and is_raw_str:
-            raise TypeError(
-                "Invalid use of 'is_raw_str' parameter: 'is_raw_str' is set to "
-                "'True' but 'content' is not an instance of type 'str'. Either "
-                "set 'is_raw_str' to 'False', or ensure your 'content' is of "
-                "type 'str'.")
-
-        json_content: Optional[str] = None
-        if content is not None:
-            if isinstance(content, str) and is_raw_str:
-                json_content = content
-            else:
-                json_content = json.dumps(content)
-
-        request = DurableHttpRequest(
-            method, uri, json_content, headers, token_source, retry_options)
-        return self._ctx.call_sub_orchestrator(
-            BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME,
-            input=request.to_json(),
-            return_type=DurableHttpResponse)
-
-
-def _schedule_awaitables(
-    operations: Sequence[Awaitable[T]],
-) -> tuple[list[asyncio.Future[T]], list[asyncio.Future[T]]]:
-    """Schedule each distinct awaitable once, retaining input order."""
-    scheduled: dict[int, asyncio.Future[T]] = {}
-    owned: list[asyncio.Future[T]] = []
-    futures: list[asyncio.Future[T]] = []
-    loop = asyncio.get_running_loop()
-    for operation in operations:
-        if not inspect.isawaitable(operation):
-            raise TypeError("Orchestration operations must be awaitable.")
-        if isinstance(operation, asyncio.Future) and operation.get_loop() is not loop:
-            raise ValueError("Orchestration tasks must belong to the current durable event loop.")
-    for operation in operations:
-        key = id(operation)
-        if key not in scheduled:
-            future = asyncio.ensure_future(operation)
-            scheduled[key] = future
-            if future is not operation:
-                owned.append(future)
-        futures.append(scheduled[key])
-    return futures, owned
-
-
-async def _cancel_owned(futures: Sequence[asyncio.Future[Any]]) -> None:
-    pending = [future for future in futures if not future.done()]
-    for future in pending:
-        future.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-
-
-class AsyncDurableOrchestrationContext:
-    """Functions v1-style context supplied automatically to async orchestrators.
-
-    Durable operations are cold, single-use coroutines. Synchronous commands
-    and metadata have the same behavior and argument names as the generator
-    context. Use :meth:`as_task_context` only when eager durable task handles
-    are needed for interoperability.
-    """
-
-    def __init__(
-        self, ctx: task.AsyncOrchestrationContext,
-        orchestration_input: Any = None, input_type: type | None = None,
-    ) -> None:
-        self._ctx = ctx
-        self._compat = DurableOrchestrationContext(ctx.as_task_context(), orchestration_input, input_type)
-
-    @overload
-    def get_input(self, expected_type: type[T]) -> T:
-        ...
-
-    @overload
-    def get_input(self, expected_type: None = None) -> Any:
-        ...
-
-    def get_input(self, expected_type: type | None = None) -> Any:
-        """Get the orchestration input, optionally coerced to the expected type."""
-        return self._compat.get_input(expected_type)
-
-    @property
-    def instance_id(self) -> str:
-        """Get the current orchestration instance ID."""
-        return self._compat.instance_id
-
-    @property
-    def parent_instance_id(self) -> str | None:
-        """Get the parent orchestration instance ID, if any."""
-        return self._compat.parent_instance_id
-
-    @property
-    def version(self) -> str | None:
-        """Get the orchestration instance version, if any."""
-        return self._compat.version
-
-    @property
-    def current_utc_datetime(self) -> datetime:
-        """Get the replay-safe current UTC time as a timezone-aware datetime."""
-        return self._compat.current_utc_datetime
-
-    @property
-    def is_replaying(self) -> bool:
-        """Get whether the orchestration is replaying its history."""
-        return self._compat.is_replaying
-
-    @property
-    def custom_status(self) -> Any:
-        """Get the custom status set during this execution."""
-        return self._compat.custom_status
-
-    @property
-    def will_continue_as_new(self) -> bool:
-        """Get whether continue-as-new was requested during this execution."""
-        return self._compat.will_continue_as_new
-
-    @property
-    def function_context(self) -> FunctionContext:
-        """Get the Functions context bag."""
-        return self._compat.function_context
-
-    @property
-    def histories(self) -> Any:
-        """History is not exposed on orchestration contexts."""
-        return self._compat.histories
-
-    def continue_as_new(self, input_: Any) -> None:
-        """Restart the orchestration with a new input."""
-        self._compat.continue_as_new(input_)
-
-    def set_custom_status(self, status: Any) -> None:
-        """Set the orchestration's custom status."""
-        self._compat.set_custom_status(status)
-
-    def new_uuid(self) -> str:
-        """Create a replay-safe UUID string."""
-        return self._compat.new_uuid()
-
-    def new_guid(self) -> UUID:
-        """Create a replay-safe UUID."""
-        return self._compat.new_guid()
-
-    def signal_entity(
-        self, entityId: EntityInstanceId, operationName: str, operationInput: Any = None,
-    ) -> None:
-        """Signal an entity without waiting for a result."""
-        self._compat.signal_entity(entityId, operationName, operationInput)
-
-    def as_task_context(self) -> DurableOrchestrationContext:
-        """Get the v1-compatible eager task-handle context."""
-        return self._compat
-
-    async def call_activity(self, name: Callable[..., Any] | str, input_: Any = None) -> Any:
-        """Start and await an activity."""
-        return await self._ctx.call_activity(name, input=input_)
-
-    async def call_activity_with_retry(
-        self, name: Callable[..., Any] | str, retry_options: RetryPolicy, input_: Any = None,
-    ) -> Any:
-        """Start and await an activity with retries."""
-        return await self._ctx.call_activity(name, input=input_, retry_policy=retry_options)
-
-    async def call_sub_orchestrator(
-        self, name: Callable[..., Any] | str, input_: Any = None, instance_id: str | None = None,
-    ) -> Any:
-        """Start and await a sub-orchestration."""
-        return await self._ctx.call_sub_orchestrator(name, input=input_, instance_id=instance_id)
-
-    async def call_sub_orchestrator_with_retry(
-        self, name: Callable[..., Any] | str, retry_options: RetryPolicy,
-        input_: Any = None, instance_id: str | None = None,
-    ) -> Any:
-        """Start and await a sub-orchestration with retries."""
-        return await self._ctx.call_sub_orchestrator(
-            name, input=input_, instance_id=instance_id, retry_policy=retry_options)
-
-    async def create_timer(self, fire_at: datetime | timedelta) -> None:
-        """Wait for a durable timer, withdrawing it locally if cancelled."""
-        await self._ctx.create_timer(fire_at)
-
-    @overload
-    async def wait_for_external_event(
-        self, name: str, expected_type: type[T], *, timeout: timedelta | None = None,
-    ) -> T:
-        ...
-
-    @overload
-    async def wait_for_external_event(
-        self, name: str, expected_type: None = None, *, timeout: timedelta | None = None,
-    ) -> Any:
-        ...
-
-    async def wait_for_external_event(
-        self, name: str, expected_type: type[Any] | None = None, *, timeout: timedelta | None = None,
-    ) -> Any:
-        """Wait for an event, withdrawing the local subscription on cancellation or timeout."""
-        return await self._ctx.wait_for_external_event(name, data_type=expected_type, timeout=timeout)
-
-    async def call_entity(
-        self, entityId: EntityInstanceId, operationName: str, operationInput: Any = None,
-    ) -> Any:
-        """Start and await an entity operation."""
-        return await self._ctx.call_entity(entityId, operationName, operationInput)
-
-    async def call_http(
-        self, method: str, uri: str, content: Any = None, headers: dict[str, str] | None = None,
-        token_source: TokenSource | None = None, is_raw_str: bool = False,
-        retry_options: HttpRetryOptions | None = None,
-    ) -> DurableHttpResponse:
-        """Start and await a durable HTTP request."""
-        return await self._compat.call_http(
-            method, uri, content, headers, token_source, is_raw_str, retry_options)
-
-    async def task_all(self, operations: Sequence[Awaitable[T]]) -> list[T]:
-        """Wait for every operation, preserving input order and duplicate references.
-
-        The first observed failure is raised after all operations finish.
-        Existing asyncio futures are borrowed; cancelling this group leaves
-        them running. Coroutines started by this group are cancelled and
-        cleaned up if the group itself is cancelled.
-        """
-        futures, owned = _schedule_awaitables(operations)
-        unique = list({id(future): future for future in futures}.values())
-        failures: list[BaseException] = []
-
-        def record_failure(future: asyncio.Future[T]) -> None:
-            if not failures:
-                if future.cancelled():
-                    failures.append(asyncio.CancelledError())
-                else:
-                    error = future.exception()
-                    if error is not None:
-                        failures.append(error)
-
-        for future in unique:
-            future.add_done_callback(record_failure)
-        try:
-            results = await asyncio.gather(*(asyncio.shield(future) for future in futures),
-                                           return_exceptions=True)
-            if failures:
-                raise failures[0]
-            return cast(list[T], results)
-        except asyncio.CancelledError:
-            await _cancel_owned(owned)
-            raise
-        finally:
-            for future in unique:
-                future.remove_done_callback(record_failure)
-
-    async def task_any(self, operations: Sequence[Awaitable[T]]) -> asyncio.Future[T]:
-        """Return the first completed operation without cancelling the losers.
-
-        The winner is the original asyncio future if one was supplied; a raw
-        coroutine is wrapped in a new task. Use tasks when identity or later
-        access to losing operations is needed. Cancelling the group cancels
-        only coroutines it started, not futures supplied by its caller.
-        """
-        if not operations:
-            raise ValueError("task_any requires at least one operation.")
-        futures, owned = _schedule_awaitables(operations)
-        unique = list({id(future): future for future in futures}.values())
-        winner: asyncio.Future[asyncio.Future[T]] = asyncio.get_running_loop().create_future()
-
-        def completed(future: asyncio.Future[T]) -> None:
-            if not winner.done():
-                winner.set_result(future)
-
-        for future in unique:
-            future.add_done_callback(completed)
-        try:
-            return await winner
-        except asyncio.CancelledError:
-            await _cancel_owned(owned)
-            raise
-        finally:
-            for future in unique:
-                future.remove_done_callback(completed)
+        return schedule_http_request(
+            self._ctx, method, uri, content, headers, token_source, is_raw_str, retry_options)
 
 
 FunctionsOrchestrator: TypeAlias = (
     task.Orchestrator[Any, Any]
     | Callable[[DurableOrchestrationContext], Any]
-    | Callable[[AsyncDurableOrchestrationContext], Coroutine[Any, Any, Any]]
 )
+"""Orchestrator shapes accepted by the Functions decorators and worker.
+
+Async orchestrators use the durabletask two-argument shape
+``async def orchestrator(ctx: task.AsyncOrchestrationContext, input)``. The
+single-argument ``DurableOrchestrationContext`` shape is for synchronous and
+generator orchestrators only.
+"""
 
 
 def accepts_two_positional_args(fn: Callable[..., Any]) -> bool:
@@ -576,10 +302,35 @@ def accepts_two_positional_args(fn: Callable[..., Any]) -> bool:
     return positional >= 2
 
 
+def validate_orchestrator(fn: Callable[..., Any]) -> None:
+    """Reject orchestrator shapes the Functions provider does not support.
+
+    A single-argument ``async def`` orchestrator is rejected because the
+    ``DurableOrchestrationContext`` API is synchronous. The function is only
+    inspected, never called, so no coroutine is created.
+
+    Raises
+    ------
+    TypeError
+        If ``fn`` is a single-argument async orchestrator.
+    """
+    if accepts_two_positional_args(fn) or not is_async_callable(fn):
+        return
+    name = getattr(fn, "__name__", "orchestrator")
+    raise TypeError(
+        f"Orchestrator '{name}' is an async function with a single context parameter, "
+        "which is not supported. Declare async orchestrators with two parameters, "
+        "for example 'async def orchestrator(ctx: task.AsyncOrchestrationContext, input)', "
+        "where 'task' is 'durabletask.task'. Single-parameter orchestrators that use "
+        "DurableOrchestrationContext must be generator or regular functions.")
+
+
 def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Adapt a v1-style one-argument orchestrator to durabletask's ``(ctx, input)``.
 
-    Two-argument (durabletask-native) orchestrators are returned unchanged. The
+    Two-argument (durabletask-native) orchestrators, including ``async def``
+    orchestrators, are returned unchanged. Single-argument ``async def``
+    orchestrators are rejected with ``TypeError``. The
     returned wrapper deliberately does not set ``__wrapped__`` so durabletask
     introspects the wrapper's own ``(context, _input)`` signature rather than the
     wrapped function's signature. When the ``orchestration_trigger`` decorator
@@ -588,25 +339,12 @@ def wrap_orchestrator(fn: Callable[..., Any]) -> Callable[..., Any]:
     type (required in strict-typing mode, where the codec reconstructs a
     custom-object payload only when given the destination type).
     """
+    validate_orchestrator(fn)
     if accepts_two_positional_args(fn):
         return fn
 
     input_type = getattr(fn, "_df_input_type", None)
     name = getattr(fn, "__name__", "orchestrator")
-
-    if is_async_callable(fn):
-        async def _async_wrapper(context: task.AsyncOrchestrationContext, _input: Any = None) -> Any:
-            adapter = AsyncDurableOrchestrationContext(context, _input, input_type)
-            coroutine = fn(adapter)
-            if not inspect.iscoroutine(coroutine):
-                if inspect.isgenerator(coroutine):
-                    coroutine.close()
-                raise TypeError("An async orchestrator must return a coroutine.")
-            return await coroutine
-        _async_wrapper.__name__ = name
-        if input_type is not None:
-            _async_wrapper.__annotations__["_input"] = input_type
-        return _async_wrapper
 
     if inspect.isgeneratorfunction(fn):
         def _generator_wrapper(context: OrchestrationContext, _input: Any = None) -> Any:

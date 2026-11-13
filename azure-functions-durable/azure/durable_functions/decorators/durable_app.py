@@ -21,7 +21,7 @@ from ..http.builtin import (
     builtin_http_poll_orchestrator,
 )
 from ..internal.compat.activity import wrap_activity, wrap_activity_payloads
-from ..internal.compat.orchestration_context import FunctionsOrchestrator
+from ..internal.compat.orchestration_context import FunctionsOrchestrator, validate_orchestrator
 from ..internal.invocation import preserve_function_source, wrap_invocation
 from ..worker import DurableFunctionsWorker
 
@@ -190,6 +190,7 @@ class Blueprint(TriggerApi, BindingApi):
         """
         def decorator(orchestrator_func: FunctionsOrchestrator) -> FunctionBuilder:
             # Construct an orchestrator based on the end-user code
+            validate_orchestrator(orchestrator_func)
 
             if input_type is not None:
                 # Stash the decorator-declared input type so the runtime can
@@ -297,6 +298,12 @@ class Blueprint(TriggerApi, BindingApi):
             ``context.get_input()`` decodes the input payload to this type. A
             call-site ``expected_type`` argument on ``get_input`` takes
             precedence over this value.
+
+        Raises
+        ------
+        TypeError
+            When applied to a single-parameter ``async def`` orchestrator.
+            Async orchestrators take ``(ctx: task.AsyncOrchestrationContext, input)``.
         """
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
