@@ -52,10 +52,10 @@ async def sequence(ctx: task.AsyncOrchestrationContext, value: int) -> list[int]
 ```
 
 Register the function with `TaskHubGrpcWorker`, `DurableTaskSchedulerWorker`,
-or the Azure Functions `orchestration_trigger` decorator as usual. Functions
-also supports single-argument `async def` orchestrators using the compatibility
-context and `await context.task_all(...)`. Async orchestrators automatically
-receive cold coroutine operations accepted by `create_task` and task groups.
+or the Azure Functions `orchestration_trigger` decorator as usual. All three
+packages use this two-argument shape for async orchestrators. Async
+orchestrators automatically receive cold coroutine operations accepted by
+`create_task` and task groups.
 Generator orchestrators keep their eager, reusable durable handles. For
 interoperability, `ctx.as_task_context()` exposes the eager context and
 `handle.wait()` creates an independently cancellable borrower.

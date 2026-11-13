@@ -4,8 +4,8 @@ All three packages accept native `async def` orchestrators alongside existing
 synchronous generator orchestrators. Both styles use the same history, action,
 retry, payload, and entity engine. Register the function normally with
 `TaskHubGrpcWorker`, `DurableTaskSchedulerWorker`, or the Functions
-`orchestration_trigger` decorator. Functions supports both native two-argument
-and compatibility single-argument orchestrators.
+`orchestration_trigger` decorator. Async orchestrators use the same
+two-argument `(ctx, input)` shape in all three packages.
 
 ```python
 import asyncio
@@ -156,47 +156,47 @@ unmarked synchronous wrapper returning a coroutine is rejected because it would
 have received the generator context. Cyclic `__wrapped__` chains are rejected at
 registration. Existing registration naming requirements still apply.
 
-## Azure Functions compatibility
+## Azure Functions
 
-Single-argument async Functions orchestrators receive
-`df.AsyncDurableOrchestrationContext`, with the v1-style method and argument
-names. Two-argument native orchestrators receive `task.AsyncOrchestrationContext`.
+Functions async orchestrators use the two-argument shape and receive
+`task.AsyncOrchestrationContext`, as in the other packages. The second argument
+is the orchestration input. Single-argument `async def` orchestrators are not
+supported: the `orchestration_trigger` decorator raises `TypeError` for them.
+The single-argument `df.DurableOrchestrationContext` remains available for
+generator orchestrators.
+
+Durable HTTP requests use `df.call_http`, which accepts the async context and
+returns a cold coroutine:
 
 ```python
+import asyncio
+
 import azure.durable_functions as df
+from durabletask import task
 
 app = df.DFApp()
 
 
 @app.orchestration_trigger(context_name="context")
-async def greetings(context: df.AsyncDurableOrchestrationContext) -> list[str]:
-    names = context.get_input()
-    return await context.task_all([
-        context.call_activity("say_hello", name) for name in names
-    ])
+async def greetings(
+        ctx: task.AsyncOrchestrationContext, names: list[str]) -> dict[str, object]:
+    messages = await asyncio.gather(*(
+        ctx.call_activity("say_hello", input=name, return_type=str)
+        for name in names
+    ))
+    response = await df.call_http(ctx, "GET", "https://example.com/status")
+    return {"greetings": messages, "status": response.status_code}
 ```
 
-`task_all` starts its inputs, waits for all of them, and returns results in
-input order, including duplicate references. If an operation fails, the first
-observed failure is raised after all have finished. `task_any` returns the
-winning `asyncio.Future`, whether it succeeded, failed, or was cancelled,
-without cancelling the losers. Await the winner to obtain its result or failure.
-An existing future keeps its identity; a coroutine is wrapped in a new task.
-Create tasks yourself when you need to identify the winner or later await the
-losers. Repeated references within a group are scheduled only once.
-
-On group cancellation, coroutines started by that group are cancelled and
-drained, while supplied futures are borrowed and continue running. Remote work
-already issued by either kind of operation is not cancelled. The compatibility
-context's `as_task_context()` returns its eager v1-style counterpart when
-explicit durable handles are needed.
+Compose branches with `asyncio.gather` or `asyncio.TaskGroup`, and use
+`ctx.as_task_context()` handles with `task.when_any` for races, as described
+above.
 
 ## Supported authoring contract
 
 Await activities, timers, external events, sub-orchestrations, durable
 operations via eager `task.when_all` / `task.when_any`, and entity calls/locks
-where supported by the provider. Functions compatibility contexts also provide
-async `task_all` / `task_any`. Generator and coroutine parents/children may call
+where supported by the provider. Generator and coroutine parents/children may call
 one another through durable sub-orchestrations.
 
 For sub-orchestration results, pass `return_type=Result` to reconstruct a custom
@@ -409,8 +409,7 @@ instances and validate histories before upgrades. All workers processing an
 instance must use that pinned environment; see the Python version warning
 above.
 
-The Functions `orchestrator_generator_wrapper` helper supports direct durable
-awaits in synchronous and async mock-based unit tests; it does not simulate the
-asyncio scheduler.
-Use the real replay executor/provider or the in-memory backend to test task
-groups, gather, and durable timeouts.
+The Functions `orchestrator_generator_wrapper` helper drives generator
+orchestrators only. Use the real replay executor/provider or the in-memory
+backend to test async orchestrators, including task groups, gather, and durable
+timeouts.

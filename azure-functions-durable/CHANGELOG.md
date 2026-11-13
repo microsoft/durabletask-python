@@ -11,19 +11,14 @@ ADDED
 
 - A best-effort background check warns when a Function App's requirements allow
 a future major version, which may introduce replay-breaking changes.
-
-- With the corresponding core SDK, native and v1-style `async def`
-orchestrators automatically receive async contexts with cold durable operations
-and supported asyncio composition. The v1-style context preserves compatibility
-argument names and provides async `task_all` and `task_any`. Generator
-orchestrators retain their eager behavior. See the
+- Added `async def` orchestrators with the core two-argument shape,
+`async def orchestrator(ctx: task.AsyncOrchestrationContext, input)`, and
+`df.call_http()` for durable HTTP requests from durabletask orchestration
+contexts. Single-parameter `async def` orchestrators are not supported and
+raise `TypeError` when registered. Generator orchestrators are unchanged.
+Requires a `durabletask` release with async orchestrator support. See the
 [async contract](../docs/async-orchestrators.md) for dispatch cleanup and
 replay/upgrade precautions.
-Release the core async support first, then coordinate this provider's version
-and core dependency minimum in a dedicated release PR.
-- The `orchestrator_generator_wrapper` test helper accepts direct-await
-coroutines. Tests involving asyncio scheduling still require a replay executor
-or backend.
 - Added opt-in `HttpRetryOptions` on `context.call_http()` for durable initial
 request retries with configurable timing and status selection. Empty or omitted
 status lists select all non-2xx responses; exhausted retries fail the call.
@@ -73,7 +68,6 @@ the core store, and marked downloads decode explicitly. Upgrade all Python
 readers before enabling new writers; existing headerless blobs still require
 their original compression setting. See the
 [core compatibility guidance](../docs/features.md#cross-sdk-compatibility).
-
 
 ## v2.0.0rc4
 
