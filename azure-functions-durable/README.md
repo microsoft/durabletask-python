@@ -108,9 +108,85 @@ These compatibility paths remain supported.
 > Changing typing modes can change values returned during orchestration replay.
 > Validate existing payloads and drain affected orchestrations before switching.
 
+## Async orchestrators
+
+Async orchestrators use the same two-argument shape as the core SDK and Durable
+Task Scheduler provider. They receive `task.AsyncOrchestrationContext` and the
+orchestration input:
+
+```python
+import asyncio
+from datetime import timedelta
+from typing import Any
+
+import azure.durable_functions as df
+from durabletask import task
+
+app = df.DFApp()
+
+
+@app.orchestration_trigger(context_name="context")
+async def fan_out(ctx: task.AsyncOrchestrationContext, names: list[str]) -> list[str]:
+    return list(await asyncio.gather(*(
+        ctx.call_activity("say_hello", input=name, return_type=str)
+        for name in names
+    )))
+
+
+@app.orchestration_trigger(context_name="context")
+async def approval(ctx: task.AsyncOrchestrationContext, _: Any) -> bool:
+    handles = ctx.as_task_context()
+    approved = handles.wait_for_external_event("approval", data_type=bool)
+    deadline = handles.create_timer(timedelta(hours=1))
+    winner = await task.when_any([approved, deadline])
+    return winner is approved and approved.get_result()
+```
+
+Durable operations on the async context are cold coroutines. Compose branches
+with `asyncio.gather` or `asyncio.TaskGroup`; `asyncio.sleep` and timeouts use
+durable timers. For races, schedule eager handles through
+`ctx.as_task_context()` and pass them to `task.when_any`, which returns the
+identical winning handle. `handle.wait()` creates an independently cancellable
+waiter for an eager handle. Generator orchestrators remain supported, including
+mixed-style sub-orchestrations.
+
+Single-argument `async def` orchestrators are not supported. The
+`orchestration_trigger` decorator raises `TypeError` for them. The
+single-argument `df.DurableOrchestrationContext` remains available for
+generator orchestrators.
+
+The [shared async contract](../docs/async-orchestrators.md) defines the supported
+API subset, cancellation, per-dispatch `finally`/async-generator cleanup,
+replay/migration rules, and framework adapter responsibilities. Arbitrary I/O,
+threads, subprocesses, `asyncio.wait`/`as_completed`, and automatic recording of
+ordinary async helpers are not supported. Put nondeterministic work in ordinary
+activities, not orchestrators.
+
+## Durable HTTP calls
+
+`df.call_http` makes durable HTTP requests from durabletask orchestration
+contexts. With `task.AsyncOrchestrationContext`, it returns a cold coroutine to
+`await`. With a generator's `task.OrchestrationContext`, it schedules the
+request immediately and returns a task to `yield`. The result is a
+`df.DurableHttpResponse`:
+
+```python
+@app.orchestration_trigger(context_name="context")
+async def check_status(ctx: task.AsyncOrchestrationContext, url: str) -> int:
+    response = await df.call_http(ctx, "GET", url)
+    return response.status_code
+```
+
+`df.call_http` accepts the same `content`, `headers`, `token_source`,
+`is_raw_str`, and `retry_options` options as `context.call_http()` on
+`df.DurableOrchestrationContext`, as keyword arguments. Both follow `202
+Accepted` responses with a `Location` header until the operation completes and
+return unselected non-2xx responses rather than raising.
+
 ## Durable HTTP failure retries
 
-Opt in to durable retries for the **initial** `context.call_http()` request with
+Opt in to durable retries for the **initial** `context.call_http()` or
+`df.call_http()` request with
 `HttpRetryOptions`. It uses the core activity retry engine and durable timers,
 not an in-process HTTP retry loop:
 
@@ -153,6 +229,7 @@ rather than returning the last selected response. Transport and other activity
 failures also use the policy regardless of the status list.
 
 The policy and status list are snapshotted when the request is scheduled.
+For async orchestrators, scheduling occurs when the coroutine starts.
 Omitting `retry_options` preserves the existing request payload and behavior.
 Automatic 202/Location polling remains separate: subsequent GET polls inherit
 neither the failure retry policy nor its status classification. Poll HTTP
@@ -297,8 +374,9 @@ agree on the store and reference encoding; Functions references are JSON strings
 > storage error can therefore become a terminal orchestration failure.
 
 Registered orchestration and entity handlers await the store's async methods
-before and after execution. Orchestrators remain synchronous generators, and
-orchestration replay and entity code run on execution threads with their
+before and after execution. Orchestrators may be synchronous generators or
+native `async def` functions; both use synchronous replay execution.
+Orchestration replay and entity code run on execution threads with their
 invocation logging context preserved. Their payload downloads and uploads do
 not occupy those threads, and serialization does not access storage during
 replay. Custom stores must implement genuinely nonblocking async methods to

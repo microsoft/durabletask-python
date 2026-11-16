@@ -110,9 +110,12 @@ jobs:
         displayName: "pytest: durabletask (unit tests, no emulators)"
         workingDirectory: tests/durabletask
 
-      # `tests/durabletask-azuremanaged/` is  NOT exercised here.
-      # Those tests require the Durable Task Scheduler emulator which is 
-      # not available in the network-isolated pools.
+      # Exercise the in-memory gRPC compatibility cases without an emulator.
+      # DTS-backed cases remain in the GitHub Actions emulator matrix.
+      - script: pytest test_dts_coroutine_orchestrators.py -m "not dts" --verbose
+        displayName: "pytest: durabletask-azuremanaged (coroutines, no emulator)"
+        workingDirectory: tests/durabletask-azuremanaged
+
       - script: |
           set -e
           python -P -c "import durabletask.azuremanaged; from durabletask.azuremanaged.client import DurableTaskSchedulerClient; from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker; print('durabletask.azuremanaged smoke import OK')"
