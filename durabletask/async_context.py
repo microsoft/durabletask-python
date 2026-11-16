@@ -5,16 +5,42 @@
 
 from __future__ import annotations
 
-import math
+import functools
+import inspect
 import logging
+import sys
+import weakref
+from collections.abc import Callable, Coroutine, Generator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
-from typing import Any, TypeVar, overload
+from typing import Any, Concatenate, ParamSpec, TypeVar, overload
 
 from durabletask.entities import EntityInstanceId, EntityLock
 
 T = TypeVar("T")
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _cold_operation(
+    operation: Callable[Concatenate[AsyncOrchestrationContext, P], Coroutine[Any, Any, R]],
+) -> Callable[Concatenate[AsyncOrchestrationContext, P], Coroutine[Any, Any, R]]:
+    """Weakly track each operation coroutine so dispatch teardown can close unstarted ones."""
+    @functools.wraps(operation)
+    def create(self: AsyncOrchestrationContext, /, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R]:
+        coroutine = operation(self, *args, **kwargs)
+        self._operations.add(coroutine)  # pyright: ignore[reportPrivateUsage]
+        return coroutine
+
+    if sys.version_info >= (3, 12):
+        inspect.markcoroutinefunction(create)
+    return create
+
+
+def _is_unstarted(operation: Coroutine[Any, Any, Any]) -> bool:
+    return inspect.getcoroutinestate(operation) == inspect.CORO_CREATED
 
 
 class AsyncOrchestrationContext:
@@ -33,6 +59,23 @@ class AsyncOrchestrationContext:
 
     def __init__(self, context: task.OrchestrationContext) -> None:
         self._context = context
+        self._operations: weakref.WeakSet[Coroutine[Any, Any, Any]] = weakref.WeakSet()
+
+    @contextmanager
+    def _closing_unstarted_operations(self) -> Generator[None, None, None]:
+        """Close operation coroutines that never started once dispatch teardown ends.
+
+        An unstarted coroutine has run none of its body, so closing it schedules
+        nothing. Retaining them during teardown keeps the cancelled orchestrator
+        from finalizing them first and reporting them as never awaited.
+        """
+        unstarted = [operation for operation in self._operations if _is_unstarted(operation)]
+        try:
+            yield
+        finally:
+            for operation in (*unstarted, *self._operations):
+                if _is_unstarted(operation):
+                    operation.close()
 
     @property
     def instance_id(self) -> str:
@@ -126,6 +169,7 @@ class AsyncOrchestrationContext:
     ) -> Any:
         ...
 
+    @_cold_operation
     async def call_activity(
         self, activity: task.Activity[TInput, TOutput] | str, *,
         input: TInput | None = None,
@@ -170,6 +214,7 @@ class AsyncOrchestrationContext:
     ) -> Any:
         ...
 
+    @_cold_operation
     async def call_sub_orchestrator(
         self, orchestrator: task.Orchestrator[TInput, TOutput] | str, *,
         input: TInput | None = None,
@@ -202,6 +247,7 @@ class AsyncOrchestrationContext:
     ) -> Any:
         ...
 
+    @_cold_operation
     async def call_entity(
         self, entity: EntityInstanceId, operation: str, input: Any = None, *,
         return_type: type | None = None,
@@ -210,6 +256,7 @@ class AsyncOrchestrationContext:
         return await self._context.call_entity(
             entity, operation, input, return_type=return_type)
 
+    @_cold_operation
     async def lock_entities(self, entities: list[EntityInstanceId]) -> EntityLock:
         """Acquire locks, for use as ``with await ctx.lock_entities(ids):``.
 
@@ -223,6 +270,7 @@ class AsyncOrchestrationContext:
         """
         return await self._context.lock_entities(entities)
 
+    @_cold_operation
     async def create_timer(self, fire_at: datetime | timedelta) -> None:
         """Await a private durable timer, cancelling it when this wait exits.
 
@@ -230,8 +278,6 @@ class AsyncOrchestrationContext:
         coroutine is constructed. Cancellation removes uncommitted timer work
         where possible; it cannot retract a timer already present in history.
         """
-        if isinstance(fire_at, timedelta) and not math.isfinite(fire_at.total_seconds()):
-            raise ValueError("Timer delays must be finite.")
         timer = self._context.create_timer(fire_at)
         try:
             await timer
@@ -252,13 +298,14 @@ class AsyncOrchestrationContext:
     ) -> Any:
         ...
 
+    @_cold_operation
     async def wait_for_external_event(
         self, name: str, *, timeout: timedelta | None = None,
         data_type: type | None = None,
     ) -> Any:
         """Receive one event through a private, cancellation-owned subscription.
 
-        A finite relative timeout starts when the coroutine executes and raises
+        A relative timeout starts when the coroutine executes and raises
         ``TimeoutError`` if its durable timer wins. Buffered events win
         immediately, even for zero/negative timeouts, without creating a timer.
         Otherwise nonpositive timeouts fail immediately without a timer.
@@ -271,8 +318,6 @@ class AsyncOrchestrationContext:
         """
         from durabletask.task import when_any
 
-        if timeout is not None and not math.isfinite(timeout.total_seconds()):
-            raise ValueError("Event receive timeouts must be finite.")
         event: task.CancellableTask[Any] = self._context.wait_for_external_event(name, data_type=data_type)
         timer: task.TimerTask | None = None
         try:
