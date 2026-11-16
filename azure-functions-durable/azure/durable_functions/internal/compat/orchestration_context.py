@@ -305,22 +305,25 @@ def accepts_two_positional_args(fn: Callable[..., Any]) -> bool:
 def validate_orchestrator(fn: Callable[..., Any]) -> None:
     """Reject orchestrator shapes the Functions provider does not support.
 
-    A single-argument ``async def`` orchestrator is rejected because the
-    ``DurableOrchestrationContext`` API is synchronous. The function is only
-    inspected, never called, so no coroutine is created.
+    An ``async def`` orchestrator that cannot be called with two positional
+    arguments is rejected because the ``DurableOrchestrationContext`` API is
+    synchronous. The function is only inspected, never called, so no coroutine
+    is created.
 
     Raises
     ------
     TypeError
-        If ``fn`` is a single-argument async orchestrator.
+        If ``fn`` is an async orchestrator with fewer than two positional
+        parameters.
     """
     if accepts_two_positional_args(fn) or not is_async_callable(fn):
         return
     name = getattr(fn, "__name__", "orchestrator")
     raise TypeError(
-        f"Orchestrator '{name}' is an async function with a single context parameter, "
-        "which is not supported. Declare async orchestrators with two parameters, "
-        "for example 'async def orchestrator(ctx: task.AsyncOrchestrationContext, input)', "
+        f"Orchestrator '{name}' is an async function with fewer than two positional "
+        "parameters, which is not supported. Declare async orchestrators with two "
+        "positional parameters, for example "
+        "'async def orchestrator(ctx: task.AsyncOrchestrationContext, input)', "
         "where 'task' is 'durabletask.task'. Single-parameter orchestrators that use "
         "DurableOrchestrationContext must be generator or regular functions.")
 

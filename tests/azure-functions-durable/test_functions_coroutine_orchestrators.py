@@ -162,3 +162,12 @@ async def test_single_argument_async_orchestrator_is_rejected(entry: str) -> Non
 
     assert not called
     assert [str(w.message) for w in caught if issubclass(w.category, RuntimeWarning)] == []
+
+
+def test_keyword_only_input_async_orchestrator_is_rejected_actionably() -> None:
+    async def keyword_input(ctx: task.AsyncOrchestrationContext, *, inp: int) -> int:
+        return inp
+
+    with pytest.raises(TypeError, match="fewer than two positional parameters") as error:
+        df.DFApp().orchestration_trigger(context_name="ctx")(keyword_input)
+    assert "async def orchestrator(ctx: task.AsyncOrchestrationContext, input)" in str(error.value)
