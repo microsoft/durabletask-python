@@ -455,6 +455,9 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
             steps += max(1, self._drain(limit - steps))
 
     def close(self) -> None:
+        if self.is_running():
+            # Orchestrator code always runs inside the loop; only the worker may close it.
+            raise RuntimeError(f"loop.close() is not supported in durable orchestrators. {_LOOP_HINT}")
         if self._closed:
             return
         self._closing = True
