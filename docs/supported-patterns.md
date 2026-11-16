@@ -2,6 +2,13 @@
 
 The following orchestration patterns are currently supported.
 
+Generator and native coroutine orchestrators share these durable patterns.
+See the [async orchestrator contract](async-orchestrators.md) for supported
+asyncio composition, durable clocks/timeouts, and dispatch-local cleanup.
+Async orchestrators receive cold coroutine operations and owned event/timeouts
+automatically. Generator orchestrators retain eager handles; async code can
+obtain them through `ctx.as_task_context()` and share them via `handle.wait()`.
+
 ## Function chaining
 
 An orchestration can chain a sequence of function calls using the following syntax:
@@ -81,6 +88,10 @@ to nested exception groups containing these signals on Python 3.11 and later.
 The existing warning-only handling of direct `asyncio.CancelledError` during
 forced teardown is unchanged. Other cancellation or process-control exits
 propagate after the worker attempts to abandon the accepted dispatch.
+Native coroutine authoring distinguishes a cancelled local root task: an
+unhandled local cancellation becomes `TaskCancelledError` and fails the
+orchestration instead of repeatedly abandoning replay. It does not terminate
+the durable instance; see the [async cancellation contract](async-orchestrators.md#failures-timeouts-and-cancellation).
 
 If a completion or abandonment RPC raises, its server-side outcome may be
 unknown. The worker logs the uncertainty and closes the dispatch's originating
