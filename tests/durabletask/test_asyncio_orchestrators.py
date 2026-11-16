@@ -5,6 +5,7 @@
 
 import asyncio
 import gc
+import inspect
 import json
 import os
 import subprocess
@@ -638,6 +639,18 @@ def test_every_unsupported_loop_api_fails_actionably(name: str) -> None:
     with pytest.raises(RuntimeError, match=rf"loop\.{name}\(\) is not supported") as error:
         getattr(loop, name)()
     assert str(error.value).endswith(_UNSUPPORTED_LOOP_APIS[name])
+
+
+@pytest.mark.parametrize("name", sorted(
+    name for name, member in inspect.getmembers(asyncio.AbstractEventLoop)
+    if not name.startswith("_") and callable(member)))
+def test_no_loop_api_inherits_bare_not_implemented_error(name: str) -> None:
+    # Fails when a new Python adds a loop API that is neither implemented nor tabled.
+    implementation = getattr(DurableEventLoop, name)
+    inherited = implementation is getattr(asyncio.AbstractEventLoop, name)
+    assert name in _UNSUPPORTED_LOOP_APIS or not inherited, (
+        f"loop.{name}() inherits AbstractEventLoop's bare NotImplementedError; "
+        "implement it or add it to _UNSUPPORTED_LOOP_APIS.")
 
 
 def test_untracked_task_finalized_after_dispatch_close_is_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
