@@ -51,7 +51,8 @@ existing replay engine, history format, and provider integrations.
 `asyncio.wait_for`, with durable timers as the clock.
 - Allow async helpers and libraries to compose durable operations, as long as
 they use only supported asyncio APIs.
-- Keep generator orchestrators and their recorded histories unchanged.
+- Keep generator orchestrators that yield durable tasks, and their recorded
+histories, unchanged.
 
 Non-goals:
 
