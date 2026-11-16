@@ -600,7 +600,7 @@ def test_unsupported_work_fails_actionably(api: str) -> None:
 def test_orchestrator_cannot_close_the_durable_loop(caught: bool, caplog: pytest.LogCaptureFixture) -> None:
     cleaned: list[str] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         async def background() -> None:
             try:
                 await ctx.call_activity("background")
@@ -692,7 +692,7 @@ def test_untracked_task_finalized_after_dispatch_close_is_quiet(monkeypatch: pyt
     monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
     untracked: list[asyncio.Task[Any]] = []
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         untracked.append(asyncio.Task(ctx.call_activity("background")))
         await ctx.call_activity("work")
 
@@ -1179,7 +1179,7 @@ def test_cleanup_keeps_first_custom_exit_over_later_generator_exit() -> None:
 
     errors: list[BaseException] = [CleanupAbort("first"), GeneratorExit("later")]
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def branch(index: int) -> None:
             try:
                 await ctx.wait_for_external_event(f"never-{index}")
@@ -1202,7 +1202,7 @@ def test_dispatch_restores_host_async_generator_hooks() -> None:
     def finalizer(generator: Any) -> None:
         pass
 
-    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> None:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> None:
         async def resource() -> AsyncIterator[int]:
             yield 1
 
