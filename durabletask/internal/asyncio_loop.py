@@ -184,6 +184,10 @@ class DurableEventLoop(asyncio.AbstractEventLoop):
     def get_task_factory(self) -> None:
         return None
 
+    def get_exception_handler(self) -> None:
+        # Callback failures always fail the dispatch; there is no custom handler.
+        return None
+
     def create_task(
         self, coro: Coroutine[Any, Any, T] | Generator[Any, None, T], *, name: str | None = None,
         context: contextvars.Context | None = None, **kwargs: Any,
@@ -424,7 +428,8 @@ _UNSUPPORTED_LOOP_APIS: dict[str, str] = {
     ), _THREAD_HINT),
     **dict.fromkeys((
         "run_forever", "run_until_complete", "stop", "set_task_factory",
-        "set_exception_handler",
+        "set_exception_handler", "default_exception_handler", "set_debug",
+        "shutdown_asyncgens",
     ), _LOOP_HINT),
 }
 
