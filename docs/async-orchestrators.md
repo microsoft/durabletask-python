@@ -51,7 +51,8 @@ existing replay engine, history format, and provider integrations.
 `asyncio.wait_for`, with durable timers as the clock.
 - Allow async helpers and libraries to compose durable operations, as long as
 they use only supported asyncio APIs.
-- Keep generator orchestrators and their recorded histories unchanged.
+- Keep generator orchestrators that yield durable tasks, and their recorded
+histories, unchanged.
 
 Non-goals:
 
@@ -409,8 +410,7 @@ instances and validate histories before upgrades. All workers processing an
 instance must use that pinned environment; see the Python version warning
 above.
 
-The Functions `orchestrator_generator_wrapper` helper supports direct durable
-awaits in synchronous and async mock-based unit tests; it does not simulate the
-asyncio scheduler.
-Use the real replay executor/provider or the in-memory backend to test task
-groups, gather, and durable timeouts.
+The Functions `orchestrator_generator_wrapper` helper drives generator
+orchestrators only. Use the real replay executor/provider or the in-memory
+backend to test async orchestrators, including task groups, gather, and durable
+timeouts.
