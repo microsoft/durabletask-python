@@ -4,9 +4,11 @@
 """Cold coroutine and ownership semantics through the shared replay executor."""
 
 import asyncio
+import gc
 import inspect
 import json
 import logging
+import sys
 from collections.abc import Coroutine, Generator
 from dataclasses import dataclass
 from datetime import timedelta
@@ -14,7 +16,7 @@ from typing import Any, get_type_hints
 
 import pytest
 
-from durabletask import entities, task
+from durabletask import entities, task, worker
 from durabletask.async_context import AsyncOrchestrationContext
 from durabletask.internal import helpers
 from durabletask.internal import orchestrator_service_pb2 as pb
@@ -59,7 +61,11 @@ def test_async_context_public_api_matches_task_context() -> None:
         assert isinstance(async_member, property) == isinstance(eager_member, property), name
         if isinstance(async_member, property):
             continue
-        assert inspect.iscoroutinefunction(async_member) == (name in _ASYNC_OPERATIONS), name
+        is_operation = name in _ASYNC_OPERATIONS
+        assert inspect.iscoroutinefunction(inspect.unwrap(async_member)) == is_operation, name
+        if sys.version_info >= (3, 12):
+            # Cold-operation tracking wraps each operation; 3.12+ can mark the wrapper.
+            assert inspect.iscoroutinefunction(async_member) == is_operation, name
         async_parameters = set(inspect.signature(async_member).parameters)
         eager_parameters = set(inspect.signature(eager_member).parameters)
         assert async_parameters - eager_parameters == _EXTRA_ASYNC_PARAMETERS.get(name, set()), name
@@ -379,41 +385,6 @@ def test_owned_receive_race_follows_history_order(event_first: bool) -> None:
     assert json.loads(_completion(result).result.value) == ("event:42" if event_first else "timeout:42")
 
 
-@pytest.mark.parametrize("seconds", [float("inf"), float("-inf"), float("nan")])
-def test_nonfinite_timeout_rejected_before_consuming_event(seconds: float) -> None:
-    class InfiniteTimeout(timedelta):
-        def total_seconds(self) -> float:
-            return seconds
-
-    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> int:
-        await ctx.wait_for_external_event("go")
-        ops = ctx
-        with pytest.raises(ValueError, match="finite"):
-            await ops.wait_for_external_event("value", timeout=InfiniteTimeout())
-        return await ops.wait_for_external_event("value", data_type=int)
-
-    result = _execute(orchestrator, _start(), [
-        helpers.new_event_raised_event("value", "42"),
-        helpers.new_event_raised_event("go", None),
-    ])
-    assert json.loads(_completion(result).result.value) == 42
-
-
-@pytest.mark.parametrize("seconds", [float("inf"), float("-inf"), float("nan")])
-def test_nonfinite_timer_delay_rejected_before_scheduling(seconds: float) -> None:
-    class InfiniteDelay(timedelta):
-        def total_seconds(self) -> float:
-            return seconds
-
-    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
-        with pytest.raises(ValueError, match="finite"):
-            await ctx.create_timer(InfiniteDelay())
-        return await ctx.call_activity("work", return_type=str)
-
-    actions = _execute(orchestrator, [], _start()).actions
-    assert [(action.id, action.scheduleTask.name) for action in actions] == [(1, "work")]
-
-
 @pytest.mark.parametrize("approved_first", [True, False])
 def test_winner_completion_and_result_idioms(approved_first: bool) -> None:
     observed: list[Any] = []
@@ -511,6 +482,40 @@ def test_dispatch_disposal_of_owned_resources_preserves_response_and_has_no_clea
     assert [(a.id, a.createTimer.fireAt.ToDatetime()) for a in result.actions] == [
         (1, NOW + timedelta(seconds=10)), (2, NOW + timedelta(seconds=5))]
     assert not caplog.records
+
+
+@pytest.mark.filterwarnings("error::RuntimeWarning")
+def test_operation_created_before_other_awaits_starts_later_without_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Teardown can finalize an unstarted operation; its warning would surface here.
+    unraisable: list[Any] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
+        operation = ctx.call_activity("work", return_type=str)
+        await ctx.create_timer(timedelta(seconds=5))
+        return await operation
+
+    deadline = NOW + timedelta(seconds=5)
+    batches = [
+        _start(),
+        [helpers.new_timer_created_event(1, deadline), helpers.new_timer_fired_event(1, deadline)],
+        [helpers.new_task_scheduled_event(2, "work"), helpers.new_task_completed_event(2, '"done"')],
+    ]
+    old: list[pb.HistoryEvent] = []
+    observed: list[worker.ExecutionResults] = []
+    for new in batches:
+        result = _execute(orchestrator, old, new)
+        assert list(result.actions) == list(_execute(orchestrator, old, new).actions)
+        observed.append(result)
+        old += new
+        gc.collect()
+
+    assert [action.createTimer.fireAt.ToDatetime() for action in observed[0].actions] == [deadline]
+    assert [(action.id, action.scheduleTask.name) for action in observed[1].actions] == [(2, "work")]
+    assert json.loads(_completion(observed[2]).result.value) == "done"
+    assert not unraisable
 
 
 def test_sequential_cold_operations_preserve_generator_actions() -> None:

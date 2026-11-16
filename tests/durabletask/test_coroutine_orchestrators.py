@@ -247,7 +247,7 @@ def test_generator_wrapper_of_async_function_is_synchronous(shape: str) -> None:
 
 
 def test_orchestrator_is_classified_once_at_registration(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def orchestrator(ctx: task.OrchestrationContext, value: int) -> int:
+    async def orchestrator(ctx: task.AsyncOrchestrationContext, value: int) -> int:
         return await ctx.call_activity("work", input=value, return_type=int)
 
     registry = worker._Registry()  # pyright: ignore[reportPrivateUsage]

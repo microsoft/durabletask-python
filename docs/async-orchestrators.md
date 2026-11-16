@@ -104,6 +104,18 @@ timer delays start from that execution point. Keep or copy inputs accordingly.
 Dropping an operation without awaiting it or wrapping it in a task schedules
 nothing, and Python reports that the coroutine was never awaited.
 
+An operation can be created before other awaits and awaited later; it is
+scheduled at its first await, not where it was created. Dispatch teardown
+closes operations that have not started yet, which schedules nothing and does
+not report them as never awaited. To start an operation immediately, wrap it
+with `asyncio.create_task(...)`:
+
+```python
+pending = asyncio.create_task(ctx.call_activity("report", return_type=str))
+await ctx.create_timer(timedelta(minutes=5))
+summary = await pending
+```
+
 Cold coroutines are single-use, like ordinary Python coroutines. For an
 explicitly started operation with multiple independent waiters, retain its
 durable handle:

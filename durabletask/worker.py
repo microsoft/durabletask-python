@@ -1673,6 +1673,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
         self._exception_properties_provider = exception_properties_provider
         self._logger = logger
         self._async_loop: DurableEventLoop | None = None
+        self._async_context: task.AsyncOrchestrationContext | None = None
         self._async_cleanup = False
 
     def run(self, orchestrator: Generator[task.Task[Any], Any, Any] | Coroutine[Any, Any, Any]) -> None:
@@ -1687,7 +1688,11 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def close(self) -> None:
         if self._async_loop is not None:
             self._async_cleanup = True
-            self._async_loop.close()
+            if self._async_context is None:
+                self._async_loop.close()
+                return
+            with self._async_context._closing_unstarted_operations():  # pyright: ignore[reportPrivateUsage]
+                self._async_loop.close()
         elif self._generator is not None:
             self._generator.close()
 
@@ -2758,7 +2763,9 @@ class _OrchestrationExecutor:
                 is_async = self._registry.is_async_orchestrator(event.executionStarted.name, fn)
                 if is_async:
                     async_fn = cast(task.AsyncOrchestrator[Any, Any], fn)
-                    result = async_fn(task.AsyncOrchestrationContext(ctx), input)
+                    async_ctx = task.AsyncOrchestrationContext(ctx)
+                    ctx._async_context = async_ctx  # pyright: ignore[reportPrivateUsage]
+                    result = async_fn(async_ctx, input)
                 else:
                     sync_fn = cast(task.SyncOrchestrator[Any, Any], fn)
                     result = sync_fn(ctx, input)
