@@ -13,10 +13,9 @@ ADDED
 whose durable operations are cold coroutines, support durable asyncio timers
 and ordered composition such as `asyncio.gather`, `asyncio.TaskGroup`, and
 `asyncio.timeout`, and offer event waits with owned cancellation and timeouts.
-Generator orchestrators are unchanged; `as_task_context()` and `Task.wait()`
-interoperate with their eager durable handles. Pass `return_type` to type and
-reconstruct async sub-orchestration results. `asyncio.wait` and
-`asyncio.as_completed` are not supported.
+`as_task_context()` and `Task.wait()` interoperate with eager durable task
+handles. Pass `return_type` to type and reconstruct async sub-orchestration
+results. `asyncio.wait` and `asyncio.as_completed` are not supported.
 
 > [!WARNING]
 > Async cleanup can run at every dispatch, including suspension; it is not
@@ -25,6 +24,15 @@ reconstruct async sub-orchestration results. `asyncio.wait` and
 > Python minor version, so keep it fixed for in-flight instances. See the
 > [async contract](docs/async-orchestrators.md) for supported operations and
 > replay and upgrade guidance.
+
+CHANGED
+
+- A generator orchestrator whose first `yield` is not a `durabletask.Task`, such
+as a bare `yield` or `yield [task]`, now fails on its first dispatch with a
+`TypeError` ("The orchestrator generator yielded a non-Task object").
+Previously a bare first `yield` left the instance pending indefinitely, and a
+non-Task first yield scheduled its work and then failed later with an
+`AttributeError`.
 
 FIXED
 

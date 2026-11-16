@@ -178,6 +178,15 @@ For fan-out in an async orchestrator, use ordered `asyncio.gather` or
 `asyncio.TaskGroup`:
 
 ```python
+import asyncio
+
+import azure.durable_functions as df
+from durabletask import task
+
+app = df.DFApp()
+
+
+@app.orchestration_trigger(context_name="context")
 async def greetings(ctx: task.AsyncOrchestrationContext, names: list[str]) -> list[str]:
     return list(await asyncio.gather(*(
         ctx.call_activity("say_hello", input=name, return_type=str)
@@ -195,6 +204,16 @@ For races, obtain eager handles through `ctx.as_task_context()` and pass them to
 `task.when_any`, which returns the identical winning handle:
 
 ```python
+from datetime import timedelta
+from typing import Any
+
+import azure.durable_functions as df
+from durabletask import task
+
+app = df.DFApp()
+
+
+@app.orchestration_trigger(context_name="context")
 async def approval(ctx: task.AsyncOrchestrationContext, _: Any) -> bool:
     handles = ctx.as_task_context()
     approved = handles.wait_for_external_event("approval", data_type=bool)

@@ -14,8 +14,8 @@ a future major version, which may introduce replay-breaking changes.
 - Added `async def` orchestrators with the core two-argument shape,
 `async def orchestrator(ctx: task.AsyncOrchestrationContext, input)`, and
 `df.call_http()` for durable HTTP requests from durabletask orchestration
-contexts. Single-parameter `async def` orchestrators are not supported and
-raise `TypeError` when registered. Generator orchestrators are unchanged.
+contexts. `async def` orchestrators with fewer than two positional parameters
+are not supported and raise `TypeError` when registered.
 Requires a `durabletask` release with async orchestrator support. See the
 [async contract](../docs/async-orchestrators.md) for dispatch cleanup and
 replay/upgrade precautions.
