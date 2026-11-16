@@ -596,6 +596,40 @@ def test_unsupported_work_fails_actionably(api: str) -> None:
         "use an activity", "ordinary activity", "different loop"))
 
 
+@pytest.mark.parametrize("caught", [False, True])
+def test_orchestrator_cannot_close_the_durable_loop(caught: bool, caplog: pytest.LogCaptureFixture) -> None:
+    cleaned: list[str] = []
+
+    async def orchestrator(ctx: task.OrchestrationContext, _: Any) -> str:
+        async def background() -> None:
+            try:
+                await ctx.call_activity("background")
+            finally:
+                cleaned.append("background")
+
+        pending = asyncio.create_task(background())
+        await asyncio.sleep(0)
+        try:
+            asyncio.get_running_loop().close()
+        except RuntimeError:
+            if not caught:
+                raise
+        assert not pending.done()
+        return "closed" if asyncio.get_running_loop().is_closed() else "open"
+
+    complete = _completion(_execute(orchestrator, [], _start()))
+    if caught:
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED
+        assert json.loads(complete.result.value) == "open"
+    else:
+        assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
+        assert complete.failureDetails.errorType == "builtins.RuntimeError"
+        assert complete.failureDetails.errorMessage.startswith(
+            "loop.close() is not supported in durable orchestrators.")
+    assert cleaned == ["background"]
+    assert "cleanup failed" not in caplog.text
+
+
 @pytest.mark.parametrize("async_generator", [False, True])
 @pytest.mark.parametrize("unexpected", [False, True])
 def test_cleanup_failure_policy_includes_async_generator_tasks(
