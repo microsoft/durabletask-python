@@ -6,14 +6,24 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Coroutine
-from typing import Any, overload
+from collections.abc import Callable, Coroutine
+from typing import Any, TypeVar, overload
 
 from durabletask import task
+from durabletask.async_context import _cold_operation  # pyright: ignore[reportPrivateUsage]
 
 from ..internal.compat.token_source import TokenSource
 from .builtin import BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME
 from .models import DurableHttpRequest, DurableHttpResponse, HttpRetryOptions
+
+_F = TypeVar("_F", bound=Callable[..., Coroutine[Any, Any, Any]])
+
+
+def _named_call_http(function: _F) -> _F:
+    # Name the coroutine and its frames after the public API in warnings and tracebacks.
+    function.__code__ = function.__code__.replace(co_name="call_http", co_qualname="call_http")
+    function.__name__ = function.__qualname__ = "call_http"
+    return function
 
 
 def _build_request(
@@ -54,6 +64,8 @@ def schedule_http_request(
         BUILTIN_HTTP_POLL_ORCHESTRATOR_NAME, input=request, return_type=DurableHttpResponse)
 
 
+@_cold_operation
+@_named_call_http
 async def _call_http_async(
         ctx: task.AsyncOrchestrationContext,
         method: str,

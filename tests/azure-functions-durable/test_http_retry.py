@@ -2,8 +2,10 @@
 # Licensed under the MIT License.
 
 import base64
+import gc
 import io
 import json
+import sys
 import urllib.error
 from collections.abc import Generator
 from datetime import datetime, timedelta, tzinfo
@@ -389,7 +391,7 @@ def _async_caller(policy: df.HttpRetryOptions, codes: list[int]):
 @pytest.mark.parametrize("outcome", ["success", "polled", "failure"])
 @pytest.mark.parametrize("make_caller", [_v1_caller, _task_caller, _async_caller],
                          ids=["v1-context", "task-context", "async-context"])
-def test_call_http_schedules_snapshot_and_observes_child_result(make_caller, outcome: str) -> None:
+def test_call_http_copies_retry_status_codes_and_observes_child_result(make_caller, outcome: str) -> None:
     codes = [503]
     policy = df.HttpRetryOptions(
         first_retry_interval=timedelta(seconds=2),
@@ -424,7 +426,12 @@ def test_call_http_schedules_snapshot_and_observes_child_result(make_caller, out
         assert "status code 503" in str(completion.failureDetails)
 
 
-def test_async_call_http_is_cold_until_awaited() -> None:
+@pytest.mark.filterwarnings("error::RuntimeWarning")
+def test_async_call_http_is_cold_until_awaited(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Teardown can finalize the unstarted call; its warning would surface here.
+    unraisable: list[Any] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+
     async def caller(ctx: task.AsyncOrchestrationContext, _: Any) -> str:
         pending = df.call_http(ctx, "POST", "https://example.com", content=1, is_raw_str=True)
         await ctx.create_timer(timedelta(seconds=1))
@@ -439,6 +446,29 @@ def test_async_call_http_is_cold_until_awaited() -> None:
     completion = history.only_action("completeOrchestration").completeOrchestration
     assert completion.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED, completion.failureDetails
     assert json.loads(completion.result.value) == "validated"
+    gc.collect()
+    assert not unraisable
+
+
+@pytest.mark.parametrize("context", ["task", "async"])
+def test_call_http_reads_headers_when_the_request_is_scheduled(context: str) -> None:
+    def eager(ctx: task.OrchestrationContext, _: Any) -> Generator[task.Task[Any], Any, df.DurableHttpResponse]:
+        headers = {"X-Step": "created"}
+        pending = df.call_http(ctx, "GET", "https://example.com", headers=headers)
+        headers["X-Step"] = "mutated"
+        return (yield pending)
+
+    async def cold(ctx: task.AsyncOrchestrationContext, _: Any) -> df.DurableHttpResponse:
+        headers = {"X-Step": "created"}
+        pending = df.call_http(ctx, "GET", "https://example.com", headers=headers)
+        headers["X-Step"] = "mutated"
+        return await pending
+
+    history = _History(eager if context == "task" else cold)
+    action = history.only_action("createSubOrchestration")
+    payload = json.loads(action.createSubOrchestration.input.value)
+    # Eager calls serialize when called; cold calls serialize at their first await.
+    assert payload["headers"] == {"X-Step": "created" if context == "task" else "mutated"}
 
 
 @pytest.mark.parametrize(("content", "is_raw_str", "expected"), [
