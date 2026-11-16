@@ -613,22 +613,19 @@ class Task(ABC, Generic[T]):
         # Dict insertion order preserves subscription order for shared races.
         self._parents = {}
 
-    def __await__(self) -> Generator[Task[T], Any, T]:
+    def __await__(self) -> Generator[Any, Any, T]:
         """Wait for this task in a replay-driven ``async def`` orchestrator.
 
         A local asyncio waiter does not own or cancel the durable operation.
+        Awaiting outside a durable orchestrator's event loop, including with no
+        running loop, raises ``RuntimeError``.
         """
         from durabletask.internal.asyncio_loop import DurableEventLoop
 
         loop = asyncio._get_running_loop()
-        if isinstance(loop, DurableEventLoop):
-            return (yield from loop.wait_durable(self).__await__())
-        if loop is not None:
+        if not isinstance(loop, DurableEventLoop):
             raise RuntimeError("Durable tasks can only be awaited inside a durable orchestrator.")
-        # Allow mock-based orchestration drivers to send results without an event loop.
-        if not self.is_complete:
-            yield self
-        return self.get_result()
+        return (yield from loop.wait_durable(self).__await__())
 
     async def wait(self) -> T:
         """Borrow this operation's result through a fresh native coroutine.

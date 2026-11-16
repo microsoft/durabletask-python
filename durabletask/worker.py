@@ -1694,6 +1694,7 @@ class _RuntimeOrchestrationContext(task.OrchestrationContext):
     def _set_next_task(self, next_task: Any) -> None:
         if not isinstance(next_task, task.Task):
             raise TypeError(
+                "The orchestrator generator yielded a non-Task object. "
                 "Generator orchestrators must yield durabletask.Task objects. "
                 "Use async def and await for asyncio composition."
             )
