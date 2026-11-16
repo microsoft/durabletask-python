@@ -350,20 +350,44 @@ def test_await_is_concrete_and_completed_tasks_do_not_suspend() -> None:
     assert json.loads(_completion(_execute(orchestrator, [], _start())).result.value) == [7, 7]
 
 
+@pytest.mark.parametrize("yielded", ["none", "list"])
 @pytest.mark.parametrize("after_activity", [False, True])
-def test_generator_invalid_yield_recommends_async_authoring(after_activity: bool) -> None:
+def test_generator_invalid_yield_recommends_async_authoring(after_activity: bool, yielded: str) -> None:
     def orchestrator(ctx: task.OrchestrationContext, _: Any) -> Generator[Any, Any, None]:
         if after_activity:
             yield ctx.call_activity("work")
-        yield None
+        if yielded == "none":
+            yield None
+        else:
+            yield [ctx.call_activity("other")]
 
     old = _start() + [helpers.new_task_scheduled_event(1, "work")] if after_activity else []
     new = [helpers.new_task_completed_event(1, "null")] if after_activity else _start()
     complete = _completion(_execute(orchestrator, old, new))
     assert complete.orchestrationStatus == pb.ORCHESTRATION_STATUS_FAILED
     assert complete.failureDetails.errorType == "builtins.TypeError"
+    assert complete.failureDetails.errorMessage.startswith(
+        "The orchestrator generator yielded a non-Task object")
     assert "Generator orchestrators must yield durabletask.Task objects" in complete.failureDetails.errorMessage
     assert "Use async def and await for asyncio composition" in complete.failureDetails.errorMessage
+
+
+@pytest.mark.parametrize("foreign_loop", [False, True])
+def test_awaiting_durable_task_outside_durable_loop_raises(foreign_loop: bool) -> None:
+    completed = task.CompletableTask[int]()
+    completed.complete(7)
+
+    async def await_task() -> int:
+        return await completed
+
+    coro = await_task()
+    if foreign_loop:
+        with pytest.raises(RuntimeError, match="only be awaited inside a durable orchestrator"):
+            asyncio.run(coro)
+        return
+    with pytest.raises(RuntimeError, match="only be awaited inside a durable orchestrator"):
+        coro.send(None)
+    coro.close()
 
 
 def test_precompleted_failure_and_cancellation_are_catchable() -> None:
