@@ -4,7 +4,8 @@
 """Orchestrator functions for the durabletask-native-style sample app (blueprint).
 
 Every orchestrator uses the modern durabletask two-argument style
-(``def orch(ctx, input):``) and the durabletask ``OrchestrationContext`` API
+(``def orch(ctx, input):`` or ``async def orch(ctx, input):``) and the
+durabletask ``OrchestrationContext`` / ``AsyncOrchestrationContext`` API
 directly. These cover the inherited durabletask surface -- activity chaining,
 fan-out/fan-in (``task.when_all``), sub-orchestrations, external events, timers,
 entities (``ctx.call_entity`` / ``ctx.signal_entity``), custom status,
@@ -13,6 +14,7 @@ and context properties -- plus the failure paths.
 """
 
 from datetime import timedelta
+import asyncio
 import logging
 from typing import Any
 
@@ -33,6 +35,50 @@ def activity_chain(ctx: task.OrchestrationContext, _: Any):
     second = yield ctx.call_activity("say_hello", input="Seattle")
     third = yield ctx.call_activity("say_hello", input="London")
     return [first, second, third]
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_await_probe(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
+    greeting = await ctx.call_activity("say_hello", input="Tokyo", return_type=str)
+    values = await asyncio.gather(*(ctx.call_activity("square", input=i, return_type=int) for i in (2, 3)))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+    child: list[str] = await ctx.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": sum(values), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_cold_probe(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
+    greeting = await asyncio.create_task(ctx.call_activity("say_hello", input="Tokyo", return_type=str))
+    async with asyncio.TaskGroup() as group:
+        first = group.create_task(ctx.call_activity("square", input=2, return_type=int))
+        second = group.create_task(ctx.call_activity("square", input=3, return_type=int))
+    await ctx.create_timer(timedelta(milliseconds=10))
+    child: list[str] = await ctx.call_sub_orchestrator("activity_chain")
+    return {"greeting": greeting, "total": first.result() + second.result(), "child": child}
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_fan_out(ctx: task.AsyncOrchestrationContext, count: int | None) -> int:
+    count = count or 5
+    results = await asyncio.gather(
+        *(ctx.call_activity("square", input=i, return_type=int) for i in range(1, count + 1)))
+    return sum(results)
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_race(ctx: task.AsyncOrchestrationContext, _: Any) -> dict[str, Any]:
+    handles = ctx.as_task_context()
+    activity = handles.call_activity("say_hello", input="Tokyo", return_type=str)
+    timeout = handles.create_timer(timedelta(minutes=5))
+    winner = await task.when_any([activity, timeout])
+    return {"activity_won": winner is activity, "result": activity.get_result()}
+
+
+@bp.orchestration_trigger(context_name="context")
+async def async_call_http(ctx: task.AsyncOrchestrationContext, url: str) -> dict[str, Any]:
+    response = await df.call_http(ctx, "GET", url)
+    return {"status_code": response.status_code, "content": response.content}
 
 
 @bp.orchestration_trigger(context_name="context")

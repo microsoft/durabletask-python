@@ -22,7 +22,7 @@ from durabletask.worker import TaskHubGrpcWorker
 from .internal.azurefunctions_null_stub import AzureFunctionsNullStub
 from .internal.invocation import run_sync
 from .internal.compat.entity_context import wrap_entity
-from .internal.compat.orchestration_context import wrap_orchestrator
+from .internal.compat.orchestration_context import FunctionsOrchestrator, wrap_orchestrator
 from .internal.payloads import (
     discard_scheduled_activity_inputs, get_transport_payload_store,
     hydrate_entity_request, hydrate_entity_request_async,
@@ -60,7 +60,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         )
         self._registration_lock = Lock()
         self._registered_orchestrator_functions: dict[
-            str, task.Orchestrator[Any, Any]
+            str, FunctionsOrchestrator
         ] = {}
         self._registered_entity_functions: dict[
             str, task.Entity[Any, Any]
@@ -72,7 +72,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
     def _register_orchestrator_once(
             self,
             name: str,
-            func: task.Orchestrator[Any, Any],
+            func: FunctionsOrchestrator,
     ) -> None:
         with self._registration_lock:
             if self._registered_orchestrator_functions.get(name) is func:
@@ -92,7 +92,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             self.add_entity(wrap_entity(func), name=name)
             self._registered_entity_functions[name] = func
 
-    def execute_orchestration_request(self, func: task.Orchestrator[Any, Any], context: Any) -> str:
+    def execute_orchestration_request(self, func: FunctionsOrchestrator, context: Any) -> str:
         payload_store = get_transport_payload_store()
         context_body = getattr(context, "body", None)
         if context_body is None:
@@ -109,7 +109,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
             externalize_payloads(response, payload_store, instance_id=request.instanceId)
         return base64.b64encode(response.SerializeToString()).decode("utf-8")
 
-    async def execute_orchestration_request_async(self, func: task.Orchestrator[Any, Any], context: Any) -> str:
+    async def execute_orchestration_request_async(self, func: FunctionsOrchestrator, context: Any) -> str:
         payload_store = get_transport_payload_store()
         request = OrchestratorRequest()
         request.ParseFromString(base64.b64decode(getattr(context, "body", None) or context))
@@ -123,7 +123,7 @@ class DurableFunctionsWorker(TaskHubGrpcWorker):
         return base64.b64encode(response.SerializeToString()).decode("utf-8")
 
     def _run_orchestration(
-            self, func: task.Orchestrator[Any, Any], request: OrchestratorRequest) -> OrchestratorResponse:
+            self, func: FunctionsOrchestrator, request: OrchestratorRequest) -> OrchestratorResponse:
         stub: Any = AzureFunctionsNullStub()
         response: Optional[OrchestratorResponse] = None
 

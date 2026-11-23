@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 import azure.functions as func
 
+from .internal.compat.orchestration_context import validate_orchestrator
 from .worker import DurableFunctionsWorker
 
 
@@ -70,8 +71,13 @@ class Orchestrator:
         -------
         Callable[[Any], str]
             Handle function of the newly created orchestration client
-        """
 
+        Raises
+        ------
+        TypeError
+            If ``fn`` is a single-argument ``async def`` orchestrator.
+        """
+        validate_orchestrator(fn)
         worker = DurableFunctionsWorker()
 
         # The generated handle is the function registered with the Azure

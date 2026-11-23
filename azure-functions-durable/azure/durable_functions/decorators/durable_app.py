@@ -21,6 +21,7 @@ from ..http.builtin import (
     builtin_http_poll_orchestrator,
 )
 from ..internal.compat.activity import wrap_activity, wrap_activity_payloads
+from ..internal.compat.orchestration_context import FunctionsOrchestrator, validate_orchestrator
 from ..internal.invocation import preserve_function_source, wrap_invocation
 from ..worker import DurableFunctionsWorker
 
@@ -169,7 +170,7 @@ class Blueprint(TriggerApi, BindingApi):
             wrap: Callable[[Callable[..., Any]], FunctionBuilder],
             context_name: str,
             input_type: Optional[type] = None
-    ) -> Callable[[task.Orchestrator[Any, Any]], FunctionBuilder]:
+    ) -> Callable[[FunctionsOrchestrator], FunctionBuilder]:
         """Obtain decorator to construct an Orchestrator class from a user-defined Function.
 
         Parameters
@@ -187,8 +188,9 @@ class Blueprint(TriggerApi, BindingApi):
             The function to construct an Orchestrator class from the user-defined Function,
             wrapped by the next decorator in the sequence.
         """
-        def decorator(orchestrator_func: task.Orchestrator[Any, Any]) -> FunctionBuilder:
+        def decorator(orchestrator_func: FunctionsOrchestrator) -> FunctionBuilder:
             # Construct an orchestrator based on the end-user code
+            validate_orchestrator(orchestrator_func)
 
             if input_type is not None:
                 # Stash the decorator-declared input type so the runtime can
@@ -281,7 +283,7 @@ class Blueprint(TriggerApi, BindingApi):
     def orchestration_trigger(self, context_name: str,
                               orchestration: Optional[str] = None,
                               input_type: Optional[type] = None
-                              ) -> Callable[[task.Orchestrator[Any, Any]], FunctionBuilder]:
+                              ) -> Callable[[FunctionsOrchestrator], FunctionBuilder]:
         """Register an Orchestrator Function.
 
         Parameters
@@ -296,6 +298,12 @@ class Blueprint(TriggerApi, BindingApi):
             ``context.get_input()`` decodes the input payload to this type. A
             call-site ``expected_type`` argument on ``get_input`` takes
             precedence over this value.
+
+        Raises
+        ------
+        TypeError
+            When applied to a single-parameter ``async def`` orchestrator.
+            Async orchestrators take ``(ctx: task.AsyncOrchestrationContext, input)``.
         """
         @self._build_function
         def wrap(fb: FunctionBuilder) -> FunctionBuilder:
