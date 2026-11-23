@@ -10,7 +10,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
+from enum import Enum
+from typing import Any, Generic, Literal, TypeAlias, TypeVar, cast, overload
 
 from durabletask.entities import DurableEntity, EntityInstanceId, EntityLock, EntityContext
 import durabletask.internal.helpers as pbh
@@ -851,7 +852,12 @@ class RetryableTask(CompletableTask[T]):
         else:
             backoff_coefficient = self._retry_policy.backoff_coefficient
 
-        next_delay_f = math.pow(backoff_coefficient, self._attempt_count - 1) * self._retry_policy.first_retry_interval.total_seconds()
+        first_retry_seconds = self._retry_policy.first_retry_interval.total_seconds()
+        try:
+            next_delay_f = math.pow(backoff_coefficient, self._attempt_count - 1) * first_retry_seconds
+        except OverflowError:
+            # The uncapped delay is unrepresentable; let max_retry_interval bound it.
+            next_delay_f = math.inf if first_retry_seconds > 0 else 0.0
 
         if self._retry_policy.max_retry_interval is not None:
             next_delay_f = min(next_delay_f, self._retry_policy.max_retry_interval.total_seconds())
@@ -960,6 +966,16 @@ Activity: TypeAlias = Callable[[ActivityContext, TInput], TOutput]
 Entity: TypeAlias = Callable[[EntityContext, TInput], TOutput] | type[DurableEntity]
 
 
+class _DefaultMaxRetryInterval(Enum):
+    DEFAULT = 'default'
+
+    def __repr__(self) -> str:
+        return 'DEFAULT'
+
+
+_DEFAULT_MAX_RETRY_INTERVAL = timedelta(hours=1)
+
+
 class RetryPolicy:
     """Represents the retry policy for an orchestration or activity function."""
 
@@ -967,7 +983,8 @@ class RetryPolicy:
                  first_retry_interval: timedelta,
                  max_number_of_attempts: int,
                  backoff_coefficient: float | None = 1.0,
-                 max_retry_interval: timedelta | None = None,
+                 max_retry_interval: timedelta | None | Literal[_DefaultMaxRetryInterval.DEFAULT] = (
+                     _DefaultMaxRetryInterval.DEFAULT),
                  retry_timeout: timedelta | None = None):
         """Creates a new RetryPolicy instance.
 
@@ -980,7 +997,9 @@ class RetryPolicy:
         backoff_coefficient : float | None
             The backoff coefficient to use for calculating the next retry interval.
         max_retry_interval : timedelta | None
-            The maximum retry interval to use for any retry attempt.
+            The maximum retry interval to use for any retry attempt. If omitted,
+            defaults to one hour or ``first_retry_interval``, whichever is longer.
+            Pass ``None`` to remove the cap.
         retry_timeout : timedelta | None
             The maximum amount of time to spend retrying the operation.
         """
@@ -991,6 +1010,8 @@ class RetryPolicy:
             raise ValueError('max_number_of_attempts must be >= 1')
         if backoff_coefficient is not None and backoff_coefficient < 1:
             raise ValueError('backoff_coefficient must be >= 1')
+        if max_retry_interval is _DefaultMaxRetryInterval.DEFAULT:
+            max_retry_interval = max(_DEFAULT_MAX_RETRY_INTERVAL, first_retry_interval)
         if max_retry_interval is not None and max_retry_interval < timedelta(seconds=0):
             raise ValueError('max_retry_interval must be >= 0')
         if retry_timeout is not None and retry_timeout < timedelta(seconds=0):
@@ -1019,7 +1040,7 @@ class RetryPolicy:
 
     @property
     def max_retry_interval(self) -> timedelta | None:
-        """The maximum retry interval to use for any retry attempt."""
+        """The maximum retry interval to use for any retry attempt, or ``None`` if uncapped."""
         return self._max_retry_interval
 
     @property
