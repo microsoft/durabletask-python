@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- With the corresponding core SDK release, synchronous and asynchronous clients
+accept public `OrchestrationIdReusePolicy` values to control duplicate instance
+IDs without changing backend defaults. See [ID reuse](../docs/features.md#orchestration-id-reuse).
+Core release and dependency minimum updates are coordinated in the dedicated release PR.
+
 FIXED
 
 - With the corresponding core SDK update, activity and sub-orchestration

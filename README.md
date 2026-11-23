@@ -32,6 +32,14 @@ The Azure Functions Durable provider requires Python 3.13 or later.
 
 ## Optional Features
 
+### Orchestration ID Reuse
+
+Use `OrchestrationIdReusePolicy` from `durabletask.client` to select which
+existing-instance statuses reject duplicate IDs. Omission preserves backend
+defaults; an explicit empty deduplication list permits replacement in every
+stable status, subject to backend support. See the
+[policy documentation](./docs/features.md#orchestration-id-reuse).
+
 ### Task Hub Query Filters
 
 Set `OrchestrationQuery.task_hub_names` to filter orchestration queries by one or

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- With the corresponding core SDK release, Functions-bound synchronous and
+asynchronous clients accept public `OrchestrationIdReusePolicy` values through
+`schedule_new_orchestration()`, preserving backend defaults when omitted.
+See [ID reuse](../docs/features.md#orchestration-id-reuse). Core release and
+dependency minimum updates are coordinated in the dedicated release PR.
 - A best-effort background check warns when a Function App's requirements allow
 a future major version, which may introduce replay-breaking changes.
 
