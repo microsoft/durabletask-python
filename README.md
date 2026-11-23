@@ -25,12 +25,21 @@ The Azure Functions Durable provider requires Python 3.13 or later.
 
 - [Supported Patterns](./docs/supported-patterns.md)
 - [Available Features](./docs/features.md)
+- [Serialization and Replay](./docs/serialization.md)
 - [Getting Started](./docs/getting-started.md)
 - [Development Guide](./docs/development.md)
 - [Azure Functions Durable 2.x](./azure-functions-durable/README.md)
 - [Contributing Guide](./CONTRIBUTING.md)
 
 ## Optional Features
+
+### Orchestration ID Reuse
+
+Use `OrchestrationIdReusePolicy` from `durabletask.client` to select which
+existing-instance statuses reject duplicate IDs. Omission preserves backend
+defaults; an explicit empty deduplication list permits replacement in every
+stable status, subject to backend support. See the
+[policy documentation](./docs/features.md#orchestration-id-reuse).
 
 ### Task Hub Query Filters
 
@@ -66,6 +75,9 @@ Azure Functions uses its own shared codec rather than this converter.
 > of recorded JSON arrays. Enabling it for existing orchestrations can change
 > replay behavior. Iteration over reconstructed sets is not replay-safe; sort
 > values explicitly before using their order to schedule durable work.
+
+See [serialization and replay](./docs/serialization.md) for supported types,
+custom converters, and compatibility guidance.
 
 ### Entity IDs
 

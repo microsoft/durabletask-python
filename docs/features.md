@@ -11,6 +11,64 @@ fault-tolerant and durable, meaning that they can automatically recover from fai
 their local execution state. Orchestrator functions must be deterministic, meaning that they must
 always produce the same output given the same input.
 
+### Orchestration ID reuse
+
+Use the public `OrchestrationIdReusePolicy` to control what happens when scheduling
+an orchestration whose instance ID already exists:
+
+```python
+from durabletask.client import OrchestrationIdReusePolicy, OrchestrationStatus
+
+instance_id = client.schedule_new_orchestration(
+    "process_order",
+    instance_id="order-123",
+    reuse_id_policy=OrchestrationIdReusePolicy(
+        dedupe_statuses=[
+            OrchestrationStatus.RUNNING,
+            OrchestrationStatus.PENDING,
+            OrchestrationStatus.SUSPENDED,
+            OrchestrationStatus.TERMINATED,
+            OrchestrationStatus.CANCELED,
+        ],
+    ),
+)
+```
+
+In this example, only completed or failed instances are eligible for replacement.
+`dedupe_statuses` contains the statuses that **must not** be replaced, matching the
+.NET and Go SDKs' deduplication semantics.
+
+- Omitting `reuse_id_policy`, or using `OrchestrationIdReusePolicy()` with
+  `dedupe_statuses=None`, preserves the backend's default duplicate-ID behavior.
+- An explicit `dedupe_statuses=[]` permits replacement in every stable status,
+  including running instances. Include all stable statuses to reject every
+  duplicate.
+- Stable statuses are `RUNNING`, `PENDING`, `SUSPENDED`, `COMPLETED`, `FAILED`,
+  `TERMINATED`, and the legacy `CANCELED` status. `CONTINUED_AS_NEW` is an execution
+  transition, not a configurable instance status. Invalid status values raise
+  `ValueError` before the scheduling request is sent.
+
+The policy works with synchronous and asynchronous core, Azure Managed, and
+Functions-bound clients. Use `await client.schedule_new_orchestration(...)` with
+an asynchronous client. The deprecated Functions `start_new()` alias does not
+accept policy options.
+
+Existing callers may continue passing a generated protobuf policy through
+`reuse_id_policy`. Its `replaceableStatus` list has the **opposite polarity**:
+it lists statuses that may be replaced. An explicitly empty protobuf policy still
+permits no replacements; it is not equivalent to an empty public deduplication list.
+
+> [!WARNING]
+> Replacing an active instance can terminate its execution. Support, replacement
+> guarantees, and duplicate rejection are enforced by the backend, not by the SDK.
+> The SDK sends one scheduling request; it does not perform a separate
+> terminate-then-start sequence. The shared protocol does not provide an atomic
+> no-op/`IGNORE` action.
+
+Provider releases exposing this public policy require the corresponding core SDK
+release first. Package versions and dependency minimums are coordinated in the
+dedicated release PR.
+
 ### Orchestration versioning
 
 Orchestrations may be assigned a version when they are first created. If an orchestration is given a

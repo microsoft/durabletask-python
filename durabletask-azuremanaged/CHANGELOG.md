@@ -15,6 +15,12 @@ defaults to one hour or `first_retry_interval`, whichever is longer. Pass
 workers do not split long timers, so in-flight retries replay without
 `NonDeterminismError`, but retries already past the new cap use it for
 subsequent attempts. See the [core upgrade warning](../CHANGELOG.md#unreleased).
+ADDED
+
+- With the corresponding core SDK release, synchronous and asynchronous clients
+accept public `OrchestrationIdReusePolicy` values to control duplicate instance
+IDs without changing backend defaults. See [ID reuse](../docs/features.md#orchestration-id-reuse).
+Core release and dependency minimum updates are coordinated in the dedicated release PR.
 
 FIXED
 
