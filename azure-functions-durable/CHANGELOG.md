@@ -21,8 +21,18 @@ Release coordination requires the corrected core replay-safe retry-timeout
 behavior before this provider feature is published; version and dependency
 minimum updates belong in the dedicated release PR.
 
+CHANGED
+
+- With the corresponding core SDK update, `RetryPolicy.max_retry_interval`
+defaults to one hour or `first_retry_interval`, whichever is longer. Pass
+`max_retry_interval=None` to keep uncapped delays. In-flight retries with
+backoff delays beyond the new cap can replay differently or fail with
+`NonDeterminismError`; see the [core upgrade warning](../CHANGELOG.md#unreleased).
+
 FIXED
 
+- With the corresponding core SDK update, exponential backoff that exceeds
+`max_retry_interval` no longer fails the orchestration with `OverflowError`.
 - With the corresponding core SDK update, activity and sub-orchestration
 `retry_timeout` decisions use replay-safe orchestration time rather than
 wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)

@@ -7,8 +7,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+CHANGED
+
+- `RetryPolicy.max_retry_interval` now defaults to one hour or
+`first_retry_interval`, whichever is longer, so exponential backoff no longer
+grows without bound by default. Pass `max_retry_interval=None` to keep
+uncapped delays.
+
+> [!WARNING]
+> **Replay-affecting default change:** In-flight retries whose policy omits
+> `max_retry_interval` and whose next delay exceeded the new cap can replay
+> differently. Already-scheduled retry timers keep their recorded fire time.
+> Retry delays longer than the worker's `maximum_timer_interval` (three days by
+> default) are split into multiple timers: if the first part has fired, the
+> retry runs early; if a later part was already scheduled, replay fails with
+> `NonDeterminismError`. Drain affected instances on the previous SDK, or set
+> `max_retry_interval=None` on those policies before upgrading.
+
 FIXED
 
+- Exponential backoff that exceeds `max_retry_interval` no longer fails the
+orchestration with `OverflowError`; the retry continues at the configured cap.
 - Activity and sub-orchestration `retry_timeout` decisions now use replay-safe
 orchestration time, preventing retries from expiring solely because history is
 replayed later. Retry calculations also accept timezone-aware timestamps.

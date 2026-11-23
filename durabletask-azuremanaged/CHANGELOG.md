@@ -7,8 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+CHANGED
+
+- With the corresponding core SDK update, `RetryPolicy.max_retry_interval`
+defaults to one hour or `first_retry_interval`, whichever is longer. Pass
+`max_retry_interval=None` to keep uncapped delays. Durable Task Scheduler
+workers do not split long timers, so in-flight retries replay without
+`NonDeterminismError`, but retries already past the new cap use it for
+subsequent attempts. See the [core upgrade warning](../CHANGELOG.md#unreleased).
+
 FIXED
 
+- With the corresponding core SDK update, exponential backoff that exceeds
+`max_retry_interval` no longer fails the orchestration with `OverflowError`.
 - With the corresponding core SDK update, activity and sub-orchestration
 `retry_timeout` decisions use replay-safe orchestration time rather than
 wall-clock time. See the [core upgrade guidance](../CHANGELOG.md#unreleased)

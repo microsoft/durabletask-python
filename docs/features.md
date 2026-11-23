@@ -225,6 +225,10 @@ Orchestrations can specify retry policies for activities and sub-orchestrations.
 control how many times and how frequently an activity or sub-orchestration will be retried in the
 event of a transient error.
 
+Exponential backoff delays are capped by `max_retry_interval`. When omitted, the cap defaults to
+one hour or `first_retry_interval`, whichever is longer. Pass `max_retry_interval=None` to remove
+the cap.
+
 ### Replay-safe logging
 
 Orchestrator functions replay their history each time they are resumed,
