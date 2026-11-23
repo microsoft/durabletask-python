@@ -80,6 +80,22 @@ Examples:
 - Add a regression test that confirms a new concrete API is absent from the
   public ABC's `__abstractmethods__`.
 
+## Serialization Compatibility
+
+- Follow the [serialization policy](../docs/serialization.md) for changes
+  to default serialization, including provider adapters. Use the affected
+  provider's documented contract to establish existing support.
+- Preserve encoded payloads, reconstructed values, raw fallback, and failure
+  behavior between major releases, subject to the exceptions below. Defer
+  consideration of new types and unsupported edge cases until a breaking major
+  release rather than adding feature-specific opt-in flags.
+- Non-major replay-breaking changes are limited to security fixes and repairs
+  to previously supported behavior. An unsupported annotation is not supported
+  merely because a related type is supported or its raw value is returned.
+- For an allowed replay-impacting change, add focused regression coverage,
+  including replay where appropriate, and document the risk and upgrade
+  mitigation. A previous failure can itself affect replay if it is caught.
+
 ## Copyright Headers
 
 Every new Python (`.py`) source file MUST begin with the following copyright
