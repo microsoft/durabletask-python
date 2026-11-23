@@ -13,6 +13,14 @@ ADDED
 accept public `OrchestrationIdReusePolicy` values to control duplicate instance
 IDs without changing backend defaults. See [ID reuse](../docs/features.md#orchestration-id-reuse).
 Core release and dependency minimum updates are coordinated in the dedicated release PR.
+- With the corresponding core SDK, `DurableTaskSchedulerWorker` accepts
+`async def` orchestrators with an automatically supplied async context, cold
+durable operations, and supported asyncio composition. Event waits support
+owned cancellation and timeouts; remote operations are not cancelled by local
+waiter cancellation.
+See the [async contract](../docs/async-orchestrators.md) for dispatch cleanup
+and replay/upgrade precautions. Requires a `durabletask` release with async
+orchestrator support.
 
 FIXED
 
