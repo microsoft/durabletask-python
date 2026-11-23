@@ -19,10 +19,12 @@ uncapped delays.
 > `max_retry_interval` and whose next delay exceeded the new cap can replay
 > differently. Already-scheduled retry timers keep their recorded fire time.
 > Retry delays longer than the worker's `maximum_timer_interval` (three days by
-> default) are split into multiple timers: if the first part has fired, the
-> retry runs early; if a later part was already scheduled, replay fails with
-> `NonDeterminismError`. Drain affected instances on the previous SDK, or set
-> `max_retry_interval=None` on those policies before upgrading.
+> default) are split into multiple timers. When the capped delay needs fewer
+> parts than were recorded, the retry runs early after its last part fires, or
+> replay fails with `NonDeterminismError` if an extra part was already recorded.
+> `DurableTaskSchedulerWorker` does not split timers. Drain affected instances on
+> the previous SDK, or set `max_retry_interval=None` on those policies before
+> upgrading.
 
 FIXED
 

@@ -11,8 +11,8 @@ CHANGED
 
 - With the corresponding core SDK update, `RetryPolicy.max_retry_interval`
 defaults to one hour or `first_retry_interval`, whichever is longer. Pass
-`max_retry_interval=None` to keep uncapped delays. Durable Task Scheduler
-workers do not split long timers, so in-flight retries replay without
+`max_retry_interval=None` to keep uncapped delays. `DurableTaskSchedulerWorker`
+does not split long timers, so its in-flight retries replay without
 `NonDeterminismError`, but retries already past the new cap use it for
 subsequent attempts. See the [core upgrade warning](../CHANGELOG.md#unreleased).
 
