@@ -8,6 +8,7 @@ from durabletask.task import RetryPolicy
 
 from .decorators.durable_app import Blueprint, DFApp
 from .client import DurableFunctionsClient, SyncDurableFunctionsClient
+from .http.call import call_http
 from .http.models import DurableHttpRequest, DurableHttpResponse, HttpRetryOptions
 from .orchestrator import Orchestrator
 from .internal.compat.retry_options import RetryOptions
@@ -59,4 +60,5 @@ __all__ = [
     "RetryOptions",
     "RetryPolicy",
     "TokenSource",
+    "call_http",
 ]
