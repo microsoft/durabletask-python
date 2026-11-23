@@ -101,6 +101,20 @@ allocate action IDs, serialize input, or consume buffered events. Cancelling its
 its first step starts no durable operation. Operation inputs are not copied:
 mutations made before the coroutine's first step are observed, and relative
 timer delays start from that execution point. Keep or copy inputs accordingly.
+Dropping an operation without awaiting it or wrapping it in a task schedules
+nothing, and Python reports that the coroutine was never awaited.
+
+An operation can be created before other awaits and awaited later; it is
+scheduled at its first await, not where it was created. Dispatch teardown
+closes operations that have not started yet, which schedules nothing and does
+not report them as never awaited. To start an operation immediately, wrap it
+with `asyncio.create_task(...)`:
+
+```python
+pending = asyncio.create_task(ctx.call_activity("report", return_type=str))
+await ctx.create_timer(timedelta(minutes=5))
+summary = await pending
+```
 
 Cold coroutines are single-use, like ordinary Python coroutines. For an
 explicitly started operation with multiple independent waiters, retain its
@@ -118,6 +132,27 @@ Cancelling either borrower does not cancel the underlying operation. Direct
 `await operation` remains supported, but `create_task(operation)` is not valid:
 an awaitable durable handle is not a coroutine. Do not retry that expression
 assuming the eager operation was rolled back.
+
+To identify the winner of a race, check whether an operation has completed, or
+read its result later, use eager handles with `task.when_any`, or wrap cold
+operations in `asyncio` tasks:
+
+```python
+eager = ctx.as_task_context()
+approval = eager.wait_for_external_event("approval", data_type=bool)
+deadline = eager.create_timer(timedelta(hours=1))
+winner = await task.when_any([approval, deadline])  # The identical handle wins.
+if winner is approval:
+    deadline.cancel()
+    approved = approval.get_result()
+else:
+    report = asyncio.create_task(ctx.call_activity("report", return_type=str))
+    finished = report.done()  # Completion check without waiting.
+    summary = await report  # Result, or the operation's failure.
+```
+
+The losing handle stays inspectable through `is_complete` and, once complete,
+`get_result()`.
 
 The worker classifies each orchestrator once, when it is registered:
 
@@ -176,6 +211,12 @@ operations via eager `task.when_all` / `task.when_any`, and entity calls/locks
 where supported by the provider. Functions compatibility contexts also provide
 async `task_all` / `task_any`. Generator and coroutine parents/children may call
 one another through durable sub-orchestrations.
+
+For sub-orchestration results, pass `return_type=Result` to reconstruct a custom
+result type. Unlike activity calls, a child orchestrator's return annotation is
+not used for result reconstruction, even when passing the child function rather
+than its name. Without an explicit `return_type`, the async API returns `Any`;
+with the default JSON converter, a plain JSON object remains a dictionary.
 
 The dispatch-local loop supports FIFO ready callbacks, local futures and tasks,
 `asyncio.create_task`, `asyncio.gather`, `asyncio.sleep`, `asyncio.TaskGroup`,

@@ -32,6 +32,7 @@ jobs:
       - name: Check asyncio, replay, and dispatch cleanup
         run: >-
           python -m pytest
+          tests\durabletask\test_async_context.py
           tests\durabletask\test_asyncio_orchestrators.py
           tests\durabletask\test_coroutine_orchestrators.py
           tests\durabletask\test_orchestration_generator_cleanup.py
