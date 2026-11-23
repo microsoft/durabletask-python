@@ -13,6 +13,30 @@ ADDED
 synchronous and asynchronous orchestration scheduling, including legacy
 `OrchestrationStatus.CANCELED`. Omission preserves backend defaults; existing
 protobuf policies remain supported. See [ID reuse](docs/features.md#orchestration-id-reuse).
+- Added `async def` orchestrators. They receive an `AsyncOrchestrationContext`
+whose durable operations are cold coroutines, support durable asyncio timers
+and ordered composition such as `asyncio.gather`, `asyncio.TaskGroup`, and
+`asyncio.timeout`, and offer event waits with owned cancellation and timeouts.
+`as_task_context()` and `Task.wait()` interoperate with eager durable task
+handles. Pass `return_type` to type and reconstruct async sub-orchestration
+results. `asyncio.wait` and `asyncio.as_completed` are not supported.
+
+> [!WARNING]
+> Async cleanup can run at every dispatch, including suspension; it is not
+> durable workflow compensation. Converting running orchestrations can alter
+> replay-visible action order, and recorded async histories depend on the
+> Python minor version, so keep it fixed for in-flight instances. See the
+> [async contract](docs/async-orchestrators.md) for supported operations and
+> replay and upgrade guidance.
+
+CHANGED
+
+- A generator orchestrator whose first `yield` is not a `durabletask.Task`, such
+as a bare `yield` or `yield [task]`, now fails on its first dispatch with a
+`TypeError` ("The orchestrator generator yielded a non-Task object").
+Previously a bare first `yield` left the instance pending indefinitely, and a
+non-Task first yield scheduled its work and then failed later with an
+`AttributeError`.
 
 FIXED
 
