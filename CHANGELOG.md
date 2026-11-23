@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+ADDED
+
+- Added public `OrchestrationIdReusePolicy` with typed deduplication statuses for
+synchronous and asynchronous orchestration scheduling, including legacy
+`OrchestrationStatus.CANCELED`. Omission preserves backend defaults; existing
+protobuf policies remain supported. See [ID reuse](docs/features.md#orchestration-id-reuse).
+
 CHANGED
 
 - `RetryPolicy.max_retry_interval` now defaults to one hour or
@@ -52,6 +59,8 @@ automatically reconstructed into typed model instances without requiring an expl
 > Drain affected instances on the previous SDK, or keep their task hub on the
 > previous SDK and use a separate task hub for new instances. Pin or lock the core
 > `durabletask` dependency, including when using the Azure Managed provider.
+> See [serialization and replay](docs/serialization.md) for supported types and
+> compatibility guidance.
 
 ## v1.13.1
 

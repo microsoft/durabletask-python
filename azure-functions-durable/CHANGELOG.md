@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ADDED
 
+- With the corresponding core SDK release, Functions-bound synchronous and
+asynchronous clients accept public `OrchestrationIdReusePolicy` values through
+`schedule_new_orchestration()`, preserving backend defaults when omitted.
+See [ID reuse](../docs/features.md#orchestration-id-reuse). Core release and
+dependency minimum updates are coordinated in the dedicated release PR.
 - A best-effort background check warns when a Function App's requirements allow
 a future major version, which may introduce replay-breaking changes.
 
@@ -27,7 +32,8 @@ CHANGED
 defaults to one hour or `first_retry_interval`, whichever is longer. Pass
 `max_retry_interval=None` to keep uncapped delays. In-flight retries with
 backoff delays beyond the new cap can replay differently or fail with
-`NonDeterminismError`; see the [core upgrade warning](../CHANGELOG.md#unreleased).
+`NonDeterminismError`, including in apps that use Durable Task Scheduler; see
+the [core upgrade warning](../CHANGELOG.md#unreleased).
 
 FIXED
 
